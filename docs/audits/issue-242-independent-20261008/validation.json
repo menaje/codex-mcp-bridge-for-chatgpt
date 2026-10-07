@@ -1,0 +1,311 @@
+{
+  "reviewedCommit": "de037d99d82aa42c5a792c1d3bd9c88afb45b173",
+  "reviewedTree": "b7c4cee8d90725dd4fa554cb777b201af50e899a",
+  "commands": [
+    {
+      "id": "build",
+      "source": "de037d99d82aa42c5a792c1d3bd9c88afb45b173 e1cc5aea23da3fb8464301d00c0e905cca1b7bb7 b7c4cee8d90725dd4fa554cb777b201af50e899a",
+      "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008",
+      "tmpdir": "/tmp/cb242-independent-tests-ySYYH7",
+      "command": "/usr/sbin/taskpolicy",
+      "args": [
+        "-a",
+        "npm",
+        "run",
+        "build"
+      ],
+      "envOverrides": {},
+      "startedAt": "2026-10-07T19:19:55.696Z",
+      "code": 0,
+      "signal": null,
+      "durationMs": 4851,
+      "finishedAt": "2026-10-07T19:20:00.552Z"
+    },
+    {
+      "id": "typecheck",
+      "source": "de037d99d82aa42c5a792c1d3bd9c88afb45b173 e1cc5aea23da3fb8464301d00c0e905cca1b7bb7 b7c4cee8d90725dd4fa554cb777b201af50e899a",
+      "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008",
+      "tmpdir": "/tmp/cb242-independent-tests-ySYYH7",
+      "command": "/usr/sbin/taskpolicy",
+      "args": [
+        "-a",
+        "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008/node_modules/.bin/tsc",
+        "--noEmit",
+        "-p",
+        "tsconfig.json"
+      ],
+      "envOverrides": {},
+      "startedAt": "2026-10-07T19:20:00.623Z",
+      "code": 0,
+      "signal": null,
+      "durationMs": 2427,
+      "finishedAt": "2026-10-07T19:20:03.051Z"
+    },
+    {
+      "id": "validate-fast",
+      "source": "de037d99d82aa42c5a792c1d3bd9c88afb45b173 e1cc5aea23da3fb8464301d00c0e905cca1b7bb7 b7c4cee8d90725dd4fa554cb777b201af50e899a",
+      "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008",
+      "tmpdir": "/tmp/cb242-independent-tests-ySYYH7",
+      "command": "/usr/sbin/taskpolicy",
+      "args": [
+        "-a",
+        "npm",
+        "run",
+        "validate:fast"
+      ],
+      "envOverrides": {
+        "CODEX_MCP_BRIDGE_CODEX": "/tmp/codex-cli-0.153.3/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex"
+      },
+      "startedAt": "2026-10-07T19:20:03.112Z",
+      "code": 0,
+      "signal": null,
+      "durationMs": 1510,
+      "finishedAt": "2026-10-07T19:20:04.623Z"
+    },
+    {
+      "id": "node-full",
+      "source": "de037d99d82aa42c5a792c1d3bd9c88afb45b173 e1cc5aea23da3fb8464301d00c0e905cca1b7bb7 b7c4cee8d90725dd4fa554cb777b201af50e899a",
+      "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008",
+      "tmpdir": "/tmp/cb242-independent-tests-ySYYH7",
+      "command": "/usr/sbin/taskpolicy",
+      "args": [
+        "-a",
+        "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008/node_modules/.bin/vitest",
+        "run",
+        "--maxWorkers=1",
+        "--reporter=default",
+        "--reporter=json",
+        "--outputFile.json=/tmp/issue-242-independent-20261008/node-full.json"
+      ],
+      "envOverrides": {
+        "ISSUE_242_R502_TUNNEL_BINARY": "/opt/homebrew/bin/tunnel-client",
+        "ISSUE_242_R502_REPORT": "/tmp/issue-242-independent-20261008/proxy-matrix.json",
+        "ISSUE_242_R502_TUNNEL_REPORT": "/tmp/issue-242-independent-20261008/tunnel-matrix.json"
+      },
+      "startedAt": "2026-10-07T19:20:04.695Z",
+      "code": 0,
+      "signal": null,
+      "durationMs": 774495,
+      "finishedAt": "2026-10-07T19:32:59.192Z",
+      "counts": {
+        "passed": 1493,
+        "failed": 0,
+        "skipped": 0,
+        "total": 1493,
+        "files": 135
+      }
+    },
+    {
+      "id": "native-full",
+      "source": "de037d99d82aa42c5a792c1d3bd9c88afb45b173 e1cc5aea23da3fb8464301d00c0e905cca1b7bb7 b7c4cee8d90725dd4fa554cb777b201af50e899a",
+      "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008",
+      "tmpdir": "/tmp/cb242-independent-tests-ySYYH7",
+      "command": "/usr/sbin/taskpolicy",
+      "args": [
+        "-a",
+        "npm",
+        "run",
+        "macos:check"
+      ],
+      "envOverrides": {},
+      "startedAt": "2026-10-07T19:32:59.274Z",
+      "code": 0,
+      "signal": null,
+      "durationMs": 105041,
+      "finishedAt": "2026-10-07T19:34:44.315Z"
+    },
+    {
+      "id": "characterization-1200",
+      "source": "de037d99d82aa42c5a792c1d3bd9c88afb45b173 e1cc5aea23da3fb8464301d00c0e905cca1b7bb7 b7c4cee8d90725dd4fa554cb777b201af50e899a",
+      "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008",
+      "tmpdir": "/tmp/cb242-independent-tests-ySYYH7",
+      "command": "/usr/sbin/taskpolicy",
+      "args": [
+        "-a",
+        "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008/node_modules/.bin/tsx",
+        "scripts/issue-242-characterization.ts",
+        "1200"
+      ],
+      "envOverrides": {},
+      "startedAt": "2026-10-07T19:34:44.379Z",
+      "code": 0,
+      "signal": null,
+      "durationMs": 3952,
+      "finishedAt": "2026-10-07T19:34:48.332Z"
+    },
+    {
+      "id": "completion-counts",
+      "source": "de037d99d82aa42c5a792c1d3bd9c88afb45b173 e1cc5aea23da3fb8464301d00c0e905cca1b7bb7 b7c4cee8d90725dd4fa554cb777b201af50e899a",
+      "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008",
+      "tmpdir": "/tmp/cb242-independent-tests-ySYYH7",
+      "command": "/usr/sbin/taskpolicy",
+      "args": [
+        "-a",
+        "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008/node_modules/.bin/tsx",
+        "scripts/issue-242-completion.ts"
+      ],
+      "envOverrides": {},
+      "startedAt": "2026-10-07T19:34:48.403Z",
+      "code": 0,
+      "signal": null,
+      "durationMs": 605,
+      "finishedAt": "2026-10-07T19:34:49.009Z"
+    },
+    {
+      "id": "tunnel-cost",
+      "source": "de037d99d82aa42c5a792c1d3bd9c88afb45b173 e1cc5aea23da3fb8464301d00c0e905cca1b7bb7 b7c4cee8d90725dd4fa554cb777b201af50e899a",
+      "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008",
+      "tmpdir": "/tmp/cb242-independent-tests-ySYYH7",
+      "command": "/usr/sbin/taskpolicy",
+      "args": [
+        "-a",
+        "node",
+        "scripts/issue-242-runtime-cost.mjs",
+        "compare",
+        "/opt/homebrew/bin/tunnel-client"
+      ],
+      "envOverrides": {},
+      "startedAt": "2026-10-07T19:34:49.083Z",
+      "code": 0,
+      "signal": null,
+      "durationMs": 10256,
+      "finishedAt": "2026-10-07T19:34:59.339Z"
+    }
+  ],
+  "focusedExtras": [
+    {
+      "id": "harness-typecheck",
+      "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008",
+      "tmpdir": "/tmp/cb242-independent-extra-iPFEhi",
+      "command": "/usr/sbin/taskpolicy",
+      "args": [
+        "-a",
+        "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008/node_modules/.bin/tsc",
+        "--noEmit",
+        "--target",
+        "ES2022",
+        "--module",
+        "NodeNext",
+        "--moduleResolution",
+        "NodeNext",
+        "--strict",
+        "--skipLibCheck",
+        "--esModuleInterop",
+        "scripts/issue-242-characterization.ts",
+        "scripts/issue-242-completion.ts",
+        "scripts/issue-242-fixture.ts"
+      ],
+      "source": "de037d99d82aa42c5a792c1d3bd9c88afb45b173 e1cc5aea23da3fb8464301d00c0e905cca1b7bb7 b7c4cee8d90725dd4fa554cb777b201af50e899a",
+      "startedAt": "2026-10-07T19:36:51.149Z",
+      "code": 0,
+      "signal": null,
+      "durationMs": 2210,
+      "finishedAt": "2026-10-07T19:36:53.365Z"
+    },
+    {
+      "id": "sql-slice",
+      "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008",
+      "tmpdir": "/tmp/cb242-independent-extra-iPFEhi",
+      "command": "/usr/sbin/taskpolicy",
+      "args": [
+        "-a",
+        "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008/node_modules/.bin/tsx",
+        "/tmp/issue-242-independent-20261008/sql-slice.mts"
+      ],
+      "source": "de037d99d82aa42c5a792c1d3bd9c88afb45b173 e1cc5aea23da3fb8464301d00c0e905cca1b7bb7 b7c4cee8d90725dd4fa554cb777b201af50e899a",
+      "startedAt": "2026-10-07T19:36:53.410Z",
+      "code": 0,
+      "signal": null,
+      "durationMs": 1445,
+      "finishedAt": "2026-10-07T19:36:54.856Z"
+    },
+    {
+      "id": "read-samples",
+      "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008",
+      "tmpdir": "/tmp/cb242-independent-extra-iPFEhi",
+      "command": "/usr/sbin/taskpolicy",
+      "args": [
+        "-a",
+        "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008/node_modules/.bin/tsx",
+        "/tmp/issue-242-independent-20261008/read-samples.mts"
+      ],
+      "source": "de037d99d82aa42c5a792c1d3bd9c88afb45b173 e1cc5aea23da3fb8464301d00c0e905cca1b7bb7 b7c4cee8d90725dd4fa554cb777b201af50e899a",
+      "startedAt": "2026-10-07T19:36:54.927Z",
+      "code": 0,
+      "signal": null,
+      "durationMs": 6899,
+      "finishedAt": "2026-10-07T19:37:01.826Z"
+    }
+  ],
+  "initialFocusedExtras": [
+    {
+      "id": "harness-typecheck",
+      "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008",
+      "tmpdir": "/tmp/cb242-independent-extra-xS4muY",
+      "command": "/usr/sbin/taskpolicy",
+      "args": [
+        "-a",
+        "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008/node_modules/.bin/tsc",
+        "--noEmit",
+        "--target",
+        "ES2022",
+        "--module",
+        "NodeNext",
+        "--moduleResolution",
+        "NodeNext",
+        "--strict",
+        "--skipLibCheck",
+        "--esModuleInterop",
+        "scripts/issue-242-characterization.ts",
+        "scripts/issue-242-completion.ts",
+        "scripts/issue-242-fixture.ts"
+      ],
+      "source": "de037d99d82aa42c5a792c1d3bd9c88afb45b173 e1cc5aea23da3fb8464301d00c0e905cca1b7bb7 b7c4cee8d90725dd4fa554cb777b201af50e899a",
+      "startedAt": "2026-10-07T19:35:19.580Z",
+      "code": 0,
+      "signal": null,
+      "durationMs": 2326,
+      "finishedAt": "2026-10-07T19:35:21.916Z"
+    },
+    {
+      "id": "sql-slice",
+      "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008",
+      "tmpdir": "/tmp/cb242-independent-extra-xS4muY",
+      "command": "/usr/sbin/taskpolicy",
+      "args": [
+        "-a",
+        "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008/node_modules/.bin/tsx",
+        "/tmp/issue-242-independent-20261008/sql-slice.mts"
+      ],
+      "source": "de037d99d82aa42c5a792c1d3bd9c88afb45b173 e1cc5aea23da3fb8464301d00c0e905cca1b7bb7 b7c4cee8d90725dd4fa554cb777b201af50e899a",
+      "startedAt": "2026-10-07T19:35:21.984Z",
+      "code": 0,
+      "signal": null,
+      "durationMs": 1471,
+      "finishedAt": "2026-10-07T19:35:23.455Z"
+    },
+    {
+      "id": "read-samples",
+      "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008",
+      "tmpdir": "/tmp/cb242-independent-extra-xS4muY",
+      "command": "/usr/sbin/taskpolicy",
+      "args": [
+        "-a",
+        "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008/node_modules/.bin/tsx",
+        "/tmp/issue-242-independent-20261008/read-samples.mts"
+      ],
+      "source": "de037d99d82aa42c5a792c1d3bd9c88afb45b173 e1cc5aea23da3fb8464301d00c0e905cca1b7bb7 b7c4cee8d90725dd4fa554cb777b201af50e899a",
+      "startedAt": "2026-10-07T19:35:23.516Z",
+      "code": 1,
+      "signal": null,
+      "durationMs": 1700,
+      "finishedAt": "2026-10-07T19:35:25.217Z"
+    }
+  ],
+  "executionPolicy": "Serialized stages; one Vitest worker; /usr/sbin/taskpolicy -a on validation children only; fresh owned TMPDIR; no ancestor package.json; operational CODEX_HOME, live companion/pairing opt-ins, CONTROL_PLANE_* and API key variables removed.",
+  "deadlineChanges": [],
+  "expectationChangesToCandidate": [],
+  "dependencyChanges": [],
+  "nodeSuiteFiltering": false,
+  "pinnedLocalGoFixture": "ISSUE_242_R502_TUNNEL_BINARY selects an isolated local Go dev proxy with synthetic profile/home and target, never a hosted tunnel."
+}

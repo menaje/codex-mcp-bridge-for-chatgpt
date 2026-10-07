@@ -1,0 +1,78 @@
+{
+  "issues": [
+    {
+      "number": 143,
+      "title": "fix: 다중 프로젝트 실행 중 macOS·현황 카드 연결 장애 — DB 실행 격리·상태 관측·복구 설계",
+      "updatedAt": "2026-09-22T04:53:50Z",
+      "state": "CLOSED",
+      "url": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/143",
+      "bodySha256": "17f4a54b98a000e1dd5d8118b8d22760d66328e42224a192d01e20135435d1a3"
+    },
+    {
+      "number": 185,
+      "title": "refactor: 프로세스 관측·연결과 실행 수명 분리로 Job 중단·전역 접수 차단 방지",
+      "updatedAt": "2026-09-26T06:17:09Z",
+      "state": "CLOSED",
+      "url": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/185",
+      "bodySha256": "5aeef538c1235fe13dab740c1d2937dae8ee4a6e7f5a7509cbfebccc9361c9be"
+    },
+    {
+      "number": 191,
+      "title": "bug: 상태 조회 503/502 반복 — 자동 복구 과부하·응답 중단·용량 관리 결함",
+      "updatedAt": "2026-09-28T04:05:53Z",
+      "state": "CLOSED",
+      "url": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/191",
+      "bodySha256": "465ee7234001024bedab708ece00a42c2178d7dada05e0d283ae0109178859bb"
+    },
+    {
+      "number": 193,
+      "title": "architecture: 내부 복구·관측 작업량 예산과 사용자 조회·제어 우선순위 보장",
+      "updatedAt": "2026-09-28T06:02:23Z",
+      "state": "CLOSED",
+      "url": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/193",
+      "bodySha256": "7deab32973c38bd018758d80c06aa9b461866301f8a0aa154e5806ac79627fb9"
+    },
+    {
+      "number": 200,
+      "title": "architecture: App Server·실행 소유자·DB 책임 경계와 중복 상태관리 축소",
+      "updatedAt": "2026-09-28T08:26:09Z",
+      "state": "CLOSED",
+      "url": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/200",
+      "bodySha256": "468eefdfd10c63ea30b069a46ca8a3100224a1511997f28a6f0e7261ebd1fccf"
+    },
+    {
+      "number": 240,
+      "title": "[Fix/Refactor] 프로젝트 아카이브 시 연결 정리·삭제 시 DB 관리정보 제거·동일 폴더 재등록 보장",
+      "updatedAt": "2026-10-07T10:10:45Z",
+      "state": "CLOSED",
+      "url": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/240",
+      "bodySha256": "b4a864188f04a12f6c3565e205464a711e44c253972da3e5aedde387d673e56b"
+    },
+    {
+      "number": 241,
+      "title": "Complete project archive, management deletion and same-folder registration (#240)",
+      "updatedAt": "2026-10-07T10:09:18Z",
+      "state": "MERGED",
+      "url": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt/pull/241",
+      "bodySha256": "8b293bdfffde4ea6f07606b5836bedad3c5d6317651296790609bfd908ffddb3"
+    },
+    {
+      "number": 242,
+      "title": "[Bug/Perf] 실행 기록 조회 시간 초과·연결 상태 오판 개선 및 로컬 502 추적",
+      "updatedAt": "2026-10-07T09:46:56Z",
+      "state": "OPEN",
+      "url": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/242",
+      "bodySha256": "3f5bfd08d221890a7693e87b27ac5fdff5c8ebf3053b1d5fe9a620bd28c2427f"
+    }
+  ],
+  "issue242MatchesCandidateSavedBody": true,
+  "candidateDiffCheckExit": 2,
+  "localDevDivergence": "23\t17",
+  "finalIssueRecheck": {
+    "at": "2026-10-07T19:41:58.294Z",
+    "updatedAt": "2026-10-07T09:46:56Z",
+    "state": "OPEN",
+    "bodySha256": "3f5bfd08d221890a7693e87b27ac5fdff5c8ebf3053b1d5fe9a620bd28c2427f",
+    "unchanged": true
+  }
+}

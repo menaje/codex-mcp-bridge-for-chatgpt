@@ -1,0 +1,300 @@
+{
+  "total": 246,
+  "passed": 244,
+  "failed": 0,
+  "skipped": 2,
+  "strictBuild": "npm run macos:check; Swift strict concurrency and warnings as errors; no installation or operational service action",
+  "skippedCases": [
+    {
+      "suite": "CodexBridgeKitTests.LiveCompanionTests",
+      "test": "testLiveDashboardAndSettingsContractsWhenRequested",
+      "status": "skipped",
+      "duration": "0.003 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.RemoteConnectionTests",
+      "test": "testLivePinnedPairingWhenRequested",
+      "status": "skipped",
+      "duration": "0.000 seconds"
+    }
+  ],
+  "focusedCases": [
+    {
+      "suite": "CodexBridgeKitTests.AppPresentationTests",
+      "test": "testIssue242ArchiveDeleteSameCwdRegistrationFencesLateDashboardAndDetail",
+      "status": "passed",
+      "duration": "0.576 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.AppPresentationTests",
+      "test": "testIssue242FailureRecoveryCancellationAndActualStop",
+      "status": "passed",
+      "duration": "0.021 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.AppPresentationTests",
+      "test": "testIssue242HelperRPCFailureKeepsSettingsSkillsDetailAndFencesLateReads",
+      "status": "passed",
+      "duration": "0.377 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.AppPresentationTests",
+      "test": "testIssue242HelperRPCFailureRetainsObservationAfterGrace",
+      "status": "passed",
+      "duration": "0.013 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.AppPresentationTests",
+      "test": "testIssue242LateHelperHealthCannotReplaceConfirmedStop",
+      "status": "passed",
+      "duration": "0.365 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.AppPresentationTests",
+      "test": "testIssue242RepeatedDashboardAndHelperMethodCounts",
+      "status": "passed",
+      "duration": "0.019 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.BridgeModelsTests",
+      "test": "testNativeCompletionNotificationDecodesOnlyItsOpaqueReceipt",
+      "status": "passed",
+      "duration": "0.000 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.CompletionNotificationWakeTests",
+      "test": "testDuplicateOutOfOrderReconnectEpochAndAppRestart",
+      "status": "passed",
+      "duration": "0.000 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.CompletionNotificationWakeTests",
+      "test": "testLegacyUnsupportedEventsAndDueRetryOrLease",
+      "status": "passed",
+      "duration": "0.002 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.CompletionNotificationWakeTests",
+      "test": "testProgressAndSettingsNeverWakeClaimsAndLostEventsUseBoundedRecovery",
+      "status": "passed",
+      "duration": "0.009 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.CompletionNotificationsTests",
+      "test": "testDeferredRetryPreflightDoesNotClaimAndRetainsDeadline",
+      "status": "passed",
+      "duration": "0.003 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.CompletionNotificationsTests",
+      "test": "testDeliveredButAckLostReleasesAndUsesSameIdentifierOnRecovery",
+      "status": "passed",
+      "duration": "0.002 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.CompletionNotificationsTests",
+      "test": "testFailedDeliveryReleasesTheClaimForRetry",
+      "status": "passed",
+      "duration": "0.001 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.CompletionNotificationsTests",
+      "test": "testIssue242RepeatedEmptyClaimsAndPermissionGate",
+      "status": "passed",
+      "duration": "0.003 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.CompletionNotificationsTests",
+      "test": "testPermissionRevokedDuringPreflightDoesNotClaim",
+      "status": "passed",
+      "duration": "0.163 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.CompletionNotificationsTests",
+      "test": "testSingleflightAndGenerationFenceBeforeClaim",
+      "status": "passed",
+      "duration": "0.009 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.CompletionNotificationsTests",
+      "test": "testSuccessfulDeliveryClaimsAndAcknowledgesOpaqueEvents",
+      "status": "passed",
+      "duration": "0.004 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.ConnectionObservationRecoveryTests",
+      "test": "testDeferredMenuReadCompletesAfterLocalConnectionRecovery",
+      "status": "passed",
+      "duration": "2.730 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.ConnectionObservationRecoveryTests",
+      "test": "testDeferredMenuReadCompletesAfterRemoteConnectionRecovery",
+      "status": "passed",
+      "duration": "0.920 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.ConnectionObservationRecoveryTests",
+      "test": "testExplicitWindowEntryRefreshesDashboardWithAnExistingQuietSubscription",
+      "status": "passed",
+      "duration": "3.861 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.ConnectionObservationRecoveryTests",
+      "test": "testFailedObservationDoesNotClaimTheServerStopped",
+      "status": "passed",
+      "duration": "0.014 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.ConnectionObservationRecoveryTests",
+      "test": "testLateEnrichmentNoticeStaysCachedUntilExplicitWindowRefresh",
+      "status": "passed",
+      "duration": "1.870 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.ConnectionObservationRecoveryTests",
+      "test": "testObservationGapReschedulesTheExpiryForTheFreshWindow",
+      "status": "passed",
+      "duration": "8.399 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.ConnectionObservationRecoveryTests",
+      "test": "testSleepKeepsMenuCheckingUntilAFreshObservation",
+      "status": "passed",
+      "duration": "0.014 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.ConnectionObservationRecoveryTests",
+      "test": "testStructuralRefreshPreservesAnUnfinishedEnrichment",
+      "status": "passed",
+      "duration": "1.354 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.ConnectionObservationRecoveryTests",
+      "test": "testWindowEntryRecoveryRefreshesDashboardImmediately",
+      "status": "passed",
+      "duration": "2.333 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.OperationalNotificationsTests",
+      "test": "testCompletionNotificationContentIsGenericAndContainsNoTaskData",
+      "status": "passed",
+      "duration": "0.001 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.OperationalNotificationsTests",
+      "test": "testDeniedPermissionPreferencesDeliveryFailureAndPersistence",
+      "status": "passed",
+      "duration": "0.010 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.OperationalNotificationsTests",
+      "test": "testGraceTransientRecoveryAndRestartDedupe",
+      "status": "passed",
+      "duration": "0.000 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.OperationalNotificationsTests",
+      "test": "testOperationalClassificationIgnoresTaskEventsAndManualOperations",
+      "status": "passed",
+      "duration": "0.009 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.OperationalNotificationsTests",
+      "test": "testPermissionRefreshRecognizesAuthorizationWithoutPromptingAgain",
+      "status": "passed",
+      "duration": "0.009 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.OperationalNotificationsTests",
+      "test": "testPrivateErrorsBecomeFixedCopyAndSafeSettingsDestinations",
+      "status": "passed",
+      "duration": "0.001 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.OperationalNotificationsTests",
+      "test": "testReadinessBannerWaitsForGraceAndClearsAsSoonAsConnectionRecovers",
+      "status": "passed",
+      "duration": "0.010 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.OperationalNotificationsTests",
+      "test": "testRestartAndUnknownObservationCannotCountAsContinuousRecovery",
+      "status": "passed",
+      "duration": "0.000 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.OperationalNotificationsTests",
+      "test": "testSuspendedPollingCannotCountAsContinuousRecovery",
+      "status": "passed",
+      "duration": "0.000 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.OperationalNotificationsTests",
+      "test": "testSystemPermissionPreservesTheInitialAuthorizationPrompt",
+      "status": "passed",
+      "duration": "0.000 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.UnixSocketRPCClientTests",
+      "test": "testCancellingChangeWaitClosesSocketWithoutWaitingForTimeout",
+      "status": "passed",
+      "duration": "0.000 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.UnixSocketRPCClientTests",
+      "test": "testContractDecodeFailureIsNotReportedAsPersistentDataLoss",
+      "status": "passed",
+      "duration": "0.000 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.UnixSocketRPCClientTests",
+      "test": "testDefaultTransportReadsMaximumBridgeSkillContentEnvelope",
+      "status": "passed",
+      "duration": "3.472 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.UnixSocketRPCClientTests",
+      "test": "testIssue242CancellationDuringDecodeRemainsCancellation",
+      "status": "passed",
+      "duration": "0.001 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.UnixSocketRPCClientTests",
+      "test": "testIssue242DecoderCannotPublishAfterAbsoluteDeadline",
+      "status": "passed",
+      "duration": "2.012 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.UnixSocketRPCClientTests",
+      "test": "testIssue242PartialResponseCannotExtendAbsoluteDeadline",
+      "status": "passed",
+      "duration": "0.213 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.UnixSocketRPCClientTests",
+      "test": "testIssue242RefusalPeerCloseAndMissingResultStayDistinct",
+      "status": "passed",
+      "duration": "0.004 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.UnixSocketRPCClientTests",
+      "test": "testIssue242StructuralFailureCategories",
+      "status": "passed",
+      "duration": "0.001 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.UnixSocketRPCClientTests",
+      "test": "testPendingChangeWaitDoesNotDelayIndependentHealthRead",
+      "status": "passed",
+      "duration": "0.004 seconds"
+    },
+    {
+      "suite": "CodexBridgeKitTests.UnixSocketRPCClientTests",
+      "test": "testPerCallTimeoutCanOutliveShortClientDefault",
+      "status": "passed",
+      "duration": "0.204 seconds"
+    }
+  ],
+  "logSha256": "eefc86856f562ad0ff81993936f6e9ff24790a453825b59652d1e0ff9555681d"
+}

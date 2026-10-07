@@ -1,0 +1,2346 @@
+{
+  "scope": "isolated exact-baseline R502 fixtures; no production/tunnel injection",
+  "idleTimeoutOverrideMs": 200,
+  "parentEventLoopDelayMs": {
+    "max": 305.397759
+  },
+  "fixtureResults": 33,
+  "allExactlyOnce": true,
+  "allCapacityReturned": true,
+  "allSingleGeneratedCorrelationId": true,
+  "allRecordsWithin32": true,
+  "unexpectedKeys": [],
+  "privacy": "Numeric/boolean/enumerated phase records and generated UUID only. Test assertions also prove caller trace stripping, no public response header, bounded 128 sessions and observer-failure inertness; SDK adapter header enumeration independently inspected.",
+  "production502RootCause": "UNRESOLVED. The local injected bridge race is proven only for the synthetic upstream-end/late-error ordering; no installed trace or external production cause is claimed.",
+  "rawReport": {
+    "path": "/tmp/issue-242-independent-20261008/proxy-matrix.json",
+    "bytes": 170353,
+    "sha256": "29a2333c7264cc755f4f8ac7e1e5779b6eade1de51f3d62ad3aaf5199ab4ec9d"
+  },
+  "results": [
+    {
+      "fault": "late-error",
+      "status": 200,
+      "complete": true,
+      "chunked": false,
+      "phaseCount": 11,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-end",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-request-error",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-close",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "ok",
+      "status": 200,
+      "complete": true,
+      "chunked": false,
+      "phaseCount": 10,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-end",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-close",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "late-response-error",
+      "status": 200,
+      "complete": true,
+      "chunked": false,
+      "phaseCount": 11,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-end",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-response-error",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-close",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "ok",
+      "status": 200,
+      "complete": true,
+      "chunked": false,
+      "phaseCount": 10,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-end",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-close",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "late-timeout",
+      "status": 200,
+      "complete": true,
+      "chunked": false,
+      "phaseCount": 11,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-end",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "idle-timeout",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-close",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "ok",
+      "status": 200,
+      "complete": true,
+      "chunked": false,
+      "phaseCount": 10,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-end",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-close",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "pre",
+      "status": 503,
+      "complete": true,
+      "chunked": false,
+      "phaseCount": 8,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-request-error",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "ok",
+      "status": 200,
+      "complete": true,
+      "chunked": false,
+      "phaseCount": 10,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-end",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-close",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "post",
+      "status": 200,
+      "complete": false,
+      "chunked": false,
+      "phaseCount": 9,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-response-error",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-close",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "ok",
+      "status": 200,
+      "complete": true,
+      "chunked": false,
+      "phaseCount": 10,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-end",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-close",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "idle",
+      "status": 503,
+      "complete": true,
+      "chunked": false,
+      "phaseCount": 9,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "idle-timeout",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-request-error",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "ok",
+      "status": 200,
+      "complete": true,
+      "chunked": false,
+      "phaseCount": 10,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-end",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-close",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "app-timeout",
+      "status": 503,
+      "complete": true,
+      "chunked": false,
+      "phaseCount": 10,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-end",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-close",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "ok",
+      "status": 200,
+      "complete": true,
+      "chunked": false,
+      "phaseCount": 10,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-end",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-close",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "caller",
+      "phaseCount": 6,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-aborted",
+          "firstTermination": true,
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-request-error",
+          "outcome": "not-observed"
+        }
+      ]
+    },
+    {
+      "fault": "ok",
+      "status": 200,
+      "complete": true,
+      "chunked": false,
+      "phaseCount": 10,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-end",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-close",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "continue",
+      "phaseCount": 6,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-request-error",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "ok",
+      "status": 200,
+      "complete": true,
+      "chunked": false,
+      "phaseCount": 10,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-end",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-close",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "ok",
+      "status": 200,
+      "complete": true,
+      "chunked": false,
+      "phaseCount": 10,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-end",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-close",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "ok",
+      "status": 200,
+      "complete": true,
+      "chunked": false,
+      "phaseCount": 10,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-end",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-close",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "close-after-response",
+      "status": 200,
+      "complete": true,
+      "chunked": false,
+      "phaseCount": 10,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-end",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-close",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "ok",
+      "status": 200,
+      "complete": true,
+      "chunked": false,
+      "phaseCount": 10,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-end",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-close",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "ok",
+      "status": 200,
+      "complete": true,
+      "chunked": false,
+      "phaseCount": 10,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-end",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-close",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "pre",
+      "status": 503,
+      "complete": true,
+      "chunked": false,
+      "phaseCount": 8,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-request-error",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "ok",
+      "status": 200,
+      "complete": true,
+      "chunked": false,
+      "phaseCount": 10,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-end",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-close",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "loop-idle",
+      "status": 503,
+      "complete": true,
+      "chunked": false,
+      "phaseCount": 9,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "idle-timeout",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-request-error",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "ok",
+      "status": 200,
+      "complete": true,
+      "chunked": false,
+      "phaseCount": 10,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-end",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-close",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "ok",
+      "status": 200,
+      "complete": true,
+      "chunked": true,
+      "phaseCount": 11,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "queued",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-end",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-close",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "real-child",
+      "phaseCount": 21,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "admitted",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "application-dispatch",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "state-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "state-yield",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "application-response",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-end",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-close",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "child-response-idle-expiry",
+      "phaseCount": 21,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "admitted",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "application-dispatch",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "state-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "state-yield",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "application-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "idle-timeout",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-request-error",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "application-response",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "application-complete",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "ok",
+      "status": 200,
+      "complete": true,
+      "chunked": false,
+      "phaseCount": 10,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-end",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-close",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "real-child-caller-disconnect",
+      "phaseCount": 18,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "admitted",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "application-dispatch",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "state-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "state-yield",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "application-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "application-response",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-request-error",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "child",
+          "phase": "application-complete",
+          "outcome": "unknown"
+        }
+      ]
+    },
+    {
+      "fault": "ok",
+      "status": 200,
+      "complete": true,
+      "chunked": false,
+      "phaseCount": 10,
+      "ingressCleanupCount": 1,
+      "firstTerminationCount": 1,
+      "correlationIdCount": 1,
+      "capacityAfterCleanup": {
+        "activeRequests": 0,
+        "activeBytes": 0
+      },
+      "unexpectedKeys": [],
+      "phases": [
+        {
+          "source": "ingress",
+          "phase": "admitted",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "dispatch",
+          "outcome": "not-observed"
+        },
+        {
+          "source": "ingress",
+          "phase": "request-finished",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-headers",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-header-start",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-end",
+          "firstTermination": true,
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "cleanup",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "response-complete",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "caller-closed",
+          "outcome": "unknown"
+        },
+        {
+          "source": "ingress",
+          "phase": "upstream-close",
+          "outcome": "unknown"
+        }
+      ]
+    }
+  ]
+}
