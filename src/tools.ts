@@ -3247,8 +3247,13 @@ export class CodexJobRegistry {
   }
 
   claimNativeCompletionNotifications(limit: number, leaseOwner: string) {
-    return this.activityTransaction(() =>
-      this.activityStore.listPendingNotifyCompletionOutbox(limit).flatMap((candidate) => {
+    if (!this.activityStore.nativeCompletionAvailability().available) {
+      this.nativeCompletionClaims.emptyPreflights++;
+      return [];
+    }
+    this.nativeCompletionClaims.transactions++;
+    const records = this.activityTransaction(() =>
+      this.activityStore.listPendingNotifyCompletionOutbox(Math.max(1, Math.min(10, limit))).flatMap((candidate) => {
         const record = this.activityStore.claimCompletionOutbox(
           candidate.outboxId,
           candidate.scopeId,
@@ -3257,6 +3262,18 @@ export class CodexJobRegistry {
         return record?.channel === "notify" ? [record] : [];
       })
     );
+    if (!records.length) this.nativeCompletionClaims.lostRaces++;
+    return records;
+  }
+
+  private readonly nativeCompletionClaims = { emptyPreflights: 0, transactions: 0, lostRaces: 0 };
+
+  nativeCompletionClaimDiagnostics() { return { ...this.nativeCompletionClaims }; }
+
+  nativeCompletionAvailability() { return this.activityStore.nativeCompletionAvailability(); }
+
+  subscribeNativeCompletionReady(listener: () => void) {
+    return this.activityStore.subscribeNativeCompletionReady(listener);
   }
 
   markNativeCompletionNotificationsDelivered(outboxIds: number[], leaseOwner: string) {
@@ -3285,8 +3302,7 @@ export class CodexJobRegistry {
       for (const outboxId of [...new Set(outboxIds)].sort((a, b) => a - b)) {
         const record = this.activityStore.getCompletionOutbox(outboxId);
         if (!record || record.channel !== "notify") continue;
-        this.activityStore.releaseCompletionOutbox(record.outboxId, record.scopeId, leaseOwner);
-        affected.add(record.scopeId);
+        if (this.activityStore.releaseNativeCompletionOutbox(record, leaseOwner)) affected.add(record.scopeId);
       }
       return affected;
     });
@@ -5456,6 +5472,9 @@ export function registerBridgeTools(
       return { phase: record.phase, ...(record.reason !== undefined ? { reason: record.reason } : {}), requested: record.handoffRequested,
         canOpen: record.phase === "released" && Boolean(record.evidence) };
     },
+    async nativeCompletionAvailability() {
+      return jobs.nativeCompletionAvailability();
+    },
     async claimNativeCompletionNotifications(input) {
       // Native alerts are a separate, explicit Activity channel. They never
       // stand in for ordinary exact-result review in ChatGPT.
@@ -5479,6 +5498,7 @@ export function registerBridgeTools(
     subscribeChanges(listener) {
       const subscriptions = [
         jobs.subscribeChanges(() => listener("dashboard")),
+        jobs.subscribeNativeCompletionReady(() => listener("completion-outbox-ready")),
         userSettings.subscribeChanges(() => { listener("settings"); listener("dashboard"); }),
         modelCatalog.subscribe?.(() => listener("settings")),
         subscribeCardObservations(upstream, () => listener("enrichment"))
@@ -11124,7 +11144,7 @@ export type BridgeApplicationService = {
   problemAction?(input: ProblemAction, scopeId?: string, source?: "operator" | "widget-control"): Promise<ProblemActionResult>;
   historyAction?(input: DashboardHistoryActionInput): Promise<{ok: true}>;
   threadHandoff?(input: { rowKey: string; codexThreadUrl: string; action: "request" | "cancel" | "status" }): Promise<{ phase: string; reason?: string; requested: boolean; canOpen: boolean }>;
-  subscribeChanges?(listener: (topic: "dashboard" | "settings" | "enrichment") => void): () => void;
+  subscribeChanges?(listener: (topic: "dashboard" | "settings" | "enrichment" | "completion-outbox-ready") => void): () => void;
   dashboardSnapshot(options?: BridgeDashboardSnapshotOptions, context?: ReadObservationContext): Promise<DashboardView>;
   dashboardHistoryDetail?(options: BridgeDashboardHistoryDetailOptions, context?: ReadObservationContext): Promise<DashboardHistoryDetail>;
   /** Internal read-worker planning boundary; never registered as an MCP/native method. */
@@ -11144,6 +11164,7 @@ export type BridgeApplicationService = {
   /** Internal runtime gate; never registered as an MCP or native RPC method. */
   setStorageAdmissionError?(error?: BridgeStorageAdmissionError): void;
   /** Local native app only: opaque completion events, never task content. */
+  nativeCompletionAvailability?(): Promise<import("./completionDelivery.js").NativeCompletionAvailability>;
   claimNativeCompletionNotifications?(input: BridgeNativeCompletionNotificationClaim): Promise<NativeCompletionNotification[]>;
   markNativeCompletionNotificationsDelivered?(input: BridgeNativeCompletionNotificationMutation): Promise<void>;
   releaseNativeCompletionNotifications?(input: BridgeNativeCompletionNotificationMutation): Promise<void>;

@@ -281,6 +281,7 @@ final class AppModel: ObservableObject {
     private var notificationsStarted = false
     private var completionNotificationDeliveryTask: Task<Void, Never>?
     private var completionNotificationDeliveryRequested = false
+    private var completionWakeState = CompletionNotificationWakeState()
     var completionNotificationOpenHandler: (() -> Void)?
     private var statusRefreshTask: Task<Void, Never>?
     private var statusRefreshPending = false
@@ -614,17 +615,24 @@ final class AppModel: ObservableObject {
         let generation = connectionGeneration
         completionNotificationDeliveryTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
             while !Task.isCancelled,
                   generation == self.connectionGeneration,
                   !self.isRemoteClient,
                   self.completionNotificationDeliveryRequested {
+                do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+                guard generation == self.connectionGeneration, !Task.isCancelled else { return }
                 self.completionNotificationDeliveryRequested = false
                 let client = await self.localBridgeClient()
-                await self.completionNotifications?.refresh(
+                let more = await self.completionNotifications?.refresh(
                     client: client,
-                    locale: self.interfaceLocale
+                    locale: self.interfaceLocale,
+                    isCurrent: { [weak self] in
+                        self?.connectionGeneration == generation && self?.isRemoteClient == false
+                    }
                 )
+                guard generation == self.connectionGeneration, !Task.isCancelled else { return }
+                self.completionWakeState.checked(at: Date(), nextAvailableAt: self.completionNotifications?.nextAvailableAt)
+                if more == true { self.completionNotificationDeliveryRequested = true }
             }
             guard generation == self.connectionGeneration else { return }
             self.completionNotificationDeliveryTask = nil
@@ -1479,7 +1487,7 @@ final class AppModel: ObservableObject {
             lastDashboardEnrichment = nil
             enqueueRefresh(["settings"])
         }
-        if next.bridge.connected { scheduleCompletionNotificationDelivery() }
+        if next.bridge.connected, refreshContent || completionWakeState.recoveryDue(at: now) { scheduleCompletionNotificationDelivery() }
     }
 
     func recordLocalConnectionFailure(_ error: Error, at now: Date = Date()) {
@@ -1974,7 +1982,6 @@ final class AppModel: ObservableObject {
                 interfaceLocalePreference = next.settings.uiLocalePreference
             }
             settingsLoadErrorMessage = nil
-            scheduleCompletionNotificationDelivery()
         } catch {
             guard !Task.isCancelled, generation == connectionGeneration,
                   request == settingsRequestGeneration else { return }
@@ -3455,7 +3462,6 @@ final class AppModel: ObservableObject {
                 }
                 self.scheduleBackgroundRefreshes()
                 self.scheduleOperationalObservation()
-                self.scheduleCompletionNotificationDelivery()
             }
         }
     }
@@ -3487,6 +3493,8 @@ final class AppModel: ObservableObject {
         }
         lastScheduledRefresh.removeAll()
         lastDashboardEnrichment = nil
+        completionWakeState = CompletionNotificationWakeState()
+        scheduleCompletionNotificationDelivery()
         enqueueRefresh(["status", "settings", "auth", "codex"])
         beginChangeWatchingIfNeeded()
         refreshLoginItemStatus()
@@ -3638,20 +3646,20 @@ final class AppModel: ObservableObject {
                     let notice = try await client.waitForChanges(after: revision)
                     guard !Task.isCancelled, generation == self.connectionGeneration else { return }
                     self.companionChangesAvailable = true
+                    self.recordCompletionChangeNotice(notice)
                     revision = notice.revision
                     failures = 0
                     var topics = Set(notice.topics)
                     if topics.remove("enrichment") != nil {
                         self.dashboardEnrichmentInvalidated = true
                     }
-                    if topics.contains("dashboard") {
-                        self.scheduleCompletionNotificationDelivery()
-                    }
+                    topics.remove("completion-outbox-ready")
                     topics.remove("dashboard")
                     self.enqueueRefresh(topics)
                 } catch {
                     guard !Task.isCancelled, generation == self.connectionGeneration else { return }
                     self.companionChangesAvailable = false
+                    self.completionWakeState.disconnected()
                     if let error = error as? LocalRPCError, error.isUnsupportedMethod {
                         self.companionChangesUnsupported = true
                         return
@@ -3672,5 +3680,10 @@ final class AppModel: ObservableObject {
         companionChangesAvailable = false
         helperChangesUnsupported = false
         companionChangesUnsupported = false
+        completionWakeState = CompletionNotificationWakeState()
+    }
+
+    func recordCompletionChangeNotice(_ notice: ChangeNotice) {
+        if completionWakeState.observe(notice) { scheduleCompletionNotificationDelivery() }
     }
 }

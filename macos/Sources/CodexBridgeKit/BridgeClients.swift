@@ -22,6 +22,10 @@ public struct BridgeCompanionClient: Sendable {
         return response.events
     }
 
+    public func completionAvailability() async throws -> NativeCompletionAvailability {
+        try await rpc.call("completion.availability", params: EmptyParameters())
+    }
+
     public func markCompletionNotificationsDelivered(
         outboxIDs: [Int],
         leaseOwner: String
