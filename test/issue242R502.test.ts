@@ -320,7 +320,13 @@ describe("R502 deterministic lifecycle races", () => {
         "io.modelcontextprotocol/clientCapabilities": {} } } }) });
     expect(response.status).toBe(200);
     await response.arrayBuffer();
-    await vi.waitFor(() => expect(observations.slice(start).some(row => row.source === "child" && row.phase === "cleanup")).toBe(true));
+    // Handler cleanup and the HTTP finish event cross IPC independently. Both
+    // must arrive before inspecting the complete diagnostic phase set.
+    await vi.waitFor(() => {
+      const childPhases = observations.slice(start).filter(row => row.source === "child").map(row => row.phase);
+      expect(childPhases).toContain("cleanup");
+      expect(childPhases).toContain("response-complete");
+    });
     const phases = phasesFor(start);
     expect(new Set(phases.map(row => row.requestId)).size).toBe(1);
     expect(phases.filter(row => row.source === "child").map(row => row.phase)).toEqual(expect.arrayContaining([
