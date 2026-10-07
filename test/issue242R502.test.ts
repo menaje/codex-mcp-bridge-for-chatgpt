@@ -320,7 +320,13 @@ describe("R502 deterministic lifecycle races", () => {
         "io.modelcontextprotocol/clientCapabilities": {} } } }) });
     expect(response.status).toBe(200);
     await response.arrayBuffer();
-    await vi.waitFor(() => expect(observations.slice(start).some(row => row.source === "child" && row.phase === "cleanup")).toBe(true));
+    // Handler cleanup can precede response finish and its asynchronous IPC record.
+    // Await both records before asserting the complete correlated phase set.
+    await vi.waitFor(() => {
+      const child = observations.slice(start).filter(row => row.source === "child");
+      expect(child.some(row => row.phase === "cleanup")).toBe(true);
+      expect(child.some(row => row.phase === "response-complete")).toBe(true);
+    });
     const phases = phasesFor(start);
     expect(new Set(phases.map(row => row.requestId)).size).toBe(1);
     expect(phases.filter(row => row.source === "child").map(row => row.phase)).toEqual(expect.arrayContaining([
