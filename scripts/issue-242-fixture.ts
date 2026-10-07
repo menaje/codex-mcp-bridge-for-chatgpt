@@ -61,7 +61,7 @@ export async function issue242Fixture(size: number) {
         requestId: `fixture-${i}`, requestHash: "a".repeat(64), requestHashVersion: 11,
         operation: "start", backendKind: "mcp-server", status: i % 5 === 0 ? "failed" : "completed",
         createdAt: now - size + i, updatedAt: now - size + i, lastProgressAt: now - size + i,
-        cwd: root, sandbox: "read-only", version: 1, completionDeliveryPolicy: "direct-wait",
+        cwd: root, sandbox: "read-only", version: 1, completionDeliveryPolicy: "direct-wait" as const,
         exclusiveKeys: [], sessionDecision: { requestedMode: "new", action: "start", reason: "explicit-new", threadId: `fixture-${Math.floor(i / 10)}` },
         publicEvents: [], pendingInteractions: [], result: { content: [{ type: "text", text: "synthetic" }] } };
       store.upsertJob(seededJob);
