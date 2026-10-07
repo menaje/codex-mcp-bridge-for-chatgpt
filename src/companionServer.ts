@@ -79,6 +79,7 @@ const requestSchema = z.strictObject({
     "skills.package.update",
     "skills.package.export",
     "completion.claim",
+    "completion.availability",
     "completion.delivered",
     "completion.release",
     "runtime.snapshot",
@@ -337,7 +338,7 @@ export type PrivateJsonLineServerOptions = {
 export async function startBridgeCompanionServer(
   options: BridgeCompanionServerOptions
 ): Promise<BridgeCompanionServer> {
-  const changes = new ChangeSignal(["dashboard", "settings", "enrichment"]);
+  const changes = new ChangeSignal(["dashboard", "settings", "enrichment", "completion-outbox-ready"]);
   const unsubscribe = options.applicationService.subscribeChanges?.(topic => changes.notify(topic));
   let ordinaryRequests = 0;
   const server = await startPrivateJsonLineServer({
@@ -458,7 +459,7 @@ function isPriorityCompanionRequest(line: string): boolean {
     const request = requestSchema.safeParse(parsed);
     if (!request.success) return false;
     const { method, params } = request.data;
-    if (["completion.claim", "completion.delivered", "completion.release",
+    if (["completion.claim", "completion.availability", "completion.delivered", "completion.release",
       "runtime.health", "runtime.beginDrain", "runtime.cancelDrain"].includes(method)) return true;
     if (method === "dashboard.problem" && params && typeof params === "object" &&
         !Array.isArray(params) && (params as Record<string, unknown>).action === "retry-stop") return true;
@@ -504,7 +505,7 @@ export async function dispatchCompanionPayload(
           const params = changeWaitParamsSchema.parse(request.params || {});
           return changes.wait(params.after, params.waitMs, signal);
         })()
-      : await dispatchRequest(request, applicationService, remoteManagement);
+      : await dispatchRequest(request, applicationService, remoteManagement, signal);
     return { jsonrpc: "2.0", id: request.id, result };
   } catch (error) {
     return errorResponse(request.id, -32602, safeErrorMessage(error));
@@ -514,7 +515,8 @@ export async function dispatchCompanionPayload(
 async function dispatchRequest(
   request: CompanionRequest,
   applicationService: BridgeApplicationService,
-  remoteManagement?: RemoteCompanionControl
+  remoteManagement?: RemoteCompanionControl,
+  signal?: AbortSignal
 ): Promise<unknown> {
   switch (request.method) {
     case "companion.hello":
@@ -575,7 +577,8 @@ async function dispatchRequest(
         throw new Error("DASHBOARD_HISTORY_DETAIL_UNSUPPORTED");
       }
       return applicationService.dashboardHistoryDetail(
-        dashboardHistoryDetailParamsSchema.parse(request.params)
+        dashboardHistoryDetailParamsSchema.parse(request.params),
+        { signal, deadlineAt: Date.now() + 4_500 }
       );
     }
     case "dashboard.problem": {
@@ -601,13 +604,13 @@ async function dispatchRequest(
         // snapshot behavior. The current client sends false explicitly.
         inspectRuntime: params.enrich !== false,
         includeHistory: params.includeHistory !== false
-      });
+      }, { signal, deadlineAt: Date.now() + (params.enrich !== false ? 9_000 : params.problems ? 2_500 : 1_500) });
     }
     case "settings.snapshot": {
       const params = settingsSnapshotParamsSchema.parse(request.params || {});
       const view = await applicationService.settingsSnapshot({
         refreshModels: params.refreshModels
-      });
+      }, { signal, deadlineAt: Date.now() + 10_000 });
       return localizeSettingsView(view, params.locale);
     }
     case "settings.model-description-history":
@@ -677,6 +680,11 @@ async function dispatchRequest(
       return requireSkillPackages(applicationService).exportBridgeSkillPackage(
         bridgeSkillReferenceSchema.parse(request.params || {})
       );
+    case "completion.availability": {
+      emptyParamsSchema.parse(request.params || {});
+      if (!applicationService.nativeCompletionAvailability) throw new Error("CHANGES_UNSUPPORTED");
+      return applicationService.nativeCompletionAvailability();
+    }
     case "completion.claim": {
       if (!applicationService.claimNativeCompletionNotifications) {
         throw new Error("COMPLETION_NOTIFICATIONS_UNAVAILABLE");

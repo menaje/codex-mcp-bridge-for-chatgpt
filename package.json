@@ -30,6 +30,7 @@
     "scripts/text-integrity.d.mts",
     "scripts/text-integrity.mjs",
     "scripts/tunnel-profile.mjs",
+    "scripts/tunnel-health.mjs",
     ".codex-plugin",
     ".app.json",
     "release-manifest.json",

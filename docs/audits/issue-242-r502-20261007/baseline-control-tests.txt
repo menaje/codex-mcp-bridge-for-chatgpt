@@ -1,0 +1,41 @@
+
+ RUN  v4.1.11 /private/tmp/bridge-r502-baseline-23869jui
+
+ ❯ test/runtimeProcess.test.ts (26 tests | 1 failed | 25 skipped) 5126ms
+     × separates a proxy connection failure from still-fresh runtime readiness 5108ms
+ ❯ test/server.test.ts (11 tests | 1 failed | 10 skipped) 5381ms
+     × accepts optional client identity and pins current wire-only behavior 5365ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > separates a proxy connection failure from still-fresh runtime readiness
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/runtimeProcess.test.ts:849:3
+    847|   }, 15_000);
+    848|
+    849|   it("separates a proxy connection failure from still-fresh runtime re…
+       |   ^
+    850|     const runtime = await start(undefined, undefined, {
+    851|       NODE_ENV: "test",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  test/server.test.ts > MCP 2026-07-28 HTTP server > accepts optional client identity and pins current wire-only behavior
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/server.test.ts:533:3
+    531|   });
+    532|
+    533|   it("accepts optional client identity and pins current wire-only beha…
+       |   ^
+    534|     const { baseUrl, catalog } = await start();
+    535|     const endpoint = `${baseUrl}/mcp`;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  2 failed | 35 skipped (37)
+   Start at  22:04:43
+   Duration  40.43s (transform 17.30s, setup 0ms, import 27.22s, tests 10.51s, environment 11ms)

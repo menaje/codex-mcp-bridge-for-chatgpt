@@ -38,12 +38,17 @@ describe("native companion server", () => {
     }]);
     service.markNativeCompletionNotificationsDelivered = vi.fn(async () => undefined);
     service.releaseNativeCompletionNotifications = vi.fn(async () => undefined);
+    service.nativeCompletionAvailability = vi.fn(async () => ({ available: false, nextAvailableAt: 123_000 }));
     servers.push(await startBridgeCompanionServer({ socketPath, applicationService: service }));
 
     const hello = await request(socketPath, {
       jsonrpc: "2.0", id: "completion-hello", method: "companion.hello", params: {}
     });
     expect(hello.result.capabilities).toContain("completion-notifications.local-delivery");
+    expect(await request(socketPath, {
+      jsonrpc: "2.0", id: "availability", method: "completion.availability", params: {}
+    })).toMatchObject({ result: { available: false, nextAvailableAt: 123_000 } });
+    expect(REMOTE_COMPANION_APPLICATION_METHODS.has("completion.availability")).toBe(false);
 
     const claimed = await request(socketPath, {
       jsonrpc: "2.0", id: "completion-claim", method: "completion.claim",
@@ -449,7 +454,7 @@ describe("native companion server", () => {
     })).toMatchObject({ result: {
       kind: "dashboard-history", rowKey: params.rowKey, historyRevision: "b".repeat(64)
     } });
-    expect(applicationService.dashboardHistoryDetail).toHaveBeenCalledWith(params);
+    expect(applicationService.dashboardHistoryDetail).toHaveBeenCalledWith(params, expect.objectContaining({ signal: expect.any(AbortSignal), deadlineAt: expect.any(Number) }));
     expect(await request(socketPath, {
       jsonrpc: "2.0", id: "invalid-history-detail", method: "dashboard.history-detail", params: { rowKey: "bad" }
     })).toHaveProperty("error");
@@ -494,7 +499,7 @@ describe("native companion server", () => {
       idleOffset: 7,
       inspectRuntime: false,
       includeHistory: false
-    });
+    }, expect.objectContaining({ signal: expect.any(AbortSignal), deadlineAt: expect.any(Number) }));
     expect(dashboard).toMatchObject({ id: 1, result: { kind: "dashboard" } });
 
     await request(socketPath, {
@@ -511,7 +516,7 @@ describe("native companion server", () => {
       idleOffset: undefined,
       inspectRuntime: true,
       includeHistory: true
-    });
+    }, expect.objectContaining({ signal: expect.any(AbortSignal), deadlineAt: expect.any(Number) }));
 
     await request(socketPath, {
       jsonrpc: "2.0",
@@ -527,7 +532,7 @@ describe("native companion server", () => {
       idleOffset: undefined,
       inspectRuntime: true,
       includeHistory: true
-    });
+    }, expect.objectContaining({ signal: expect.any(AbortSignal), deadlineAt: expect.any(Number) }));
 
     const settings = await request(socketPath, {
       jsonrpc: "2.0",
@@ -535,7 +540,7 @@ describe("native companion server", () => {
       method: "settings.snapshot",
       params: { refreshModels: true }
     });
-    expect(applicationService.settingsSnapshot).toHaveBeenCalledWith({ refreshModels: true });
+    expect(applicationService.settingsSnapshot).toHaveBeenCalledWith({ refreshModels: true }, expect.objectContaining({ signal: expect.any(AbortSignal), deadlineAt: expect.any(Number) }));
     expect(settings).toMatchObject({ id: 2, result: { settings: { settingsRevision: 3 } } });
 
     const mutation = {
@@ -584,7 +589,7 @@ describe("native companion server", () => {
       idleOffset: undefined,
       inspectRuntime: false,
       includeHistory: false
-    });
+    }, expect.objectContaining({ signal: expect.any(AbortSignal), deadlineAt: expect.any(Number) }));
   });
 
   it("localizes native Settings warnings using the requested locale", async () => {

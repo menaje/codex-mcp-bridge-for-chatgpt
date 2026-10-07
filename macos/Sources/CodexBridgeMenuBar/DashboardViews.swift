@@ -64,6 +64,7 @@ struct DashboardPopoverView: View {
     var body: some View {
         VStack(spacing: 0) {
             headerSection.dashboardHeight(.header)
+            ConnectionObservationNotice()
             Group {
                 if !model.hasConnectionTarget {
                     runtimeUnavailableView.frame(height: fallbackHeight)

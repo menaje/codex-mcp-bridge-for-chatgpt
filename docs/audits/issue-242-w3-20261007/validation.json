@@ -1,0 +1,296 @@
+{
+  "schema": 1,
+  "baseHead": "f710974b33fc40432653c815d175058cba1adaee",
+  "implementationHead": "fa0cc254596621da00370d8e1459bbf2f539e362",
+  "validatedHead": "bff15a07b4838b3d5b5cb05a34f8c3c471da2af6",
+  "sourceEquivalence": "Product source, scripts, Node tests and release fragment unchanged between implementation and validated heads; only native test startup synchronization changed. Final audit commit adds evidence only.",
+  "branch": "codex/issue-242-w3-completion",
+  "integration": {
+    "target": "codex/issue-242-p0-w0",
+    "pending": true,
+    "cleanup": "branch/worktree preserved for review",
+    "devMerged": false
+  },
+  "checks": [
+    {
+      "name": "build/release/localization",
+      "command": "npm run build",
+      "result": "passed",
+      "artifact": "build-final.txt"
+    },
+    {
+      "name": "strict count harness and Node W3 test typecheck",
+      "result": "passed",
+      "artifact": "harness-typecheck.txt"
+    },
+    {
+      "name": "focused Node W3/change-channel/completion routing",
+      "result": "passed",
+      "passed": 10,
+      "artifact": "w3-correctness.txt"
+    },
+    {
+      "name": "stateStore regressions in broad first run",
+      "result": "passed",
+      "passed": 17,
+      "artifact": "node-regressions.txt"
+    },
+    {
+      "name": "strict Swift W3 tests",
+      "result": "passed",
+      "passed": 11,
+      "artifact": "native-w3-final.txt"
+    },
+    {
+      "name": "full Swift suite on the strictly built final binary",
+      "command": "swift test --skip-build --package-path macos",
+      "result": "passed",
+      "tests": 245,
+      "skipped": 2,
+      "failed": 0,
+      "artifact": "native-full-recheck.txt"
+    },
+    {
+      "name": "compiled runtime generation/readiness/availability",
+      "result": "passed",
+      "assertions": 7,
+      "artifact": "runtime-compiled.json"
+    },
+    {
+      "name": "source-TS runtime W3 quiet recheck",
+      "result": "passed",
+      "passed": 1,
+      "skipped": 26,
+      "artifact": "runtime-w3-quiet.txt"
+    },
+    {
+      "name": "broad default Node first run",
+      "result": "failed",
+      "passed": 64,
+      "failed": 39,
+      "cause": "five-second Vitest test limits",
+      "artifact": "node-regressions.txt"
+    },
+    {
+      "name": "broad Node with 30-second test allowance",
+      "result": "failed",
+      "passed": 63,
+      "failed": 13,
+      "cause": "HTTP ECONNRESET and ten-second setup hook timeout; all 21 delivery tests passed",
+      "artifact": "node-regressions-budget.txt"
+    },
+    {
+      "name": "broad default Node quiet recheck",
+      "result": "failed",
+      "passed": 74,
+      "failed": 2,
+      "cause": "two five-second fixture timeouts",
+      "artifact": "node-quiet-recheck.txt"
+    },
+    {
+      "name": "isolated speed-policy and events-B rechecks",
+      "result": "failed",
+      "passed": 2,
+      "failed": 1,
+      "skipped": 73,
+      "cause": "events-B replay exceeds five-second fixture allowance; speed cases both pass",
+      "artifact": "two-timeout-recheck.txt"
+    },
+    {
+      "name": "companion/read regression recheck",
+      "result": "failed",
+      "passed": 20,
+      "failed": 1,
+      "cause": "large skill socket explicit 20-second limit",
+      "artifact": "companion-read-regressions.txt"
+    },
+    {
+      "name": "large skill quiet recheck",
+      "result": "failed",
+      "cause": "explicit 20-second limit",
+      "artifact": "large-skill-quiet.txt"
+    },
+    {
+      "name": "unchanged baseline large skill control",
+      "result": "failed",
+      "cause": "same explicit 20-second limit",
+      "artifact": "baseline-large-skill-control.txt"
+    },
+    {
+      "name": "unchanged baseline default tool control",
+      "result": "failed",
+      "cause": "same five-second fixture limit",
+      "artifact": "baseline-tool-control.txt"
+    },
+    {
+      "name": "unchanged baseline tool control with 30-second allowance",
+      "result": "passed",
+      "passed": 1,
+      "artifact": "baseline-tool-budget-control.txt"
+    }
+  ],
+  "changedImplementationFiles": [
+    ".changes/issue-242-w3-completion.json",
+    "macos/Sources/CodexBridgeKit/BridgeClients.swift",
+    "macos/Sources/CodexBridgeKit/BridgeModels.swift",
+    "macos/Sources/CodexBridgeKit/ChangeNotice.swift",
+    "macos/Sources/CodexBridgeMenuBar/AppModel.swift",
+    "macos/Sources/CodexBridgeMenuBar/CompletionNotificationWakeState.swift",
+    "macos/Sources/CodexBridgeMenuBar/CompletionNotifications.swift",
+    "macos/Tests/CodexBridgeKitTests/AppPresentationTests.swift",
+    "macos/Tests/CodexBridgeKitTests/CompletionNotificationWakeTests.swift",
+    "macos/Tests/CodexBridgeKitTests/OperationalNotificationsTests.swift",
+    "macos/Tests/CodexBridgeKitTests/W3NativeOutboxFixture.swift",
+    "scripts/issue-242-completion.ts",
+    "src/changeSignal.ts",
+    "src/companionServer.ts",
+    "src/completionDelivery.ts",
+    "src/runtimeProcess.ts",
+    "src/stateStore.ts",
+    "src/tools.ts",
+    "test/companionServer.test.ts",
+    "test/issue242Characterization.test.ts",
+    "test/issue242Completion.test.ts",
+    "test/runtimeProcess.test.ts"
+  ],
+  "artifacts": {
+    "README.md": {
+      "bytes": 12738,
+      "sha256": "d2a26a3287ea247c6596621962a17a8189f5af69a99f8c0a04429bac2e9f4cef"
+    },
+    "after.json": {
+      "bytes": 2727,
+      "sha256": "db8754732d22c9ab5eed51efd3d7b860b4cbccf8f2e026c69da6a2be36820e1a"
+    },
+    "baseline-large-skill-control.txt": {
+      "bytes": 1144,
+      "sha256": "76b53336cf057b280adb9bfe009dbc41061cbbf2ee0cc7cd90c54b4029269f49"
+    },
+    "baseline-tool-budget-control.txt": {
+      "bytes": 248,
+      "sha256": "842fcd11148bb760c2d62e5056553d60e4390e9efe0d7c4a96d64adf86ba725c"
+    },
+    "baseline-tool-control.txt": {
+      "bytes": 1221,
+      "sha256": "b1d11b263acdeeab9bd5d934ae95a47586416a6b1066232bc37001471479d3b2"
+    },
+    "before.json": {
+      "bytes": 585,
+      "sha256": "53c3eff71fc186dd641f0b1707a492552232b71a547590a6929c96f4b60f1a31"
+    },
+    "build-final.txt": {
+      "bytes": 650,
+      "sha256": "63e20803a392af499b0e485fdf1ee1aadcaab81dd7eb1fb68e267d8346710825"
+    },
+    "build.txt": {
+      "bytes": 650,
+      "sha256": "63e20803a392af499b0e485fdf1ee1aadcaab81dd7eb1fb68e267d8346710825"
+    },
+    "companion-read-regressions.txt": {
+      "bytes": 1151,
+      "sha256": "02ed452f653b2efc4706d32d880f6eb3caf97995bdbb5c79a1d81c632f32fa5c"
+    },
+    "comparison.json": {
+      "bytes": 1239,
+      "sha256": "33de7e53000fa37846e2d3aa26246df8e4a5e46e6e76a90b619e594bba18536e"
+    },
+    "harness-typecheck.txt": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "integration-review.json": {
+      "bytes": 1106,
+      "sha256": "1c7aad8b5fc8fd835532db0dfd2d5a5fcff44ca410d28fb3bf0c2205ad964322"
+    },
+    "large-skill-quiet.txt": {
+      "bytes": 1152,
+      "sha256": "755527123f99b391c530507b273d8e8581f7d87c36b2524cae2babe24444c7d8"
+    },
+    "local-preservation.json": {
+      "bytes": 624,
+      "sha256": "d656a8914de876459535ecc9a7cc6c11e034cd884c1265890cc1d2077066bdd2"
+    },
+    "native-committed.txt": {
+      "bytes": 73965,
+      "sha256": "9fac43ba34053877447f75a6ccc45d47706a17eb0afd93c87265a7faab891f33"
+    },
+    "native-final.txt": {
+      "bytes": 5566,
+      "sha256": "76e133f5bb06c1238b51a9843e9302f71c172e0797077e19bfab4f2dcdfc411a"
+    },
+    "native-first.txt": {
+      "bytes": 3115,
+      "sha256": "05c25b50d816650ca90486a4e714a6c48acdb9802771dd99bffaed30c96e32b2"
+    },
+    "native-full-recheck.txt": {
+      "bytes": 71704,
+      "sha256": "7133bf651e1c8ac8a00159fdf9c1a9a0513519ff1646c8570cb0ba6f15f57f9e"
+    },
+    "native-w3-final.txt": {
+      "bytes": 4564,
+      "sha256": "350c7ed58887f1d40baec4a34a260462f072e9fc9a1d3fb9ece05acc804e0a95"
+    },
+    "node-final.txt": {
+      "bytes": 2107,
+      "sha256": "f144e199c18118a9d87353d3e5ab9840a5012b4c5d20c0ca0d5ffc4b94864d5f"
+    },
+    "node-first.txt": {
+      "bytes": 4985,
+      "sha256": "e5ab18af888383efc5dc5094ae0e73bccc389d56db828c1b2bdb52a273cf40f7"
+    },
+    "node-focused-final.txt": {
+      "bytes": 2139,
+      "sha256": "7e89697d3ae2fd04928d5aacc89f959bfdd1aa5787b9bac5664f9e84eee9c6db"
+    },
+    "node-focused.txt": {
+      "bytes": 4091,
+      "sha256": "604bc11bf743211ecf9a6d9c33ddfaa8d6395817cec2c01284039b149dfcfa08"
+    },
+    "node-quiet-recheck.txt": {
+      "bytes": 2203,
+      "sha256": "9d60bb29518187774cd353c1bd5865b8e1a814940a2e6a2374d2bfa2dd6afcd2"
+    },
+    "node-regressions-budget.txt": {
+      "bytes": 5275,
+      "sha256": "5281eb39bf78d4a5dd1c18d000dc3a9e6d634d141268996972b2fb4e08701f4b"
+    },
+    "node-regressions.txt": {
+      "bytes": 25409,
+      "sha256": "cb679586673ede8888ccff27d029dc9fb95a0b5fa5161df040728c7d44d263e0"
+    },
+    "runtime-compiled.json": {
+      "bytes": 298,
+      "sha256": "b36f96fee5642df200e7a51cbcf2b778ee7cce509c113d4483d6eb4755e48c06"
+    },
+    "runtime-compiled.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "runtime-probe.mjs": {
+      "bytes": 3953,
+      "sha256": "628a8b89a78e7f666836ddf400723cfe2bde70a81596fcbb999d4556bfeb816e"
+    },
+    "runtime-w3-quiet.txt": {
+      "bytes": 259,
+      "sha256": "96c2a8d14a3fbead7ebd6db84ac3da9a45fcd54a3e3bb75cfee6937695b61037"
+    },
+    "runtime-w3-recheck.txt": {
+      "bytes": 1236,
+      "sha256": "13749a60e4df11213badfe5d26a67699149daa9043d11afefdefc036edc5a517"
+    },
+    "runtime-w3.txt": {
+      "bytes": 1236,
+      "sha256": "83739817d6563093cb26bb4762a54e74b33e2398fe38527eb584982dff62dba6"
+    },
+    "two-timeout-recheck.txt": {
+      "bytes": 1327,
+      "sha256": "14e495094bd0e735a2943273eb315bf0d0d1352f88ff96cf55912ab430a20992"
+    },
+    "w3-correctness.txt": {
+      "bytes": 249,
+      "sha256": "5331d581386c4bdf1ffc341afc87edc111b40b78b4748c00dfafdbe20a3ac0d4"
+    }
+  },
+  "scope": "W3 native completion event/outbox only. No production state or GitHub Actions writes. W1/W2 inherited; W4 snapshot merge-file check only.",
+  "logNormalization": "Removed only extra final blank lines from text logs for the repository whitespace check; no log content or result was changed."
+}

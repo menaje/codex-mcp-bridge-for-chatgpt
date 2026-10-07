@@ -1,0 +1,4 @@
+import assert from 'node:assert/strict';
+import { issue242Fixture } from '/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-base/scripts/issue-242-fixture.ts';
+const f=await issue242Fixture(40);const topics={dashboard:0};const off=f.jobs.subscribeChanges(()=>topics.dashboard++);
+try{const jobs=f.jobs.list(40,0).slice(0,4);jobs.forEach(j=>j.status='running');const measure=await f.measure(()=>{for(let i=0;i<400;i++)(f.jobs as any).recordProgress(jobs[i%4],{progress:i})});assert.equal(topics.dashboard,400);assert.equal(measure.changedRows,0);console.log(JSON.stringify({sourceHead:'f710974b33fc40432653c815d175058cba1adaee',fixture:{retainedJobs:40,progressJobs:4,progressEvents:400},progress400:{...measure,result:undefined,topics},limits:['Native claims are not inferred from direct registry notices. Legacy scheduling reads each dashboard notice; Swift measurements are separate.']},null,2));}finally{off();await f.close();}

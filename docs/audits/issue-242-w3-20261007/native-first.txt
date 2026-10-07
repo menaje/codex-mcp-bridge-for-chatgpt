@@ -1,0 +1,50 @@
+Building for debugging...
+[0/12] /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w3-completion/macos/.build/arm64-apple-macosx/debug/CodexBridgeMacPackageTests.derived/runner.swift
+[0/12] Write sources
+[0/12] Write CodexBridgeMenuBar-entitlement.plist
+[4/12] Write sources
+[6/12] Write swift-version--58304C5D6DBC2206.txt
+[8/27] Compiling CodexBridgeKit RuntimePaths.swift
+[9/27] Compiling CodexBridgeKit TextIntegrity.swift
+[10/29] Compiling CodexBridgeKit RemoteConnectionStorage.swift
+[11/29] Compiling CodexBridgeKit RuntimeLifecycle.swift
+[12/29] Compiling CodexBridgeKit CodexRuntimeModels.swift
+[13/29] Compiling CodexBridgeKit ConnectionRecoveryWindow.swift
+[14/29] Compiling CodexBridgeKit DisplayFormat.swift
+[15/29] Compiling CodexBridgeKit HelperBootstrap.swift
+[16/29] Compiling CodexBridgeKit ProblemReviewModels.swift
+[17/29] Compiling CodexBridgeKit RemoteCompanionClient.swift
+[18/29] Compiling CodexBridgeKit TunnelSetup.swift
+[19/29] Compiling CodexBridgeKit UnixSocketRPCClient.swift
+[20/29] Compiling CodexBridgeKit BridgeApplicationClient.swift
+[21/29] Compiling CodexBridgeKit BridgeClients.swift
+[22/29] Emitting module CodexBridgeKit
+[23/29] Compiling CodexBridgeKit BridgeModels.swift
+[24/29] Compiling CodexBridgeKit ChangeNotice.swift
+[25/51] Compiling CodexBridgeMenuBar CodexAccountUsageView.swift
+[26/51] Compiling CodexBridgeMenuBar CodexAuthSelectionViews.swift
+[27/51] Compiling CodexBridgeMenuBar CodexBridgeMenuBarApp.swift
+[28/51] Compiling CodexBridgeMenuBar AppLocalization.swift
+[29/51] Compiling CodexBridgeMenuBar AppModel.swift
+[30/51] Compiling CodexBridgeMenuBar BrandViews.swift
+[31/51] Emitting module CodexBridgeMenuBar
+[32/53] Compiling CodexBridgeMenuBar LoginItemController.swift
+[33/53] Compiling CodexBridgeMenuBar ModelDescriptionSettings.swift
+[34/53] Compiling CodexBridgeMenuBar OperationalNotifications.swift
+[35/53] Compiling CodexBridgeMenuBar ProblemReviewViews.swift
+[36/53] Compiling CodexBridgeMenuBar RuntimeLifecycleNoticeView.swift
+[37/53] Compiling CodexBridgeMenuBar SettingsViews.swift
+[38/53] Compiling CodexBridgeMenuBar SkillsLibraryViews.swift
+[39/53] Compiling CodexBridgeMenuBar WorkHistoryPresentation.swift
+[40/53] Compiling CodexBridgeMenuBar CodexRuntimeUpdateControls.swift
+[41/53] Compiling CodexBridgeMenuBar CodexRuntimeViews.swift
+[42/53] Compiling CodexBridgeMenuBar CompletionNotificationWakeState.swift
+[43/53] Compiling CodexBridgeMenuBar CompletionNotifications.swift
+[44/53] Compiling CodexBridgeMenuBar ConnectionAssistantViews.swift
+[45/53] Compiling CodexBridgeMenuBar ConnectionObservationNotice.swift
+[46/53] Compiling CodexBridgeMenuBar DashboardPopoverLayout.swift
+[47/53] Compiling CodexBridgeMenuBar DashboardViews.swift
+[48/53] Compiling CodexBridgeMenuBar GeneratedLocalization.swift
+error: input file '/Volumes/Data/Dev/codex-mcp-bridge-issue-242-w3-completion/macos/Sources/CodexBridgeMenuBar/AppModel.swift' was modified during the build
+error: input file '/Volumes/Data/Dev/codex-mcp-bridge-issue-242-w3-completion/macos/Sources/CodexBridgeMenuBar/AppModel.swift' was modified during the build
+error: fatalError

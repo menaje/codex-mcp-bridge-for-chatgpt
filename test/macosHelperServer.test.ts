@@ -671,7 +671,9 @@ describe("macOS runtime helper RPC", () => {
     updateRuntimeEnvFile(envFile, { apiKey: "sk-native-test-1234567890123456", tunnelId: "tunnel_nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn" });
     const runtimeStatusFile = path.join(root, "launcher-status.json");
     const state = { phase: "running", runtimeBuildId: "test", tunnel: { phase: "connected", profile: "managed", transport: "stdio",
-      doctorPassed: true, processRunning: true, connected: true, lastCheckedAt: new Date().toISOString(), lastError: null, lastProblem: null } };
+      doctorPassed: true, processRunning: true, connected: true, lastCheckedAt: new Date().toISOString(), lastError: null, lastProblem: null,
+      observation: { healthz: { status: 200, failure: null }, readyz: { status: 200, failure: null },
+        controlPlanePoll: { lastSuccessfulAt: new Date().toISOString(), fresh: true, failure: null }, failure: null } } };
     writeManagedRuntimeStatus(runtimeStatusFile, state);
     const controller = new MacOSBridgeSupervisor({ bridgeRoot: root, envFile, runtimeStatusFile,
       bridgeSocketPath: path.join(root, "bridge.sock"), registeredProjectRoots: () => [],
@@ -680,9 +682,15 @@ describe("macOS runtime helper RPC", () => {
     const unsubscribe = controller.subscribeChanges(topic => changes.push(topic));
     try {
       expect((await controller.health()).configuration.valid).toBe(true);
-      writeManagedRuntimeStatus(runtimeStatusFile, { ...state, tunnel: { ...state.tunnel, lastCheckedAt: new Date(Date.now() + 1).toISOString() } });
+      writeManagedRuntimeStatus(runtimeStatusFile, { ...state, tunnel: { ...state.tunnel, lastCheckedAt: new Date(Date.now() + 1).toISOString(),
+        observation: { ...state.tunnel.observation, controlPlanePoll: { ...state.tunnel.observation.controlPlanePoll,
+          lastSuccessfulAt: new Date(Date.now() + 1).toISOString() } } } });
       await new Promise(resolve => setTimeout(resolve, 50));
       expect(changes).not.toContain("runtime");
+      writeManagedRuntimeStatus(runtimeStatusFile, { ...state, tunnel: { ...state.tunnel,
+        observation: { ...state.tunnel.observation, failure: "timeout" } } });
+      await vi.waitFor(() => expect(changes).toContain("runtime"));
+      changes.length = 0;
       writeManagedRuntimeStatus(runtimeStatusFile, { ...state, tunnel: { ...state.tunnel, connected: false, phase: "degraded" } });
       await vi.waitFor(() => expect(changes).toContain("runtime"));
       writeFileSync(envFile, "", { mode: 0o600 });

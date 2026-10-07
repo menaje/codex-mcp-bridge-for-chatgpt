@@ -1,0 +1,20 @@
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+0 !== 1
+
+    at <anonymous> (/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/scripts/issue-242-characterization.ts:89:14)
+    at Object.measure (/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/scripts/issue-242-fixture.ts:82:28)
+    at async <anonymous> (/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/scripts/issue-242-characterization.ts:86:26) {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: 0,
+  expected: 1,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.11.1

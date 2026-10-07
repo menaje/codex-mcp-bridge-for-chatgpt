@@ -1,4 +1,5 @@
 import { ProjectLifecycleStore } from "./projectLifecycle.js";
+import { nativeCompletionRetryMs, type NativeCompletionAvailability } from "./completionDelivery.js";
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
@@ -688,6 +689,8 @@ export class BridgeStateStore {
   private readonly migrationLease: StateMigrationLease | null;
   private readonly currentInstanceId = randomUUID();
   private transactionDepth = 0;
+  private readonly insertedNotifyCompletions = new Set<number>();
+  private readonly completionReadyListeners = new Set<() => void>();
   private closed = false;
 
   constructor(private readonly options: BridgeStateStoreOptions) {
@@ -1122,11 +1125,13 @@ export class BridgeStateStore {
       throw error;
     }
     this.transactionDepth += 1;
+    let committed = false;
     try {
       this.observeTransactionPhase(observePhase, "executing");
       const result = operation();
       this.observeTransactionPhase(observePhase, "committing");
       this.database.exec("COMMIT");
+      committed = true;
       try {
         this.options.onTransactionCommitted?.();
       } catch {
@@ -1148,7 +1153,31 @@ export class BridgeStateStore {
       throw error;
     } finally {
       this.transactionDepth -= 1;
+      const inserted = [...this.insertedNotifyCompletions];
+      this.insertedNotifyCompletions.clear();
+      const now = Date.now();
+      let ready = false;
+      if (committed && this.completionReadyListeners.size) {
+        try {
+          ready = inserted.some(outboxId => {
+            const row = this.getCompletionOutbox(outboxId);
+            return row && row.deliveredAt === undefined && row.acknowledgedAt === undefined &&
+              (row.nextAttemptAt === undefined || row.nextAttemptAt <= now) &&
+              (row.leaseOwner === undefined || (row.leaseExpiresAt !== undefined && row.leaseExpiresAt <= now));
+          });
+        } catch { /* A lost invalidation is recovered by the next read-only check. */ }
+      }
+      if (ready) {
+        for (const listener of this.completionReadyListeners) {
+          try { listener(); } catch { /* Invalidation cannot undo a durable commit. */ }
+        }
+      }
     }
+  }
+
+  subscribeNativeCompletionReady(listener: () => void): () => void {
+    this.completionReadyListeners.add(listener);
+    return () => { this.completionReadyListeners.delete(listener); };
   }
 
   private observeTransactionPhase(
@@ -1305,7 +1334,7 @@ export class BridgeStateStore {
     return Number((row as CountRow).count);
   }
 
-  listJobs(): StoredJobRecord[] {
+  listJobs(agentId?: string): StoredJobRecord[] {
     return this.database
       .prepare(`
         SELECT j.payload,j.job_id,j.scope_id,j.request_id,j.activity_id,j.thread_id,
@@ -1330,10 +1359,16 @@ export class BridgeStateStore {
           JOIN activities a ON a.activity_id=j.activity_id
           LEFT JOIN projects p ON p.project_id=a.project_id
          WHERE j.archived_at IS NULL
+           ${agentId ? "AND j.agent_id=?" : ""}
          ORDER BY j.updated_at ASC
       `)
-      .all()
+      .all(...(agentId ? [agentId] : []))
       .map((row) => hydrateJobPayload(row as JobStorageRow));
+  }
+
+  /** Connection-local commit observation; holds no WAL snapshot between reads. */
+  readObservationVersion(): number {
+    return Number(this.database.pragma("data_version", { simple: true }));
   }
 
   /** Exact scoped admission proof after the result body leaves ordinary Job retention. */
@@ -3411,6 +3446,20 @@ export class BridgeStateStore {
     return (rows as Array<Record<string, unknown>>).map(readCompletionOutboxRow);
   }
 
+  nativeCompletionAvailability(now = Date.now()): NativeCompletionAvailability {
+    // A deferred item becomes processable only after BOTH retry and lease deadlines.
+    // This SELECT neither acquires the writer lock nor updates attempts/leases.
+    const row = this.database.prepare(`
+      SELECT MIN(MAX(COALESCE(next_attempt_at, 0),
+                     CASE WHEN lease_owner IS NULL THEN 0 ELSE COALESCE(lease_expires_at, 0) END)) AS due
+        FROM completion_outbox
+       WHERE channel = 'notify' AND delivered_at IS NULL AND acknowledged_at IS NULL
+    `).get() as { due: number | null };
+    return row.due === null ? { available: false } : {
+      available: row.due <= now, nextAvailableAt: Math.max(now, row.due)
+    };
+  }
+
   getCompletionOutbox(outboxId: number): CompletionOutboxRecord | undefined {
     if (!Number.isSafeInteger(outboxId) || outboxId < 1) return undefined;
     const row = this.database
@@ -3493,6 +3542,14 @@ export class BridgeStateStore {
          WHERE outbox_id = ? AND scope_id = ? AND lease_owner = ? AND delivered_at IS NULL
       `)
       .run(outboxId, scopeId, leaseOwner);
+  }
+
+  releaseNativeCompletionOutbox(record: CompletionOutboxRecord, leaseOwner: string, now = Date.now()): boolean {
+    return this.database.prepare(`
+      UPDATE completion_outbox SET lease_owner = NULL, lease_expires_at = NULL, next_attempt_at = ?
+       WHERE outbox_id = ? AND scope_id = ? AND channel = 'notify' AND lease_owner = ?
+         AND delivered_at IS NULL AND acknowledged_at IS NULL
+    `).run(now + nativeCompletionRetryMs(record.attemptCount), record.outboxId, record.scopeId, leaseOwner).changes === 1;
   }
 
   markCompletionOutboxUncertain(
@@ -6771,7 +6828,7 @@ export class BridgeStateStore {
     createdAt: number;
     payload: unknown;
   }): void {
-    this.database
+    const result = this.database
       .prepare(`
         INSERT OR IGNORE INTO completion_outbox(
           activity_id, scope_id, completion_version, channel, payload, attempt_count,
@@ -6786,6 +6843,7 @@ export class BridgeStateStore {
         JSON.stringify(input.payload),
         input.createdAt
       );
+    if (result.changes === 1 && input.channel === "notify") this.insertedNotifyCompletions.add(Number(result.lastInsertRowid));
   }
 
   private insertJobCompletionDelivery(input: {

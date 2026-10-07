@@ -1,0 +1,11 @@
+
+ RUN  v4.1.11 /private/tmp/cb242-r502-control-8izpwb3c
+
+ ✓ test/issue242R502.test.ts (15 tests | 14 skipped) 1220ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 14 skipped (15)
+   Start at  03:54:56
+   Duration  2.27s (transform 730ms, setup 0ms, import 977ms, tests 1.22s, environment 0ms)
+
+JSON report written to /Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/r502-authoritative-control.json

@@ -1,0 +1,20 @@
+{
+  "sourceHead": "f710974b33fc40432653c815d175058cba1adaee",
+  "fixture": {
+    "retainedJobs": 40,
+    "progressJobs": 4,
+    "progressEvents": 400
+  },
+  "progress400": {
+    "wallMs": 0.719250000000045,
+    "sql": {},
+    "changedRows": 0,
+    "walFileBytesDelta": 0,
+    "topics": {
+      "dashboard": 400
+    }
+  },
+  "limits": [
+    "Native claims are not inferred from direct registry notices. Legacy scheduling reads each dashboard notice; Swift measurements are separate."
+  ]
+}

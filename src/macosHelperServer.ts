@@ -293,6 +293,7 @@ export type MacOSHelperStatus = {
     doctorPassed: boolean;
     processRunning: boolean;
     connected: boolean;
+    observation?: ManagedTunnelStatus["observation"];
     lastCheckedAt: string | null;
     lastError: string | null;
     lastProblem: StatusProblem | null;
@@ -413,7 +414,9 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     if (!state) return "missing";
     // A routine heartbeat is not a connection change.
     return JSON.stringify({ pid: state.launcherPid, phase: state.phase, build: state.runtimeBuildId,
-      tunnel: { ...state.tunnel, lastCheckedAt: null } });
+      tunnel: { ...state.tunnel, lastCheckedAt: null,
+        observation: state.tunnel.observation && { ...state.tunnel.observation,
+          controlPlanePoll: { ...state.tunnel.observation.controlPlanePoll, lastSuccessfulAt: null } } } });
   }
 
   private watchManager(manager: CodexRuntimeManager): void {
@@ -2346,6 +2349,7 @@ function normalizeTunnelStatus(
     doctorPassed: current && tunnel.doctorPassed,
     processRunning: current && tunnel.processRunning,
     connected: current && tunnel.processRunning && tunnel.connected,
+    ...(current && tunnel.observation ? { observation: tunnel.observation } : {}),
     lastCheckedAt: tunnel.lastCheckedAt,
     lastError: current
       ? tunnel.lastError && safeErrorMessage(tunnel.lastError)

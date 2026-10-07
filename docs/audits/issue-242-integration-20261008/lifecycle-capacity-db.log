@@ -1,0 +1,120 @@
+
+ RUN  v4.1.11 /Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review
+
+ ✓ test/projectLifecycle.test.ts (27 tests) 1560ms
+ ✓ test/stateSchemaMigration.test.ts (16 tests) 5034ms
+     ✓ uses the Agent history index on fresh and upgraded state without changing latest Job identity  415ms
+     ✓ upgrades schema 19 without losing request dedupe identity or terminal results  318ms
+     ✓ backfills schema 21 receipt consumption without replaying a terminal Job  302ms
+     ✓ creates the current schema directly and matches an authentic schema 18 upgrade  459ms
+     ✓ upgrades the published schema 3 fixture through every supported checkpoint  686ms
+     ✓ 'does not resurrect a rejected legacy …'  389ms
+     ✓ 'rejects an invalid Agent mirror besid…'  361ms
+     ✓ 'uses a valid Agent mirror only when t…'  373ms
+     ✓ rolls back an interrupted rebuild and reuses one recovery backup on retry  472ms
+     ✓ replaces a stale same-version backup before beginning a new upgrade  428ms
+     ✓ keeps the original recovery point when a multi-checkpoint upgrade resumes  411ms
+ ✓ test/stateStore.test.ts (17 tests) 483ms
+ ✓ test/executionServiceProcess.test.ts (16 tests) 51870ms
+     ✓ binds existing controls and terminal ACK to the original IPC request and worker turn  1981ms
+     ✓ runs turns, progress, account reads, and steering outside the state owner  1948ms
+     ✓ retains a running executor across a parent wall-clock jump  3448ms
+     ✓ keeps private interaction input in the execution process proxy only  1958ms
+     ✓ reserves request slots for interaction responses and forced termination  5428ms
+     ✓ reserves byte capacity for steering an existing turn  1929ms
+     ✓ retains an exited App Server until its same-group command is gone  5623ms
+     ✓ contains actual worker loss while its sibling completes and its detached descendant is cleaned  3899ms
+     ✓ kills a detached descendant group before replacing a crashed executor  6102ms
+     ✓ rechecks release eligibility across the process boundary (retireContext=false)  1937ms
+     ✓ rechecks release eligibility across the process boundary (retireContext=true)  1939ms
+     ✓ does not grant the execution process Bridge database or listener authority  1918ms
+     ✓ continues Codex work while the state-owner event loop is blocked  2429ms
+     ✓ keeps two in-flight Jobs across a 1.1 second synchronous SQLite pause  3051ms
+     ✓ retains an active turn after the executor event loop resumes  5983ms
+     ✓ bounds executor progress IPC while the state owner cannot receive messages  2294ms
+ ✓ test/projectLifecycleHost.test.ts (5 tests) 2984ms
+     ✓ repeats full HTTP admission/use/delete cycles with fresh identities and preserves real Git/files/conversation evidence  1445ms
+     ✓ fences task retries across host restart and same-cwd registration with public envelope known=true  531ms
+     ✓ fences task retries across host restart and same-cwd registration with public envelope known=false  439ms
+     ✓ blocks fresh/continue/fork during failed cleanup and preserves a shared worker peer across delete and late callbacks  342ms
+ ✓ test/tools.test.ts (55 tests) 91365ms
+     ✓ preserves an admitted speed through a settings change and handles later support loss explicitly: false  543ms
+     ✓ preserves an admitted speed through a settings change and handles later support loss explicitly: true  314ms
+     ✓ continues, replaces and forks the same Agent across accounts while keeping Bridge scope and logout admission checks  390ms
+     ✓ keeps an original Job's completed result and session with its owner through an external login change and commit retry  1253ms
+     ✓ keeps an original Job's failed result and session with its owner through an external login change and commit retry  1376ms
+     ✓ keeps an original Job's interrupted result and session with its owner through an external login change and commit retry  1324ms
+     ✓ preserves the original Job through a lost queued request, external auth change and transport ACK retries  5394ms
+     ✓ preserves the original Job through a lost completed response, external auth change and transport ACK retries  4853ms
+     ✓ retains an original host-accepted completion receipt through a new login and lost result response  442ms
+     ✓ retains an original acceptance-unknown completion receipt through a new login and lost result response  357ms
+     ✓ keeps the original Job question and ACK after an external login change: 'worker proof recovered before send'  319ms
+     ✓ keeps the original Job question and ACK after an external login change: 'answer sent but reply lost'  301ms
+     ✓ reports an exact owner result awaiting terminal storage without claiming the Job is still executing  1260ms
+     ✓ returns durable admission immediately while the admitted Job runs for more than one minute  61317ms
+     ✓ does not admit a task when transport fails before dispatch and admits it once on exact retry  317ms
+     ✓ recovers an approved second turn after response loss and repeated parent reads without stalling independent work  459ms
+     ✓ recovers a scoped terminal admission fact after its result expires and the bridge restarts  380ms
+     ✓ does not distinguish scope-mismatched handles from missing handles  388ms
+     ✓ records an aborted exact status wait while the same Job keeps running  3249ms
+     ✓ keeps an asynchronous admission valid before App Server assigns its thread  301ms
+     ✓ opens Dashboard explicitly and rejects every retired sender operation without mutating a Job  312ms
+ ✓ test/stateServiceProcess.test.ts (12 tests) 15605ms
+     ✓ keeps the parent responsive and retains the blocked write phase and queue depth  2859ms
+     ✓ keeps timed-out commands charged to capacity until their late response arrives  660ms
+     ✓ reports an explicit storage-busy result when SQLite lock waiting expires  5576ms
+     ✓ replays a durable receipt after response loss and rejects hash conflicts  829ms
+     ✓ restarts a crashed state owner with one live writer generation  350ms
+     ✓ retires a live but stale state owner before starting its replacement  4658ms
+ ✓ test/runtimeLifecycleRecovery.test.ts (10 tests) 5142ms
+   ✓ a new app launch starts after recovering a completed native shutdown without menu interaction  1281ms
+   ✓ a helper-only respawn leaves a recovered shutdown stopped until a fresh app launch  422ms
+   ✓ helper shutdown preserves a graceful reservation and its active runtime  629ms
+   ✓ a new helper claims execution and completes replacement only after the runtime is ready  405ms
+   ✓ a real helper SIGTERM preserves active work, then a new helper adopts and finishes the reservation  2107ms
+ ✓ test/runtimeLifecycle.test.ts (23 tests) 605ms
+ ✓ test/automaticRecovery.test.ts (9 tests) 1540ms
+     ✓ surveys 1,200 Agents and retained Jobs in small indexed pages, then reaches a late incident  1364ms
+ ✓ test/stateDatabaseLifecycle.test.ts (11 tests) 13926ms
+     ✓ fails capacity preflight before changing the supported source database  555ms
+     ✓ fails permission preflight before changing the supported source database  533ms
+     ✓ rejects malformed and unsupported databases before creating lifecycle sidecars  1279ms
+     ✓ derives every supported intermediate start from real committed checkpoints  10213ms
+     ✓ records a completed progress status for the exact committed path  363ms
+     ✓ reconciles a crash after schema commit without inventing a provenance gap  392ms
+     ✓ rejects a changed applied-migration checksum on a later startup  374ms
+ ✓ test/executionRecovery.test.ts (12 tests) 46396ms
+   ✓ reconnects a broken control socket without duplicating its turn or result  2197ms
+   ✓ drains a large restored acknowledgement history through the bounded reconnect queue  2243ms
+   ✓ reattaches a replacement controller to an exact question and preserves its answer/result  1989ms
+   ✓ recovers completion produced while no controller was connected  2374ms
+   ✓ lets exact completion win a late cancellation without killing another turn on the same worker  1943ms
+   ✓ completes old and new turns throughout continuous ps slow failure  12203ms
+   ✓ completes old and new turns throughout continuous ps spawn failure  2057ms
+   ✓ completes old and new turns throughout continuous ps exit failure  2106ms
+   ✓ completes old and new turns throughout continuous ps output-limit failure  2057ms
+   ✓ completes old and new turns throughout continuous ps output-invalid failure  2052ms
+   ✓ completes old and new turns throughout continuous ps output-utf8 failure  2053ms
+   ✓ keeps healthy protocol traffic alive when only heartbeat is missing beyond the old kill threshold  13121ms
+ ✓ test/stateRecovery.test.ts (8 tests) 3726ms
+     ✓ restores the verified original only before service-open and preserves the replaced files  900ms
+     ✓ refuses snapshot rollback after either HTTP or stdio service-open evidence  720ms
+     ✓ requires an explicit source-runtime attestation when old metadata had none  395ms
+     ✓ reports a checksum-corrupted recovery point as ineligible before restore  361ms
+     ✓ rejects partially recorded source-runtime identity in backup metadata  338ms
+     ✓ rejects a recovery point created by a different target build  380ms
+     ✓ treats an invalid service-open marker as an unknown and unsafe boundary  344ms
+ ✓ test/projectRegistry.test.ts (10 tests) 9ms
+ ✓ test/currentSelectorReplay.test.ts (1 test) 415ms
+     ✓ preserves the admitted v6 record but rejects a stale project selector after restart  415ms
+ ✓ test/executionJournal.test.ts (6 tests) 173ms
+ ✓ test/projectRecovery.test.ts (9 tests) 289ms
+ ✓ test/executionRuntime.test.ts (3 tests) 658ms
+ ✓ test/cancellation.test.ts (1 test) 2ms
+
+ Test Files  19 passed (19)
+      Tests  251 passed (251)
+   Start at  03:35:02
+   Duration  245.83s (transform 922ms, setup 0ms, import 2.66s, tests 241.78s, environment 1ms)
+
+JSON report written to /Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/lifecycle-capacity-db.json

@@ -215,6 +215,7 @@ struct SkillsLibraryWindowView: View {
                 .navigationSplitViewColumnWidth(min: 610, ideal: 820)
         }
         .navigationSplitViewStyle(.balanced)
+        .safeAreaInset(edge: .top) { ConnectionObservationNotice() }
         .searchable(text: $searchText, placement: .sidebar, prompt: "macos.skills.searchBridgeSkills")
         .modifier(SkillsDefaultSidebarToolbarRemovalModifier())
         .background(SkillsTitlebarSanitizerView())

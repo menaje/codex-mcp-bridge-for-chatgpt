@@ -1,6 +1,8 @@
 import { execFile as execCatalogFile } from "node:child_process";
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import { timingSafeEqual } from "node:crypto";
+import { BoundedHttpDiagnostics, HTTP_DIAGNOSTIC_HEADER, httpDiagnosticContext,
+  type HttpObservation } from "./httpDiagnostics.js";
 import { McpEventsController } from "./mcpEvents.js";
 import { mcpBearerPrincipal, authenticatedMcpPrincipal } from "./mcpPrincipal.js";
 import { promptDigest } from "./taskFollowups.js";
@@ -123,6 +125,8 @@ export type BridgeHttpRuntimeOptions = {
    * otherwise use (sampling, progressive responses, and list mutations).
    */
   conformanceFixtures?: boolean;
+  /** Supervisor-only, bounded private HTTP evidence; disabled by default. */
+  httpDiagnostics?: (value: HttpObservation) => void;
 };
 
 export type BridgeHttpServer = HttpServer & {
@@ -298,6 +302,8 @@ export function createHttpServer(
   modelCatalogOverride?: CodexModelCatalogProvider,
   runtimeOptions: BridgeHttpRuntimeOptions = {}
 ): BridgeHttpServer {
+  const diagnostics = runtimeOptions.httpDiagnostics
+    ? new BoundedHttpDiagnostics(runtimeOptions.httpDiagnostics) : undefined;
   if (config.oauth && config.noAuth) throw new Error("MCP OAuth cannot run with No Auth.");
   const oauthVerifier = config.oauth ? new McpOAuthVerifier(config.oauth, runtimeOptions.oauthJwksFetch) : undefined;
   const stateStore = runtimeOptions.stateStore || new BridgeStateStore({ file: config.stateDatabaseFile });
@@ -381,7 +387,16 @@ export function createHttpServer(
   // top-level securitySchemes field. Publish OpenAI's extension after encoding,
   // preserving the same declaration in _meta for standard MCP clients.
   const oauthMcpHandler: Parameters<typeof toNodeHandler>[0] = { fetch: async (request, options) => {
-    const response = await mcpHandler.fetch(request, options);
+    const trace = httpDiagnosticContext.getStore();
+    trace?.record("application-dispatch");
+    let response: Response;
+    try {
+      response = await mcpHandler.fetch(request, options);
+      trace?.record("application-response");
+    } catch (error) {
+      trace?.record("application-error");
+      throw error;
+    }
     if (!config.oauth || request.headers.get("mcp-method") !== "tools/list" ||
         !response.headers.get("content-type")?.includes("application/json") || response.status !== 200) return response;
     const body = await response.json();
@@ -408,7 +423,26 @@ export function createHttpServer(
   const validateOrigin = originValidation(allowedOrigins);
 
   const httpServer = createServer((req, res) => {
-    void handleHttpRequest(
+    const id = req.headers[HTTP_DIAGNOSTIC_HEADER];
+    delete req.headers[HTTP_DIAGNOSTIC_HEADER];
+    const trace = typeof id === "string" ? diagnostics?.start("child", id) : undefined;
+    if (trace) {
+      trace.record("admitted");
+      req.once("end", () => { trace.outcome = "unknown"; trace.record("request-finished"); });
+      req.once("aborted", () => trace.record("caller-aborted"));
+      const writeHead = res.writeHead;
+      res.writeHead = function (this: ServerResponse, ...args: Parameters<typeof writeHead>) {
+        trace.responseStarted = true;
+        trace.record("response-header-start");
+        const result = writeHead.apply(this, args);
+        trace.headersSent = this.headersSent;
+        trace.record("response-headers");
+        return result;
+      } as typeof res.writeHead;
+      res.once("finish", () => { trace.callerComplete = true; trace.record("response-complete"); });
+      res.once("close", () => trace.record("caller-closed"));
+    }
+    const handle = () => handleHttpRequest(
       req,
       res,
       config,
@@ -424,6 +458,8 @@ export function createHttpServer(
       })),
       oauthVerifier
     );
+    void (trace ? httpDiagnosticContext.run(trace, handle) : handle())
+      .finally(() => trace?.record("cleanup"));
   }) as BridgeHttpServer;
   httpServer.once("listening", () => stateStore.markServiceOpen("http"));
   Object.defineProperty(httpServer, "applicationService", {
@@ -776,15 +812,19 @@ function installMcpToolTextIntegrityGuard(
       _meta: { ...(config as { _meta?: Record<string, unknown> })._meta,
         securitySchemes: [{ type: "oauth2", scopes: MCP_OAUTH_SCOPES }] } } : config,
     async (args, context) => {
+      const trace = httpDiagnosticContext.getStore();
       try {
         if (bridgeConfig?.oauth && authenticatedMcpPrincipal(context as import("@modelcontextprotocol/server").ServerContext) !== mcpOAuthPrincipal(bridgeConfig.oauth)) {
           return oauthRequiredResult(bridgeConfig.oauth);
         }
         assertJsonTextIntegrity(args, `MCP tool ${name} input`);
+        trace?.record("application-start");
         const result = await callback(args, context);
         assertJsonTextIntegrity(result, `MCP tool ${name} result`);
+        trace?.record("application-complete");
         return result;
       } catch (error) {
+        trace?.record("application-error");
         observeOperationFailure(onOperationFailure, error);
         throw error;
       }

@@ -2,6 +2,8 @@ export type DisplayRead<T> = {
   promise: Promise<T>;
   deferred: boolean;
   invalidated: boolean;
+  waiters: number;
+  settled: boolean;
 };
 
 /** The display budget does not cancel work or release its physical concurrency slot.
@@ -13,6 +15,8 @@ export class DisplayReadPool<T> {
   private waitingForCapacity = false;
 
   constructor(private readonly concurrency: number, private readonly capacityAvailable?: () => void) {}
+
+  get inFlight(): number { return this.reads.size; }
 
   start(
     key: string,
@@ -28,10 +32,13 @@ export class DisplayReadPool<T> {
     const entry: DisplayRead<T> = {
       deferred: false,
       invalidated: false,
+      waiters: 0,
+      settled: false,
       promise: Promise.resolve().then(() => read(() => !entry.invalidated)).then(value => {
         if (!entry.invalidated) settled(value, entry.deferred);
         return value;
       }).finally(() => {
+        entry.settled = true;
         this.reads.delete(key);
         if (this.waitingForCapacity) {
           this.waitingForCapacity = false;
@@ -61,6 +68,41 @@ export class DisplayReadPool<T> {
     }
     return count;
   }
+}
+
+/** Local observation budget, never serialized as execution authority. */
+export type ReadObservationContext = { signal?: AbortSignal; deadlineAt?: number };
+
+/** Each observer can leave independently. The shared promise owns capacity. */
+export function observeDisplayRead<T>(
+  read: DisplayRead<T>,
+  context: ReadObservationContext,
+  noWaiters: () => void
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    read.waiters += 1;
+    const finish = (error?: Error, value?: T) => {
+      if (done) return;
+      done = true;
+      if (timer) clearTimeout(timer);
+      context.signal?.removeEventListener("abort", cancel);
+      read.waiters -= 1;
+      if (error) reject(error); else resolve(value as T);
+      if (!read.waiters && !read.settled) noWaiters();
+    };
+    const cancel = () => finish(new Error("STATE_READ_CANCELLED: Observation cancelled."));
+    const expire = () => finish(new Error("STATE_READ_STALE: Observation deadline expired; retain the last confirmed view."));
+    read.promise.then(value => finish(undefined, value), error => finish(error));
+    context.signal?.addEventListener("abort", cancel, { once: true });
+    if (context.signal?.aborted) cancel();
+    else if (context.deadlineAt !== undefined) {
+      const remaining = context.deadlineAt - Date.now();
+      if (remaining <= 0) expire();
+      else { timer = setTimeout(expire, remaining); timer.unref(); }
+    }
+  });
 }
 
 export async function waitForDisplay<T>(

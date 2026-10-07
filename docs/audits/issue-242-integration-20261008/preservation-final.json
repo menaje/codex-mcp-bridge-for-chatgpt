@@ -1,0 +1,48 @@
+{
+  "originalWorktrees": [
+    {
+      "path": "/Volumes/Data/Dev/codex-mcp-bridge",
+      "head": "ea8f93e2acbb9f4b6deca113165d27e8c9c23857",
+      "unchangedHeadAndStatus": true
+    },
+    {
+      "path": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-p0-w0",
+      "head": "f710974b33fc40432653c815d175058cba1adaee",
+      "unchangedHeadAndStatus": true
+    },
+    {
+      "path": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-r502",
+      "head": "e550798fe16bd5944f69f1941a98d249e84adefc",
+      "unchangedHeadAndStatus": true
+    },
+    {
+      "path": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-w1-baseline",
+      "head": "8474165e523b47d881f688bd09caf2e4c78ac7af",
+      "unchangedHeadAndStatus": true
+    },
+    {
+      "path": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-w1-read-path",
+      "head": "5353458221aa65aa1768f434379801d09761344c",
+      "unchangedHeadAndStatus": true
+    },
+    {
+      "path": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-w2-native",
+      "head": "8474165e523b47d881f688bd09caf2e4c78ac7af",
+      "unchangedHeadAndStatus": true
+    },
+    {
+      "path": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-w3-completion",
+      "head": "6580a196a36dacaa94fff7a6b5a101f58efff9a8",
+      "unchangedHeadAndStatus": true
+    },
+    {
+      "path": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-w4-runtime",
+      "head": "2eb315d529e57164b3e4a53cf24737ef3f4649e1",
+      "unchangedHeadAndStatus": true
+    }
+  ],
+  "worktreeList": "worktree /Volumes/Data/Dev/codex-mcp-bridge\nHEAD ea8f93e2acbb9f4b6deca113165d27e8c9c23857\nbranch refs/heads/dev\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-candidate-20261008\nHEAD b9cb19d49e8ef9192e1044ddd5880e66c06e1cca\nbranch refs/heads/codex/issue-242-candidate-20261008\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review\nHEAD e1cc5aea23da3fb8464301d00c0e905cca1b7bb7\nbranch refs/heads/codex/issue-242-integration-review\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-p0-w0\nHEAD f710974b33fc40432653c815d175058cba1adaee\nbranch refs/heads/codex/issue-242-p0-w0\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-r502\nHEAD e550798fe16bd5944f69f1941a98d249e84adefc\nbranch refs/heads/codex/issue-242-r502\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w1-baseline\nHEAD 8474165e523b47d881f688bd09caf2e4c78ac7af\ndetached\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w1-read-path\nHEAD 5353458221aa65aa1768f434379801d09761344c\nbranch refs/heads/codex/issue-242-w1-read-path\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w2-native\nHEAD 8474165e523b47d881f688bd09caf2e4c78ac7af\nbranch refs/heads/codex/issue-242-w2-native\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w3-completion\nHEAD 6580a196a36dacaa94fff7a6b5a101f58efff9a8\nbranch refs/heads/codex/issue-242-w3-completion\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w4-runtime\nHEAD 2eb315d529e57164b3e4a53cf24737ef3f4649e1\nbranch refs/heads/codex/issue-242-w4-runtime",
+  "unrelatedCandidate": "Created/validated by another task; never modified, stopped, reset, rebased, merged or removed by this task.",
+  "localDevPreserved": true,
+  "sourceBranchesPreserved": true
+}

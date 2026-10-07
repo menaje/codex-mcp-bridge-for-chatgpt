@@ -1,0 +1,23 @@
+{
+  "w3Head": "bff15a07b4838b3d5b5cb05a34f8c3c471da2af6",
+  "w3Base": "f710974b33fc40432653c815d175058cba1adaee",
+  "w4Head": "8474165e523b47d881f688bd09caf2e4c78ac7af",
+  "w4Status": "uncommitted work in progress; read-only snapshot, not final integration acceptance",
+  "overlap": [
+    {
+      "path": "macos/Sources/CodexBridgeMenuBar/AppModel.swift",
+      "oursSha256": "7e8c132d6e55bba690d8347a03a2c584c9f082c3884ca1297672ad71f9d64e33",
+      "w4WorkingCopySha256": "e0e9b1a284efbe456f99358389f11d15b406b8e7e6b4c7897ebc2b2b18785d9e",
+      "mergeFileExit": 0,
+      "conflictMarkerLines": 0
+    },
+    {
+      "path": "macos/Tests/CodexBridgeKitTests/AppPresentationTests.swift",
+      "oursSha256": "8bcbb86be2212c1808eded522b0f46713cdebdce3d2adf42bc4fbca11117b2e2",
+      "w4WorkingCopySha256": "12dc3fc9fe96ef929f591314f76dc900635dc6ae7eb6b3c9e72875831ca28a74",
+      "mergeFileExit": 0,
+      "conflictMarkerLines": 0
+    }
+  ],
+  "limitation": "Only the two overlapping tracked Swift files were checked with three-way merge-file. No branch, index, working copy, or conversation was changed."
+}

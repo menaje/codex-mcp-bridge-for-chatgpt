@@ -1,0 +1,147 @@
+ea8f93e2acbb9f4b6deca113165d27e8c9c23857
+264fa5c99ca1c8edeef50af247614204c8f3df53
+8bb81b1b27745532b7bc2113bb00e66c43df3bbb
+ea8f93e2acbb9f4b6deca113165d27e8c9c23857
+worktree /Volumes/Data/Dev/codex-mcp-bridge
+HEAD ea8f93e2acbb9f4b6deca113165d27e8c9c23857
+branch refs/heads/dev
+
+worktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-p0-w0
+HEAD 264fa5c99ca1c8edeef50af247614204c8f3df53
+branch refs/heads/codex/issue-242-p0-w0
+
+ea8f93e2acbb9f4b6deca113165d27e8c9c23857 fix: expose Codex CLI updates in the menu-bar footer
+9be3bb6c70b8673137fb8663c9137c07d1d7c90d fix: isolate and batch Dashboard database reads
+6b3368d6c51c4f4a9eb5a1e26e0b77541edf064c feat: share reasoning choices across selected models
+19c5b477090e46d9cc50d8fc402fc5acc25a14fe feat: simplify model and reasoning selection in settings
+fec4e6db9f0240a9bfea47c8f0b69a380e0ee5f7 Merge branch 'dev' into codex/fix-sidebar-search-layout
+e3c31c17fa231191d0e1357c001dcc016ccb90ef Merge processing speed picker changes into dev
+ec2f0317ec1a3aa90460151e756f244dd9d03a79 fix: keep sidebar search and menus at the top (#236)
+482a15964618d54d8938846fe0028f57e0e465e0 docs: conclude multilingual input source review (#236)
+1b2bc081e3a3c56afea27e513084fb47dff0362f docs: record final multilingual input verification and restored settings (#236)
+2746f05168d94dfc8aa1cb759a87e1ebb83a37dd Merge remote-tracking branch 'origin/dev' into dev
+18ba07c4e40f03286cb41ab5d559deaa23962f8c docs: record physical Korean search reacceptance (#236)
+cc3036c2d44d37f76e975bda359f1df9dba253e0 fix: preserve native sidebar search composition during refreshes (#236)
+c31d078308c37fbbacc3180d8a5eda291123fb03 Merge isolated IPC capacity verification into dev
+79ef0214768d2b13d6dac2cabcefb0d5fd6fb89d Merge capability read recovery fix into dev
+948d6c06879d05a77cdb468021b230e205343a03 Merge processing speed display fixes into dev
+4b9c86b51b6ab3f880fd537b52ea56100d1abd4e docs: record native input acceptance evidence and remaining IME checks (#236)
+60b1ca4143f93e96f68de04e4c1ad702290be81e fix(macos): exclude system find inputs from edit ownership (#236)
+3bb592d55da1885773aabe7c3689cebe550ab960 fix(macos): centralize draft and submission protection (#236)
+6bd8692eeb0c7bfcbd229b4ff93008e97fdcabee fix(macos): preserve byte-distinct multilingual document edits
+089e7b78baf98e024fb41dd36b3b4df3411ba8b8 fix(macos): preserve Hangul composition across native inputs
+116405e1a838eb251a7572b84a936891df49e1bb Fix documentation checks and execution test readiness
+b179733ca7d5db8e7888476ce737c8d92e09695d fix: allow thread initialization and preserve model trust context
+5dc05a49875ede987aa86a6041c8fddb36219ae7 docs: refresh user guides and English screenshots
+.changes/codex-cli-update-icon.json
+.changes/common-reasoning-policy.json
+.changes/dashboard-read-efficiency.json
+.changes/documentation-checks.json
+.changes/issue-236-native-edit-sessions.json
+.changes/issue-236-search-ime.json
+.changes/issue-236-sidebar-search-layout.json
+.changes/macos-hangul-input.json
+.changes/macos-verbatim-edit-detection.json
+.changes/simplify-model-reasoning-selection.json
+.changes/thread-initialization-model-trust.json
+.changes/user-documentation-refresh.json
+README.md
+docs/audits/2026-10-06-dashboard-read-efficiency.md
+docs/chatgpt-setup.md
+docs/codex-runtimes.md
+docs/images/README.md
+docs/images/chatgpt-activity-light-en.png
+docs/images/chatgpt-dashboard-light-en.png
+docs/images/chatgpt-settings-light-en.png
+docs/images/macos-codex-account-light-en.png
+docs/images/macos-dashboard-light-en.png
+docs/images/macos-menubar-usage-light-en.png
+docs/images/macos-settings-sidebar-light-en.png
+docs/images/macos-settings-sidebar-light-ko.png
+docs/images/macos-skill-library-light-en.png
+docs/macos-app.md
+docs/mcp-2026-07-28-migration.md
+docs/model-selection.md
+docs/native-edit-sessions.md
+docs/processing-speed.md
+docs/remote-client.md
+docs/security.md
+docs/setup.md
+docs/skills.md
+docs/state-execution-isolation.md
+docs/text-integrity.md
+docs/ui-release-compatibility.md
+locales/catalog.json
+locales/text-integrity-vectors.json
+macos/README.md
+macos/Resources/Localization/Localizable.xcstrings
+macos/Sources/CodexBridgeKit/BridgeApplicationClient.swift
+macos/Sources/CodexBridgeMenuBar/AppLocalization.swift
+macos/Sources/CodexBridgeMenuBar/AppModel.swift
+macos/Sources/CodexBridgeMenuBar/CodexAccountUsageView.swift
+macos/Sources/CodexBridgeMenuBar/CodexAuthSelectionViews.swift
+macos/Sources/CodexBridgeMenuBar/CodexBridgeMenuBarApp.swift
+macos/Sources/CodexBridgeMenuBar/ConnectionAssistantViews.swift
+macos/Sources/CodexBridgeMenuBar/DashboardViews.swift
+macos/Sources/CodexBridgeMenuBar/EditSession.swift
+macos/Sources/CodexBridgeMenuBar/GeneratedLocalization.swift
+macos/Sources/CodexBridgeMenuBar/ModelAllowlistDraft.swift
+macos/Sources/CodexBridgeMenuBar/ModelDescriptionSettings.swift
+macos/Sources/CodexBridgeMenuBar/SettingsViews.swift
+macos/Sources/CodexBridgeMenuBar/SkillsLibraryViews.swift
+macos/Sources/CodexBridgeMenuBar/TextInputViews.swift
+macos/Tests/CodexBridgeKitTests/AppPresentationTests.swift
+macos/Tests/CodexBridgeKitTests/EditSessionTests.swift
+macos/Tests/CodexBridgeKitTests/ModelAllowlistDraftTests.swift
+macos/Tests/CodexBridgeKitTests/NativeTextInputTests.swift
+macos/Tests/CodexBridgeKitTests/RemoteConnectionTests.swift
+macos/Tests/CodexBridgeKitTests/SettingsConnectionPresentationTests.swift
+macos/Tests/CodexBridgeKitTests/SidebarLayoutTests.swift
+macos/Tests/CodexBridgeKitTests/SkillsLibraryPresentationTests.swift
+macos/Tests/CodexBridgeKitTests/SkillsLibraryTextInputTests.swift
+macos/Tests/CodexBridgeKitTests/TextIntegrityTests.swift
+macos/input-contract.json
+package-lock.json
+package.json
+scripts/build-native-input-acceptance.mjs
+scripts/fixtures/NativeSettingsConnectionVisualAcceptance.swift
+scripts/model-description-browser-regression.ts
+scripts/model-selection-browser-regression.ts
+scripts/native-input-acceptance.swift
+scripts/native-input-contract.d.mts
+scripts/native-input-contract.mjs
+scripts/native-settings-connection-visual-acceptance.ts
+scripts/ultra-policy-browser-regression.ts
+src/appServerUpstream.ts
+src/codexModelConfig.ts
+src/codexService.ts
+src/companionServer.ts
+src/executionServiceProcess.ts
+src/generated/localization.ts
+src/modelDescriptionCard.ts
+src/modelSelectionPresentation.ts
+src/remoteCompanionServer.ts
+src/settingsCard.ts
+src/stateReadModels.ts
+src/stateReadProcess.ts
+src/stateStore.ts
+src/threadConnections.ts
+src/tools.ts
+src/uiManifest.generated.ts
+test/appServerLateResponses.test.ts
+test/appServerUpstream.test.ts
+test/codexService.test.ts
+test/companionServer.test.ts
+test/dashboardReadQueries.test.ts
+test/documentationNaming.test.ts
+test/executionServiceProcess.test.ts
+test/fixtures/fake-codex-app-server.mjs
+test/modelSelectionPresentation.test.ts
+test/nativeInputContract.test.ts
+test/remoteCompanionServer.test.ts
+test/stateReadProcess.test.ts
+test/textIntegrity.test.ts
+ui-manifest.lock.json
+ui-resources/settings.html
+264fa5c99ca1c8edeef50af247614204c8f3df53	refs/heads/dev
+8bb81b1b27745532b7bc2113bb00e66c43df3bbb	refs/heads/main

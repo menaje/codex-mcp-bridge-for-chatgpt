@@ -266,6 +266,9 @@ final class RuntimeLifecycleTests: XCTestCase {
         await f.bootstrap.release()
         for _ in 0..<100 { if model.isRemoteClient { break }; try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertTrue(model.isRemoteClient)
+        XCTAssertNil(model.lastConfirmedHelperCheck)
+        XCTAssertNil(model.helperObservationFailure)
+        XCTAssertFalse(model.hasRetainedBridgeObservation)
         XCTAssertTrue(String(decoding: try Data(contentsOf: f.receiptFile), as: UTF8.self).contains("completed"))
     }
 

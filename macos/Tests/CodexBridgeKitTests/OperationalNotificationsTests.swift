@@ -268,6 +268,107 @@ final class OperationalNotificationsTests: XCTestCase {
 
 @MainActor
 final class CompletionNotificationsTests: XCTestCase {
+    func testSingleflightAndGenerationFenceBeforeClaim() async throws {
+        let path = "/tmp/cb-w3-flight-\(UUID().uuidString.prefix(8)).sock"
+        let server = try NativeRPCFixture(path: path) { method in
+            if method == "completion.availability" {
+                return NativeFixtureReply(body: #"{"result":{"available":true}}"#, delay: 0.15)
+            }
+            return NativeFixtureReply(body: #"{"result":{"events":[]}}"#)
+        }
+        defer { server.stop() }
+        let delivery = CompletionNotificationDeliveryFixture()
+        let notifications = CompletionNotifications(delivery: delivery)
+        let client = BridgeCompanionClient(socketPath: path)
+        let first = Task { await notifications.refresh(client: client, locale: Locale(identifier: "en")) }
+        for _ in 0..<100 {
+            if server.count("completion.availability") > 0 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        await notifications.refresh(client: client, locale: Locale(identifier: "en"))
+        first.cancel()
+        _ = await first.value
+        XCTAssertEqual(server.count("completion.availability"), 1)
+        XCTAssertEqual(server.count("completion.claim"), 0)
+        await notifications.refresh(client: client, locale: Locale(identifier: "en"), isCurrent: { false })
+        XCTAssertEqual(server.count("completion.availability"), 1)
+    }
+
+    func testDeliveredButAckLostReleasesAndUsesSameIdentifierOnRecovery() async throws {
+        let path = "/tmp/cb-w3-ack-\(UUID().uuidString.prefix(8)).sock"
+        let server = try NativeRPCFixture(path: path) { method in
+            switch method {
+            case "completion.claim":
+                return NativeFixtureReply(body: #"{"result":{"events":[{"eventId":"stable-id","outboxId":7}]}}"#)
+            case "completion.delivered":
+                return NativeFixtureReply(body: #"{"error":{"code":-32000,"message":"ack lost"}}"#)
+            case "completion.release":
+                return NativeFixtureReply(body: #"{"result":{"ok":true}}"#)
+            default:
+                return NativeFixtureReply(body: #"{"error":{"code":-32601,"message":"unsupported"}}"#)
+            }
+        }
+        defer { server.stop() }
+        let delivery = CompletionNotificationDeliveryFixture()
+        let notifications = CompletionNotifications(delivery: delivery)
+        let client = BridgeCompanionClient(socketPath: path)
+        let first = await notifications.refresh(client: client, locale: Locale(identifier: "en"))
+        let second = await notifications.refresh(client: client, locale: Locale(identifier: "en"))
+        XCTAssertFalse(first)
+        XCTAssertFalse(second)
+        XCTAssertEqual(delivery.identifiers, ["stable-id", "stable-id"])
+        XCTAssertEqual(server.count("completion.release"), 2)
+    }
+
+    func testDeferredRetryPreflightDoesNotClaimAndRetainsDeadline() async throws {
+        let path = "/tmp/cb-w3-retry-\(UUID().uuidString.prefix(8)).sock"
+        let server = try NativeRPCFixture(path: path) { _ in
+            NativeFixtureReply(body: #"{"result":{"available":false,"nextAvailableAt":300000}}"#)
+        }
+        defer { server.stop() }
+        let notifications = CompletionNotifications(delivery: CompletionNotificationDeliveryFixture())
+        for _ in 0..<20 { await notifications.refresh(client: BridgeCompanionClient(socketPath: path), locale: Locale(identifier: "en")) }
+        XCTAssertEqual(server.count("completion.claim"), 0)
+        XCTAssertEqual(notifications.nextAvailableAt, Date(timeIntervalSince1970: 300))
+    }
+
+    func testPermissionRevokedDuringPreflightDoesNotClaim() async throws {
+        let path = "/tmp/cb-w3-permission-\(UUID().uuidString.prefix(8)).sock"
+        let server = try NativeRPCFixture(path: path) { _ in
+            NativeFixtureReply(body: #"{"result":{"available":true}}"#, delay: 0.15)
+        }
+        defer { server.stop() }
+        let delivery = CompletionNotificationDeliveryFixture()
+        let notifications = CompletionNotifications(delivery: delivery)
+        let pending = Task { await notifications.refresh(client: BridgeCompanionClient(socketPath: path), locale: Locale(identifier: "en")) }
+        for _ in 0..<100 {
+            if server.count("completion.availability") > 0 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        delivery.authorized = false
+        _ = await pending.value
+        XCTAssertEqual(server.count("completion.claim"), 0)
+    }
+
+    func testIssue242RepeatedEmptyClaimsAndPermissionGate() async throws {
+        let path = "/tmp/cb-242-empty-\(UUID().uuidString.prefix(8)).sock"
+        let server = try NativeRPCFixture(path: path) { _ in
+            NativeFixtureReply(body: #"{"result":{"available":false}}"#)
+        }
+        defer { server.stop() }
+        let delivery = CompletionNotificationDeliveryFixture()
+        let notifications = CompletionNotifications(delivery: delivery)
+        let client = BridgeCompanionClient(socketPath: path)
+        for _ in 0..<20 { await notifications.refresh(client: client, locale: Locale(identifier: "en")) }
+        XCTAssertEqual(server.count("completion.availability"), 20)
+        XCTAssertEqual(server.count("completion.claim"), 0)
+        XCTAssertEqual(server.count("completion.delivered"), 0)
+        delivery.authorized = false
+        for _ in 0..<20 { await notifications.refresh(client: client, locale: Locale(identifier: "en")) }
+        XCTAssertEqual(server.count("completion.availability"), 20)
+        XCTAssertEqual(server.count("completion.claim"), 0)
+    }
+
     func testSuccessfulDeliveryClaimsAndAcknowledgesOpaqueEvents() async throws {
         let path = "/tmp/cb-completion-success-\(UUID().uuidString.prefix(8)).sock"
         let server = try NativeRPCFixture(path: path) { method in

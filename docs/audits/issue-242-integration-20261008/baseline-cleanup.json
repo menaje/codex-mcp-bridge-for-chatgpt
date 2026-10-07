@@ -1,0 +1,19 @@
+{
+  "at": "2026-10-07T19:13:33.439293+00:00",
+  "worktree": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-base",
+  "head": "f710974b33fc40432653c815d175058cba1adaee",
+  "target": "codex/issue-242-integration-review",
+  "cleanTrackedAndUntracked": true,
+  "ancestorOfReview": true,
+  "ignoredRoots": [
+    "dist",
+    "node_modules"
+  ],
+  "ignoredFiles": 3276,
+  "ignoredOwnership": "Created by this task: existing dependency clone and baseline build outputs; audit evidence retained in the review worktree.",
+  "processReferences": [],
+  "openWorkReview": "Task-owned detached baseline only; all baseline commands completed, no branch/PR/remote work was created. Manually created via git worktree, not Codex-managed or conversation-associated. Existing component and unrelated candidate worktrees are excluded.",
+  "removedAt": "2026-10-07T19:15:14.206241+00:00",
+  "removed": true,
+  "method": "git worktree remove (no force) from review worktree with review integration target already set"
+}

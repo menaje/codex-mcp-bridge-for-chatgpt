@@ -1,0 +1,39 @@
+{
+  "productDefects": [],
+  "supplementalHarnessFailure": {
+    "command": {
+      "id": "read-samples",
+      "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008",
+      "tmpdir": "/tmp/cb242-independent-extra-xS4muY",
+      "command": "/usr/sbin/taskpolicy",
+      "args": [
+        "-a",
+        "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008/node_modules/.bin/tsx",
+        "/tmp/issue-242-independent-20261008/read-samples.mts"
+      ],
+      "source": "de037d99d82aa42c5a792c1d3bd9c88afb45b173 e1cc5aea23da3fb8464301d00c0e905cca1b7bb7 b7c4cee8d90725dd4fa554cb777b201af50e899a",
+      "startedAt": "2026-10-07T19:35:23.516Z",
+      "code": 1,
+      "signal": null,
+      "durationMs": 1700,
+      "finishedAt": "2026-10-07T19:35:25.217Z"
+    },
+    "log": "initial-read-samples.log",
+    "source": "initial-read-samples.mts",
+    "assertion": "statusRows.length expected 120, actual 0",
+    "classification": "Verifier-owned synthetic fixture expectation error; no candidate defect or edit.",
+    "evidence": "Stock fixture latest Job per Agent is completed. dashboardSummaryCategory(completed) is null, and statusRows filters rows without a status category/background process. dashboardPresentation.ts has identical blob 99fc1ede7388015f56f78e07079ae5d0e93ccfea at remote dev and candidate. History page covers completed Jobs.",
+    "correction": "Only the external supplementary fixture changes each Agent latest Job to failed before starting its owned reader (30% failed overall), retains 120-row and 12-row assertions, then samples populated status/history and equal detail revisions. Candidate fixture and code unchanged.",
+    "finalOutcome": "PASS; 100 samples per mode; zero abandoned/deadline reads; zero occupied capacity after completion."
+  },
+  "whitespace": {
+    "candidateFullDiffCheckExit": 2,
+    "findings": 8,
+    "scope": "New blank line at EOF in preserved W1/W2 audit transcripts only",
+    "log": "candidate-diff-check.log",
+    "productDiffCheckExit": 0,
+    "blocking": false,
+    "candidateModified": false
+  },
+  "historicalIntegrationFailures": "Candidate audit preserves the obsolete immediate-reclaim harness assertion, R502 asynchronous test synchronization race, and temporary ESM package.json contamination. Their saved controls and corrections were inspected; no timeout/expectation weakening or unreported failure in this verifier full suites."
+}

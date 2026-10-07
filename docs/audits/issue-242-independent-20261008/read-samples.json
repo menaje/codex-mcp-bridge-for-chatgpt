@@ -1,0 +1,64 @@
+{
+  "scope": "1200 synthetic Jobs/120 Agents; latest per Agent failed (30% total failure); populated 12-row history page and complete 120-row native status summary; compiled read child",
+  "coldWarm": "one warmup per list mode, same child; fresh registry per physical query; OS cache and host load uncontrolled",
+  "samplesPerMode": 100,
+  "groups": {
+    "native-status-summary-120": {
+      "latencyMs": {
+        "samples": 100,
+        "p50": 22.49420800000007,
+        "p95": 33.200874999999996,
+        "p99": 37.89158300000008,
+        "max": 41.013334000000214
+      },
+      "returnedRows": 120,
+      "selectStatements": {
+        "samples": 100,
+        "p50": 36,
+        "p95": 36,
+        "p99": 36,
+        "max": 36
+      }
+    },
+    "history-page-12": {
+      "latencyMs": {
+        "samples": 100,
+        "p50": 22.683540999999423,
+        "p95": 28.4292089999999,
+        "p99": 31.341333999999733,
+        "max": 31.572667000000365
+      },
+      "returnedRows": 12,
+      "selectStatements": {
+        "samples": 100,
+        "p50": 36,
+        "p95": 36,
+        "p99": 36,
+        "max": 36
+      }
+    },
+    "detail": {
+      "latencyMs": {
+        "samples": 100,
+        "p50": 2.32495900000049,
+        "p95": 3.516000000000531,
+        "p99": 6.251749999999447,
+        "max": 10.398583999999573
+      },
+      "selectStatements": {
+        "samples": 100,
+        "p50": 27,
+        "p95": 27,
+        "p99": 27,
+        "max": 27
+      }
+    }
+  },
+  "deadlineFailures": 0,
+  "physicalReadCapacityAfter": 0,
+  "limits": [
+    "after-only supplementary sample; original exact-base comparison retained separately",
+    "after-only fixture changes latest completed Jobs to failed to populate status summary; original fixture remains untouched",
+    "nine-byte synthetic Job results; population tails, installed latency, pure transport and SQL lock waits unproven"
+  ]
+}

@@ -17,6 +17,7 @@ import {
 } from "./server.js";
 import type { OperationalStateOperationObservation } from "./stateService.js";
 import { operationalStateErrorCode } from "./stateServiceProcess.js";
+import type { ReadObservationContext } from "./displayReadPool.js";
 import { ChildProcessStateReadService } from "./stateReadProcess.js";
 import { BridgeStateStore } from "./stateStore.js";
 import {
@@ -33,6 +34,8 @@ import type {
   BridgeRuntimeAdmissionSnapshot
 } from "./tools.js";
 import { decodeUtf8Strict } from "./textIntegrity.js";
+import { BoundedHttpDiagnostics, HTTP_DIAGNOSTIC_HEADER, isChildHttpObservation, httpDiagnosticContext,
+  type HttpDiagnosticSession, type HttpObservation } from "./httpDiagnostics.js";
 
 type RuntimeStateServiceStatus = NonNullable<
   BridgeRuntimeAdmissionSnapshot["stateService"]
@@ -47,6 +50,16 @@ const HEARTBEAT_STALE_MS = 2_000;
 // These are observation budgets. They never limit the lifetime of a Codex Job.
 const RPC_OBSERVATION_TIMEOUT_MS = 120_000;
 const PROXY_IDLE_TIMEOUT_MS = 120_000;
+
+/** Private, opt-in phase evidence; never includes headers, body, URL or MCP ID. */
+export type ProxyObservation = HttpObservation;
+type ProxyDiagnostics = {
+  observe: (value: ProxyObservation) => void;
+  /** Whole-runtime request budget, clamped to 0..128 (32 records per request). */
+  maximumRequests?: number;
+  /** Fixture-only idle limit; does not change the default production budget. */
+  idleTimeoutMs?: number;
+};
 const STARTUP_TIMEOUT_MS = 20_000;
 const FORCE_CLOSE_MS = 5_000;
 const MAX_PENDING_REQUESTS = 128;
@@ -82,6 +95,7 @@ const APPLICATION_RPC_METHODS = [
   "runtimeSnapshot",
   "beginDrain",
   "cancelDrain",
+  "nativeCompletionAvailability",
   "claimNativeCompletionNotifications",
   "markNativeCompletionNotificationsDelivered",
   "releaseNativeCompletionNotifications",
@@ -104,8 +118,10 @@ const APPLICATION_RPC_METHODS = [
 
 type ApplicationRpcMethod = (typeof APPLICATION_RPC_METHODS)[number];
 type ApplicationRpcKind = "command" | "query" | "control";
+const OBSERVATION_READ_METHODS = new Set<ApplicationRpcMethod>(["dashboardSnapshot", "dashboardHistoryDetail", "settingsSnapshot"]);
 
 const APPLICATION_QUERY_METHODS = new Set<ApplicationRpcMethod>([
+  "nativeCompletionAvailability",
   "dashboardSnapshot",
   "dashboardHistoryDetail",
   "settingsSnapshot",
@@ -119,6 +135,7 @@ const APPLICATION_QUERY_METHODS = new Set<ApplicationRpcMethod>([
 ]);
 
 const APPLICATION_CONTROL_METHODS = new Set<ApplicationRpcMethod>([
+  "nativeCompletionAvailability",
   "beginDrain",
   "cancelDrain",
   "claimNativeCompletionNotifications",
@@ -160,7 +177,7 @@ type RuntimeOperationClearMessage = {
 type RuntimeChangeMessage = {
   type: "change";
   generation: string;
-  topic: "dashboard" | "settings" | "enrichment";
+  topic: "dashboard" | "settings" | "enrichment" | "completion-outbox-ready";
 };
 
 type RuntimeExecutionProcessMessage = {
@@ -179,6 +196,7 @@ type RuntimeRpcResponseMessage = {
 };
 
 type RuntimeFatalMessage = { type: "fatal"; message: string };
+type RuntimeHttpObservationMessage = { type: "http-observation"; generation: string; observation: HttpObservation };
 
 type RuntimeChildMessage =
   | RuntimeReadyMessage
@@ -188,6 +206,7 @@ type RuntimeChildMessage =
   | RuntimeChangeMessage
   | RuntimeExecutionProcessMessage
   | RuntimeRpcResponseMessage
+  | RuntimeHttpObservationMessage
   | RuntimeFatalMessage;
 
 type RuntimeRpcRequestMessage = {
@@ -199,10 +218,12 @@ type RuntimeRpcRequestMessage = {
   kind: ApplicationRpcKind;
   method: ApplicationRpcMethod;
   args: unknown[];
+  deadlineAt?: number;
 };
 
+type RuntimeCancelReadMessage = { type: "cancel-read"; generation: string; requestId: string };
 type RuntimeCloseMessage = { type: "close" };
-type RuntimeParentMessage = RuntimeRpcRequestMessage | RuntimeCloseMessage;
+type RuntimeParentMessage = RuntimeRpcRequestMessage | RuntimeCloseMessage | RuntimeCancelReadMessage;
 
 type PendingRpc = {
   resolve(value: unknown): void;
@@ -245,6 +266,8 @@ export async function createIsolatedHttpServer(
     onExecutionProcessSpawn?: (processId: number) => void;
     /** Test-only override for deterministic replacement-timeout coverage. */
     restartStartupTimeoutMs?: number;
+    /** Bounded private fixture diagnostics, disabled by default. */
+    proxyDiagnostics?: ProxyDiagnostics;
   } = {}
 ): Promise<BridgeHttpServer> {
   const childEnvironment = {
@@ -265,7 +288,8 @@ export async function createIsolatedHttpServer(
     undefined,
     options.onRuntimeProcessSpawn,
     options.onExecutionProcessSpawn,
-    options.restartStartupTimeoutMs
+    options.restartStartupTimeoutMs,
+    options.proxyDiagnostics
   );
   const applicationService = runtime.applicationService();
   const server = createServer((request, response) => {
@@ -376,7 +400,7 @@ class IsolatedRuntimeController {
   private readonly pending = new Map<string, PendingRpc>();
   private readonly abandoned = new Set<string>();
   private readonly changeListeners = new Set<
-    (topic: "dashboard" | "settings" | "enrichment") => void
+    (topic: "dashboard" | "settings" | "enrichment" | "completion-outbox-ready") => void
   >();
   private activeProxyRequests = 0;
   private activeProxyBytes = 0;
@@ -388,6 +412,8 @@ class IsolatedRuntimeController {
   private startupReject?: (error: Error) => void;
   private startupTimer?: NodeJS.Timeout;
   private stderr = "";
+  private readonly httpDiagnostics?: BoundedHttpDiagnostics;
+  private readonly httpTraces = new WeakMap<import("node:http").IncomingMessage, HttpDiagnosticSession>();
 
   private constructor(
     private readonly transport: RuntimeTransport,
@@ -397,8 +423,12 @@ class IsolatedRuntimeController {
     private readonly output?: Writable,
     private readonly onRuntimeProcessSpawn?: (processId: number) => void,
     private readonly onExecutionProcessSpawn?: (processId: number) => void,
-    private readonly restartStartupTimeoutMs = STARTUP_TIMEOUT_MS
-  ) {}
+    private readonly restartStartupTimeoutMs = STARTUP_TIMEOUT_MS,
+    private readonly proxyDiagnostics?: ProxyDiagnostics
+  ) {
+    if (proxyDiagnostics) this.httpDiagnostics = new BoundedHttpDiagnostics(
+      proxyDiagnostics.observe, proxyDiagnostics.maximumRequests);
+  }
 
   static async start(
     transport: RuntimeTransport,
@@ -408,7 +438,8 @@ class IsolatedRuntimeController {
     output?: Writable,
     onRuntimeProcessSpawn?: (processId: number) => void,
     onExecutionProcessSpawn?: (processId: number) => void,
-    restartStartupTimeoutMs?: number
+    restartStartupTimeoutMs?: number,
+    proxyDiagnostics?: ProxyDiagnostics
   ): Promise<IsolatedRuntimeController> {
     const runtime = new IsolatedRuntimeController(
       transport,
@@ -418,7 +449,8 @@ class IsolatedRuntimeController {
       output,
       onRuntimeProcessSpawn,
       onExecutionProcessSpawn,
-      restartStartupTimeoutMs
+      restartStartupTimeoutMs,
+      proxyDiagnostics
     );
     try {
       await runtime.spawnAndWait();
@@ -436,14 +468,15 @@ class IsolatedRuntimeController {
       problemAction: (...args) => rpc("problemAction", ...args),
       historyAction: (...args) => rpc("historyAction", ...args),
       threadHandoff: (...args) => rpc("threadHandoff", ...args),
-      dashboardSnapshot: (...args) => rpc("dashboardSnapshot", ...args),
-      dashboardHistoryDetail: (...args) => rpc("dashboardHistoryDetail", ...args),
-      settingsSnapshot: (...args) => rpc("settingsSnapshot", ...args),
+      dashboardSnapshot: (options, context) => this.rpc("dashboardSnapshot", [options || {}], context) as ReturnType<BridgeApplicationService["dashboardSnapshot"]>,
+      dashboardHistoryDetail: (options, context) => this.rpc("dashboardHistoryDetail", [options], context) as Promise<import("./tools.js").DashboardHistoryDetail>,
+      settingsSnapshot: (options, context) => this.rpc("settingsSnapshot", [options || {}], context) as ReturnType<BridgeApplicationService["settingsSnapshot"]>,
       updateSettings: (...args) => rpc("updateSettings", ...args),
       runtimeSnapshot: (...args) => rpc("runtimeSnapshot", ...args),
       runtimeHealth: () => this.runtimeHealth(),
       beginDrain: (...args) => rpc("beginDrain", ...args),
       cancelDrain: (...args) => rpc("cancelDrain", ...args),
+      nativeCompletionAvailability: (...args) => rpc("nativeCompletionAvailability", ...args),
       claimNativeCompletionNotifications: (...args) =>
         rpc("claimNativeCompletionNotifications", ...args),
       markNativeCompletionNotificationsDelivered: (...args) =>
@@ -595,7 +628,47 @@ class IsolatedRuntimeController {
       ordinarySlotReserved: boolean;
     }
   ): void {
+    let trace = this.httpTraces.get(incoming);
+    if (!bufferedRequest) {
+      trace = this.httpDiagnostics?.start("ingress");
+      if (trace) {
+        this.httpTraces.set(incoming, trace);
+        trace.record("admitted");
+        incoming.once("aborted", () => trace!.record("caller-aborted", true));
+        const writeHead = outgoing.writeHead;
+        outgoing.writeHead = function (this: import("node:http").ServerResponse, ...args: Parameters<typeof writeHead>) {
+          trace!.record("response-header-start");
+          const result = writeHead.apply(this, args);
+          trace!.headersSent = this.headersSent;
+          return result;
+        } as typeof outgoing.writeHead;
+        outgoing.once("finish", () => {
+          trace!.callerComplete = true;
+          trace!.headersSent = outgoing.headersSent;
+          trace!.record("response-complete");
+        });
+        outgoing.once("close", () => {
+          trace!.headersSent = outgoing.headersSent;
+          trace!.record("caller-closed", !outgoing.writableFinished);
+        });
+      }
+    }
+    const observe = (phase: ProxyObservation["phase"], terminal = false, reusedSocket?: boolean) => {
+      if (!trace) return;
+      trace.headersSent = outgoing.headersSent;
+      trace.record(phase, terminal, {
+        activeRequests: this.activeProxyRequests, activeBytes: this.activeProxyBytes,
+        ...(reusedSocket !== undefined ? { reusedSocket } : {})
+      });
+    };
+    // Rejected requests have no proxy allocation; observe their final boundary.
+    const rejected = () => {
+      observe("admission-rejected", true);
+      outgoing.once("finish", () => observe("cleanup"));
+      outgoing.once("close", () => { if (!outgoing.writableFinished) observe("cleanup"); });
+    };
     if (this.port === undefined || !this.child?.connected) {
+      rejected();
       if (bufferedRequest) {
         this.activeProxyRequests -= 1;
         writeUnavailable(outgoing, this.readiness(), "not-observed", {}, bufferedRequest.capture.id());
@@ -604,6 +677,7 @@ class IsolatedRuntimeController {
     }
     const declaredLength = requestContentLength(incoming.headers);
     if (declaredLength !== undefined && declaredLength > MAX_RPC_BYTES) {
+      rejected();
       bufferedRequest?.capture.dispose();
       if (bufferedRequest) this.activeProxyRequests -= 1;
       writeJson(outgoing, 413, {
@@ -615,6 +689,7 @@ class IsolatedRuntimeController {
     }
     if (!bufferedRequest && declaredLength !== undefined &&
         this.activeProxyBytes + declaredLength > MAX_PROXY_BYTES_IN_FLIGHT) {
+      rejected();
       writeMcpUnavailable(incoming, outgoing, this.readiness(), "not-observed", {
         reason: "state-capacity", limitations: ["state-capacity"]
       });
@@ -643,6 +718,7 @@ class IsolatedRuntimeController {
           normalAdmission: unknownLengthMcpPost && !needsPriorityReservation
         });
       } else {
+        rejected();
         writeMcpUnavailable(incoming, outgoing, this.readiness(), "not-observed");
       }
       return;
@@ -654,6 +730,7 @@ class IsolatedRuntimeController {
     if (bufferedOrdinaryOverCapacity ||
         (declaredLength !== undefined || bufferedRequest) &&
         this.activeProxyBytes + (bufferedRequest?.body.length ?? declaredLength ?? 0) > MAX_PROXY_BYTES_IN_FLIGHT) {
+      rejected();
       const failure = { reason: "state-capacity" as const, limitations: ["state-capacity"] };
       if (bufferedRequest) {
         this.activeProxyRequests -= 1;
@@ -668,6 +745,7 @@ class IsolatedRuntimeController {
     let responseStarted = false;
     let settled = false;
     let requestOutcome: ProxyRequestOutcome = "not-observed";
+    observe("dispatch");
     const requestIdCapture = bufferedRequest?.capture || new McpRequestIdCapture();
     const finish = () => {
       if (settled) return;
@@ -675,8 +753,10 @@ class IsolatedRuntimeController {
       requestIdCapture.dispose();
       this.activeProxyRequests = Math.max(0, this.activeProxyRequests - 1);
       this.activeProxyBytes = Math.max(0, this.activeProxyBytes - requestBytes);
+      observe("cleanup");
     };
     const rejectBody = (reason: "request-bytes" | "state-capacity") => {
+      observe("body-rejected", true);
       proxied.destroy(new Error(
         reason === "request-bytes" ? "RUNTIME_REQUEST_TOO_LARGE" : "RUNTIME_CAPACITY"
       ));
@@ -703,28 +783,42 @@ class IsolatedRuntimeController {
       port,
       method: incoming.method,
       path: incoming.url,
-      headers: requestHeaders(incoming.headers)
+      headers: { ...requestHeaders(incoming.headers),
+        ...(trace ? { [HTTP_DIAGNOSTIC_HEADER]: trace.requestId } : {}) }
     }, response => {
       responseStarted = true;
-      if (outgoing.destroyed) {
+      if (trace) trace.responseStarted = true;
+      observe("response-headers");
+      response.once("end", () => {
+        if (trace) trace.upstreamComplete = response.complete;
+        observe("response-end", true);
+        finish();
+      });
+      response.once("error", error => {
+        observe("upstream-response-error", true);
+        if (settled) return;
+        if (!outgoing.destroyed) outgoing.destroy(error);
+        finish();
+      });
+      response.once("close", () => observe("upstream-close"));
+      if (settled || outgoing.destroyed) {
         response.destroy();
         finish();
         return;
       }
       outgoing.writeHead(response.statusCode || 502, responseHeaders(response.headers));
       response.pipe(outgoing);
-      response.once("end", finish);
-      response.once("error", error => {
-        if (!outgoing.destroyed) outgoing.destroy(error);
-        finish();
-      });
     });
     proxied.once("finish", () => {
       // The full request crossed the supervisor boundary. The child may have
       // acted even if its response or next heartbeat is never observed.
       requestOutcome = "unknown";
+      if (trace) trace.outcome = requestOutcome;
+      observe("request-finished", false, proxied.reusedSocket);
     });
-    proxied.setTimeout(PROXY_IDLE_TIMEOUT_MS, () => {
+    proxied.setTimeout(this.proxyDiagnostics?.idleTimeoutMs ?? PROXY_IDLE_TIMEOUT_MS, () => {
+      observe("idle-timeout", true);
+      if (settled) return;
       proxied.destroy(new Error("RUNTIME_RESPONSE_UNCONFIRMED"));
       if (!responseStarted && !outgoing.headersSent) {
         writeUnavailable(outgoing, this.readiness(), requestOutcome, {}, requestIdCapture.id());
@@ -734,6 +828,8 @@ class IsolatedRuntimeController {
       finish();
     });
     proxied.once("error", error => {
+      observe("upstream-request-error", true);
+      if (settled) return;
       if (!outgoing.headersSent) {
         writeUnavailable(
           outgoing,
@@ -751,6 +847,7 @@ class IsolatedRuntimeController {
       finish();
     });
     incoming.once("aborted", () => {
+      if (settled) return;
       proxied.destroy();
       finish();
     });
@@ -792,6 +889,8 @@ class IsolatedRuntimeController {
     const capture = new McpRequestIdCapture();
     let settled = false;
     let reservedBytes = 0;
+    const trace = this.httpTraces.get(incoming);
+    trace?.record("queued", false, { activeRequests: this.activeProxyRequests, activeBytes: this.activeProxyBytes });
     const releaseBytes = () => {
       this.activeProxyBytes = Math.max(0, this.activeProxyBytes - reservedBytes);
       reservedBytes = 0;
@@ -809,6 +908,8 @@ class IsolatedRuntimeController {
       cleanup();
       releaseBytes();
       this.activeProxyRequests -= 1;
+      trace?.record("body-rejected", true);
+      trace?.record("cleanup", false, { activeRequests: this.activeProxyRequests, activeBytes: this.activeProxyBytes });
       const id = capture.id();
       capture.dispose();
       if (reason === "request-bytes") {
@@ -905,7 +1006,8 @@ class IsolatedRuntimeController {
     );
   }
 
-  private rpc(method: ApplicationRpcMethod, args: unknown[]): Promise<unknown> {
+  private rpc(method: ApplicationRpcMethod, args: unknown[], context?: ReadObservationContext): Promise<unknown> {
+    if (context?.signal?.aborted) return Promise.reject(new Error("STATE_READ_CANCELLED: Observation cancelled."));
     if (!this.child?.connected || !this.generation) {
       return Promise.reject(new Error(
         "RUNTIME_RESPONSE_UNCONFIRMED: The isolated Bridge runtime is not currently responsive."
@@ -928,26 +1030,36 @@ class IsolatedRuntimeController {
       requestId,
       kind: applicationRpcKind(method),
       method,
-      args
+      args,
+      ...(context?.deadlineAt !== undefined ? { deadlineAt: context.deadlineAt } : {})
     };
     if (Buffer.byteLength(JSON.stringify(message), "utf8") > MAX_RPC_BYTES) {
       return Promise.reject(new Error("RUNTIME_REQUEST_TOO_LARGE: Runtime request exceeds its IPC limit."));
     }
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const abandon = (error: Error) => {
         const pending = this.pending.get(requestId);
         if (!pending) return;
         this.pending.delete(requestId);
         this.abandoned.add(requestId);
-        pending.reject(new Error(
-          "RUNTIME_RESPONSE_UNCONFIRMED: The isolated Bridge runtime did not answer within the observation budget; the operation outcome is unknown."
-        ));
-      }, this.rpcObservationTimeoutMs());
+        pending.reject(error);
+        if (OBSERVATION_READ_METHODS.has(method)) this.child?.send({ type: "cancel-read",
+          generation: message.generation, requestId } satisfies RuntimeCancelReadMessage, () => {});
+      };
+      const cancel = () => abandon(new Error("STATE_READ_CANCELLED: Observation cancelled."));
+      const timer = setTimeout(() => {
+        abandon(new Error(OBSERVATION_READ_METHODS.has(method)
+          ? "STATE_READ_STALE: Observation deadline expired; retain the last confirmed view."
+          : "RUNTIME_RESPONSE_UNCONFIRMED: The isolated Bridge runtime did not answer within the observation budget; the operation outcome is unknown."));
+      }, Math.max(1, Math.min(this.rpcObservationTimeoutMs(), (context?.deadlineAt ?? Infinity) - Date.now())));
       timer.unref();
+      const cleanup = () => { clearTimeout(timer); context?.signal?.removeEventListener("abort", cancel); };
       this.pending.set(requestId, {
-        resolve: value => { clearTimeout(timer); resolve(value); },
-        reject: error => { clearTimeout(timer); reject(error); }
+        resolve: value => { cleanup(); resolve(value); },
+        reject: error => { cleanup(); reject(error); }
       });
+      context?.signal?.addEventListener("abort", cancel, { once: true });
+      if (context?.signal?.aborted) cancel();
       this.child?.send(message, error => {
         if (!error) return;
         const pending = this.pending.get(requestId);
@@ -970,6 +1082,7 @@ class IsolatedRuntimeController {
       : [modulePath, CHILD_FLAG];
     if (this.transport === "stdio") args.push(CHILD_STDIO_FLAG);
     if (this.conformanceFixtures) args.push("--conformance-fixtures");
+    if (this.httpDiagnostics) args.push("--http-diagnostics");
     const child = spawn(process.execPath, args, {
       cwd: process.cwd(),
       env: this.childEnvironment,
@@ -1050,6 +1163,10 @@ class IsolatedRuntimeController {
       return;
     }
     if (value.generation !== this.generation) return;
+    if (value.type === "http-observation") {
+      this.httpDiagnostics?.receiveChild(value.observation);
+      return;
+    }
     if (value.type === "heartbeat") {
       this.lastHeartbeatAt = value.heartbeatAt;
       this.lastRuntimeHealth = value.runtimeHealth;
@@ -1165,6 +1282,8 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
     }
   };
   const observeTransaction = (phase: OperationalStateOperationObservation["phase"]) => {
+    const trace = httpDiagnosticContext.getStore();
+    trace?.recordOnce(phase === "responding" ? "state-yield" : "state-start");
     const token = ++observationToken;
     if (phase === "write-lock-wait" || operationStartedAt === 0) {
       operationStartedAt = Date.now();
@@ -1226,6 +1345,8 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
     if (activeOperation?.access === "write") return;
     const statement = sql.trimStart().toUpperCase();
     if (!/^(SELECT|WITH|PRAGMA|EXPLAIN)\b/u.test(statement)) return;
+    const trace = httpDiagnosticContext.getStore();
+    if (trace?.recordOnce("state-start")) queueMicrotask(() => trace.recordOnce("state-yield"));
     // A synchronous projection can execute many reads before the event loop
     // yields. Keep its first read observation instead of sending one IPC
     // message per statement; the queued microtask closes the whole span.
@@ -1374,7 +1495,9 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
         healthDiagnostics: () => ({ appServerLateResponses: appServerLateResponses.status() }),
         conformanceFixtures,
         onOperationFailure: observeStorageFailure,
-        canAcceptNewJobs: canAcceptExecution
+        canAcceptNewJobs: canAcceptExecution,
+        httpDiagnostics: process.argv.includes("--http-diagnostics")
+          ? observation => send({ type: "http-observation", generation, observation }) : undefined
       });
       await new Promise<void>((resolve, reject) => {
         httpServer?.once("error", reject);
@@ -1512,6 +1635,7 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
       timer.unref();
     }
 
+    const readObservers = new Map<string, AbortController>();
     process.on("message", value => {
       if (!isRuntimeParentMessage(value) || closing) return;
       if (value.type === "close") {
@@ -1519,7 +1643,11 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
         return;
       }
       if (value.generation !== generation) return;
-      void dispatchApplicationRpc(applicationService as BridgeApplicationService, value).then(
+      if (value.type === "cancel-read") { readObservers.get(value.requestId)?.abort(); return; }
+      const observer = OBSERVATION_READ_METHODS.has(value.method) ? new AbortController() : undefined;
+      if (observer) readObservers.set(value.requestId, observer);
+      void dispatchApplicationRpc(applicationService as BridgeApplicationService, value,
+        observer ? { signal: observer.signal, deadlineAt: value.deadlineAt } : undefined).then(
         result => send({
           type: "rpc-response",
           generation,
@@ -1540,7 +1668,7 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
             }
           });
         }
-      );
+      ).finally(() => readObservers.delete(value.requestId));
     });
     if (transport === "stdio") process.stdin.once("end", () => { void close(0, false); });
     process.once("disconnect", () => { void close(0, false); });
@@ -1554,7 +1682,8 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
 
 async function dispatchApplicationRpc(
   applicationService: BridgeApplicationService,
-  request: RuntimeRpcRequestMessage
+  request: RuntimeRpcRequestMessage,
+  context?: ReadObservationContext
 ): Promise<unknown> {
   const operation = applicationService[request.method];
   if (typeof operation !== "function") {
@@ -1562,7 +1691,7 @@ async function dispatchApplicationRpc(
   }
   const result = await (operation as (...args: unknown[]) => unknown).apply(
     applicationService,
-    request.args
+    context ? [...request.args, context] : request.args
   );
   const encoded = JSON.stringify(result === undefined ? null : result);
   if (Buffer.byteLength(encoded, "utf8") > MAX_RPC_BYTES) {
@@ -1638,9 +1767,10 @@ function isRuntimeChildMessage(value: unknown): value is RuntimeChildMessage {
     return typeof message.generation === "string" && isOperation(message.observation);
   }
   if (message.type === "operation-clear") return typeof message.generation === "string";
+  if (message.type === "http-observation") return typeof message.generation === "string" && isChildHttpObservation(message.observation);
   if (message.type === "change") {
     return typeof message.generation === "string" &&
-      ["dashboard", "settings", "enrichment"].includes(String(message.topic));
+      ["dashboard", "settings", "enrichment", "completion-outbox-ready"].includes(String(message.topic));
   }
   if (message.type === "execution-process") {
     return typeof message.generation === "string" &&
@@ -1657,7 +1787,8 @@ function isRuntimeParentMessage(value: unknown): value is RuntimeParentMessage {
   if (!value || typeof value !== "object") return false;
   const message = value as Record<string, unknown>;
   if (message.type === "close") return true;
-  return message.type === "rpc" &&
+  if (message.type === "cancel-read") return typeof message.generation === "string" && typeof message.requestId === "string";
+  return (message.deadlineAt === undefined || Number.isSafeInteger(message.deadlineAt)) && message.type === "rpc" &&
     message.protocol === STATE_OWNER_PROTOCOL &&
     message.protocolVersion === STATE_OWNER_PROTOCOL_VERSION &&
     typeof message.generation === "string" &&
@@ -1708,6 +1839,7 @@ function isOperation(value: unknown): value is OperationalStateOperationObservat
 function requestHeaders(headers: IncomingHttpHeaders): IncomingHttpHeaders {
   const result = { ...headers };
   for (const name of HOP_BY_HOP_HEADERS) delete result[name];
+  delete result[HTTP_DIAGNOSTIC_HEADER];
   return result;
 }
 
@@ -1723,6 +1855,7 @@ function requestContentLength(headers: IncomingHttpHeaders): number | undefined 
 function responseHeaders(headers: IncomingHttpHeaders): IncomingHttpHeaders {
   const result = { ...headers };
   for (const name of HOP_BY_HOP_HEADERS) delete result[name];
+  delete result[HTTP_DIAGNOSTIC_HEADER];
   return result;
 }
 

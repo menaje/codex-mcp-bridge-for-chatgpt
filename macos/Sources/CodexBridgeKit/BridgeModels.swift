@@ -386,6 +386,11 @@ public struct BridgeSettings: Codable, Sendable {
 
 /// Opaque local-delivery receipt. It deliberately excludes task prompts,
 /// result content, project paths, Activity IDs, and conversation IDs.
+public struct NativeCompletionAvailability: Decodable, Sendable {
+    public let available: Bool
+    public let nextAvailableAt: Double?
+}
+
 public struct NativeCompletionNotification: Codable, Sendable, Equatable, Identifiable {
     public let eventId: String
     public let outboxId: Int

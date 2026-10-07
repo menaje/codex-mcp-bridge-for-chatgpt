@@ -1,0 +1,42 @@
+
+ RUN  v4.1.11 /Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review
+
+ ✓ test/mcpEvents.test.ts (49 tests) 15616ms
+     ✓ subscribes before completion and commits result plus delivery intent atomically  518ms
+     ✓ rolls back a terminal result and its delivery intent together after a storage failure  330ms
+     ✓ discovers the extension and late-subscribes to one durable exact result without leaking its content  434ms
+     ✓ rejects foreign conversations, unauthenticated No Auth metadata and failed callback challenges  633ms
+     ✓ does not reactivate a new subscription when unsubscribe races callback verification  334ms
+     ✓ preserves unsubscribe while another webhook is in flight  563ms
+     ✓ preserves renewed expiry and signing keys while another webhook is in flight  474ms
+     ✓ preserves delivery progress during subscription verification  357ms
+     ✓ refreshes a finite lifetime and signs with both verified keys during rotation  367ms
+     ✓ bounds exhausted attempts and denies refresh when project access is revoked  368ms
+     ✓ revokes pending delivery when project access is withdrawn  2315ms
+     ✓ keeps pending delivery recoverable when an authorization state read temporarily fails  437ms
+     ✓ keeps one logical event across retries, expires delivery without cancelling work, and does not retry 410 or 413  1145ms
+     ✓ recovers the persisted delivery after restart and keeps exact-result retrieval scope checks  390ms
+     ✓ recovers issued references from an exact A read and its event after admission response loss  770ms
+     ✓ rejects caller-issued stage identifiers and rolls back an uncommitted issued reference  709ms
+     ✓ keeps separately approved identical prompts distinct while deduplicating each issued reference  923ms
+     ✓ preserves a retained v1 approval's canonical request receipt during upgrade  645ms
+     ✓ converges duplicate callers, response loss and restart to exactly one approved B  1078ms
+     ✓ never admits unapproved B or authorizes a step from another conversation  378ms
+     ✓ rejects unrelated work occupying the approved step's canonical requestId  552ms
+     ✓ recovers one admitted B after a response is lost and the bridge restarts  822ms
+     ✓ expires unconsumed approvals while preserving admission tombstones  439ms
+ ✓ test/issue242Reads.test.ts (5 tests) 2274ms
+     ✓ preserves paged ordering, counts and detail revisions with bounded SQL  746ms
+     ✓ coalesces equal queries, cancelling A without cancelling B  391ms
+     ✓ keeps the physical slot after the last waiter leaves, skips queued work and permits a fresh retry  371ms
+     ✓ does not join a pending query after a committed write and includes queue wait in the caller deadline  375ms
+     ✓ rejects A's completed late read after archive/delete and same-cwd B registration  391ms
+ ✓ test/remoteCompanionServer.test.ts (7 tests) 640ms
+ ✓ test/displayReadPool.test.ts (5 tests) 28ms
+
+ Test Files  4 passed (4)
+      Tests  66 passed (66)
+   Start at  03:53:52
+   Duration  20.04s (transform 659ms, setup 0ms, import 1.20s, tests 18.56s, environment 0ms)
+
+JSON report written to /Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/w1-followup-contracts.json

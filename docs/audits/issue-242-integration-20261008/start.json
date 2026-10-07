@@ -1,0 +1,56 @@
+{
+  "startedAt": "2026-10-07T18:28:36.745245+00:00",
+  "base": "f710974b33fc40432653c815d175058cba1adaee 04ddf63ada7cc6a7172f4190b0909e8bd6d8a3b7 bef9e8603b790327152beea63fa230f638f7aac4",
+  "tmpdir": "/tmp/cb242-int-tswwmblu",
+  "worktree": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review",
+  "sourceAtIntegration": "73e92d36100b2da192394d90bdd095d723945c32 abc159895d9a70a14f5fa3ebb9bed34d258d14ee bd16f8660708be06c525d49a13eaaaa0d4a942fe",
+  "localDev": "ea8f93e2acbb9f4b6deca113165d27e8c9c23857",
+  "remoteDev": "264fa5c99ca1c8edeef50af247614204c8f3df53",
+  "worktrees": [
+    {
+      "path": "/Volumes/Data/Dev/codex-mcp-bridge",
+      "head": "ea8f93e2acbb9f4b6deca113165d27e8c9c23857",
+      "status": ""
+    },
+    {
+      "path": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review",
+      "head": "73e92d36100b2da192394d90bdd095d723945c32",
+      "status": ""
+    },
+    {
+      "path": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-p0-w0",
+      "head": "f710974b33fc40432653c815d175058cba1adaee",
+      "status": ""
+    },
+    {
+      "path": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-r502",
+      "head": "e550798fe16bd5944f69f1941a98d249e84adefc",
+      "status": ""
+    },
+    {
+      "path": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-w1-baseline",
+      "head": "8474165e523b47d881f688bd09caf2e4c78ac7af",
+      "status": ""
+    },
+    {
+      "path": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-w1-read-path",
+      "head": "5353458221aa65aa1768f434379801d09761344c",
+      "status": " M src/sessionRegistry.ts\n M src/stateReadModels.ts\n M src/stateReadProcess.ts\n M src/stateStore.ts\n M src/tools.ts\n?? docs/audits/issue-242-w1-read-path-20261007/read-1200-before-overlap.json\n?? docs/audits/issue-242-w1-read-path-20261007/read-1200-before.json\n?? docs/audits/issue-242-w1-read-path-20261007/read-contract-red.txt\n"
+    },
+    {
+      "path": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-w2-native",
+      "head": "8474165e523b47d881f688bd09caf2e4c78ac7af",
+      "status": " M macos/Sources/CodexBridgeKit/BridgeClients.swift\n M macos/Sources/CodexBridgeKit/UnixSocketRPCClient.swift\n M macos/Sources/CodexBridgeMenuBar/AppLocalization.swift\n M macos/Sources/CodexBridgeMenuBar/AppModel.swift\n M macos/Sources/CodexBridgeMenuBar/ConnectionAssistantViews.swift\n M macos/Sources/CodexBridgeMenuBar/DashboardViews.swift\n M macos/Tests/CodexBridgeKitTests/AppPresentationTests.swift\n M macos/Tests/CodexBridgeKitTests/UnixSocketRPCClientTests.swift\n"
+    },
+    {
+      "path": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-w3-completion",
+      "head": "6580a196a36dacaa94fff7a6b5a101f58efff9a8",
+      "status": ""
+    },
+    {
+      "path": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-w4-runtime",
+      "head": "2eb315d529e57164b3e4a53cf24737ef3f4649e1",
+      "status": ""
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "old": [
+    {
+      "file": "test/experimentRetirement.test.ts",
+      "fullName": "checks GitHub open work and deletes only the archived remote branch",
+      "title": "checks GitHub open work and deletes only the archived remote branch",
+      "messages": [
+        "AssertionError: Experiment retirement: git worktree failed: file:///private/tmp/cb242-int-tswwmblu/bridge-retirement-test-KImCpB/bin/git:2\nconst a=process.argv.slice(2);if(a[0]===\"remote\"&&a[1]===\"get-url\")console.log(\"https://github.com/fixture/experiment.git\");else{const r=require(\"node:child_process\").spawnSync(\"/usr/bin/git\",a,{stdio:\"inherit\"});process.exit(r.status??1);}\n                                                                                                                                         ^\n\nReferenceError: require is not defined in ES module scope, you can use import instead\n    at file:///private/tmp/cb242-int-tswwmblu/bridge-retirement-test-KImCpB/bin/git:2:138\n    at ModuleJob.run (node:internal/modules/esm/module_job:377:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:671:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)\n\nNode.js v24.11.1\n: expected 1 to be +0 // Object.is equality\n    at /Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/test/experimentRetirement.test.ts:180:87\n    at fixture (/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/test/experimentRetirement.test.ts:20:9)\n    at /Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/test/experimentRetirement.test.ts:178:81\n    at file:///Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11\n    at file:///Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26\n    at file:///Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)\n    at file:///Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20\n    at new Promise (<anonymous>)"
+      ],
+      "stage": "node-full"
+    }
+  ],
+  "missing": [
+    {
+      "file": "test/issue242R502.test.ts",
+      "fullName": "R502 deterministic lifecycle races joins public ingress with the real supervised child and application response",
+      "title": "joins public ingress with the real supervised child and application response",
+      "messages": [
+        "AssertionError: expected [ Array(9) ] to deeply equal ArrayContaining{…}\n    at /Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/test/issue242R502.test.ts:326:80\n    at processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at file:///Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20"
+      ],
+      "stage": "node-full"
+    }
+  ],
+  "baselineSource": "f710974b33fc40432653c815d175058cba1adaee 04ddf63ada7cc6a7172f4190b0909e8bd6d8a3b7 bef9e8603b790327152beea63fa230f638f7aac4"
+}

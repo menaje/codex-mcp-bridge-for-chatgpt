@@ -372,6 +372,16 @@ enum BridgeAppLocalization {
         locale: Locale
     ) -> String {
         switch error {
+        case .deadlineExceeded:
+            return string("macos.localService.responseTimedOut", locale: locale)
+        case .transport(_, let code):
+            switch RPCObservationFailure(error).kind {
+            case .timeout: return string("macos.localService.responseTimedOut", locale: locale)
+            case .refused, .peerClosed: return string("macos.localService.unavailable", locale: locale)
+            case .permissionDenied: return string("macos.localService.permissionDenied", locale: locale)
+            default: return format("macos.couldnotconnecttothelocalservice", locale: locale,
+                String(cString: strerror(code)))
+            }
         case .invalidSocketPath:
             return string("macos.thelocalconnectionpathisinvalid", locale: locale)
         case .peerIdentityMismatch:
