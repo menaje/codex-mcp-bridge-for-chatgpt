@@ -555,12 +555,12 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
-    func testIssue242HelperRPCFailureLosesRetainedObservationAfterGrace() async throws {
-        // Characterizes the latest-dev catch path; W2 will change these expectations.
+    func testIssue242HelperRPCFailureRetainsObservationAfterGrace() async throws {
         let model = AppModel()
         let start = Date(timeIntervalSince1970: 100)
         model.recordLocalConnectionStatus(try helperStatus(), at: start)
         model.dashboard = try dashboardStatus(scope: "issue-242-retained")
+        model.lastDashboardRefresh = start
         model.recordLocalConnectionStatus(nil, at: start.addingTimeInterval(1))
         // refreshStatusOnce's catch also sets this error, ending initial-connect checking.
         model.statusErrorMessage = "fixture helper RPC timeout"
@@ -568,11 +568,187 @@ final class AppPresentationTests: XCTestCase {
         await model.refreshDashboard()
         XCTAssertEqual(model.dashboard?.scope, "issue-242-retained")
         model.recordLocalConnectionStatus(nil, at: start.addingTimeInterval(9))
-        XCTAssertFalse(model.hasRetainedBridgeObservation)
-        XCTAssertEqual(model.health, .unavailable)
-        XCTAssertEqual(model.operationalProblem, .runtime)
+        XCTAssertTrue(model.hasRetainedBridgeObservation)
+        XCTAssertFalse(model.bridgeConnected)
+        XCTAssertEqual(model.health, .attention)
+        XCTAssertEqual(model.operationalProblem, .responseUnconfirmed)
         await model.refreshDashboard()
+        XCTAssertEqual(model.dashboard?.scope, "issue-242-retained")
+        XCTAssertEqual(model.lastDashboardRefresh, start)
+    }
+
+    @MainActor
+    func testIssue242FailureRecoveryCancellationAndActualStop() async throws {
+        let model = AppModel()
+        defer { model.cancelAllPolling() }
+        let checked = Date(timeIntervalSince1970: 100)
+        model.recordLocalConnectionStatus(try helperStatus(), at: checked)
+        model.dashboard = try dashboardStatus(scope: "confirmed")
+        model.lastDashboardRefresh = checked
+        model.recordLocalConnectionFailure(CancellationError(), at: checked.addingTimeInterval(1))
+        XCTAssertNil(model.helperObservationFailure)
+        XCTAssertTrue(model.bridgeConnected)
+        XCTAssertEqual(model.lastConfirmedHelperCheck, checked)
+        model.recordLocalConnectionFailure(LocalRPCError.transport(phase: .receive, code: EAGAIN), at: checked.addingTimeInterval(2))
+        XCTAssertEqual(model.helperObservationFailure?.kind, .timeout)
+        XCTAssertEqual(model.helperObservationFailedAt, checked.addingTimeInterval(2))
+        XCTAssertEqual(model.lastConfirmedHelperCheck, checked)
+        XCTAssertNil(model.helperStatus)
+        XCTAssertFalse(model.bridgeConnected)
+        model.recordLocalConnectionStatus(try helperStatus(), at: checked.addingTimeInterval(3))
+        XCTAssertNil(model.helperObservationFailure)
+        XCTAssertTrue(model.bridgeConnected)
+        XCTAssertEqual(model.lastConfirmedHelperCheck, checked.addingTimeInterval(3))
+        model.recordLocalConnectionFailure(LocalRPCError.emptyResponse, at: checked.addingTimeInterval(4))
+        model.recordLocalConnectionStatus(try helperStatus(phase: "stopped", bridgeConnected: false, tunnelConnected: false), at: checked.addingTimeInterval(5))
+        XCTAssertFalse(model.hasRetainedBridgeObservation)
+        XCTAssertFalse(model.bridgeResponseUnconfirmed)
+        XCTAssertFalse(model.isBridgeConnectionChecking)
         XCTAssertNil(model.dashboard)
+        XCTAssertEqual(model.lastDashboardRefresh, checked)
+        let first = AppModel()
+        defer { first.cancelAllPolling() }
+        first.recordLocalConnectionFailure(LocalRPCError.transport(phase: .connect, code: ECONNREFUSED), at: checked)
+        first.recordLocalConnectionFailure(LocalRPCError.emptyResponse, at: checked.addingTimeInterval(9))
+        XCTAssertFalse(first.hasRetainedBridgeObservation)
+        XCTAssertNil(first.lastConfirmedHelperCheck)
+        XCTAssertEqual(first.health, .unavailable)
+    }
+
+    @MainActor
+    func testIssue242HelperRPCFailureKeepsSettingsSkillsDetailAndFencesLateReads() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-242-content-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.bridgeSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let row = try issue242Row("a", project: "A")
+        let detail = "{\"kind\":\"dashboard-history\",\"rowKey\":\"\(row.rowKey)\",\"history\":[],\"historyCount\":1,\"historyRevision\":\"\(String(repeating: "a", count: 64))\"}"
+        let settings = try settingsSnapshot(policy: ["mode": "automatic", "allowedSelections": ["kind": "catalog-visible"],
+            "constraints": ["allowDelegation": true]], catalogModels: [])
+        let settingsBody = String(decoding: try JSONEncoder().encode(settings), as: UTF8.self)
+        let dashboardBody = String(decoding: try JSONEncoder().encode(dashboardStatus(scope: "late")), as: UTF8.self)
+        let slow = TestDashboardReplySequence([NativeFixtureReply(body: "{\"result\":\(dashboardBody)}", delay: 0.3)])
+        let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { method in
+            switch method {
+            case "settings.snapshot": return NativeFixtureReply(body: "{\"result\":\(settingsBody)}", delay: 0.3)
+            case "skills.snapshot": return NativeFixtureReply(body: #"{"result":{"skills":[]}}"#)
+            case "dashboard.history-detail": return NativeFixtureReply(body: "{\"result\":\(detail)}")
+            default: return slow.next()
+            }
+        }
+        let helper = try NativeRPCFixture(path: paths.helperSocket.path) { _ in NativeFixtureReply(body: "") }
+        let model = AppModel(paths: paths)
+        defer { model.cancelAllPolling(); helper.stop(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+        let checked = Date()
+        model.recordLocalConnectionStatus(try helperStatus(), at: checked)
+        model.dashboard = try dashboardStatus(scope: "confirmed")
+        model.settings = settings
+        model.lastDashboardRefresh = checked
+        await model.loadDashboardHistory(row)
+        await model.refreshSkillLibrary()
+        XCTAssertNotNil(model.dashboardHistoryDetails[row.rowKey])
+        XCTAssertNotNil(model.skillLibrary)
+        let late = Task { await model.refreshDashboard(enrich: false) }
+        let lateSettings = Task { await model.refreshSettings() }
+        for _ in 0..<100 {
+            if bridge.count("dashboard.snapshot") > 0 && bridge.count("settings.snapshot") > 0 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        await model.refreshStatus()
+        XCTAssertEqual(model.helperObservationFailure?.kind, .peerClosed)
+        model.recordLocalConnectionFailure(LocalRPCError.emptyResponse, at: checked.addingTimeInterval(9))
+        await late.value; await lateSettings.value
+        await model.refreshDashboard(); await model.refreshSettings(); await model.refreshSkillLibrary()
+        XCTAssertEqual(model.dashboard?.scope, "confirmed")
+        XCTAssertEqual(model.settings?.settings.settingsRevision, 4)
+        XCTAssertNotNil(model.skillLibrary)
+        XCTAssertNotNil(model.dashboardHistoryDetails[row.rowKey])
+        XCTAssertEqual(model.lastDashboardRefresh, checked)
+        XCTAssertEqual(model.lastConfirmedHelperCheck, checked)
+        XCTAssertFalse(model.bridgeConnected)
+        XCTAssertEqual(model.health, .attention)
+        XCTAssertEqual(bridge.count("dashboard.snapshot"), 1)
+        XCTAssertEqual(bridge.count("settings.snapshot"), 1)
+        XCTAssertEqual(bridge.count("skills.snapshot"), 1)
+        model.recordLocalConnectionStatus(try helperStatus(phase: "stopped", bridgeConnected: false, tunnelConnected: false))
+        XCTAssertNil(model.skillLibrary)
+        XCTAssertNil(model.settings)
+        XCTAssertTrue(model.dashboardHistoryDetails.isEmpty)
+    }
+
+    @MainActor
+    func testIssue242LateHelperHealthCannotReplaceConfirmedStop() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-242-health-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.helperSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let healthy = String(decoding: try JSONEncoder().encode(helperStatus()), as: UTF8.self)
+        let helper = try NativeRPCFixture(path: paths.helperSocket.path) { _ in NativeFixtureReply(body: "{\"result\":\(healthy)}", delay: 0.3) }
+        let model = AppModel(paths: paths)
+        defer { model.cancelAllPolling(); helper.stop(); try? FileManager.default.removeItem(at: root) }
+        model.recordLocalConnectionStatus(try helperStatus())
+        let pending = Task { await model.refreshStatus() }
+        for _ in 0..<100 {
+            if helper.count("helper.health") > 0 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        model.recordLocalConnectionStatus(try helperStatus(phase: "stopped", bridgeConnected: false, tunnelConnected: false))
+        await pending.value
+        XCTAssertEqual(model.helperStatus?.phase, "stopped")
+        XCTAssertFalse(model.bridgeConnected)
+        XCTAssertFalse(model.hasRetainedBridgeObservation)
+    }
+
+    @MainActor
+    func testIssue242ArchiveDeleteSameCwdRegistrationFencesLateDashboardAndDetail() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-242-projects-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.bridgeSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let aID = UUID().uuidString.lowercased(), bID = UUID().uuidString.lowercased()
+        let rowA = try issue242Row("a", project: "A"), rowB = try issue242Row("b", project: "B")
+        let snapshotA = try issue242Dashboard(rowA, scope: "A"), snapshotB = try issue242Dashboard(rowB, scope: "B")
+        let bodyA = String(decoding: try JSONEncoder().encode(snapshotA), as: UTF8.self)
+        let bodyB = String(decoding: try JSONEncoder().encode(snapshotB), as: UTF8.self)
+        let first = try issue242Settings(registry: 2, id: aID, name: "A", cwd: root.path)
+        let archive = try issue242Settings(registry: 3, id: aID, name: "A", cwd: root.path, archived: true)
+        let deleted = try issue242Settings(registry: 4, id: nil, name: "", cwd: root.path)
+        let registered = try issue242Settings(registry: 5, id: bID, name: "B", cwd: root.path)
+        let mutations = TestDashboardReplySequence(try [archive, deleted, registered].map {
+            NativeFixtureReply(body: "{\"result\":\(String(decoding: try JSONEncoder().encode($0), as: UTF8.self))}")
+        })
+        let pages = TestDashboardReplySequence([NativeFixtureReply(body: "{\"result\":\(bodyA)}", delay: 0.5),
+            NativeFixtureReply(body: "{\"result\":\(bodyB)}")])
+        let detail = "{\"result\":{\"kind\":\"dashboard-history\",\"rowKey\":\"\(rowA.rowKey)\",\"history\":[],\"historyCount\":1,\"historyRevision\":\"\(String(repeating: "a", count: 64))\"}}"
+        let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { method in
+            switch method {
+            case "settings.update": return mutations.next()
+            case "dashboard.history-detail": return NativeFixtureReply(body: detail, delay: 0.5)
+            default: return pages.next()
+            }
+        }
+        let model = AppModel(paths: paths)
+        defer { model.cancelAllPolling(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+        model.recordLocalConnectionStatus(try helperStatus())
+        model.settings = first
+        model.dashboard = snapshotA
+        let page = Task { await model.refreshDashboard(enrich: false) }
+        let history = Task { await model.loadDashboardHistory(rowA) }
+        for _ in 0..<100 {
+            if bridge.count("dashboard.snapshot") > 0 && bridge.count("dashboard.history-detail") > 0 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let archived = await model.applyProjectOperation(.archive(projectId: aID))
+        let removed = await model.applyProjectOperation(.delete(projectId: aID))
+        let added = await model.applyProjectOperation(.add(name: "B", cwd: root.path))
+        XCTAssertTrue(archived && removed && added)
+        XCTAssertEqual(model.settings?.settings.projects.first?.id, bID)
+        XCTAssertEqual(model.settings?.settings.projects.first?.cwd, root.path)
+        await page.value; await history.value
+        XCTAssertNil(model.dashboard)
+        XCTAssertTrue(model.dashboardHistoryDetails.isEmpty)
+        await model.refreshDashboard(enrich: false)
+        XCTAssertEqual(model.dashboard?.scope, "B")
+        XCTAssertEqual(model.dashboard?.terminalRows.first?.rowKey, rowB.rowKey)
+        XCTAssertNotEqual(model.dashboard?.terminalRows.first?.rowKey, rowA.rowKey)
+        XCTAssertTrue(model.dashboardHistoryDetails.isEmpty)
     }
 
     @MainActor
@@ -2301,6 +2477,34 @@ private func loginStatus(installed: Bool, authenticated: Bool) throws -> CodexLo
         "summary": authenticated ? "ready" : "login required"
     ])
     return try JSONDecoder().decode(CodexLoginStatus.self, from: data)
+}
+
+private func issue242Dashboard(_ row: DashboardRow, scope: String) throws -> DashboardSnapshot {
+    var value = try JSONSerialization.jsonObject(with: JSONEncoder().encode(dashboardStatus(scope: scope))) as! [String: Any]
+    value["terminalRows"] = [try JSONSerialization.jsonObject(with: JSONEncoder().encode(row))]
+    return try JSONDecoder().decode(DashboardSnapshot.self, from: JSONSerialization.data(withJSONObject: value))
+}
+
+private func issue242Settings(registry: Int, id: String?, name: String, cwd: String, archived: Bool = false) throws -> SettingsSnapshot {
+    let base = try settingsSnapshot(policy: ["mode": "automatic", "allowedSelections": ["kind": "catalog-visible"],
+        "constraints": ["allowDelegation": true]], catalogModels: [])
+    var value = try JSONSerialization.jsonObject(with: JSONEncoder().encode(base)) as! [String: Any]
+    var settings = value["settings"] as! [String: Any]
+    settings["registryRevision"] = registry
+    settings["projects"] = id.map { identity in [["id": identity, "projectRef": "fixture-\(identity)", "projectRevision": registry,
+        "name": name, "nameKey": name.lowercased(), "cwd": cwd, "sortOrder": 0, "createdAt": 1, "updatedAt": 2,
+        "archiveState": archived ? "complete" : "active", "archiveRevision": archived ? 1 : 0] as [String: Any]] } ?? []
+    value["settings"] = settings
+    return try JSONDecoder().decode(SettingsSnapshot.self, from: JSONSerialization.data(withJSONObject: value))
+}
+
+private func issue242Row(_ identity: String, project: String) throws -> DashboardRow {
+    let row: [String: Any] = ["rowKey": String(repeating: identity, count: 32), "activityKey": "fixture",
+        "conversationKey": "fixture", "sessionAlias": "Fixture", "bucket": "recent", "projectKey": String(repeating: identity, count: 32),
+        "projectName": project, "agentName": "Fixture", "status": "completed", "createdAt": "2026-10-07T00:00:00Z",
+        "updatedAt": "2026-10-07T00:00:01Z", "elapsedMs": 1000, "backgroundProcessCount": 0,
+        "history": [], "historyCount": 1, "historyRevision": String(repeating: "a", count: 64)]
+    return try JSONDecoder().decode(DashboardRow.self, from: JSONSerialization.data(withJSONObject: row))
 }
 
 private func dashboardStatus(

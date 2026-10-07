@@ -657,6 +657,7 @@ struct NativeSettingsView: View {
             Divider()
             VStack(spacing: 8) {
                 RuntimeLifecycleNoticeView()
+                ConnectionObservationNotice()
                 if syncState.externalChangeDetected {
                     HStack(spacing: 10) {
                         Label(

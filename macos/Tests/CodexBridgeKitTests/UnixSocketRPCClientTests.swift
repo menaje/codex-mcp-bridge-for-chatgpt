@@ -23,8 +23,69 @@ final class UnixSocketRPCClientTests: XCTestCase {
 
         let client = UnixSocketRPCClient(socketPath: path)
         XCTAssertEqual(client.maximumResponseBytes, bridgeSkillTransportEnvelopeMaxBytes)
-        let result: SkillResult = try await client.call("skills.read", params: EmptyParameters())
+        // This is a byte-envelope test. Debug Foundation decoding of 18 MiB
+        // takes longer than the ordinary deadline; deadline behavior is tested separately.
+        let result: SkillResult = try await client.call("skills.read", params: EmptyParameters(), timeout: 60)
         XCTAssertEqual(result.content, content)
+    }
+
+    func testIssue242StructuralFailureCategories() {
+        for (code, kind) in [(EAGAIN, RPCFailureKind.timeout), (ECONNREFUSED, .refused),
+                             (ECONNRESET, .peerClosed), (EPIPE, .peerClosed), (EPERM, .permissionDenied)] {
+            let failure = RPCObservationFailure(LocalRPCError.transport(phase: .receive, code: code))
+            XCTAssertEqual(failure.kind, kind)
+            XCTAssertEqual(failure.phase, .receive)
+            XCTAssertEqual(failure.posixCode, code)
+        }
+        XCTAssertEqual(RPCObservationFailure(CancellationError()).kind, .cancelled)
+        XCTAssertEqual(RPCObservationFailure(LocalRPCError.malformedResponse("test")).kind, .contractMismatch)
+    }
+
+    func testIssue242RefusalPeerCloseAndMissingResultStayDistinct() async throws {
+        let path = "/tmp/cb-242-errors-\(UUID().uuidString.prefix(8)).sock"
+        do {
+            let _: EmptyParameters = try await UnixSocketRPCClient(socketPath: path).call("test", params: EmptyParameters())
+            XCTFail("Missing listener must refuse the connection")
+        } catch { XCTAssertEqual(RPCObservationFailure(error).kind, .refused) }
+        let replies = ["test.close": "", "test.contract": "{}"]
+        let server = try NativeRPCFixture(path: path) { NativeFixtureReply(body: replies[$0] ?? "") }
+        defer { server.stop() }
+        for (method, kind) in [("test.close", RPCFailureKind.peerClosed), ("test.contract", .contractMismatch)] {
+            do {
+                let _: EmptyParameters = try await UnixSocketRPCClient(socketPath: path).call(method, params: EmptyParameters())
+                XCTFail("Fixture must fail")
+            } catch { XCTAssertEqual(RPCObservationFailure(error).kind, kind) }
+        }
+    }
+
+    func testIssue242PartialResponseCannotExtendAbsoluteDeadline() async throws {
+        let path = "/tmp/cb-242-partial-\(UUID().uuidString.prefix(8)).sock"
+        let listener = try makeListener(at: path)
+        defer { Darwin.close(listener); unlink(path) }
+        let server = Task.detached {
+            let client = Darwin.accept(listener, nil, nil)
+            guard client >= 0 else { return }
+            defer { Darwin.close(client) }
+            var noSignal: Int32 = 1
+            _ = setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout<Int32>.size))
+            var input = [UInt8](repeating: 0, count: 4096)
+            _ = Darwin.read(client, &input, input.count)
+            var byte: UInt8 = 0x20
+            for _ in 0..<30 {
+                if Darwin.write(client, &byte, 1) != 1 { break }
+                try? await Task.sleep(for: .milliseconds(30))
+            }
+        }
+        let started = Date()
+        do {
+            let _: EmptyParameters = try await UnixSocketRPCClient(socketPath: path, timeout: 0.2).call("test", params: EmptyParameters())
+            XCTFail("Partial response must miss its total deadline")
+        } catch {
+            XCTAssertEqual(RPCObservationFailure(error).kind, .timeout)
+            XCTAssertEqual(RPCObservationFailure(error).phase, .receive)
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.7)
+        await server.value
     }
 
     func testContractDecodeFailureIsNotReportedAsPersistentDataLoss() async throws {
