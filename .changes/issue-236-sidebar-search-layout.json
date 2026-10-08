@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Restore the top placement of search and menus in macOS Settings and Skills Library sidebars while retaining composition protection.",
+  "breaking": false,
+  "migration": null
+}

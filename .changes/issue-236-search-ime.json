@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Keep macOS sidebar search composition intact during navigation refreshes and delayed input updates.",
+  "breaking": false,
+  "migration": null
+}

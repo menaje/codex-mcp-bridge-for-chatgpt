@@ -5,6 +5,10 @@ reaches that bridge over MCP 2026-07-28. See the
 [migration guide](mcp-2026-07-28-migration.md) before replacing an older
 deployment.
 
+For ordinary first use, follow [Setup](setup.md), try a [first task](../README.md#try-your-first-task),
+and [create a reusable skill](skills.md#create-and-use-your-first-skill). This
+page also covers the tool contracts and upgrade checks used by operators.
+
 ## 1. Prepare Codex and the bridge
 
 Confirm that Codex is installed and authenticated:
@@ -71,8 +75,8 @@ checks its saved settings and the operator ceiling at admission.
 
 ## 3. Add the ChatGPT connection
 
-1. Enable Developer mode in ChatGPT Settings.
-2. Create a developer connection and choose **Tunnel**.
+1. Enable Developer mode in **ChatGPT Settings → Security and login**.
+2. Create a developer connection at [ChatGPT Plugins](https://chatgpt.com/plugins) and choose **Connection → Tunnel**.
 3. Select the configured tunnel ID.
 4. Choose **No Auth**. The loopback bridge and Secure MCP Tunnel form the
    transport boundary.
@@ -92,7 +96,14 @@ Ask ChatGPT to open Settings. The card manages:
 - registered projects;
 - read-only, write, or full-access policy within the operator ceiling;
 - fixed or automatic model and reasoning-effort selection;
-- Fast mode, concurrency, Codex-app thread visibility, and UI language.
+- processing speed, concurrency, conversation storage, Codex-app visibility, history retention, and UI language;
+- custom model descriptions and their version history.
+
+See [settings choices](setup.md#settings-reference) for the current native
+destinations and card save behavior. Use the separate native Skill Library to
+import or edit reusable Markdown procedures; ChatGPT can search and read them
+through the skill tools. Account and CLI selection are managed on the server
+Mac under **Codex Account & Installation**.
 
 Projects are named paths stored on the bridge. ChatGPT receives a project name,
 opaque `projectRef`, and `projectRevision`; it does not receive the path or the
@@ -173,7 +184,10 @@ deploying a change to either:
 4. verify the current resources listed in
    [the UI release policy](ui-release-compatibility.md).
 
-Dashboard and Settings now use v4 URIs. The old sender API and automatic mount inputs are refused. A server refusal cannot retract result text or a queued message already held in a v3 iframe; close/tear down those old instances before accepting the cutover.
+Dashboard and Settings currently use v5 URIs. The v3-to-v4 transition removed
+the sender API and automatic mount inputs; v5 introduces explicit processing
+speed and scope. A server refusal cannot retract result text or a queued message
+already held in an old v3 iframe; close those instances before accepting the cutover.
 
 The bridge offers no old resource URI or old descriptor fallback. A conversation
 that cached a previous resource must refresh and use the current card. Retired
@@ -206,7 +220,7 @@ In a fresh ChatGPT conversation:
 4. Read overview, Job list, Activity and thread summaries; verify exact retrieval actions without embedded result text.
 5. Explicitly open Dashboard. Verify state/history refresh and scoped management while observing no chat message or automatic followup.
 6. Verify old completion calls are refused without cancelling, failing or recreating Jobs; existing completed B replays and unexecuted legacy B requests follow the documented reapproval rule.
-7. Restart the bridge and verify retained work and upgrade settings remain consistent. Confirm Bridge/app build identity and the actual v4 URI/HTML hash served by the connector.
+7. Restart the bridge and verify retained work and upgrade settings remain consistent. Confirm Bridge/app build identity and the actual v5 URI/HTML hash served by the connector.
 
 For release acceptance, also record a real current-protocol discovery, tool
 call, and card open through ChatGPT and Secure MCP Tunnel. A host that cannot

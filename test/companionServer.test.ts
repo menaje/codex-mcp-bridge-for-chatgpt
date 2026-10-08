@@ -754,6 +754,22 @@ describe("native companion server", () => {
     });
     expect(configured.result).toMatchObject({ enabled: false, serverId: expect.any(String) });
 
+    const expectedConfiguration = { serverId: configured.result.serverId, enabled: false, endpoint: null, displayName: "Studio" };
+    await request(socketPath, {
+      jsonrpc: "2.0", id: "remote-guarded", method: "remote.configure",
+      params: { enabled: true, endpoint: "https://studio.example:8766", displayName: "new", expectedConfiguration }
+    });
+    expect(remoteManagement.configure).toHaveBeenLastCalledWith({ enabled: true, endpoint: "https://studio.example:8766", displayName: "new", expectedConfiguration });
+    const calls = remoteManagement.configure.mock.calls.length;
+    for (const invalid of [ { ...expectedConfiguration, endpoint: undefined }, { ...expectedConfiguration, ignored: true } ]) {
+      const rejected = await request(socketPath, {
+        jsonrpc: "2.0", id: "remote-invalid-guard", method: "remote.configure",
+        params: { enabled: true, endpoint: "https://studio.example:8766", displayName: "new", expectedConfiguration: invalid }
+      });
+      expect(rejected.error).toBeDefined();
+    }
+    expect(remoteManagement.configure.mock.calls).toHaveLength(calls);
+
     await request(socketPath, {
       jsonrpc: "2.0",
       id: "remote-pair",

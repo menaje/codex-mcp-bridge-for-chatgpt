@@ -109,7 +109,10 @@ export const MODEL_DESCRIPTION_EDITOR_SCRIPT = String.raw`function createModelDe
         root.parentElement.hidden = !snapshot.settings.modelDescriptionOverrides;
         root.replaceChildren();
         const catalog = models();
-        const ids = [...new Set([...catalog.keys(), ...Object.keys(snapshot.settings.modelDescriptionOverrides || {}), ...(snapshot.modelDescriptionHistoryModelIds || []), ...edits.keys()])].sort();
+        const retained = [...Object.keys(snapshot.settings.modelDescriptionOverrides || {}), ...(snapshot.modelDescriptionHistoryModelIds || []), ...edits.keys()];
+        const allowed = options.allowedModelIDs();
+        const ids = options.orderedIDs([...catalog.keys()], retained).filter(id => options.showAll() || allowed.has(id) || edits.has(id) || historyExpanded.has(id));
+        if (!ids.length) root.append(node("p", copy("noAllowed"), "hint"));
         for (const id of ids) {
           const model = catalog.get(id), override = saved(id), edit = edits.get(id);
           const official = model && model.description || "";

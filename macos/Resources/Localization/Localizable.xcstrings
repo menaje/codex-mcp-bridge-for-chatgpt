@@ -10098,55 +10098,55 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Models"
+            "value": "Models to use"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "모델"
+            "value": "사용할 모델"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "モデル"
+            "value": "使用するモデル"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "模型"
+            "value": "使用的模型"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "模型"
+            "value": "使用的模型"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Modelos"
+            "value": "Modelos que se usarán"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Modèles"
+            "value": "Modèles à utiliser"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Modelle"
+            "value": "Zu verwendende Modelle"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Modelos"
+            "value": "Modelos a usar"
           }
         }
       }
@@ -11026,55 +11026,55 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Choose at least one reasoning effort for {model}."
+            "value": "Choose a common reasoning level supported by {model}."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "{model} 모델의 추론 에포트를 하나 이상 선택하세요."
+            "value": "공통 추론 목록에서 {model} 모델이 지원하는 추론을 하나 이상 선택하세요."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "{model} の推論エフォートを 1 つ以上選択してください。"
+            "value": "{model} が対応する推論レベルを共通リストから選択してください。"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "请为 {model} 至少选择一个推理强度。"
+            "value": "请从共享推理列表中选择 {model} 支持的推理级别。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "請為 {model} 至少選擇一個推理強度。"
+            "value": "請從共用推理清單中選擇 {model} 支援的推理層級。"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Selecciona al menos un nivel de razonamiento para {model}."
+            "value": "Elige un nivel de razonamiento común compatible con {model}."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Sélectionnez au moins un niveau de raisonnement pour {model}."
+            "value": "Choisissez un niveau de raisonnement commun pris en charge par {model}."
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Wählen Sie mindestens eine Reasoning-Stufe für {model} aus."
+            "value": "Wählen Sie eine gemeinsame Denkstufe, die {model} unterstützt."
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Selecione pelo menos um nível de raciocínio para {model}."
+            "value": "Escolha um nível de raciocínio comum compatível com {model}."
           }
         }
       }
@@ -29983,6 +29983,876 @@
           "stringUnit": {
             "state": "translated",
             "value": "A configuração atual é mantida até você escolher uma velocidade."
+          }
+        }
+      }
+    },
+    "settings.commonEfforts": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reasoning levels to use"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "사용할 추론 수준"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用する推論レベル"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用的推理级别"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用的推理層級"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Niveles de razonamiento que se usarán"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Niveaux de raisonnement à utiliser"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zu verwendende Denkstufen"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Níveis de raciocínio a usar"
+          }
+        }
+      }
+    },
+    "settings.commonEffortsHint": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Selected reasoning levels apply to all selected models that support them."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "선택한 추론은 이를 지원하는 모든 선택 모델에 적용됩니다."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選択した推論レベルは、対応するすべての選択モデルに適用されます。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "所选推理级别会应用于支持它们的所有选中模型。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "所選推理層級會套用到支援它們的所有已選模型。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Los niveles seleccionados se aplican a todos los modelos seleccionados que los admiten."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les niveaux sélectionnés s’appliquent à tous les modèles sélectionnés qui les prennent en charge."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ausgewählte Denkstufen gelten für alle ausgewählten Modelle, die sie unterstützen."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Os níveis selecionados se aplicam a todos os modelos selecionados que os suportam."
+          }
+        }
+      }
+    },
+    "settings.selectionSummary": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "{models} models · {count} executable combinations"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "모델 {models}개 · 실행 가능한 조합 {count}개"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデル {models} 個 · 実行可能な組み合わせ {count} 個"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "{models} 个模型 · {count} 个可执行组合"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "{models} 個模型 · {count} 個可執行組合"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "{models} modelos · {count} combinaciones ejecutables"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "{models} modèles · {count} combinaisons exécutables"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "{models} Modelle · {count} ausführbare Kombinationen"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "{models} modelos · {count} combinações executáveis"
+          }
+        }
+      }
+    },
+    "settings.modelDescriptions.showAll": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show all models"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "전체 모델 보기"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すべてのモデルを表示"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示所有模型"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顯示所有模型"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mostrar todos los modelos"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Afficher tous les modèles"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alle Modelle anzeigen"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mostrar todos os modelos"
+          }
+        }
+      }
+    },
+    "settings.modelDescriptions.noAllowed": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No models are currently allowed. Show all models to view their descriptions."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "현재 허용된 모델이 없습니다. 전체 모델 보기에서 설명을 확인할 수 있습니다."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "現在許可されているモデルはありません。すべてのモデルを表示すると説明を確認できます。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目前没有允许使用的模型。显示所有模型即可查看说明。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目前沒有允許使用的模型。顯示所有模型即可查看說明。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No hay modelos permitidos. Muestra todos los modelos para ver sus descripciones."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun modèle n’est actuellement autorisé. Affichez tous les modèles pour consulter leurs descriptions."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Derzeit sind keine Modelle erlaubt. Zeigen Sie alle Modelle an, um ihre Beschreibungen zu sehen."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nenhum modelo está permitido no momento. Mostre todos os modelos para ver suas descrições."
+          }
+        }
+      }
+    },
+    "settings.chooseModelsForEfforts": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select models to see the reasoning levels they support."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "사용할 모델을 선택하면 지원되는 추론 수준이 표시됩니다."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデルを選択すると、対応する推論レベルが表示されます。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择模型后将显示它们支持的推理级别。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選擇模型後將顯示它們支援的推理層級。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Selecciona modelos para ver sus niveles de razonamiento compatibles."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sélectionnez des modèles pour afficher leurs niveaux de raisonnement disponibles."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wählen Sie Modelle aus, um ihre verfügbaren Denkstufen zu sehen."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Selecione modelos para ver os níveis de raciocínio disponíveis."
+          }
+        }
+      }
+    },
+    "settings.unsupportedModelEfforts": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "{model} does not support {efforts}; these reasoning levels will not be applied."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "{model} 모델은 {efforts} 추론을 지원하지 않아 적용되지 않습니다."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "{model} は {efforts} に対応していないため、これらの推論レベルは適用されません。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "{model} 不支持 {efforts}，因此不会应用这些推理级别。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "{model} 不支援 {efforts}，因此不會套用這些推理層級。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "{model} no admite {efforts}; estos niveles de razonamiento no se aplicarán."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "{model} ne prend pas en charge {efforts} ; ces niveaux de raisonnement ne seront pas appliqués."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "{model} unterstützt {efforts} nicht; diese Denkstufen werden nicht angewendet."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "{model} não suporta {efforts}; esses níveis de raciocínio não serão aplicados."
+          }
+        }
+      }
+    },
+    "macos.input.externalChange": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This draft changed elsewhere. Review the latest values before saving."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "외부 변경이 있습니다. 최신 값을 검토한 뒤 저장하세요."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "外部で変更されました。最新の値を確認してから保存してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "内容已在其他位置更改。请先查看最新值再保存。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "內容已在其他位置變更。請先檢查最新值再儲存。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este borrador cambió en otro lugar. Revisa los valores actuales antes de guardar."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce brouillon a été modifié ailleurs. Vérifiez les valeurs actuelles avant de l’enregistrer."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dieser Entwurf wurde andernorts geändert. Prüfe vor dem Speichern die aktuellen Werte."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este rascunho foi alterado em outro lugar. Revise os valores atuais antes de salvar."
+          }
+        }
+      }
+    },
+    "macos.input.reload": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reload values"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "다시 불러오기"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "値を再読み込み"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新加载值"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新載入值"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recargar valores"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recharger les valeurs"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Werte neu laden"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recarregar valores"
+          }
+        }
+      }
+    },
+    "macos.input.keepDraft": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep draft"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "초안 유지"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下書きを保持"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保留草稿"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保留草稿"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conservar borrador"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conserver le brouillon"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Entwurf behalten"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Manter rascunho"
+          }
+        }
+      }
+    },
+    "macos.input.refresh": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Load latest values"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "최신 값 불러오기"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最新の値を読み込み"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加载最新值"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "載入最新值"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cargar valores actuales"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Charger les valeurs actuelles"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aktuelle Werte laden"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Carregar valores atuais"
+          }
+        }
+      }
+    },
+    "macos.input.synchronizationFailed": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not confirm the latest input. Your draft is kept. Try saving again."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "최신 입력을 확인하지 못했습니다. 초안은 유지됩니다. 다시 저장해 주세요."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最新の入力を確認できませんでした。下書きは保持されています。もう一度保存してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法确认最新输入。草稿已保留，请重新保存。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法確認最新輸入。草稿已保留，請重新儲存。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo confirmar la entrada actual. El borrador se conserva. Intenta guardar de nuevo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de confirmer la dernière saisie. Le brouillon est conservé. Réessayez de l’enregistrer."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die aktuelle Eingabe konnte nicht bestätigt werden. Der Entwurf bleibt erhalten. Versuche erneut zu speichern."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível confirmar a entrada atual. O rascunho foi mantido. Tente salvar novamente."
+          }
+        }
+      }
+    },
+    "macos.input.invalidNumber": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enter a whole number within the allowed range."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "허용 범위 안의 정수를 입력하세요."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "許可された範囲内の整数を入力してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请输入允许范围内的整数。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請輸入允許範圍內的整數。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Introduce un número entero dentro del rango permitido."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saisissez un nombre entier dans la plage autorisée."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gib eine ganze Zahl im zulässigen Bereich ein."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Digite um número inteiro dentro do intervalo permitido."
+          }
+        }
+      }
+    },
+    "macos.input.invalidValue": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check this input before saving."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "입력 내용을 확인한 뒤 저장하세요."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "入力内容を確認してから保存してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请检查输入内容后再保存。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請檢查輸入內容後再儲存。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Revisa esta entrada antes de guardar."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vérifiez cette saisie avant de l’enregistrer."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prüfe diese Eingabe vor dem Speichern."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verifique esta entrada antes de salvar."
+          }
+        }
+      }
+    },
+    "macos.input.discard": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discard unsaved input?"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "저장하지 않은 입력을 폐기할까요?"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未保存の入力を破棄しますか？"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "放弃未保存的输入？"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "捨棄尚未儲存的輸入？"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "¿Descartar la entrada sin guardar?"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ignorer la saisie non enregistrée ?"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ungespeicherte Eingabe verwerfen?"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Descartar a entrada não salva?"
           }
         }
       }
@@ -52859,55 +53729,55 @@
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Versionsverwaltung"
+            "value": "Codex CLI-Versionsverwaltung"
           }
         },
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Version management"
+            "value": "Codex CLI version management"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Gestión de versiones"
+            "value": "Gestión de versiones de Codex CLI"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Gestion des versions"
+            "value": "Gestion des versions de Codex CLI"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "バージョン管理"
+            "value": "Codex CLI のバージョン管理"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "버전 관리"
+            "value": "Codex CLI 버전 관리"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Gerenciamento de versões"
+            "value": "Gerenciamento de versões do Codex CLI"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "版本管理"
+            "value": "Codex CLI 版本管理"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "版本管理"
+            "value": "Codex CLI 版本管理"
           }
         }
       }
@@ -75862,55 +76732,55 @@
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codex aktualisieren"
+            "value": "Codex CLI aktualisieren"
           }
         },
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Update Codex"
+            "value": "Update Codex CLI"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Actualizar Codex"
+            "value": "Actualizar Codex CLI"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Mettre à jour Codex"
+            "value": "Mettre à jour Codex CLI"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codex を更新"
+            "value": "Codex CLI を更新"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "코덱스 업데이트"
+            "value": "Codex CLI 업데이트"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Atualizar Codex"
+            "value": "Atualizar Codex CLI"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "更新 Codex"
+            "value": "更新 Codex CLI"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "更新 Codex"
+            "value": "更新 Codex CLI"
           }
         }
       }
@@ -82780,6 +83650,65 @@
           "stringUnit": {
             "state": "translated",
             "value": "Bridge CLI (Recomendado)"
+          }
+        }
+      }
+    },
+    "macos.codexCliUpdate.description": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Updates the Codex CLI managed by Bridge."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "브리지가 관리하는 Codex CLI를 업데이트합니다."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ブリッジが管理する Codex CLI を更新します。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新由 Bridge 管理的 Codex CLI。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新由 Bridge 管理的 Codex CLI。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Actualiza Codex CLI administrado por Bridge."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Met à jour Codex CLI géré par Bridge."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aktualisiert die von der Bridge verwaltete Codex CLI."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Atualiza o Codex CLI gerenciado pelo Bridge."
           }
         }
       }

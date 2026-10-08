@@ -598,6 +598,28 @@ struct DashboardPopoverView: View {
 
             Spacer()
 
+            if !model.isRemoteClient, let runtime = model.codexRuntime, runtime.showsMenuUpdate {
+                Button {
+                    Task { await model.manageCodex(.init(action: "update")) }
+                } label: {
+                    Label("macos.updatecodex", systemImage: "arrow.down.circle")
+                        .labelStyle(.iconOnly)
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(Color.accentColor)
+                .help(
+                    Text("macos.updatecodex") +
+                    Text(verbatim: "\n\(runtime.installedVersion ?? "—") → \(runtime.updateVersion ?? "—")\n") +
+                    Text("macos.codexCliUpdate.description")
+                )
+                .accessibilityLabel("macos.updatecodex")
+                .accessibilityValue(Text(verbatim: "\(runtime.installedVersion ?? "—") → \(runtime.updateVersion ?? "—")"))
+                .accessibilityHint(Text("macos.codexCliUpdate.description"))
+                .accessibilityIdentifier("dashboard-codex-cli-update")
+                .disabled(model.needsSetup || model.isBusy)
+            }
+
             Button {
                 presentSettingsWindow()
             } label: {
@@ -638,12 +660,6 @@ struct DashboardPopoverView: View {
                 .disabled(model.isBusy)
             } else {
                 Menu {
-                    if model.codexRuntime?.showsMenuUpdate == true {
-                        Button("macos.updatecodex") {
-                            Task { await model.manageCodex(.init(action: "update")) }
-                        }
-                        Divider()
-                    }
                     Button("macos.restartserveraftertasksfinish") {
                         Task { await model.restartRuntime(force: false) }
                     }

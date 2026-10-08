@@ -441,6 +441,9 @@ enum BridgeAppLocalization {
     }
 
     private static func localizedErrorDetail(_ message: String, locale: Locale) -> String {
+        if message.contains("REMOTE_CONFIGURATION_CONFLICT") {
+            return string("macos.input.externalChange", locale: locale)
+        }
         if message.contains("PROCESSING_SPEED_ACCESS_UNVERIFIED:") {
             return string("settings.warning.ultrafastAccessUnverified", locale: locale)
         }

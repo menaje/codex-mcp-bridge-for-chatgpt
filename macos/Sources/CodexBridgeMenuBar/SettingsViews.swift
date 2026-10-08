@@ -349,7 +349,9 @@ struct NativeSettingsView: View {
     @State private var showDiscardDraftConfirmation = false
     @State private var didResolveInitialPane = false
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
-    @State private var searchQuery = ""
+    @Environment(\.bridgeEditScope) private var editScope
+    @StateObject private var searchSession: BridgeEditSession
+    private var searchQuery: String { searchSession.searchValue }
     @State private var searchRequest: SettingsSearchRequest?
     @AppStorage("settings.selectedPane") private var selectedPaneID = "general"
     var onWindowTitleChange: ((String) -> Void)?
@@ -359,7 +361,7 @@ struct NativeSettingsView: View {
         initialSearchQuery: String = ""
     ) {
         self.onWindowTitleChange = onWindowTitleChange
-        _searchQuery = State(initialValue: initialSearchQuery)
+        _searchSession = StateObject(wrappedValue: BridgeEditSession(target: "settings-search", values: [.query: initialSearchQuery]))
     }
 
     var body: some View {
@@ -376,9 +378,13 @@ struct NativeSettingsView: View {
 
     private var settingsNavigation: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            settingsSidebar
-                .id(settingsSidebarIdentity)
-                .navigationSplitViewColumnWidth(min: 210, ideal: 230, max: 270)
+            VStack(spacing: 0) {
+                BridgeSearchField(text: searchSession.binding(.query), prompt: BridgeAppLocalization.string("macos.settings.searchPrompt", locale: model.interfaceLocale))
+                    .bridgeSearchInput(searchSession)
+                    .padding(10)
+                settingsSidebar.id(settingsSidebarIdentity)
+            }
+            .navigationSplitViewColumnWidth(min: 210, ideal: 230, max: 270)
         } detail: {
             GeometryReader { detailGeometry in
                 settingsDetail
@@ -393,11 +399,6 @@ struct NativeSettingsView: View {
         .navigationSplitViewStyle(.balanced)
         .modifier(SettingsDefaultSidebarToolbarRemovalModifier())
         .background(SettingsTitlebarSanitizerView())
-        .searchable(
-            text: $searchQuery,
-            placement: .sidebar,
-            prompt: Text("macos.settings.searchPrompt")
-        )
         .background(Color(nsColor: .windowBackgroundColor))
         .environment(\.locale, model.interfaceLocale)
         .onAppear {
@@ -431,7 +432,8 @@ struct NativeSettingsView: View {
         .onChange(of: model.connectionContextID) { _ in
             syncState = SettingsDraftSyncState()
             synchronizeDraft(force: true)
-            selectedPaneID = model.settings == nil ? "connection" : "general"
+            if editScope?.hasPendingDrafts == true { normalizeSelection() }
+            else { selectedPaneID = model.settings == nil ? "connection" : "general" }
         }
         .onChange(of: model.settings?.settings.settingsRevision) { revision in
             guard let snapshot = model.settings else { return }
@@ -493,7 +495,7 @@ struct NativeSettingsView: View {
             get: { selectedPane },
             set: { pane in
                 guard let pane else { return }
-                selectedPaneID = pane.rawValue
+                _ = selectPane(pane.rawValue)
             }
         )
     }
@@ -600,7 +602,7 @@ struct NativeSettingsView: View {
 
     private var settingsConnectionStatusCard: some View {
         Button {
-            searchQuery = ""
+            searchSession.edit(.query, "")
             selectedPaneID = SettingsNavigationPane.connection.rawValue
         } label: {
             HStack(spacing: 9) {
@@ -677,7 +679,7 @@ struct NativeSettingsView: View {
             }
             GeometryReader { geometry in
                 paneContent
-                    .id("\(selectedPane.rawValue):\(model.interfaceLocaleIdentifier)")
+                    .id(selectedPane.rawValue)
                     .frame(width: geometry.size.width, height: geometry.size.height)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -749,7 +751,18 @@ struct NativeSettingsView: View {
 
     private func synchronizeDraft(force: Bool = false) {
         guard let snapshot = model.settings else { return }
+        let loadingSnapshot = force || syncState.loadedRevision != snapshot.settings.settingsRevision
         syncState.synchronize(with: snapshot, force: force)
+        if loadingSnapshot, !syncState.externalChangeDetected, let draft = syncState.draft,
+           draft.policyMode == "automatic", draft.allowedKind == "explicit", draft.modelPolicyDirty,
+           draft.hasSameEditableValues(as: SettingsDraft(snapshot: snapshot)),
+           !draft.explicitSelectionKeys.isEmpty,
+           draft.modelAllowlist.modelIDs.allSatisfy({ id in
+               draft.modelAllowlist.selections(choices: SettingsDraft.selectableChoices(in: snapshot, allowDelegation: true))
+                   .contains { $0.model == id }
+           }) {
+            model.scheduleSettingsAutosave(draft)
+        }
     }
 
     private func resetDraftAfterDefaults() {
@@ -762,17 +775,21 @@ struct NativeSettingsView: View {
         if selectedPaneID != normalized { selectedPaneID = normalized }
     }
 
+    private func selectPane(_ id: String) -> Bool {
+        guard id != selectedPaneID else { return true }
+        if let editScope, !editScope.confirmDiscardIfNeeded({ BridgeDiscardAlert.confirm(locale: model.interfaceLocale) }) { return false }
+        selectedPaneID = id
+        return true
+    }
+
     private func selectRequestedPane(_ request: String) {
-        selectedPaneID = SettingsNavigationPane.resolved(
-            rawValue: request,
-            available: availablePanes,
-            needsSetup: model.needsSetup
-        ).rawValue
+        _ = selectPane(SettingsNavigationPane.resolved(
+            rawValue: request, available: availablePanes, needsSetup: model.needsSetup
+        ).rawValue)
     }
 
     private func selectSearchResult(_ target: SettingsSearchTarget) {
-        selectedPaneID = target.pane.rawValue
-        searchRequest = SettingsSearchRequest(target: target)
+        if selectPane(target.pane.rawValue) { searchRequest = SettingsSearchRequest(target: target) }
     }
 
     private func reportWindowTitle() {
@@ -931,6 +948,7 @@ private struct SettingsPaneHeader: View {
 }
 
 private struct ConnectionSettingsPane: View {
+    @Environment(\.bridgeEditScope) private var editScope
     @EnvironmentObject private var model: AppModel
     let searchRequest: SettingsSearchRequest?
     @State private var showRemoteModeConfirmation = false
@@ -939,9 +957,11 @@ private struct ConnectionSettingsPane: View {
     @State private var showDisableRemoteConnectionConfirmation = false
     @State private var profileDeletionTarget: RemoteServerProfile?
     @State private var deviceRevocationTarget: RemoteManagementDevice?
-    @State private var activeProfileName = ""
-    @State private var hostedEndpoint = detectedRemoteManagementEndpoint()
-    @State private var hostedDisplayName = Host.current().localizedName ?? "Codex MCP Bridge"
+    @StateObject private var profileSession = BridgeEditSession(target: "profile", values: [.name: ""])
+    @StateObject private var hostedSession = BridgeEditSession(target: "hosted-server", values: [
+        .endpoint: detectedRemoteManagementEndpoint(), .displayName: Host.current().localizedName ?? "Codex MCP Bridge"
+    ])
+    @FocusState private var focusedHostedField: BridgeEditField?
     @State private var pairingInvitationCopied = false
     @State private var advancedConnectionSettingsExpanded = false
 
@@ -971,6 +991,7 @@ private struct ConnectionSettingsPane: View {
                         Spacer()
                         if model.isRemoteClient {
                             Button("macos.runonthismac") {
+                                guard confirmContextChange() else { return }
                                 Task { await model.setConnectionMode(.localHost) }
                             }
                         } else {
@@ -992,16 +1013,19 @@ private struct ConnectionSettingsPane: View {
         }
         .onAppear {
             synchronizeProfileName()
+            synchronizeHostedFields()
             guard !model.isRemoteClient else { return }
             Task {
                 await model.refreshRemoteManagementStatus()
                 synchronizeHostedFields()
             }
         }
-        .onChange(of: model.connectionPreferences.activeServerId) { _ in
-            synchronizeProfileName()
-        }
+        .onChange(of: model.activeRemoteProfile) { _ in synchronizeProfileName() }
+        .onChange(of: model.connectionContextID) { _ in synchronizeProfileName(); synchronizeHostedFields() }
         .onChange(of: model.remoteManagementStatus) { _ in
+            synchronizeHostedFields()
+        }
+        .onChange(of: focusedHostedField) { _ in
             synchronizeHostedFields()
         }
         .onChange(of: model.remotePairingInvitation) { invitation in
@@ -1030,9 +1054,11 @@ private struct ConnectionSettingsPane: View {
             isPresented: $showRemoteModeConfirmation
         ) {
             Button("macos.switchtoremotemodeafterfinishingwork") {
+                guard confirmContextChange() else { return }
                 Task { await model.setConnectionMode(.remoteClient) }
             }
             Button("macos.forcestopandswitch", role: .destructive) {
+                guard confirmContextChange() else { return }
                 Task { await model.setConnectionMode(.remoteClient, force: true) }
             }
             Button("common.cancel", role: .cancel) {}
@@ -1044,12 +1070,11 @@ private struct ConnectionSettingsPane: View {
             isPresented: $showDisableRemoteConnectionConfirmation
         ) {
             Button("macos.turnoffconnectionsfromothermacs", role: .destructive) {
+                guard let status = model.remoteManagementStatus else { return }
+                let expected = RemoteManagementConfiguration(status: status)
                 Task {
-                    await model.configureRemoteManagement(
-                        enabled: false,
-                        endpoint: hostedEndpoint,
-                        displayName: hostedDisplayName
-                    )
+                    _ = await model.submitRemoteManagementSettings(enabled: false, endpoint: status.endpoint ?? detectedRemoteManagementEndpoint(),
+                                                                  displayName: status.displayName, expected: expected)
                 }
             }
             Button("common.cancel", role: .cancel) {}
@@ -1065,6 +1090,7 @@ private struct ConnectionSettingsPane: View {
             presenting: profileDeletionTarget
         ) { profile in
             Button("macos.deleteserverprofileandcredentials", role: .destructive) {
+                guard confirmContextChange() else { return }
                 Task {
                     if await model.removeRemoteServer(profile.serverId) {
                         profileDeletionTarget = nil
@@ -1140,6 +1166,7 @@ private struct ConnectionSettingsPane: View {
                         Spacer()
                         if profile.serverId != model.connectionPreferences.activeServerId {
                             Button("macos.switch") {
+                                guard confirmContextChange() else { return }
                                 Task { await model.activateRemoteServer(profile.serverId) }
                             }
                         }
@@ -1161,13 +1188,20 @@ private struct ConnectionSettingsPane: View {
             }
             if let profile = model.activeRemoteProfile {
                 HStack {
-                    TextField("macos.activeserverdisplayname", text: $activeProfileName)
+                    TextField("macos.activeserverdisplayname", text: profileSession.binding(.name))
+                        .bridgeInput(profileSession, field: .name)
                     Button("macos.savename") {
-                        _ = model.renameRemoteServer(profile.serverId, name: activeProfileName)
+                        guard let submitted = profileSession.prepareSubmission(validate: {
+                            if $0.value(.name).isEmpty || $0.targetID != "profile:\(profile.serverId)" { throw BridgeEditError.invalidValue }
+                        }) else { return }
+                        if model.renameRemoteServer(profile.serverId, name: submitted.value(.name)) {
+                            profileSession.acknowledge(submitted)
+                        } else { profileSession.fail(submitted) }
                     }
-                    .disabled(activeProfileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(profileSession.value(.name).isEmpty && !profileSession.hasMarkedText)
                 }
             }
+            BridgeEditStatus(session: profileSession)
             if let hello = model.remoteHello {
                 Label(
                     BridgeAppLocalization.format(
@@ -1202,7 +1236,9 @@ private struct ConnectionSettingsPane: View {
             Text("macos.thismacsnameandconnectionaddressare")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            TextField("macos.servernameshownonotherdevices", text: $hostedDisplayName)
+            TextField("macos.servernameshownonotherdevices", text: hostedSession.binding(.displayName))
+                .bridgeInput(hostedSession, field: .displayName)
+                .focused($focusedHostedField, equals: .displayName)
             HStack {
                 if let status = model.remoteManagementStatus {
                     Label(
@@ -1213,29 +1249,38 @@ private struct ConnectionSettingsPane: View {
                 }
                 Spacer()
                 Button {
-                    Task {
-                        await model.configureRemoteManagement(
-                            enabled: true,
-                            endpoint: hostedEndpoint,
-                            displayName: hostedDisplayName
-                        )
+                    guard let submitted = hostedSession.prepareSubmission(validate: {
+                        guard $0.targetID == "hosted:\(model.connectionContextID)" else { throw BridgeEditError.synchronization }
+                        if $0.value(.endpoint).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || $0.value(.displayName).isEmpty { throw BridgeEditError.invalidValue }
+                        guard (try? JSONDecoder().decode(RemoteManagementConfiguration.self, from: Data($0.value(.content).utf8))) != nil else { throw BridgeEditError.synchronization }
+                    }) else { return }
+                    Task { @MainActor in
+                        let expected = try? JSONDecoder().decode(RemoteManagementConfiguration.self, from: Data(submitted.value(.content).utf8))
+                        if let receipt = await model.submitRemoteManagementSettings(enabled: true, endpoint: submitted.value(.endpoint), displayName: submitted.value(.displayName), expected: expected) {
+                            let configuration = encodedRemoteConfiguration(receipt)
+                            hostedSession.acknowledge(submitted, confirmed: [.endpoint: receipt.endpoint ?? submitted.value(.endpoint), .displayName: receipt.displayName, .content: configuration])
+                        } else {
+                            hostedSession.fail(submitted, conflict: model.remoteConfigurationHadConflict)
+                            await model.refreshRemoteManagementStatus()
+                        }
                     }
                 } label: {
                     Text(remoteManagementActionTitle)
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(
-                    hostedEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                        hostedDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                        model.isBusy
+                    ((!hostedSession.hasMarkedText) && (hostedSession.value(.endpoint).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || hostedSession.value(.displayName).isEmpty)) ||
+                        model.isBusy || hostedSession.isSubmitting
                 )
                 if model.remoteManagementStatus?.enabled == true {
                     Button("macos.turnoffconnections", role: .destructive) {
+                        guard hostedSession.confirmInput() else { return }
                         showDisableRemoteConnectionConfirmation = true
                     }
                     .disabled(model.isBusy)
                 }
             }
+            BridgeEditStatus(session: hostedSession, reloadLatest: { Task { await model.refreshRemoteManagementStatus() } })
             FullRowDisclosure(
                 "macos.advancedconnectionsettings",
                 isExpanded: $advancedConnectionSettingsExpanded
@@ -1249,10 +1294,12 @@ private struct ConnectionSettingsPane: View {
                             .font(.caption.weight(.medium))
                             .foregroundStyle(.secondary)
                             .frame(width: 76, alignment: .leading)
-                        TextField(text: $hostedEndpoint) {
+                        TextField(text: hostedSession.binding(.endpoint)) {
                             EmptyView()
                         }
+                        .focused($focusedHostedField, equals: .endpoint)
                         .textFieldStyle(.roundedBorder)
+                        .bridgeInput(hostedSession, field: .endpoint)
                         .multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity)
                     }
@@ -1361,7 +1408,10 @@ private struct ConnectionSettingsPane: View {
     }
 
     private func synchronizeProfileName() {
-        activeProfileName = model.activeRemoteProfile?.name ?? ""
+        let target = "profile:\(model.activeRemoteProfile?.serverId ?? "none")"
+        let values: [BridgeEditField: String] = [.name: model.activeRemoteProfile?.name ?? ""]
+        if profileSession.targetID == target { profileSession.receive(values) }
+        else { profileSession.reset(target: target, values: values) }
     }
 
     private func remoteManagementStatusText(_ status: RemoteManagementStatus) -> String {
@@ -1387,15 +1437,24 @@ private struct ConnectionSettingsPane: View {
         return BridgeAppLocalization.string("macos.turnonconnectionsfromothermacs", locale: model.interfaceLocale)
     }
 
+    private func confirmContextChange() -> Bool {
+        editScope?.confirmDiscardIfNeeded { BridgeDiscardAlert.confirm(locale: model.interfaceLocale) } ?? true
+    }
+
     private func synchronizeHostedFields() {
-        let detectedEndpoint = detectedRemoteManagementEndpoint()
+        let target = "hosted:\(model.connectionContextID)"
+        var values: [BridgeEditField: String] = [.endpoint: model.remoteManagementStatus?.endpoint ?? detectedRemoteManagementEndpoint()]
         if let status = model.remoteManagementStatus {
-            hostedEndpoint = status.endpoint ?? detectedEndpoint
-            if status.endpoint != nil || status.enabled {
-                hostedDisplayName = status.displayName
-            }
-        } else if hostedEndpoint.isEmpty {
-            hostedEndpoint = detectedEndpoint
+            values[.content] = encodedRemoteConfiguration(status)
+            if status.endpoint != nil || status.enabled { values[.displayName] = status.displayName }
+        }
+        if hostedSession.targetID == "hosted-server" {
+            values[.displayName] = values[.displayName] ?? hostedSession.value(.displayName)
+            hostedSession.reset(target: target, values: values)
+        } else if hostedSession.targetID == target { hostedSession.receive(values) }
+        else {
+            values[.displayName] = values[.displayName] ?? Host.current().localizedName ?? "Codex MCP Bridge"
+            hostedSession.reset(target: target, values: values)
         }
     }
 
@@ -1408,9 +1467,9 @@ private struct ConnectionSettingsPane: View {
 private struct RemoteServerConnectionSheet: View {
     @EnvironmentObject private var model: AppModel
     let onComplete: (Bool) -> Void
-    @State private var invitation = ""
-    @State private var profileName = ""
-    @State private var deviceName = Host.current().localizedName ?? "Mac"
+    @StateObject private var inputSession = BridgeEditSession(target: "pair-server", values: [
+        .invitation: "", .profileName: "", .deviceName: Host.current().localizedName ?? "Mac"
+    ])
     @State private var selectedServerId = ""
     @State private var optionalFieldsExpanded = false
 
@@ -1455,41 +1514,43 @@ private struct RemoteServerConnectionSheet: View {
                     Text("macos.ontheservermacclickcreateandcopy")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    TextEditor(text: $invitation)
-                        .font(.caption.monospaced())
+                    BridgeTextEditor(text: inputSession.binding(.invitation), font: .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular))
+                        .bridgeInput(inputSession, field: .invitation)
                         .frame(minHeight: 76)
                         .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
                     HStack {
                         Button("macos.pastefromclipboard") {
+                            guard inputSession.confirmInput() else { return }
                             if let copied = NSPasteboard.general.string(forType: .string) {
-                                invitation = copied.trimmingCharacters(in: .whitespacesAndNewlines)
+                                inputSession.edit(.invitation, copied.trimmingCharacters(in: .whitespacesAndNewlines))
                             }
                         }
                         Spacer()
                     }
-                    TextField("macos.nameofthisdeviceshownontheserver", text: $deviceName)
+                    TextField("macos.nameofthisdeviceshownontheserver", text: inputSession.binding(.deviceName))
+                        .bridgeInput(inputSession, field: .deviceName)
                     FullRowDisclosure("macos.optional", isExpanded: $optionalFieldsExpanded) {
-                        TextField("macos.servernametosaveoptional", text: $profileName)
+                        TextField("macos.servernametosaveoptional", text: inputSession.binding(.profileName))
+                            .bridgeInput(inputSession, field: .profileName)
                     }
                     HStack {
                         Spacer()
                         Button(model.isRemoteClient ? "macos.pairandactivate" : "macos.verifyandregisterserver") {
+                            guard let submitted = inputSession.prepareSubmission(validate: {
+                                if $0.value(.invitation).isEmpty || $0.value(.deviceName).isEmpty { throw BridgeEditError.invalidValue }
+                            }) else { return }
                             let shouldSwitchMode = !model.isRemoteClient
                             Task {
                                 if await model.pairRemoteServer(
-                                    invitation: invitation,
-                                    profileName: profileName,
-                                    deviceName: deviceName
+                                    invitation: submitted.value(.invitation), profileName: submitted.value(.profileName), deviceName: submitted.value(.deviceName)
                                 ) {
-                                    onComplete(shouldSwitchMode)
-                                }
+                                    if inputSession.acknowledge(submitted) { onComplete(shouldSwitchMode) }
+                                } else { inputSession.fail(submitted) }
                             }
                         }
                         .buttonStyle(.borderedProminent)
                         .disabled(
-                            invitation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                                deviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                                model.isBusy
+                            ((!inputSession.hasMarkedText) && (inputSession.value(.invitation).isEmpty || inputSession.value(.deviceName).isEmpty)) || model.isBusy || inputSession.isSubmitting
                         )
                     }
                     Text("macos.devicecredentialsarestoredonlyinthemacos")
@@ -1497,6 +1558,7 @@ private struct RemoteServerConnectionSheet: View {
                         .foregroundStyle(.secondary)
                 }
 
+                BridgeEditStatus(session: inputSession)
                 if let error = model.connectionErrorMessage {
                     Section("macos.connectionerror") {
                         Label(error, systemImage: "exclamationmark.triangle.fill")
@@ -1521,6 +1583,9 @@ private struct RemoteServerConnectionSheet: View {
             selectedServerId = model.connectionPreferences.activeServerId ??
                 model.connectionPreferences.profiles.first?.serverId ?? ""
         }
+        .bridgeEditForm(inputSession)
+        .interactiveDismissDisabled(inputSession.hasUnsavedChanges || inputSession.isSubmitting)
+        .onDisappear { inputSession.discard() }
     }
 }
 
@@ -1806,8 +1871,13 @@ private struct ModelExecutionSettingsPane: View {
     let didReset: () -> Void
     let searchRequest: SettingsSearchRequest?
     @State private var showResetConfirmation = false
-    @State private var allowedModelsExpanded = false
-    @State private var expandedModelIDs = Set<String>()
+    @StateObject private var numberSession: BridgeEditSession
+
+    init(snapshot: SettingsSnapshot, draft: Binding<SettingsDraft>, didReset: @escaping () -> Void, searchRequest: SettingsSearchRequest?) {
+        self.snapshot = snapshot; _draft = draft; self.didReset = didReset; self.searchRequest = searchRequest
+        _numberSession = StateObject(wrappedValue: BridgeEditSession(target: "concurrent-jobs", values: [.number: String(draft.wrappedValue.maxConcurrentJobs)],
+            policies: [.number: .integer(1...snapshot.capabilities.maxConcurrentJobs)]))
+    }
 
     private var choices: [ModelChoice] {
         SettingsDraft.displayedChoices(
@@ -1834,6 +1904,27 @@ private struct ModelExecutionSettingsPane: View {
     private var modelIDs: [String] {
         var seen = Set<String>()
         return choices.map(\.model).filter { seen.insert($0).inserted }
+    }
+    private var allowlistChoices: [ModelChoice] {
+        SettingsDraft.selectableChoices(in: snapshot, allowDelegation: true)
+    }
+    private var catalogChoices: [ModelChoice] {
+        snapshot.catalog.models.filter { $0.hidden != true }.flatMap { entry in
+            entry.supportedReasoningEfforts.map { ModelChoice(model: entry.id, reasoningEffort: $0.effort) }
+        }
+    }
+    private var allowlistModelIDs: [String] {
+        ModelSettingsOrder.ids(catalog: snapshot.catalog.models,
+            retained: Set(modelIDs).union(draft.modelAllowlist.modelIDs))
+            .filter { id in choices.contains { $0.model == id } || draft.modelAllowlist.modelIDs.contains(id) }
+    }
+    private var commonEfforts: [String] {
+        draft.modelAllowlist.availableEfforts(choices: allowlistChoices)
+    }
+    private var allowedDescriptionModelIDs: Set<String> {
+        if draft.allowedKind == "catalog-visible" { return Set(SettingsDraft.selectableChoices(
+            in: snapshot, allowDelegation: draft.allowDelegation).map(\.model)) }
+        return Set(choices.filter { draft.explicitSelectionKeys.contains($0.key) && selectableChoiceKeys.contains($0.key) }.map(\.model))
     }
 
     var body: some View {
@@ -1901,35 +1992,53 @@ private struct ModelExecutionSettingsPane: View {
                         Text("macos.selectexplicitly").tag("explicit")
                     }
                     if draft.allowedKind == "explicit" {
-                        FullRowDisclosure(
-                            "macos.allowedmodelsandreasoningefforts",
-                            isExpanded: $allowedModelsExpanded
-                        ) {
-                            VStack(alignment: .leading, spacing: 6) {
-                                ForEach(modelIDs, id: \.self) { modelID in
-                                    FullRowDisclosure(
-                                        isExpanded: modelExpansionBinding(modelID),
-                                        label: { Text(modelLabel(modelID)) },
-                                        content: {
-                                            VStack(alignment: .leading, spacing: 5) {
-                                                ForEach(choices(for: modelID), id: \.key) { choice in
-                                                    Toggle(
-                                                        effortLabel(choice),
-                                                        isOn: explicitBinding(choice.key)
-                                                    )
-                                                    .disabled(
-                                                        draft.isUltraDisabled(choice) ||
-                                                        (!selectableChoiceKeys.contains(choice.key) &&
-                                                        !draft.explicitSelectionKeys.contains(choice.key))
-                                                    )
-                                                }
-                                            }
-                                            .padding(.leading, 2)
-                                        }
-                                    )
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(alignment: .top, spacing: 20) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("settings.allowedModels").font(.headline)
+                                    ForEach(allowlistModelIDs, id: \.self) { id in
+                                        Toggle(modelLabel(id), isOn: Binding(
+                                            get: { draft.modelAllowlist.modelIDs.contains(id) },
+                                            set: { selected in draft.updateAllowlist(choices: allowlistChoices) {
+                                                $0.setModel(id, selected: selected, choices: allowlistChoices)
+                                            } }
+                                        ))
+                                        .toggleStyle(.checkbox)
+                                        .disabled(!choices.contains { $0.model == id && selectableChoiceKeys.contains($0.key) }
+                                            && !draft.modelAllowlist.modelIDs.contains(id))
+                                    }
+                                }.frame(maxWidth: .infinity, alignment: .leading)
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("settings.commonEfforts").font(.headline)
+                                    Text("settings.commonEffortsHint").font(.caption).foregroundStyle(.secondary)
+                                    if commonEfforts.isEmpty {
+                                        Text("settings.chooseModelsForEfforts").font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    ForEach(commonEfforts, id: \.self) { effort in
+                                        commonEffortToggle(effort)
+                                    }
+                                }.frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            Text(BridgeAppLocalization.string("settings.selectionSummary", locale: model.interfaceLocale)
+                                .replacingOccurrences(of: "{models}", with: String(draft.modelAllowlist.modelIDs.count))
+                                .replacingOccurrences(of: "{count}", with: String(draft.explicitSelectionKeys.intersection(selectableChoiceKeys).count)))
+                                .font(.caption).foregroundStyle(.secondary)
+                            ForEach(allowlistModelIDs.filter { draft.modelAllowlist.modelIDs.contains($0) }, id: \.self) { id in
+                                let unsupported = draft.modelAllowlist.unsupportedEfforts(for: id, catalogChoices: catalogChoices)
+                                if !unsupported.isEmpty {
+                                    Text(BridgeAppLocalization.string("settings.unsupportedModelEfforts", locale: model.interfaceLocale)
+                                        .replacingOccurrences(of: "{model}", with: modelLabel(id))
+                                        .replacingOccurrences(of: "{efforts}", with: unsupported.map { $0 == "ultra" ? "Ultra" : $0 }.joined(separator: ", ")))
+                                        .font(.caption).foregroundStyle(.secondary)
                                 }
                             }
-                            .padding(.vertical, 4)
+                            if let id = draft.modelAllowlist.modelIDs.sorted().first(where: { id in
+                                !draft.modelAllowlist.selections(choices: allowlistChoices).contains { $0.model == id }
+                            }) {
+                                Text(BridgeAppLocalization.string("settings.modelEffortRequired", locale: model.interfaceLocale)
+                                    .replacingOccurrences(of: "{model}", with: modelLabel(id)))
+                                    .font(.caption).foregroundStyle(.orange)
+                            }
                         }
                     }
                 }
@@ -1990,25 +2099,26 @@ private struct ModelExecutionSettingsPane: View {
                 .id(SettingsSearchTarget.modelSelection.anchorID)
 
             if draft.policyMode == "automatic", snapshot.settings.modelDescriptionOverrides != nil {
-                ModelDescriptionsSettingsSection(snapshot: snapshot)
+                ModelDescriptionsSettingsSection(snapshot: snapshot, allowedModelIDs: allowedDescriptionModelIDs)
                     .id(model.connectionContextID)
             }
 
                 Section("macos.settings.execution") {
                 LabeledContent("macos.concurrentagenttasks") {
                     HStack(spacing: 6) {
-                        TextField(value: concurrentJobsBinding, format: .number) {
-                            EmptyView()
-                        }
-                        .frame(width: 46)
+                        TextField(text: numberSession.binding(.number)) { EmptyView() }
                         .multilineTextAlignment(.trailing)
                         .textFieldStyle(.roundedBorder)
+                        .onSubmit { if !numberSession.hasMarkedText { commitConcurrentJobs() } }
+                        .bridgeInput(numberSession, field: .number, onCommit: commitConcurrentJobs)
+                        .frame(width: 46)
                         Stepper(value: concurrentJobsBinding, in: 1...snapshot.capabilities.maxConcurrentJobs) {
                             EmptyView()
                         }
                         .labelsHidden()
                     }
                 }
+                BridgeEditStatus(session: numberSession)
                 Text(BridgeAppLocalization.format(
                     "macos.enteravaluefrom1totheoperator",
                     locale: model.interfaceLocale,
@@ -2064,7 +2174,7 @@ private struct ModelExecutionSettingsPane: View {
             }
             .formStyle(.grouped)
         }
-        .disabled(model.modelDescriptionSaveInProgress)
+        .onChange(of: draft.maxConcurrentJobs) { numberSession.receive([.number: String($0)]) }
         .confirmationDialog("macos.resetgeneralsettingstotheoperatordefaults", isPresented: $showResetConfirmation) {
             Button("macos.resetgeneralsettings", role: .destructive) {
                 Task {
@@ -2074,34 +2184,22 @@ private struct ModelExecutionSettingsPane: View {
         }
     }
 
+    private func commitConcurrentJobs() {
+        guard let submitted = numberSession.prepareSubmission(), let value = Int(submitted.value(.number)) else { return }
+        draft.maxConcurrentJobs = value
+        numberSession.acknowledge(submitted)
+    }
+
     private var concurrentJobsBinding: Binding<Int> {
         Binding(
             get: { draft.maxConcurrentJobs },
             set: {
+                guard numberSession.confirmInput() else { return }
                 draft.maxConcurrentJobs = min(
                     snapshot.capabilities.maxConcurrentJobs,
                     max(1, $0)
                 )
-            }
-        )
-    }
-
-    private func modelExpansionBinding(_ modelID: String) -> Binding<Bool> {
-        Binding(
-            get: { expandedModelIDs.contains(modelID) },
-            set: { expanded in
-                if expanded { expandedModelIDs.insert(modelID) }
-                else { expandedModelIDs.remove(modelID) }
-            }
-        )
-    }
-
-    private func explicitBinding(_ key: String) -> Binding<Bool> {
-        Binding(
-            get: { draft.explicitSelectionKeys.contains(key) },
-            set: { enabled in
-                if enabled { draft.explicitSelectionKeys.insert(key) }
-                else { draft.explicitSelectionKeys.remove(key) }
+                numberSession.reset(target: numberSession.targetID, values: [.number: String(draft.maxConcurrentJobs)])
             }
         )
     }
@@ -2124,6 +2222,17 @@ private struct ModelExecutionSettingsPane: View {
 
     private var selectedFixedChoice: ModelChoice? {
         choices.first { $0.key == draft.fixedSelectionKey }
+    }
+
+    private func commonEffortToggle(_ effort: String) -> some View {
+        let inactive = effort == "ultra" && !draft.allowDelegation
+        let label = effort + (inactive ? " (" + BridgeAppLocalization.string("settings.ultraDisabled", locale: model.interfaceLocale) + ")" : "")
+        return Toggle(label, isOn: Binding(
+            get: { draft.modelAllowlist.commonEfforts.contains(effort) },
+            set: { selected in draft.updateAllowlist(choices: allowlistChoices) { $0.setEffort(effort, selected: selected) } }
+        ))
+        .toggleStyle(.checkbox)
+        .disabled(inactive)
     }
 
     private var choicesForFixedModel: [ModelChoice] {
@@ -2474,10 +2583,8 @@ private struct ProjectsSettingsPane: View {
         }
         .id(SettingsSearchTarget.projects.anchorID)
         .sheet(item: $editor) { editor in
-            ProjectEditorSheet(editor: editor, usesRemotePaths: usesRemotePaths) { operation in
-                let succeeded = await model.applyProjectOperation(operation)
-                if succeeded { self.editor = nil }
-                return succeeded
+            ProjectEditorSheet(editor: editor, usesRemotePaths: usesRemotePaths) { operations, revision in
+                await model.submitProjectOperations(operations, expectedRegistryRevision: revision)
             }
         }
         .confirmationDialog(
@@ -2607,33 +2714,32 @@ private struct ProjectEditorSheet: View {
     @EnvironmentObject private var model: AppModel
     let editor: ProjectEditor
     let usesRemotePaths: Bool
-    let save: (ProjectOperation) async -> Bool
-    @State private var name: String
-    @State private var cwd: String
-    @State private var isSaving = false
+    let save: @MainActor ([ProjectOperation], Int?) async -> SettingsSnapshot?
+    @StateObject private var inputSession: BridgeEditSession
+    private var name: String { inputSession.value(.name) }
+    private var cwd: String { inputSession.value(.cwd) }
 
     init(
         editor: ProjectEditor,
         usesRemotePaths: Bool,
-        save: @escaping (ProjectOperation) async -> Bool
+        save: @escaping @MainActor ([ProjectOperation], Int?) async -> SettingsSnapshot?
     ) {
         self.editor = editor
         self.usesRemotePaths = usesRemotePaths
         self.save = save
+        let values: [BridgeEditField: String]
         switch editor {
-        case .add(let name, let cwd):
-            _name = State(initialValue: name)
-            _cwd = State(initialValue: cwd)
-        case .rename(let project), .relocate(let project), .restore(let project):
-            _name = State(initialValue: project.name)
-            _cwd = State(initialValue: project.cwd)
+        case .add(let name, let cwd): values = [.name: name, .cwd: cwd]
+        case .rename(let project), .relocate(let project), .restore(let project): values = [.name: project.name, .cwd: project.cwd]
         }
+        _inputSession = StateObject(wrappedValue: BridgeEditSession(target: editor.id, values: values))
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(title).font(.title2.bold())
-            TextField("macos.projectname", text: $name)
+            TextField("macos.projectname", text: inputSession.binding(.name))
+                .bridgeInput(inputSession, field: .name)
             if case .rename = editor {
                 EmptyView()
             } else {
@@ -2643,11 +2749,13 @@ private struct ProjectEditorSheet: View {
                             usesRemotePaths ? "macos.absolutefolderpathontheserver" : "macos.folder",
                             locale: locale
                         ),
-                        text: $cwd
+                        text: inputSession.binding(.cwd)
                     )
                     .textFieldStyle(.roundedBorder)
+                    .bridgeInput(inputSession, field: .cwd)
                     if !usesRemotePaths {
                         Button("problem.selectShort") {
+                            guard inputSession.confirmInput() else { return }
                             let panel = NSOpenPanel()
                             panel.canChooseFiles = false
                             panel.canChooseDirectories = true
@@ -2656,7 +2764,7 @@ private struct ProjectEditorSheet: View {
                                 "macos.choosethefoldertolinknofoldersor",
                                 locale: locale
                             )
-                            if panel.runModal() == .OK, let url = panel.url { cwd = url.path }
+                            if panel.runModal() == .OK, let url = panel.url { inputSession.edit(.cwd, url.path) }
                         }
                     }
                 }
@@ -2669,6 +2777,7 @@ private struct ProjectEditorSheet: View {
                     .foregroundStyle(.secondary)
                 }
             }
+            BridgeEditStatus(session: inputSession, reloadLatest: { Task { await model.refreshSettings() } })
             if let error = model.settingsErrorMessage {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
@@ -2676,26 +2785,42 @@ private struct ProjectEditorSheet: View {
                     .textSelection(.enabled)
             }
             HStack {
-                Button("common.cancel", role: .cancel) { dismiss() }
+                Button("common.cancel", role: .cancel) { inputSession.discard(); dismiss() }
                 Spacer()
-                if isSaving { ProgressView().controlSize(.small) }
+                if inputSession.isSubmitting { ProgressView().controlSize(.small) }
                 Button("macos.save") {
-                    isSaving = true
-                    Task {
-                        if await save(operation) { dismiss() }
-                        isSaving = false
-                    }
+                    inputSession.submitReceipt(validate: {
+                        if $0.value(.name).isEmpty || (requiresPath && $0.value(.cwd).isEmpty) { throw BridgeEditError.invalidValue }
+                    }, isConflict: { model.settingsConflictMessage != nil }, operation: { submitted, _ in
+                        let existingIDs = Set(model.settings?.settings.projects.map(\.id) ?? [])
+                        guard let receipt = await save(operations(for: submitted), submitted.expectedVersion.flatMap(Int.init)) else { return nil }
+                        let project: BridgeProject?
+                        switch editor {
+                        case .add where submitted.targetID == editor.id:
+                            project = receipt.settings.projects.first { !existingIDs.contains($0.id) && $0.name == submitted.value(.name) }
+                        case .add:
+                            project = receipt.settings.projects.first { $0.id == submitted.targetID }
+                        case .rename(let original), .relocate(let original), .restore(let original):
+                            project = receipt.settings.projects.first { $0.id == original.id }
+                        }
+                        guard let project else { return nil }
+                        return BridgeEditReceipt(version: String(receipt.settings.registryRevision), target: project.id,
+                                                 confirmed: [.name: project.name, .cwd: project.cwd])
+                    }, onClean: { dismiss() })
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(
-                    name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                        requiresPath && cwd.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                        isSaving
+                    ((!inputSession.hasMarkedText) && (name.isEmpty || requiresPath && cwd.isEmpty)) || inputSession.isSubmitting
                 )
             }
         }
         .padding(20)
         .frame(width: 480)
+        .onAppear { synchronizeProject() }
+        .onChange(of: model.settings?.settings.registryRevision) { _ in synchronizeProject() }
+        .bridgeEditForm(inputSession)
+        .interactiveDismissDisabled(inputSession.hasUnsavedChanges || inputSession.isSubmitting)
+        .onDisappear { inputSession.discard() }
     }
 
     private var title: String {
@@ -2709,17 +2834,39 @@ private struct ProjectEditorSheet: View {
         return BridgeAppLocalization.string(key, locale: locale)
     }
 
-    private var operation: ProjectOperation {
+    private func operations(for submitted: BridgeEditSubmission) -> [ProjectOperation] {
+        let name = submitted.value(.name), cwd = submitted.value(.cwd)
         switch editor {
         case .add:
-            return .add(name: name, cwd: cwd)
+            if submitted.targetID != editor.id {
+                return [.rename(projectId: submitted.targetID, name: name), .relocate(projectId: submitted.targetID, cwd: cwd)]
+            }
+            return [.add(name: name, cwd: cwd)]
         case .rename(let project):
-            return .rename(projectId: project.id, name: name)
+            return [.rename(projectId: project.id, name: name)]
         case .relocate(let project):
-            return .relocate(projectId: project.id, cwd: cwd)
+            return [.relocate(projectId: project.id, cwd: cwd)]
         case .restore(let project):
-            return .restore(projectId: project.id, name: name, cwd: cwd)
+            if submitted.targetID == project.id {
+                return [.rename(projectId: project.id, name: name), .relocate(projectId: project.id, cwd: cwd)]
+            }
+            return [.restore(projectId: project.id, name: name, cwd: cwd)]
         }
+    }
+
+    private func synchronizeProject() {
+        var values: [BridgeEditField: String] = [:]
+        switch editor {
+        case .add:
+            if let current = model.settings?.settings.projects.first(where: { $0.id == inputSession.targetID }) {
+                values = [.name: current.name, .cwd: current.cwd]
+            }
+        case .rename(let original), .relocate(let original), .restore(let original):
+            if let current = model.settings?.settings.projects.first(where: { $0.id == original.id }) {
+                values = [.name: current.name, .cwd: current.cwd]
+            }
+        }
+        inputSession.receive(values, version: model.settings.map { String($0.settings.registryRevision) })
     }
 
     private var requiresPath: Bool {
@@ -2799,4 +2946,10 @@ private func phaseLabel(_ value: String?, locale: Locale) -> String {
     default: key = "macos.stopped"
     }
     return BridgeAppLocalization.string(key, locale: locale)
+}
+
+private func encodedRemoteConfiguration(_ status: RemoteManagementStatus) -> String {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = .sortedKeys
+    return String(decoding: (try? encoder.encode(RemoteManagementConfiguration(status: status))) ?? Data(), as: UTF8.self)
 }

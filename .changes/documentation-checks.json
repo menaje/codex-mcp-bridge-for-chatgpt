@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Condense the README setup overview and keep documentation checks compatible with wrapped product names and current guide headings.",
+  "breaking": false,
+  "migration": null
+}

@@ -48,6 +48,7 @@ describe("AppServerLateResponseJournal", () => {
       {
         initializeTimeoutMs: 2_000,
         requestTimeoutMs: 30,
+        threadInitializationTimeoutMs: 30,
         onLateResponse: (response) => journal.observe(response)
       },
       { versionProbe: async () => CODEX_CLI_TEST_VERSION }

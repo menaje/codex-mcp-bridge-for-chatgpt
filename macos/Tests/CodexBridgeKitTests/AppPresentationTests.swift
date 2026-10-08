@@ -1278,6 +1278,19 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertFalse(SettingsDraft(snapshot: disabledSnapshot).experimentalDirectResultDelivery)
     }
 
+    func testEmptyCatalogDoesNotRewriteAnExplicitPolicyForUnrelatedPreferences() throws {
+        let saved = ModelChoice(model: "temporarily-unavailable", reasoningEffort: "high")
+        let snapshot = try settingsSnapshot(policy: [
+            "mode": "automatic", "allowedSelections": ["kind": "explicit", "selections": [choiceObject(saved)]],
+            "constraints": ["allowDelegation": true]
+        ], catalogModels: [])
+        var draft = SettingsDraft(snapshot: snapshot)
+        draft.accessStrategy = "read-only"
+        XCTAssertFalse(draft.modelPolicyDirty)
+        XCTAssertEqual(draft.rebased(on: snapshot).explicitSelectionKeys, [saved.key])
+        XCTAssertFalse(draft.rebased(on: snapshot).modelPolicyDirty)
+    }
+
     func testSettingsDraftIgnoresRetiredAutomaticDefaultsWithoutDirtyingPolicy() throws {
         let snapshot = try settingsSnapshot(
             policy: [
@@ -1365,6 +1378,19 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertEqual(custom.valueToSave(officialDescription: "User text"), "User text")
     }
 
+    func testModelDescriptionLimitCountsCanonicalUnicodeScalarsWithoutRewritingTheDraft() {
+        var edit = ModelDescriptionEdit(officialDescription: nil, override: nil)
+        edit.text = String(repeating: "한", count: 2_000)
+        XCTAssertFalse(edit.isTooLong)
+        XCTAssertEqual(edit.text.utf8.count, 18_000)
+        edit.text += "글"
+        XCTAssertTrue(edit.isTooLong)
+        edit.text = String(repeating: "😀", count: 2_000)
+        XCTAssertFalse(edit.isTooLong)
+        edit.text += "😀"
+        XCTAssertTrue(edit.isTooLong)
+    }
+
     @MainActor
     func testModelDescriptionHistoryDecodesAndLoadsThroughRemoteClient() async throws {
         let policy: [String: Any] = [
@@ -1427,8 +1453,10 @@ final class AppPresentationTests: XCTestCase {
                 remoteClientFactory: { _, _ in client }
             )
             await model.start()
-            let saved = await model.saveModelDescription(modelID: "gpt-current", description: restoring ? nil : "  User text  ", expectedOverride: initial["gpt-current"])
-            XCTAssertTrue(saved)
+            let result = await model.submitModelDescription(modelID: "gpt-current", description: restoring ? nil : "  User text  ", expectedOverride: initial["gpt-current"], expectedSettingsRevision: 4)
+            let receipt = try XCTUnwrap(result)
+            XCTAssertEqual(receipt.settings.settingsRevision, 5)
+            XCTAssertEqual(receipt.settings.modelDescriptionOverrides, expected)
             XCTAssertEqual(client.settingsUpdateCallCount, 1)
             let mutation = try XCTUnwrap(client.lastSettingsMutation)
             XCTAssertEqual(mutation.expectedSettingsRevision, 4)
@@ -1559,6 +1587,63 @@ final class AppPresentationTests: XCTestCase {
         model.scheduleSettingsAutosave(SettingsDraft(snapshot: snapshot))
 
         XCTAssertEqual(model.generalSettingsSaveState, .idle)
+    }
+
+    @MainActor
+    func testAutosaveRejectsASelectedModelWithoutAnySupportedCommonEffort() async throws {
+        let high = ModelChoice(model: "gpt-current", reasoningEffort: "high")
+        let snapshot = try settingsSnapshot(policy: [
+            "mode": "automatic", "allowedSelections": ["kind": "explicit", "selections": [choiceObject(high)]],
+            "constraints": ["allowDelegation": true]
+        ], catalogModels: [catalogModel(id: high.model, efforts: ["high"]), catalogModel(id: "ultra-only", efforts: ["ultra"])])
+        let model = AppModel()
+        model.settings = snapshot
+        var draft = SettingsDraft(snapshot: snapshot)
+        let choices = SettingsDraft.selectableChoices(in: snapshot, allowDelegation: true)
+        draft.updateAllowlist(choices: choices) { $0.setModel("ultra-only", selected: true, choices: choices) }
+        XCTAssertTrue(draft.modelPolicyDirty)
+        XCTAssertEqual(draft.explicitSelectionKeys, [high.key])
+        model.scheduleSettingsAutosave(draft)
+        let saved = await model.flushSettingsAutosave()
+        XCTAssertFalse(saved)
+        XCTAssertTrue(model.settingsErrorMessage?.contains("ultra-only") == true)
+        XCTAssertEqual(model.settings?.settings.settingsRevision, snapshot.settings.settingsRevision)
+        model.cancelPendingSettingsAutosave()
+    }
+
+    @MainActor
+    func testLegacyModelSpecificChoicesAreAutosavedAsOneCommonEffortList() async throws {
+        let newHigh = ModelChoice(model: "new", reasoningEffort: "high")
+        let olderLow = ModelChoice(model: "older", reasoningEffort: "low")
+        let normalized = [newHigh, olderLow, ModelChoice(model: "new", reasoningEffort: "low"), ModelChoice(model: "older", reasoningEffort: "high")]
+        let catalog = [catalogModel(id: "new", efforts: ["low", "high"]), catalogModel(id: "older", efforts: ["low", "high"])]
+        func policy(_ choices: [ModelChoice]) -> [String: Any] {
+            ["mode": "automatic", "allowedSelections": ["kind": "explicit", "selections": choices.map(choiceObject)],
+             "constraints": ["allowDelegation": true]]
+        }
+        let snapshot = try settingsSnapshot(policy: policy([newHigh, olderLow]), catalogModels: catalog)
+        let updated = try settingsSnapshot(settingsRevision: 5, policy: policy(normalized), catalogModels: catalog)
+        let profile = remoteProfile(id: "11111111-1111-4111-8111-111111111111", name: "Common reasoning test")
+        let client = TestRemoteClient(profile: profile, dashboard: try dashboardStatus(scope: "common-reasoning-test"),
+            settings: snapshot, settingsAfterUpdate: updated)
+        let model = AppModel(loginItemController: TestLoginItemController(status: .notRegistered),
+            connectionStore: TestConnectionStore(BridgeConnectionPreferences(mode: .remoteClient, activeServerId: profile.serverId, profiles: [profile])),
+            credentialStore: TestCredentialStore([profile.serverId: "device_abcdefghijklmnopqrstuvwxyz1234567890ABCDE"]),
+            remoteClientFactory: { _, _ in client })
+        await model.start()
+        let draft = SettingsDraft(snapshot: snapshot)
+        XCTAssertTrue(draft.modelPolicyDirty)
+        XCTAssertEqual(draft.explicitSelectionKeys, Set(normalized.map(\.key)))
+        model.scheduleSettingsAutosave(draft)
+        let saved = await model.flushSettingsAutosave()
+        XCTAssertTrue(saved)
+        XCTAssertEqual(client.settingsUpdateCallCount, 1)
+        let mutation = try XCTUnwrap(client.lastSettingsMutation)
+        guard case .patch(let patch) = mutation.operation else { return XCTFail("Expected a policy patch") }
+        XCTAssertEqual(Set(patch.modelPolicy?.allowedSelections?.selections ?? []), Set(normalized))
+        XCTAssertFalse(SettingsDraft(snapshot: updated).modelPolicyDirty)
+        let stopped = await model.shutdownApplication(force: false)
+        XCTAssertTrue(stopped)
     }
 
     @MainActor

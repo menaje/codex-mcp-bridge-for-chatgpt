@@ -13289,13 +13289,17 @@ async function buildDashboardView(
       const observed = inspectionFailed ? cachedRuntime?.attemptedAt : cachedRuntime?.observedAt;
       const runtimeRow = {...row,controlKind:null,status:kind === "unknown" ? "liveness-unknown" as const : row.status,
         history:[],historyCount:0};
+      // Resolve this identity once; doing it inside find() repeated the same
+      // database query for every historical recovery record.
+      const automaticKey = automaticRecords.length === 0 ? undefined
+        : kind === "termination-failed" && currentJob
+          ? automaticRecoveryKey("retry-stop",[currentJob.jobId,currentJob.workerId,currentJob.workerGeneration,currentJob.upstreamRequestId,currentJob.cancelRequestedAt])
+          : jobs.admissionStateStore.automaticRecovery.recheckCandidate(recheckRecoveryIdentity(jobs,agent))?.key;
       entries.push({problemKey:problemKey("runtime",agent.agentId),revision:identity.revision,kind,source:"runtime",
         review:resolvedAt ? "acknowledged" : "pending",acknowledgedAt:resolvedAt ? new Date(resolvedAt).toISOString() : null,
         observedAt:new Date(observed || agent.updatedAt).toISOString(),
         reason:currentJob?.error ? redactSensitiveText(currentJob.error).slice(0,1000) : null,
-        automatic:automaticSummary(automaticRecords.find(automatic => automatic.key === (kind === "termination-failed" && currentJob
-          ? automaticRecoveryKey("retry-stop",[currentJob.jobId,currentJob.workerId,currentJob.workerGeneration,currentJob.upstreamRequestId,currentJob.cancelRequestedAt])
-          : jobs.admissionStateStore.automaticRecovery.recheckCandidate(recheckRecoveryIdentity(jobs,agent))?.key))),
+        automatic:automaticSummary(automaticRecords.find(automatic => automatic.key === automaticKey)),
         canAcknowledge:false,canUnacknowledge:false,canRecheck:!resolvedAt && Boolean(thread && backendSupports(thread.backendKind,"supportsThreadInspection")),
         canRetryStop:currentJob?.status === "termination-failed" && Boolean(identity.stopImpact),
         ...(identity.stopImpact ? {stopImpact:identity.stopImpact} : {}),projectRow:()=>runtimeRow});
