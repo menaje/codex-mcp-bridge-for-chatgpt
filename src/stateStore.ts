@@ -1175,12 +1175,13 @@ export class BridgeStateStore {
     }
   }
 
-  listSessions(): unknown[] {
+  listSessions(scopeId?: string): unknown[] {
     return this.database
       .prepare(`SELECT s.*,p.name AS project_name FROM sessions s
         LEFT JOIN projects p ON p.project_id=s.project_id
+        ${scopeId ? "WHERE s.scope_id=?" : ""}
         ORDER BY s.last_used_at ASC`)
-      .all()
+      .all(...(scopeId ? [scopeId] : []))
       .map((value) => {
         const row = value as Record<string, unknown>;
         return {
@@ -1305,7 +1306,7 @@ export class BridgeStateStore {
     return Number((row as CountRow).count);
   }
 
-  listJobs(agentId?: string): StoredJobRecord[] {
+  listJobs(agentId?: string, scopeId?: string): StoredJobRecord[] {
     return this.database
       .prepare(`
         SELECT j.payload,j.job_id,j.scope_id,j.request_id,j.activity_id,j.thread_id,
@@ -1331,9 +1332,10 @@ export class BridgeStateStore {
           LEFT JOIN projects p ON p.project_id=a.project_id
          WHERE j.archived_at IS NULL
            ${agentId ? "AND j.agent_id=?" : ""}
+           ${scopeId ? "AND j.scope_id=?" : ""}
          ORDER BY j.updated_at ASC
       `)
-      .all(...(agentId ? [agentId] : []))
+      .all(...(agentId ? [agentId] : []), ...(scopeId ? [scopeId] : []))
       .map((row) => hydrateJobPayload(row as JobStorageRow));
   }
 
@@ -2010,6 +2012,14 @@ export class BridgeStateStore {
     sql += " ORDER BY updated_at DESC LIMIT ? OFFSET ?";
     parameters.push(boundedLimit, boundedOffset);
     return (this.database.prepare(sql).all(...parameters) as AgentStorageRow[]).map(readAgentRow);
+  }
+
+  /** Opaque detail lookup needs identities, not every Agent's retained payload. */
+  listDashboardAgentIds(scopeId?: string): string[] {
+    return (this.database.prepare(`SELECT agent_id FROM agents
+      ${scopeId ? "WHERE scope_id=?" : ""}`)
+      .all(...(scopeId ? [normalizeUuid(scopeId, "agent scopeId")] : [])) as Array<{ agent_id: string }>)
+      .map(row => row.agent_id);
   }
 
   countAgents(scopeId?: string): number {

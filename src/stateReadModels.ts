@@ -66,12 +66,25 @@ export class DashboardReadModel {
   archivedByAgent(
     scopeId: string | undefined,
     perAgentLimit: number,
-    representativeOrder: DashboardRepresentativeOrder = "updated"
+    representativeOrder: DashboardRepresentativeOrder = "updated",
+    agentIds?: readonly string[]
   ): {
     rows: DashboardArchivedJobRow[];
     totalsByAgent: Map<string, number>;
   } {
     const limit = Math.max(1, Math.min(100, Math.floor(perAgentLimit)));
+    if (agentIds?.length === 0) return { rows: [], totalsByAgent: new Map() };
+    if (agentIds && agentIds.length > 500) {
+      const rows: DashboardArchivedJobRow[] = [];
+      const totalsByAgent = new Map<string, number>();
+      const uniqueIds = [...new Set(agentIds)];
+      for (let offset = 0; offset < uniqueIds.length; offset += 500) {
+        const page = this.archivedByAgent(scopeId, limit, representativeOrder, uniqueIds.slice(offset, offset + 500));
+        rows.push(...page.rows);
+        for (const [id, total] of page.totalsByAgent) totalsByAgent.set(id, total);
+      }
+      return { rows, totalsByAgent };
+    }
     const historyLimit = limit - 1;
     const representativeOrdering = representativeOrder === "created"
       ? "created_at DESC,updated_at DESC,job_id DESC"
@@ -88,6 +101,7 @@ export class DashboardReadModel {
           FROM jobs
          WHERE ${retainedHistoryPredicate}
            ${scopeId ? "AND scope_id=?" : ""}
+           ${agentIds ? `AND agent_id IN (${agentIds.map(() => "?").join(",")})` : ""}
       ), ranked AS (
         SELECT *,
                SUM(CASE WHEN job_id<>representative_job_id THEN 1 ELSE 0 END) OVER (
@@ -102,7 +116,7 @@ export class DashboardReadModel {
         FROM ranked
        WHERE job_id=representative_job_id OR history_rank<=?
        ORDER BY updated_at DESC,job_id DESC
-    `).all(...(scopeId ? [scopeId, historyLimit] : [historyLimit])) as DashboardArchivedJobRow[];
+    `).all(...(scopeId ? [scopeId] : []), ...(agentIds || []), historyLimit) as DashboardArchivedJobRow[];
     const totalsByAgent = new Map<string, number>();
     for (const row of rows) {
       if (row.agent_id) totalsByAgent.set(row.agent_id, Number(row.agent_total || 0));
