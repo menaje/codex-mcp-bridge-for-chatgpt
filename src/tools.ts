@@ -2049,7 +2049,7 @@ export type CodexJobRegistryOptions = {
   /** Read-worker snapshot: load persisted state without recovery mutations. */
   projectionOnly?: boolean;
   /** Query-only worker: detail hydrates one Agent; Settings hydrates no Jobs. */
-  projectionJobs?: { agentId: string } | false;
+  projectionJobs?: { agentId?: string; scopeId?: string } | false;
   allowedRoots?: string[];
 };
 
@@ -4487,9 +4487,9 @@ export class CodexJobRegistry {
     }
   }
 
-  private load(filter?: { agentId: string } | false): void {
+  private load(filter?: { agentId?: string; scopeId?: string } | false): void {
     if (!this.stateStore || filter === false) return;
-    const stored = this.stateStore.listJobs(filter?.agentId);
+    const stored = this.stateStore.listJobs(filter?.agentId, filter?.scopeId);
     const changed = this.loadJobs(stored);
     for (const job of this.jobs.values()) {
       this.progressPersisted.set(job.jobId, {
@@ -11582,11 +11582,8 @@ function projectDashboardHandoffs(view: DashboardView, jobs: CodexJobRegistry): 
 
 /** Resolve the opaque row identity from fresh Agent rows, never a cwd lookup. */
 export function dashboardAgentForDetail(store: BridgeStateStore, options: BridgeDashboardHistoryDetailOptions): BridgeAgent | undefined {
-  for (let offset = 0; ; offset += 1_000) {
-    const page = store.listAgents(options.scopeId, 1_000, offset);
-    const match = page.find(agent => dashboardRowKey(agent.agentId) === options.rowKey);
-    if (match || page.length < 1_000) return match;
-  }
+  const id = store.listDashboardAgentIds(options.scopeId).find(id => dashboardRowKey(id) === options.rowKey);
+  return id ? store.getAgent(id) : undefined;
 }
 
 function dashboardRuntimeProblemIdentity(jobs: CodexJobRegistry, agent: BridgeAgent) {

@@ -669,13 +669,17 @@ async function executeProjection(
       allowedRoots: config.allowedRoots,
       maxSessions: 1_000_000,
       projectionOnly: true,
+      projectionSessions: method === "settingsSnapshot" || method === "dashboardHistoryDetail"
+        ? false : { scopeId: (args[0] as BridgeDashboardSnapshotOptions)?.scopeId },
     });
     mark("sessionsMs");
     const detailAgent = method === "dashboardHistoryDetail"
       ? dashboardAgentForDetail(stateStore, args[0] as BridgeDashboardHistoryDetailOptions) : undefined;
     jobs = new CodexJobRegistry({
       ...(method === "settingsSnapshot" ? { projectionJobs: false as const }
-        : method === "dashboardHistoryDetail" ? { projectionJobs: detailAgent ? { agentId: detailAgent.agentId } : false as const } : {}),
+        : method === "dashboardHistoryDetail" ? { projectionJobs: detailAgent
+          ? { agentId: detailAgent.agentId, scopeId: detailAgent.scopeId } : false as const }
+        : { projectionJobs: { scopeId: (args[0] as BridgeDashboardSnapshotOptions)?.scopeId } }),
       maxConcurrentJobs: config.maxConcurrentJobs,
       ttlMs: config.jobTtlMs,
       maxJobs: Math.max(config.maxRetainedJobs, config.maxConcurrentJobs),
