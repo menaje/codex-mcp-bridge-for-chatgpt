@@ -8,7 +8,7 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 import { expect, it } from "vitest";
 import { COMPANION_PROTOCOL_NAME, COMPANION_PROTOCOL_VERSION } from "../src/companionServer.js";
 
-it.each(["cli", "stdio"])("starts native and remote app connections in the built %s entrypoint", async (entrypoint) => {
+it.each([["cli", false], ["stdio", false], ["cli", true]] as const)("starts native and remote app connections in the built %s entrypoint (startup diagnostics=%s)", async (entrypoint, startupDiagnostics) => {
   const root = mkdtempSync(path.join(tmpdir(), "cb-cli-"));
   const socketPath = path.join(root, "run", "b.sock");
   const listener = createServer();
@@ -18,6 +18,9 @@ it.each(["cli", "stdio"])("starts native and remote app connections in the built
   const child = spawn(process.execPath, [path.resolve(process.env.CODEX_BRIDGE_TEST_RUNTIME_DIST || "dist", `${entrypoint}.js`)], {
     env: {
       PATH: process.env.PATH, TMPDIR: process.env.TMPDIR,
+      HOME: path.join(root, "home"), CODEX_HOME: path.join(root, "codex"),
+      CODEX_MCP_BRIDGE_STARTUP_DIAGNOSTICS: startupDiagnostics ? "1" : "0",
+      UNRELATED_PRIVATE_CONFIGURATION: "fixture-private-value-never-log",
       CODEX_MCP_BRIDGE_NO_AUTH: "1", CODEX_MCP_BRIDGE_HOST: "127.0.0.1",
       CODEX_MCP_BRIDGE_PORT: String(port), CODEX_MCP_BRIDGE_CODEX: "/usr/bin/false",
       CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime"),
@@ -43,6 +46,31 @@ it.each(["cli", "stdio"])("starts native and remote app connections in the built
       await new Promise(resolve => setTimeout(resolve, 50));
     }
     expect(existsSync(socketPath), output).toBe(true);
+    const startupRecords = output.split(/\r?\n/).filter(line => line.startsWith("[bridge-startup] "))
+      .map(line => JSON.parse(line.slice("[bridge-startup] ".length)));
+    if (startupDiagnostics) {
+      expect(startupRecords).toEqual(expect.arrayContaining([
+        expect.objectContaining({ role: "server", stage: "http-listening" }),
+        expect.objectContaining({ role: "runtime-parent", stage: "child-ready" }),
+        expect.objectContaining({ role: "state-owner", stage: "state-store-ready" }),
+        expect.objectContaining({ role: "state-owner", stage: "telemetry-ready" }),
+        expect.objectContaining({ role: "state-owner", stage: "read-service-ready" }),
+        expect.objectContaining({ role: "state-owner", stage: "ready-sent" })
+      ]));
+      for (const record of startupRecords) {
+        expect(Object.keys(record).sort()).toEqual([
+          "cpuSystemMs", "cpuUserMs", "elapsedMs", "pid", "role", "stage", "stepMs"
+        ]);
+        for (const field of ["elapsedMs", "stepMs", "cpuUserMs", "cpuSystemMs"]) {
+          expect(Number.isFinite(record[field])).toBe(true);
+          expect(record[field]).toBeGreaterThanOrEqual(0);
+        }
+      }
+      expect(JSON.stringify(startupRecords)).not.toContain("fixture-private-value");
+      expect(JSON.stringify(startupRecords)).not.toContain(root);
+    } else {
+      expect(startupRecords).toEqual([]);
+    }
     expect(lstatSync(socketPath).mode & 0o777).toBe(0o600);
     expect(await rpc(socketPath, "companion.hello")).toMatchObject({
       protocol: { name: COMPANION_PROTOCOL_NAME, version: COMPANION_PROTOCOL_VERSION }

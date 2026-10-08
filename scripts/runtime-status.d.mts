@@ -40,6 +40,13 @@ export type ManagedRuntimeStatus = {
 export const MANAGED_RUNTIME_STATUS_PROTOCOL: string;
 export const MANAGED_RUNTIME_STATUS_VERSION: number;
 export const MAX_TUNNEL_CONTROL_PLANE_AGE_MS: number;
+export function createStartupDiagnostics(
+  role: "launcher" | "server" | "runtime-parent" | "state-owner",
+  options?: {
+    environment?: NodeJS.ProcessEnv;
+    emit?: (line: string) => void;
+  }
+): (stage: string) => void;
 export function hasRecentTunnelControlPlanePoll(report: unknown, now?: number): boolean;
 
 export function readManagedRuntimeStatus(

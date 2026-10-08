@@ -300,7 +300,8 @@ if (args[0] === "run") {
   });
   await new Promise(resolve => healthServer.listen(0, "127.0.0.1", resolve));
   writeFileSync(healthFile, "http://127.0.0.1:" + healthServer.address().port + "\\n", { mode: 0o600 });
-  writeFileSync(pidFile, String(process.pid) + "\\n", { mode: 0o600 });
+  // tunnel-client v0.0.14 requests 0644; the launcher must restrict creation.
+  writeFileSync(pidFile, String(process.pid) + "\\n", { mode: 0o644 });
   try { unlinkSync(controlPlaneReadyFile); } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
@@ -342,10 +343,18 @@ async function runLauncher(paths: {
   checkWhileConnected?: () => Promise<void>;
 }): Promise<{ output: string }> {
   const environment = { ...process.env };
+  // Every launcher fixture owns its state and authentication directories.
+  for (const key of Object.keys(environment)) {
+    if (/^(CODEX_MCP_BRIDGE_|CODEX_GPT_BRIDGE_)/.test(key)) delete environment[key];
+  }
   delete environment.CONTROL_PLANE_API_KEY;
   delete environment.CONTROL_PLANE_TUNNEL_ID;
   delete environment.OPENAI_API_KEY;
-  delete environment.CODEX_HOME;
+  const fixtureRoot = path.dirname(path.dirname(paths.envFile));
+  environment.HOME = path.join(fixtureRoot, "home");
+  environment.CODEX_HOME = path.join(fixtureRoot, "codex");
+  environment.CODEX_MCP_BRIDGE_RUNTIME_HOME = path.join(fixtureRoot, "runtime");
+  environment.CODEX_MCP_BRIDGE_STATE_DATABASE_FILE = path.join(fixtureRoot, "state.sqlite");
   // The launcher acquires a canonical ownership lock before reading the
   // supplied dotenv. Keep that lock inside this fixture so a user's running
   // bridge cannot make the integration test fail before it publishes status.
@@ -378,6 +387,10 @@ async function runLauncher(paths: {
   try {
     try { await waitForConnectedStatus(paths.runtimeStatusFile, child); }
     catch (error) { throw new Error(`${String(error)}; fixture launcher output: ${output.replace(/sk-[^\s]{8,}/g, "[REDACTED]")}`); }
+    if (process.platform !== "win32") {
+      expect(statSync(paths.tunnelPIDFile).mode & 0o777).toBe(0o600);
+      expect(statSync(paths.healthURLFile).mode & 0o777).toBe(0o600);
+    }
     await paths.checkWhileConnected?.();
     expect(existsSync(paths.runtimeLockDirectory)).toBe(true);
     expect(existsSync(

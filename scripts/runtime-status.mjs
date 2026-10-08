@@ -1,11 +1,35 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { performance } from "node:perf_hooks";
 import { readPrivateFile, writePrivateFileAtomic } from "./managed-file.mjs";
 import { parseJsonUtf8Strict } from "./text-integrity.mjs";
 import { CODEX_APPLIED_ENV_KEYS, codexChildEnvironmentFingerprint } from "./runtime-env.mjs";
 
 export const MANAGED_RUNTIME_STATUS_PROTOCOL = "codex-mcp-bridge-launcher-status";
 export const MANAGED_RUNTIME_STATUS_VERSION = 1;
+
+/** Opt-in process timing only. Callers use fixed role and stage names. */
+export function createStartupDiagnostics(role, {
+  environment = process.env,
+  emit = line => process.stderr.write(line)
+} = {}) {
+  if (environment.CODEX_MCP_BRIDGE_STARTUP_DIAGNOSTICS !== "1") return () => {};
+  let previous = 0;
+  return stage => {
+    const elapsed = performance.now();
+    const cpu = process.cpuUsage();
+    emit(`[bridge-startup] ${JSON.stringify({
+      role,
+      stage,
+      pid: process.pid,
+      elapsedMs: Math.round(elapsed * 10) / 10,
+      stepMs: Math.round((elapsed - previous) * 10) / 10,
+      cpuUserMs: Math.round(cpu.user / 100) / 10,
+      cpuSystemMs: Math.round(cpu.system / 100) / 10
+    })}\n`);
+    previous = elapsed;
+  };
+}
 
 // The supported tunnel client uses a 30-second long poll plus a 5-second
 // guardrail. Allow two such windows and one monitor interval, but never accept

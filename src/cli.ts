@@ -5,12 +5,18 @@ import type { BridgeHttpServer } from "./server.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 import { startRuntimeCompanions } from "./runtimeCompanions.js";
 import { createIsolatedHttpServer } from "./runtimeProcess.js";
+import { createStartupDiagnostics } from "../scripts/runtime-status.mjs";
+
+const startup = createStartupDiagnostics("server");
+startup("imports-complete");
 
 if (process.platform === "darwin") {
   process.title = "Codex MCP Bridge Server";
 }
 
+startup("config-start");
 const config = loadConfig();
+startup("config-complete");
 let shuttingDown = false;
 let server: BridgeHttpServer | undefined;
 let companions: Awaited<ReturnType<typeof startRuntimeCompanions>> | undefined;
@@ -25,11 +31,15 @@ void main().catch((error) => {
 });
 
 async function main(): Promise<void> {
+  startup("isolated-runtime-start");
   const createdServer = await createIsolatedHttpServer(config, {
     conformanceFixtures: process.argv.slice(2).includes("--conformance-fixtures")
   });
+  startup("isolated-runtime-ready");
   server = createdServer;
+  startup("companions-start");
   companions = await startRuntimeCompanions(config, createdServer.applicationService);
+  startup("companions-ready");
   if (shuttingDown) { await companions.close(); return; }
   await new Promise<void>((resolve, reject) => {
     createdServer.once("error", reject);
@@ -38,6 +48,7 @@ async function main(): Promise<void> {
       resolve();
     });
   });
+  startup("http-listening");
   const authHint = config.oauth ? "OAuth access token required" : config.token && !config.noAuth ? "Bearer token required" : "no auth";
   console.log(`${PRODUCT_INFO.displayName} listening on http://${config.host}:${config.port}/mcp (${authHint})`);
   console.log(`build: ${BRIDGE_BUILD_INFO.id} (${BRIDGE_BUILD_INFO.version})`);
