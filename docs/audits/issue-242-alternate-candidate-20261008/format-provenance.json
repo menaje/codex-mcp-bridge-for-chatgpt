@@ -1,0 +1,201 @@
+{
+  "version": "3.6.2",
+  "flaggedInheritedPaths": 39,
+  "records": [
+    {
+      "path": "release-manifest.json",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "scripts/issue-242-characterization.ts",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "scripts/issue-242-completion.ts",
+      "reference": "6580a196a36dacaa94fff7a6b5a101f58efff9a8",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "scripts/issue-242-fixture.ts",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "scripts/issue-242-runtime-cost.mjs",
+      "reference": "2eb315d529e57164b3e4a53cf24737ef3f4649e1",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "scripts/runtime-status.d.mts",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "scripts/runtime-status.mjs",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "scripts/start-codex-mcp-bridge.mjs",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "scripts/tunnel-health.mjs",
+      "reference": "2eb315d529e57164b3e4a53cf24737ef3f4649e1",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "src/changeSignal.ts",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "src/companionServer.ts",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "src/completionDelivery.ts",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "src/displayReadPool.ts",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "src/httpDiagnostics.ts",
+      "reference": "e550798fe16bd5944f69f1941a98d249e84adefc",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "src/macosHelperServer.ts",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "src/remoteCompanionServer.ts",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "src/runtimeProcess.ts",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "src/server.ts",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "src/stateReadModels.ts",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "src/stateReadProcess.ts",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "src/stateStore.ts",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "src/threadConnections.ts",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "src/tools.ts",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "test/companionServer.test.ts",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "test/httpDiagnostics.test.ts",
+      "reference": "e550798fe16bd5944f69f1941a98d249e84adefc",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "test/issue242Characterization.test.ts",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "test/issue242Completion.test.ts",
+      "reference": "6580a196a36dacaa94fff7a6b5a101f58efff9a8",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "test/issue242ProxyCharacterization.test.ts",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "test/issue242R502.test.ts",
+      "reference": "e550798fe16bd5944f69f1941a98d249e84adefc",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "test/issue242R502Tunnel.test.ts",
+      "reference": "e550798fe16bd5944f69f1941a98d249e84adefc",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "test/issue242ReadTransport.test.ts",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "test/issue242Reads.test.ts",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "test/launcherLifecycle.integration.test.ts",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "test/macosHelperServer.test.ts",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "test/remoteCompanionServer.test.ts",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "test/runtimeProcess.test.ts",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "test/runtimeStatus.test.ts",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "test/stateReadProcess.test.ts",
+      "reference": "f710974b33fc40432653c815d175058cba1adaee",
+      "referenceAlreadyFailsPrettier": true
+    },
+    {
+      "path": "test/tunnelHealth.test.ts",
+      "reference": "2eb315d529e57164b3e4a53cf24737ef3f4649e1",
+      "referenceAlreadyFailsPrettier": true
+    }
+  ]
+}

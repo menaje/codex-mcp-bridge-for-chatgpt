@@ -1,0 +1,25 @@
+{
+  "name": "focused",
+  "head": "b52c1b8a8094cb9df9f7ca8781ad4ec8c5838b8b",
+  "tree": "bd16f8660708be06c525d49a13eaaaa0d4a942fe",
+  "command": [
+    "node_modules/.bin/vitest",
+    "run",
+    "test/issue242ReadTransport.test.ts",
+    "test/issue242Completion.test.ts",
+    "test/issue242ProxyCharacterization.test.ts",
+    "test/issue242R502.test.ts",
+    "test/issue242R502Tunnel.test.ts",
+    "test/issue242Reads.test.ts",
+    "test/issue242Characterization.test.ts",
+    "test/httpDiagnostics.test.ts",
+    "test/tunnelHealth.test.ts",
+    "--maxWorkers=1",
+    "--reporter=verbose",
+    "--reporter=json",
+    "--outputFile=output/issue-242-integration-20261008/focused.json"
+  ],
+  "exitCode": 1,
+  "seconds": 29.081,
+  "logSha256": "654c91a974e13aea12d443b045c638f38bdc882b35395b0afd9c616444c85cff"
+}

@@ -1,0 +1,24 @@
+import os,sys,json,subprocess,time,hashlib
+from pathlib import Path
+out=Path(__file__).resolve().parent
+config=json.loads((out/'environment.json').read_text())
+env={k:v for k,v in os.environ.items() if k in ['PATH','USER','LOGNAME','SHELL','LANG','LC_ALL','TERM','DEVELOPER_DIR','SDKROOT']}
+env['TMPDIR']=config['TMPDIR']
+env['XDG_CONFIG_HOME']=config['TMPDIR']+'/config'
+env['XDG_CACHE_HOME']=config['TMPDIR']+'/cache'
+name=sys.argv[1]
+args=sys.argv[2:]
+runCwd=Path.cwd()
+if args[:1] == ["--cwd"]:
+ runCwd=Path(args[1]); args=args[2:]
+if name.startswith('fast'): env['CODEX_MCP_BRIDGE_CODEX']=config['codex']
+if 'tunnel' in config: env['ISSUE_242_R502_TUNNEL_BINARY']=config['tunnel']
+start=time.time()
+head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=runCwd,text=True).strip()
+print('START',name,head,flush=True)
+with (out/(name+'.txt')).open('w') as log:
+ result=subprocess.run(['/usr/sbin/taskpolicy','-a',*args],cwd=runCwd,env=env,stdout=log,stderr=subprocess.STDOUT)
+record={'name':name,'head':head,'tree':subprocess.check_output(['git','rev-parse','HEAD^{tree}'],cwd=runCwd,text=True).strip(),'command':args,'exitCode':result.returncode,'seconds':round(time.time()-start,3),'logSha256':hashlib.sha256((out/(name+'.txt')).read_bytes()).hexdigest()}
+(out/(name+'.receipt.json')).write_text(json.dumps(record,indent=2)+'\n')
+print(json.dumps(record),flush=True)
+sys.exit(result.returncode)
