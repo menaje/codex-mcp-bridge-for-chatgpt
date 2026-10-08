@@ -734,6 +734,10 @@ final class AppModel: ObservableObject {
         isRemoteClient ? remoteHello != nil : helperStatus?.bridge.connected == true
     }
 
+    var tunnelConnected: Bool {
+        isRemoteClient ? remoteHello != nil : helperStatus?.tunnel.connected == true
+    }
+
     private var retainedHelperObservation: Bool {
         !isRemoteClient && helperObservationFailure != nil && confirmedHelperGeneration == connectionGeneration &&
             lastConfirmedHelperStatus?.phase == "running" &&
@@ -1490,8 +1494,22 @@ final class AppModel: ObservableObject {
 
     func recordLocalConnectionStatus(_ next: HelperStatus?, at now: Date = Date()) {
         guard let next else { recordLocalConnectionFailure(LocalRPCError.emptyResponse, at: now); return }
+        let previous = lastConfirmedHelperStatus
+        let targetChanged = previous.map {
+            $0.pid != next.pid || $0.startedAt != next.startedAt ||
+                $0.bridge.socketPath != next.bridge.socketPath
+        } ?? false
+        if targetChanged {
+            invalidateContentObservations()
+            dashboard = nil
+            lastDashboardRefresh = nil
+            dashboardObservationDate = nil
+            clearDashboardHistoryDetails()
+            settings = nil
+            clearSkillObservations()
+        }
         statusRequestGeneration += 1
-        let refreshContent = systemObservationPending || helperStatus?.bridge.connected != true
+        let refreshContent = targetChanged || systemObservationPending || helperStatus?.bridge.connected != true
         systemObservationPending = false
         helperStatus = next
         lastConfirmedHelperStatus = next
@@ -2024,10 +2042,17 @@ final class AppModel: ObservableObject {
     private func observeProjectRegistry(_ next: SettingsSnapshot) {
         guard let current = settings, next.settings.registryRevision != current.settings.registryRevision else { return }
         dashboardRequestGeneration += 1
+        skillLibraryRequestGeneration += 1
+        bridgeSkillSelectionRequestGeneration += 1
+        bridgeSkillFileRequestGeneration += 1
         dashboardEnrichmentTask?.cancel()
         dashboardEnrichmentTask = nil
+        dashboardEnrichmentRequest = nil
         dashboard = nil
+        lastDashboardRefresh = nil
+        dashboardObservationDate = nil
         clearDashboardHistoryDetails()
+        clearSkillObservations()
         if bridgeConnected { enqueueRefresh(["dashboard"]) }
     }
 

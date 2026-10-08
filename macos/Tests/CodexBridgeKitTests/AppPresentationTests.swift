@@ -744,6 +744,75 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
+    func testHelperReplacementClearsPreviousContentAndFencesLateDashboard() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-target-change-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.bridgeSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let previous = try dashboardStatus(scope: "previous-helper")
+        let body = String(decoding: try JSONEncoder().encode(previous), as: UTF8.self)
+        let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { _ in
+            NativeFixtureReply(body: "{\"result\":\(body)}", delay: 0.3)
+        }
+        let model = AppModel(paths: paths)
+        defer { model.cancelAllPolling(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+        model.recordLocalConnectionStatus(try helperStatus())
+        model.dashboard = previous
+        model.settings = try issue242Settings(registry: 2, id: UUID().uuidString.lowercased(), name: "Previous", cwd: root.path)
+        let pending = Task { await model.refreshDashboard(enrich: false) }
+        for _ in 0..<100 {
+            if bridge.count("dashboard.snapshot") > 0 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(bridge.count("dashboard.snapshot"), 1)
+        model.recordLocalConnectionStatus(try helperStatus(pid: 43, bridgeConnected: false, tunnelConnected: false))
+        await pending.value
+        XCTAssertEqual(model.helperStatus?.pid, 43)
+        XCTAssertNil(model.dashboard)
+        XCTAssertNil(model.settings)
+        XCTAssertNil(model.lastDashboardRefresh)
+    }
+
+    @MainActor
+    func testProjectRegistryChangeClearsSkillsAndFencesLateLibraryRead() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-skill-target-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.bridgeSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let id = UUID().uuidString.lowercased()
+        let first = try issue242Settings(registry: 2, id: id, name: "Project", cwd: root.path)
+        let archived = try issue242Settings(registry: 3, id: id, name: "Project", cwd: root.path, archived: true)
+        let settingsBody = String(decoding: try JSONEncoder().encode(archived), as: UTF8.self)
+        let libraries = TestDashboardReplySequence([
+            NativeFixtureReply(body: #"{"result":{"skills":[]}}"#),
+            NativeFixtureReply(body: #"{"result":{"skills":[]}}"#, delay: 0.3)
+        ])
+        let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { method in
+            switch method {
+            case "skills.snapshot": return libraries.next()
+            case "settings.update": return NativeFixtureReply(body: "{\"result\":\(settingsBody)}")
+            default: return NativeFixtureReply(body: "")
+            }
+        }
+        let model = AppModel(paths: paths)
+        defer { model.cancelAllPolling(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+        model.recordLocalConnectionStatus(try helperStatus())
+        model.settings = first
+        await model.refreshSkillLibrary()
+        XCTAssertNotNil(model.skillLibrary)
+        let pending = Task { await model.refreshSkillLibrary() }
+        for _ in 0..<100 {
+            if bridge.count("skills.snapshot") == 2 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(bridge.count("skills.snapshot"), 2)
+        let accepted = await model.applyProjectOperation(.archive(projectId: id))
+        XCTAssertTrue(accepted)
+        await pending.value
+        XCTAssertEqual(model.settings?.settings.registryRevision, 3)
+        XCTAssertNil(model.skillLibrary)
+        XCTAssertNil(model.selectedBridgeSkill)
+    }
+
+    @MainActor
     func testIssue242ArchiveDeleteSameCwdRegistrationFencesLateDashboardAndDetail() async throws {
         let root = URL(fileURLWithPath: "/tmp/cb-242-projects-\(UUID().uuidString.prefix(8))")
         let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
@@ -2606,6 +2675,7 @@ private final class TestDashboardReplySequence: @unchecked Sendable {
 }
 
 private func helperStatus(
+    pid: Int = 42,
     phase: String = "running",
     bridgeConnected: Bool = true,
     tunnelConnected: Bool = true,
@@ -2626,7 +2696,7 @@ private func helperStatus(
     let json = #"""
     {
       "kind":"helper-status","generatedAt":"2026-09-03T00:00:00.000Z",
-      "phase":"\#(phase)","pid":42,"startedAt":null,"lastExit":null,"lastError":null,
+      "phase":"\#(phase)","pid":\#(pid),"startedAt":null,"lastExit":null,"lastError":null,
       "restartAttempt":0,
       "configuration":{"path":"/private/.env","exists":true,"valid":\#(configurationValid),"hasApiKey":true,"hasTunnelId":true,"tunnelId":"tunnel_native123","issue":null},
       "bridge":{"socketPath":"/private/bridge.sock","connected":\#(bridgeConnected)\#(bridgeObservationJSON)\#(bridgeLastSuccessfulAtJSON)\#(readServiceStatusJSON)\#(stateServiceStorageErrorJSON),"acceptingNewJobs":true,"activeJobs":0,"pendingAdmissions":0,"backgroundProcessState":"confirmed","backgroundProcesses":0,"backgroundProcessAgents":0,"backgroundProcessUnknownAgents":0},

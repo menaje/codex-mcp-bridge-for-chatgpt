@@ -4,6 +4,51 @@ import XCTest
 @testable import CodexBridgeKit
 
 final class UnixSocketRPCClientTests: XCTestCase {
+    func testNumericFailureEvidenceAndLifecycleReplayBoundary() async throws {
+        let path = "/tmp/cb-missing-\(UUID().uuidString.prefix(8)).sock"
+        do {
+            let _: EmptyParameters = try await UnixSocketRPCClient(socketPath: path)
+                .call("helper.health", params: EmptyParameters())
+            XCTFail("Missing fixture socket must fail")
+        } catch {
+            let evidence = RPCObservationFailure(error)
+            XCTAssertEqual(evidence.phase, .connect)
+            XCTAssertEqual(evidence.posixCode, ENOENT)
+            XCTAssertEqual(evidence.kind, .refused)
+            XCTAssertTrue(try XCTUnwrap(error as? LocalRPCError).allowsLifecycleReceiptReplay)
+        }
+        for phase: LocalRPCPhase in [.connect, .send, .receive] {
+            XCTAssertTrue(LocalRPCError.transport(phase: phase, code: ETIMEDOUT).allowsLifecycleReceiptReplay)
+            XCTAssertTrue(LocalRPCError.deadlineExceeded(phase: phase).allowsLifecycleReceiptReplay)
+        }
+        for error: LocalRPCError in [.invalidSocketPath, .peerIdentityMismatch, .responseTooLarge,
+                                    .malformedResponse("contract"), .remote(code: -32000, message: "timeout"),
+                                    .transport(phase: .decode, code: ETIMEDOUT),
+                                    .transport(phase: .queued, code: EINVAL),
+                                    .deadlineExceeded(phase: .queued), .deadlineExceeded(phase: .decode)] {
+            XCTAssertFalse(error.allowsLifecycleReceiptReplay)
+        }
+    }
+
+    func testReceiptReplayUsesSameLifecycleIDAndExactPayloadAfterResponseLoss() async throws {
+        let path = "/tmp/cb-replay-\(UUID().uuidString.prefix(8)).sock"
+        let received = LifecycleReplayRequests()
+        let server = try NativeRPCFixture(path: path, requestReply: { _, params in
+            let count = received.append(params)
+            if count == 1 { return NativeFixtureReply(body: "") }
+            return NativeFixtureReply(body: #"{"result":{"requestId":"same-receipt","kind":"start","force":false,"state":"queued","phase":"queued","createdAt":"now","updatedAt":"now","impact":null,"result":null,"error":null,"cancellable":true}}"#)
+        })
+        defer { server.stop() }
+        let request = RuntimeLifecycleRequest(requestId: "same-receipt", kind: "start", force: false)
+        _ = try await MacOSHelperClient(socketPath: path).requestLifecycle(request)
+        let payloads = received.values
+        XCTAssertEqual(payloads.count, 2)
+        let first = try JSONSerialization.jsonObject(with: Data(payloads[0].utf8)) as? NSDictionary
+        let second = try JSONSerialization.jsonObject(with: Data(payloads[1].utf8)) as? NSDictionary
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(first?["requestId"] as? String, "same-receipt")
+    }
+
     func testDefaultTransportReadsMaximumBridgeSkillContentEnvelope() async throws {
         struct SkillResult: Decodable { let content: String }
         // C0 control characters are valid source text (except NUL) but use
@@ -227,6 +272,13 @@ final class UnixSocketRPCClientTests: XCTestCase {
         )
         try await server.value
     }
+}
+
+private final class LifecycleReplayRequests: @unchecked Sendable {
+    private let lock = NSLock()
+    private var payloads: [String] = []
+    func append(_ value: String) -> Int { lock.withLock { payloads.append(value); return payloads.count } }
+    var values: [String] { lock.withLock { payloads } }
 }
 
 private func makeListener(at socketPath: String) throws -> Int32 {

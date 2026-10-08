@@ -1246,7 +1246,7 @@ struct ConnectionRecoveryView: View {
             for: issue.kind,
             isRemoteClient: model.isRemoteClient,
             configurationValid: model.helperStatus?.configuration.valid == true,
-            bridgeConnected: model.helperStatus?.bridge.connected == true,
+            bridgeConnected: model.bridgeConnected,
             helperPhase: model.helperStatus?.phase,
             codexInstalled: model.authStatus?.installed,
             permissionsRepairAvailable: configurationPermissionsCanBeRepaired,
@@ -1379,7 +1379,7 @@ struct ConnectionRecoveryView: View {
                 checking: model.helperStatus == nil && model.statusErrorMessage == nil
             ))
         }
-        if !model.isRemoteClient, model.helperStatus?.bridge.connected != true {
+        if !model.isRemoteClient, !model.bridgeConnected {
             result.append(ConnectionRecoveryIssue(
                 kind: .bridge,
                 title: localized("macos.bridge"),
@@ -1389,7 +1389,7 @@ struct ConnectionRecoveryView: View {
                 checking: model.isBridgeConnectionChecking
             ))
         }
-        if !model.isRemoteClient, model.helperStatus?.tunnel.connected != true {
+        if !model.isRemoteClient, !model.tunnelConnected {
             result.append(ConnectionRecoveryIssue(
                 kind: .tunnel,
                 title: localized("macos.securemcptunnel"),
