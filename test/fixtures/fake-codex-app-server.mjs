@@ -48,6 +48,11 @@ let rateLimitsReadCount = 0;
 const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 const sendBatch = (messages) => process.stdout.write(`${messages.map(message => JSON.stringify(message)).join("\n")}\n`);
 const response = (id, result) => send({ id, result });
+const threadResponse = (id, result) => {
+  const delay = Number(process.env.CODEX_TEST_THREAD_INITIALIZATION_DELAY_MS || 0);
+  if (delay > 0) setTimeout(() => response(id, result), delay);
+  else response(id, result);
+};
 const notification = (method, params = {}) => send({ method, params });
 const serverRequest = (id, method, params, accept) => {
   pendingServerRequests.set(String(id), { requestId: id, threadId: params.threadId, accept });
@@ -234,7 +239,7 @@ lines.on("line", (line) => {
     threadEphemeral.set(id, message.params.ephemeral === true);
     threadTiers.set(id, Object.hasOwn(message.params, "serviceTier") ? message.params.serviceTier : process.env.CODEX_TEST_DEFAULT_TIER || null);
     loadedThreads.add(id);
-    response(message.id, { ...threadPolicyResponse(message.method, message.params, id), thread: { id, ephemeral: threadEphemeral.get(id), ...threadLineages.get(id) } });
+    threadResponse(message.id, { ...threadPolicyResponse(message.method, message.params, id), thread: { id, ephemeral: threadEphemeral.get(id), ...threadLineages.get(id) } });
     return;
   }
   if (message.method === "thread/resume") {
@@ -244,7 +249,7 @@ lines.on("line", (line) => {
       return;
     }
     loadedThreads.add(threadId);
-    response(message.id, { ...threadPolicyResponse(message.method, message.params, threadId), thread: { id: threadId, ephemeral: threadEphemeral.get(threadId), ...threadLineages.get(threadId) } });
+    threadResponse(message.id, { ...threadPolicyResponse(message.method, message.params, threadId), thread: { id: threadId, ephemeral: threadEphemeral.get(threadId), ...threadLineages.get(threadId) } });
     return;
   }
   if (message.method === "thread/unsubscribe") {
@@ -295,7 +300,7 @@ lines.on("line", (line) => {
     });
     threadEphemeral.set(id, message.params.ephemeral === true);
     loadedThreads.add(id);
-    response(message.id, { ...threadPolicyResponse(message.method, message.params, id), thread: { id, ephemeral: threadEphemeral.get(id), ...threadLineages.get(id) } });
+    threadResponse(message.id, { ...threadPolicyResponse(message.method, message.params, id), thread: { id, ephemeral: threadEphemeral.get(id), ...threadLineages.get(id) } });
     return;
   }
   if (message.method === "thread/archive") {

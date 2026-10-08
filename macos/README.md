@@ -1,7 +1,6 @@
 # Native macOS menu bar app
 
-This directory contains the SwiftUI/AppKit companion for issue #44. It does not
-embed the existing cards in a WebView. The Dashboard popover and Settings window
+This directory contains the SwiftUI/AppKit companion. The Dashboard popover and Settings window
 decode the same application-service snapshots used by the retained MCP cards.
 
 The app can either own the server on this Mac or act only as a client of one
@@ -36,9 +35,12 @@ the summary, so the server and native client should be updated together.
 Immutable older clients retain their original projection when those optional
 parameters are omitted.
 
-Native and ChatGPT rows use the same status, actual execution, snapshot/recorded
-time, and older-history order. Next-run settings appear only when they differ
-from the latest actual model, effort, effective Fast tier, or reroute. Effort
+Native and ChatGPT rows use the same status, recorded execution evidence,
+snapshot time, and older-history order. Current Jobs distinguish the requested
+model, effort, and speed from acceptance and correlated server confirmation;
+acceptance alone does not confirm actual speed. Next-run settings appear only
+when they differ from the latest recorded execution. See
+[processing speed and evidence](../docs/processing-speed.md). Effort
 values stay as canonical lowercase catalog text in the menu, card, and both
 Settings surfaces; labels and descriptions remain localized.
 
@@ -79,12 +81,17 @@ HTTP server entry points use the Server name. Search for **Codex MCP Bridge** to
 find these processes together. The separate `tunnel-client` and `codex` processes
 keep their own names.
 
-The everyday Settings window contains General, Projects, and Server tabs backed
-by the same application service as the retained Settings card. General changes
-are debounced, serialized, and saved automatically; server backend and maximum
-access remain an explicit apply-and-restart operation. Connection credentials,
-Codex login, and Tunnel repair stay in a separate first-run/repair surface.
-The General tab adds one native-only Mac control backed by
+The Settings sidebar contains General, Models & Execution, Projects, Codex
+Account & Installation, Connection, and Server as applicable to the current
+role. Shared ordinary changes are debounced, serialized, and saved automatically;
+server maximum access remains an explicit apply-and-restart operation.
+Model descriptions have explicit save/cancel and version history. Conversation
+storage and Codex app visibility are separate settings; processing speed and
+history retention live under Models & Execution. Connection setup and repair
+also have a dedicated assistant. The separate Skill Library supports import,
+Markdown preview/editing, version restore, and ZIP export; see
+[the user walkthrough](../docs/skills.md#create-and-use-your-first-skill).
+General adds one native-only Mac control backed by
 `SMAppService.mainApp`: whether the menu-bar UI opens at user login. Its state
 comes from macOS, is not stored in `.env` or shared Settings, and does not stop
 the background helper when disabled. Registration is opt-in from native
@@ -112,10 +119,14 @@ permissions can be restricted to `0700/0600` from the repair UI without
 rewriting its contents. Group/world-writable paths are rejected from automatic
 repair and must be inspected first.
 
-Codex authentication remains the existing `codex login` cache. The app checks
-`codex login status` and can start the browser login flow; it does not copy or
-alter `~/.codex` credentials. Explicit API-key backend selection remains out of
-scope until issue #29 defines that contract. App-managed Codex children do not
+Codex Account & Installation separates the executable from its authentication
+connection: existing Codex login, separate ChatGPT login, or API key for the
+bridge. New logins use persistent Bridge profiles and native Codex login;
+the app does not initiate login in the shared home or copy credentials.
+Account/model verification precedes a requested change, and applying a pending
+connection to a running server requires a safe restart. See
+[authentication connections](../docs/codex-auth-connections.md).
+App-managed Codex children do not
 inherit `OPENAI_API_KEY` or `CODEX_API_KEY` merely because an older dotenv or
 parent process contains one.
 The menu status cannot report healthy while login is missing, and login status
@@ -162,25 +173,28 @@ Set `MACOS_BUILD_OUTPUT_DIRECTORY` to an absolute staging directory when the
 default bundle is running. This lets the complete replacement build and pass
 verification before the running app is stopped and replaced.
 
-`Resources/Localization/Localizable.xcstrings` is the native translation source.
-Run `npm run macos:localizations:sync` after adding SwiftUI text, fill every new
-locale entry, and use `npm run macos:localizations:check` to verify source-key,
-placeholder, and nine-language coverage.
+`../locales/catalog.json` is the authored localization source.
+`Resources/Localization/Localizable.xcstrings` is generated from it. Follow
+[localization generation](../docs/localization.md) and use
+`npm run macos:localizations:check` to verify source-key, placeholder, and
+language coverage.
 
 The current build is an ad-hoc-signed development artifact for the host
 architecture. Node.js, Codex CLI, and `tunnel-client` remain managed external
 prerequisites. Public packaging is a separate command and requires the exact
-manifest-derived DMG filename:
+manifest-derived DMG filename. Follow [release governance](../docs/release-governance.md)
+to select and validate a publishable release stage first:
 
 ```bash
+bridgeReleaseVersion=$(node -p "require('./release-manifest.json').release.version")
 npm run macos:package -- \
   --architecture arm64 \
-  --output release-assets/Codex-MCP-Bridge-for-ChatGPT-0.3.0-macOS-arm64-unnotarized.dmg
+  --output "release-assets/Codex-MCP-Bridge-for-ChatGPT-${bridgeReleaseVersion}-macOS-arm64-unnotarized.dmg"
 
 # Run this on a native Intel host (including the macos-15-intel CI runner).
 npm run macos:package -- \
   --architecture x64 \
-  --output release-assets/Codex-MCP-Bridge-for-ChatGPT-0.3.0-macOS-x64-unnotarized.dmg
+  --output "release-assets/Codex-MCP-Bridge-for-ChatGPT-${bridgeReleaseVersion}-macOS-x64-unnotarized.dmg"
 ```
 
 Public packaging intentionally uses ad-hoc signing and does not submit to Apple

@@ -6,16 +6,24 @@ import SwiftUI
 struct CodexAuthSelectionControls: View {
     @EnvironmentObject private var model: AppModel
     @State private var selectedKind = "shared"
-    @State private var apiKey = ""
+    @StateObject private var inputSession = BridgeEditSession(target: "auth-candidate", values: [.apiKey: ""])
     @State private var billingConfirmed = false
     @State private var profileToRemove: CodexAuthSelection.OwnedProfile?
     @State private var reviewStoppedActivation = false
 
     var body: some View {
         authSelectionContent
+            .onAppear { synchronizeCandidate() }
+            .onChange(of: model.codexRuntime?.authSelection?.candidate?.id) { _ in synchronizeCandidate() }
+            .onDisappear { inputSession.discard() }
             .task {
                 if !model.isRemoteClient { await model.manageCodex(.init(action: "status")) }
             }
+    }
+
+    private func synchronizeCandidate() {
+        let target = model.codexRuntime?.authSelection?.candidate?.id ?? "no-candidate"
+        if inputSession.targetID != target { inputSession.reset(target: target, values: [.apiKey: ""]) }
     }
 
     @ViewBuilder private var authSelectionContent: some View {
@@ -98,7 +106,7 @@ struct CodexAuthSelectionControls: View {
                     .pickerStyle(.menu)
                     .onChange(of: selectedKind) { _ in
                         billingConfirmed = false
-                        apiKey = ""
+                        inputSession.discard()
                     }
                     Text(explanationKey(selectedKind))
                         .font(.caption).foregroundStyle(.secondary)
@@ -237,16 +245,19 @@ struct CodexAuthSelectionControls: View {
                     .disabled(model.isBusy || auth.pending != nil || auth.activation != nil || !["prepared", "login-failed"].contains(candidate.status))
                 }
             } else if candidate.status != "verified" && candidate.reused != true {
-                SecureField("macos.auth.apiKey", text: $apiKey)
+                SecureField("macos.auth.apiKey", text: inputSession.binding(.apiKey))
                     .textContentType(.password)
+                    .bridgeInput(inputSession, field: .apiKey)
                 Button("macos.auth.saveCandidateKey") {
-                    let submitted = apiKey
-                    apiKey = ""
-                    Task { await model.manageCodex(.init(action: "auth-api-key", authCandidateId: candidate.id,
-                                                        authApiKey: submitted)) }
+                    inputSession.submit(validate: {
+                        if $0.value(.apiKey).isEmpty || $0.targetID != candidate.id { throw BridgeEditError.invalidValue }
+                    }, operation: { submitted, _ in
+                        await model.submitCodexRequest(.init(action: "auth-api-key", authCandidateId: submitted.targetID, authApiKey: submitted.value(.apiKey)))
+                    })
                 }
-                .disabled(model.isBusy || auth.pending != nil || auth.activation != nil || apiKey.isEmpty ||
-                          !["prepared", "login-failed"].contains(candidate.status))
+                .disabled(model.isBusy || inputSession.isSubmitting || auth.pending != nil || auth.activation != nil ||
+                          (!inputSession.hasMarkedText && inputSession.value(.apiKey).isEmpty) || !["prepared", "login-failed"].contains(candidate.status))
+                BridgeEditStatus(session: inputSession)
             }
             Button("macos.auth.verify") {
                 Task { await model.manageCodex(.init(action: "auth-verify", authCandidateId: candidate.id)) }

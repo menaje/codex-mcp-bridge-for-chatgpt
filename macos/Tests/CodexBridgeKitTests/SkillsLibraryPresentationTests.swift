@@ -74,7 +74,7 @@ final class SkillsLibraryPresentationTests: XCTestCase {
         XCTAssertTrue(source.contains("expandFolders(containing: path)"))
         XCTAssertFalse(source.contains("SkillFileTreeRows"))
         XCTAssertFalse(source.contains("OutlineGroup("))
-        XCTAssertTrue(source.contains(".searchable"))
+        XCTAssertTrue(source.contains("BridgeSearchField(text: searchSession.binding(.query)"))
         XCTAssertTrue(source.contains("SafeMarkdownView"))
         XCTAssertTrue(source.contains("Picker(\"macos.skills.viewMode\", selection: $editorMode)"))
         XCTAssertTrue(source.contains(".labelsHidden()"))

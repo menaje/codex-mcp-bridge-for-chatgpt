@@ -54,6 +54,8 @@ export type SessionRegistryOptions = {
   maxSessions?: number;
   now?: () => number;
   projectionOnly?: boolean;
+  /** Query-only workers can omit Sessions for detail/Settings, or restrict scope. */
+  projectionSessions?: { scopeId?: string } | false;
   authBoundary?: { key: string; allowLegacyShared: boolean } | (() => { key: string; allowLegacyShared: boolean });
 };
 
@@ -73,7 +75,10 @@ export class SessionRegistry {
     this.maxSessions = options.maxSessions ?? 1000;
     this.now = options.now || Date.now;
     this.authBoundary = options.authBoundary;
-    this.load();
+    if (options.projectionSessions !== undefined && (!options.projectionOnly || !this.stateStore?.readOnly)) {
+      throw new Error("Partial Session hydration requires a query-only projection.");
+    }
+    this.load(options.projectionSessions);
   }
 
   get persistent(): boolean {
@@ -276,9 +281,9 @@ export class SessionRegistry {
     return typeof this.authBoundary === "function" ? this.authBoundary() : this.authBoundary;
   }
 
-  private load(): void {
-    if (!this.stateStore) return;
-    const stored = this.stateStore.listSessions();
+  private load(filter?: { scopeId?: string } | false): void {
+    if (!this.stateStore || filter === false) return;
+    const stored = this.stateStore.listSessions(filter?.scopeId);
     const decoded = stored
       .map(readPersistedSession)
       .filter((session): session is TrackedCodexSession => Boolean(session))

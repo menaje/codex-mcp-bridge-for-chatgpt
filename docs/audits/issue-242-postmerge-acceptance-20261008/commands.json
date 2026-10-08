@@ -1,0 +1,144 @@
+{
+  "source": "612f230b16d8ad37ddfdc718d4d3f2856c4565b0",
+  "tree": "d84c60eaba624efaf2e4a7280b6ebdb460213406",
+  "environment": {
+    "PATH": "/tmp/cb242-accept/guard:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/opt/homebrew/bin:/Users/seongsik/.codex-mcp-bridge/runtimes/cli/0.160.0-0aaba513-7ed3-43d4-8a4b-2447bb6373cd/package/vendor/aarch64-apple-darwin/codex-path:/Users/seongsik/.codex-mcp-bridge/runtimes/auth-profiles/254a4a39-5164-4417-9c56-9ce48d4c5577/tmp/arg0/codex-arg0Le7UXn:/Users/seongsik/.nvm/versions/node/v24.11.1/bin:/Users/seongsik/.local/bin:/Users/seongsik/.npm-global/bin",
+    "LANG": "C.UTF-8",
+    "LC_ALL": "C.UTF-8",
+    "SDKROOT": "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
+    "HOME": "/tmp/cb242-accept/home",
+    "CODEX_HOME": "/tmp/cb242-accept/codex",
+    "TMPDIR": "/tmp/cb242-accept/tmp",
+    "XDG_CONFIG_HOME": "/tmp/cb242-accept/config",
+    "XDG_STATE_HOME": "/tmp/cb242-accept/state",
+    "CODEX_MCP_BRIDGE_DISABLE_LAUNCH_AGENT": "1"
+  },
+  "dependencies": "APFS clone of existing verified dependencies, clean npm ci did not complete due ENOSPC",
+  "results": [
+    {
+      "name": "simulated-sign",
+      "args": [
+        "codesign",
+        "--force",
+        "--deep",
+        "--sign",
+        "-",
+        "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-postmerge-acceptance-20261008/macos/build/postmerge/Codex MCP Bridge for ChatGPT.app"
+      ],
+      "extraEnvironment": {},
+      "exit": 0,
+      "seconds": 1.73,
+      "log": "simulated-sign.log",
+      "sha256": "9b48125eb3d333dac2a6f639755963b4725e309a16dd5f98a619e40d64f49e48"
+    },
+    {
+      "name": "simulated-verify",
+      "args": [
+        "codesign",
+        "--verify",
+        "--deep",
+        "--strict",
+        "--verbose=2",
+        "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-postmerge-acceptance-20261008/macos/build/postmerge/Codex MCP Bridge for ChatGPT.app"
+      ],
+      "extraEnvironment": {},
+      "exit": 0,
+      "seconds": 0.519,
+      "log": "simulated-verify.log",
+      "sha256": "66b4853d6be59f550c0553e83ff3c6d4cd63fc389d625b7f80a439f58503bd58"
+    },
+    {
+      "name": "artifact-startup",
+      "args": [
+        "node_modules/.bin/tsx",
+        "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-postmerge-evidence-20261008/artifact-startup.mts"
+      ],
+      "extraEnvironment": {},
+      "exit": 1,
+      "seconds": 30.539,
+      "log": "artifact-startup.log",
+      "sha256": "cebfa15d47222798a9a3b099d26c7e35c663dc8b60f20e937e1ea88d36b4451c"
+    },
+    {
+      "name": "focused",
+      "args": [
+        "node_modules/.bin/vitest",
+        "run",
+        "test/issue242Reads.test.ts",
+        "test/issue242ReadTransport.test.ts",
+        "test/issue242Completion.test.ts",
+        "test/issue242Characterization.test.ts",
+        "test/issue242ProxyCharacterization.test.ts",
+        "test/issue242R502.test.ts",
+        "test/issue242R502Tunnel.test.ts",
+        "test/tunnelHealth.test.ts",
+        "test/runtimeProcess.test.ts",
+        "test/httpDiagnostics.test.ts",
+        "--maxWorkers=1",
+        "--reporter=json",
+        "--outputFile=/Volumes/Data/Dev/codex-mcp-bridge-issue-242-postmerge-evidence-20261008/focused.json"
+      ],
+      "extraEnvironment": {
+        "ISSUE_242_R502_TUNNEL_BINARY": "/opt/homebrew/bin/tunnel-client",
+        "ISSUE_242_R502_REPORT": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-postmerge-evidence-20261008/proxy-matrix.json",
+        "ISSUE_242_R502_TUNNEL_REPORT": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-postmerge-evidence-20261008/tunnel-matrix.json"
+      },
+      "exit": 0,
+      "seconds": 109.629,
+      "log": "focused.log",
+      "sha256": "de492bb463dad17af13ff6cad0589bfe218fd1846e7dbeb9b322f1e5cbc1259e"
+    },
+    {
+      "name": "characterization1200",
+      "args": [
+        "node_modules/.bin/tsx",
+        "scripts/issue-242-characterization.ts",
+        "1200"
+      ],
+      "extraEnvironment": {},
+      "exit": 0,
+      "seconds": 4.084,
+      "log": "characterization1200.log",
+      "sha256": "30329b4ca9ba4b150636558ffe844f68dbc0f91180046294404709c03e3e2ac6"
+    },
+    {
+      "name": "characterization6000",
+      "args": [
+        "node_modules/.bin/tsx",
+        "scripts/issue-242-characterization.ts",
+        "6000"
+      ],
+      "extraEnvironment": {},
+      "exit": 0,
+      "seconds": 13.688,
+      "log": "characterization6000.log",
+      "sha256": "99ea6954bbce051b7c92bff6f86d4cb684a4119b34ee675ad4b65b107df9f46c"
+    },
+    {
+      "name": "completion",
+      "args": [
+        "node_modules/.bin/tsx",
+        "scripts/issue-242-completion.ts"
+      ],
+      "extraEnvironment": {},
+      "exit": 0,
+      "seconds": 0.73,
+      "log": "completion.log",
+      "sha256": "686cf4a97f496375ef2935a18e7d5c5408424ccd1b0346d4a3603ffab1d10931"
+    },
+    {
+      "name": "runtime-cost",
+      "args": [
+        "node",
+        "scripts/issue-242-runtime-cost.mjs",
+        "compare",
+        "/opt/homebrew/bin/tunnel-client"
+      ],
+      "extraEnvironment": {},
+      "exit": 0,
+      "seconds": 10.497,
+      "log": "runtime-cost.log",
+      "sha256": "84de1bd0057dd86e3ece20e771fd04beae4fdb66fdff8428c49da7d5728edf6f"
+    }
+  ]
+}

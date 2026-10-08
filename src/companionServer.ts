@@ -227,7 +227,13 @@ const runtimeSnapshotParamsSchema = z.strictObject({
 const remoteConfigureParamsSchema = z.strictObject({
   enabled: z.boolean(),
   endpoint: z.string().min(1).max(2_048),
-  displayName: z.string().min(1).max(120)
+  displayName: z.string().min(1).max(120),
+  expectedConfiguration: z.strictObject({
+    serverId: z.string().uuid(),
+    enabled: z.boolean(),
+    endpoint: z.string().max(2_048).nullable(),
+    displayName: z.string().min(1).max(120)
+  }).optional()
 });
 const remotePairingParamsSchema = z.strictObject({
   expiresInSeconds: z.number().int().min(60).max(900).optional()
@@ -287,6 +293,7 @@ export type RemoteCompanionControl = {
     enabled: boolean;
     endpoint: string;
     displayName: string;
+    expectedConfiguration?: { serverId: string; enabled: boolean; endpoint: string | null; displayName: string };
   }): Promise<RemoteCompanionStatus>;
   beginPairing(expiresInSeconds?: number): Promise<RemotePairingInvitation>;
   revokeDevice(deviceId: string): Promise<RemoteCompanionStatus>;

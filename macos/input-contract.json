@@ -1,0 +1,211 @@
+{
+  "schemaVersion": 1,
+  "inputs": [
+    {
+      "id": "CodexAccountUsageView.swift:CodexAccountUsageView:adminKey",
+      "kind": "SecureField",
+      "session": "inputSession",
+      "field": "adminKey"
+    },
+    {
+      "id": "CodexAccountUsageView.swift:CodexAccountUsageView:organizationID",
+      "kind": "TextField",
+      "session": "inputSession",
+      "field": "organizationID"
+    },
+    {
+      "id": "CodexAccountUsageView.swift:CodexAccountUsageView:projectID",
+      "kind": "TextField",
+      "session": "inputSession",
+      "field": "projectID"
+    },
+    {
+      "id": "CodexAuthSelectionViews.swift:CodexAuthSelectionControls:apiKey",
+      "kind": "SecureField",
+      "session": "inputSession",
+      "field": "apiKey"
+    },
+    {
+      "id": "ConnectionAssistantViews.swift:ConnectionSetupFlowView:apiKey",
+      "kind": "SecureField",
+      "session": "credentialsSession",
+      "field": "apiKey"
+    },
+    {
+      "id": "ConnectionAssistantViews.swift:ConnectionSetupFlowView:tunnelID",
+      "kind": "TextField",
+      "session": "credentialsSession",
+      "field": "tunnelID"
+    },
+    {
+      "id": "ConnectionAssistantViews.swift:ConnectionSetupFlowView:invitation",
+      "kind": "BridgeTextEditor",
+      "session": "remoteSession",
+      "field": "invitation"
+    },
+    {
+      "id": "ConnectionAssistantViews.swift:ConnectionSetupFlowView:deviceName",
+      "kind": "TextField",
+      "session": "remoteSession",
+      "field": "deviceName"
+    },
+    {
+      "id": "ConnectionAssistantViews.swift:ConnectionSetupFlowView:profileName",
+      "kind": "TextField",
+      "session": "remoteSession",
+      "field": "profileName"
+    },
+    {
+      "id": "ModelDescriptionSettings.swift:ModelDescriptionDraftEditor:description",
+      "kind": "BridgeTextEditor",
+      "session": "session",
+      "field": "description"
+    },
+    {
+      "id": "SettingsViews.swift:NativeSettingsView:query",
+      "kind": "search",
+      "session": "searchSession",
+      "field": "query"
+    },
+    {
+      "id": "SettingsViews.swift:ConnectionSettingsPane:name",
+      "kind": "TextField",
+      "session": "profileSession",
+      "field": "name"
+    },
+    {
+      "id": "SettingsViews.swift:ConnectionSettingsPane:displayName",
+      "kind": "TextField",
+      "session": "hostedSession",
+      "field": "displayName"
+    },
+    {
+      "id": "SettingsViews.swift:ConnectionSettingsPane:endpoint",
+      "kind": "TextField",
+      "session": "hostedSession",
+      "field": "endpoint"
+    },
+    {
+      "id": "SettingsViews.swift:RemoteServerConnectionSheet:invitation",
+      "kind": "BridgeTextEditor",
+      "session": "inputSession",
+      "field": "invitation"
+    },
+    {
+      "id": "SettingsViews.swift:RemoteServerConnectionSheet:deviceName",
+      "kind": "TextField",
+      "session": "inputSession",
+      "field": "deviceName"
+    },
+    {
+      "id": "SettingsViews.swift:RemoteServerConnectionSheet:profileName",
+      "kind": "TextField",
+      "session": "inputSession",
+      "field": "profileName"
+    },
+    {
+      "id": "SettingsViews.swift:ModelExecutionSettingsPane:number",
+      "kind": "TextField",
+      "session": "numberSession",
+      "field": "number"
+    },
+    {
+      "id": "SettingsViews.swift:ProjectEditorSheet:name",
+      "kind": "TextField",
+      "session": "inputSession",
+      "field": "name"
+    },
+    {
+      "id": "SettingsViews.swift:ProjectEditorSheet:cwd",
+      "kind": "TextField",
+      "session": "inputSession",
+      "field": "cwd"
+    },
+    {
+      "id": "SkillsLibraryViews.swift:SkillsLibraryWindowView:query",
+      "kind": "search",
+      "session": "searchSession",
+      "field": "query"
+    },
+    {
+      "id": "SkillsLibraryViews.swift:SkillsLibraryWindowView:name",
+      "kind": "TextField",
+      "session": "editSession",
+      "field": "name"
+    },
+    {
+      "id": "SkillsLibraryViews.swift:SkillsLibraryWindowView:description",
+      "kind": "TextField",
+      "session": "editSession",
+      "field": "description"
+    },
+    {
+      "id": "SkillsLibraryViews.swift:SkillsLibraryWindowView:content",
+      "kind": "BridgeTextEditor",
+      "session": "editSession",
+      "field": "content"
+    },
+    {
+      "id": "SkillsLibraryViews.swift:BridgeSkillImportReviewSheet:name",
+      "kind": "TextField",
+      "session": "inputSession",
+      "field": "name"
+    },
+    {
+      "id": "SkillsLibraryViews.swift:BridgeSkillImportReviewSheet:description",
+      "kind": "TextField",
+      "session": "inputSession",
+      "field": "description"
+    },
+    {
+      "id": "SkillsLibraryViews.swift:NewBridgeSkillSheet:name",
+      "kind": "TextField",
+      "session": "inputSession",
+      "field": "name"
+    },
+    {
+      "id": "SkillsLibraryViews.swift:NewBridgeSkillSheet:description",
+      "kind": "TextField",
+      "session": "inputSession",
+      "field": "description"
+    },
+    {
+      "id": "SkillsLibraryViews.swift:NewBridgeSkillSheet:content",
+      "kind": "BridgeTextEditor",
+      "session": "inputSession",
+      "field": "content"
+    },
+    {
+      "id": "SkillsLibraryViews.swift:NewBridgeSkillFileSheet:path",
+      "kind": "TextField",
+      "session": "inputSession",
+      "field": "path"
+    },
+    {
+      "id": "SkillsLibraryViews.swift:NewBridgeSkillFileSheet:content",
+      "kind": "BridgeTextEditor",
+      "session": "inputSession",
+      "field": "content"
+    },
+    {
+      "id": "SkillsLibraryViews.swift:RenameBridgeSkillFileSheet:path",
+      "kind": "TextField",
+      "session": "inputSession",
+      "field": "path"
+    }
+  ],
+  "systemExceptions": [
+    {
+      "control": "NSOpenPanel",
+      "reason": "AppKit owns folder/file selection and its internal controls; confirm the owning draft before applying the selected path."
+    },
+    {
+      "control": "NSSavePanel",
+      "reason": "AppKit owns export path editing; export uses a pinned document reference."
+    },
+    {
+      "control": "NSTextView Find bar",
+      "reason": "AppKit owns search and replacement within the owned document editor; document changes still use the session binding."
+    }
+  ]
+}

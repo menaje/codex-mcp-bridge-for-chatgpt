@@ -27,6 +27,37 @@ afterEach(async () => {
 });
 
 describe("remote native companion", () => {
+  it("rejects stale configuration before stopping the listener or invalidating pairing", async () => {
+    const stateFile = path.join(temporaryDirectory(), "remote.json");
+    const manager = new RemoteCompanionManager({ stateFile, applicationService: fakeApplicationService() });
+    managers.push(manager);
+    const endpoint = `https://127.0.0.1:${await availablePort()}`;
+    const status = await manager.configure({ enabled: true, endpoint, displayName: "기준 서버" });
+    await manager.beginPairing();
+    const persisted = readFileSync(stateFile, "utf8");
+    const expectedConfiguration = { serverId: status.serverId, enabled: status.enabled, endpoint: status.endpoint, displayName: "outdated" };
+    await expect(manager.configure({ enabled: false, endpoint, displayName: "draft", expectedConfiguration })).rejects.toThrow("REMOTE_CONFIGURATION_CONFLICT");
+    expect(manager.status()).toEqual(status);
+    expect(readFileSync(stateFile, "utf8")).toBe(persisted);
+    expect(await manager.beginPairing()).toMatchObject({ serverId: status.serverId });
+  });
+
+  it("checks guarded writes inside the lifecycle queue and preserves legacy unguarded requests", async () => {
+    const manager = new RemoteCompanionManager({ stateFile: path.join(temporaryDirectory(), "remote.json"), applicationService: fakeApplicationService() });
+    managers.push(manager);
+    const status = manager.status();
+    const expectedConfiguration = { serverId: status.serverId, enabled: status.enabled, endpoint: status.endpoint, displayName: status.displayName };
+    const endpoint = `https://127.0.0.1:${await availablePort()}`;
+    const results = await Promise.allSettled([
+      manager.configure({ enabled: false, endpoint, displayName: "first", expectedConfiguration }),
+      manager.configure({ enabled: false, endpoint, displayName: "second", expectedConfiguration })
+    ]);
+    expect(results[0].status).toBe("fulfilled");
+    expect(results[1]).toMatchObject({ status: "rejected", reason: expect.objectContaining({ message: "REMOTE_CONFIGURATION_CONFLICT" }) });
+    expect(manager.status().displayName).toBe("first");
+    await expect(manager.configure({ enabled: false, endpoint, displayName: "legacy" })).resolves.toMatchObject({ displayName: "legacy" });
+  });
+
   it("pairs one device over pinned TLS and serves only the remote application API", async () => {
     const directory = temporaryDirectory();
     const stateFile = path.join(directory, "remote.json");

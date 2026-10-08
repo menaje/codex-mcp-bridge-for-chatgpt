@@ -41,6 +41,7 @@ struct SettingsDraft: Equatable {
     var fixedSelectionKey: String
     var allowedKind: String
     var explicitSelectionKeys: Set<String>
+    var modelAllowlist: ModelAllowlistDraft
     var allowDelegation: Bool
     var usePriorityServiceTier: Bool
     var processingSpeed: String
@@ -57,6 +58,7 @@ struct SettingsDraft: Equatable {
         let fixedSelectionKey: String
         let allowedKind: String
         let explicitSelectionKeys: Set<String>
+        let explicitModelIDs: Set<String>
         let allowDelegation: Bool
     }
 
@@ -67,9 +69,13 @@ struct SettingsDraft: Equatable {
         policyMode = settings.modelPolicy.mode
         fixedSelectionKey = settings.modelPolicy.selection?.key ?? ""
         allowedKind = settings.modelPolicy.allowedSelections?.kind ?? "catalog-visible"
-        explicitSelectionKeys = Set(
+        let savedExplicitKeys = Set(
             settings.modelPolicy.allowedSelections?.selections?.map(\ModelChoice.key) ?? []
         )
+        modelAllowlist = ModelAllowlistDraft(selections: settings.modelPolicy.allowedSelections?.selections ?? [])
+        explicitSelectionKeys = policyMode == "automatic" && allowedKind == "explicit" && !snapshot.catalog.models.isEmpty
+            ? Set(modelAllowlist.selections(choices: Self.selectableChoices(in: snapshot, allowDelegation: true)).map(\.key))
+            : savedExplicitKeys
         allowDelegation = settings.modelPolicy.constraints.allowDelegation
         usePriorityServiceTier = settings.usePriorityServiceTier
         processingSpeed = settings.processingSpeed ?? "legacy"
@@ -83,13 +89,19 @@ struct SettingsDraft: Equatable {
             mode: policyMode,
             fixedSelectionKey: fixedSelectionKey,
             allowedKind: allowedKind,
-            explicitSelectionKeys: explicitSelectionKeys,
+            explicitSelectionKeys: savedExplicitKeys,
+            explicitModelIDs: modelAllowlist.modelIDs,
             allowDelegation: allowDelegation
         )
     }
 
     var modelPolicyDirty: Bool {
         policyState != originalPolicyState
+    }
+
+    mutating func updateAllowlist(choices: [ModelChoice], _ change: (inout ModelAllowlistDraft) -> Void) {
+        change(&modelAllowlist)
+        explicitSelectionKeys = Set(modelAllowlist.selections(choices: choices).map(\.key))
     }
 
     static func processingSpeedChoices(in snapshot: SettingsSnapshot) -> [String] {
@@ -123,7 +135,10 @@ struct SettingsDraft: Equatable {
         rebased.policyMode = policyMode
         rebased.fixedSelectionKey = fixedSelectionKey
         rebased.allowedKind = allowedKind
-        rebased.explicitSelectionKeys = explicitSelectionKeys
+        rebased.modelAllowlist = modelAllowlist
+        rebased.explicitSelectionKeys = policyMode == "automatic" && allowedKind == "explicit" && !snapshot.catalog.models.isEmpty
+            ? Set(modelAllowlist.selections(choices: Self.selectableChoices(in: snapshot, allowDelegation: true)).map(\.key))
+            : explicitSelectionKeys
         rebased.allowDelegation = allowDelegation
         rebased.usePriorityServiceTier = usePriorityServiceTier
         rebased.processingSpeed = processingSpeed
@@ -142,6 +157,7 @@ struct SettingsDraft: Equatable {
             fixedSelectionKey == other.fixedSelectionKey &&
             allowedKind == other.allowedKind &&
             explicitSelectionKeys == other.explicitSelectionKeys &&
+            modelAllowlist == other.modelAllowlist &&
             allowDelegation == other.allowDelegation &&
             usePriorityServiceTier == other.usePriorityServiceTier &&
             processingSpeed == other.processingSpeed &&
@@ -159,6 +175,7 @@ struct SettingsDraft: Equatable {
             fixedSelectionKey: fixedSelectionKey,
             allowedKind: allowedKind,
             explicitSelectionKeys: explicitSelectionKeys,
+            explicitModelIDs: modelAllowlist.modelIDs,
             allowDelegation: allowDelegation
         )
     }
@@ -338,6 +355,8 @@ final class AppModel: ObservableObject {
     @Published var skillLibraryErrorMessage: String?
     @Published var skillMutationErrorMessage: String?
     @Published private(set) var skillMutationInProgress = false
+    private(set) var skillMutationHadConflict = false
+    private(set) var remoteConfigurationHadConflict = false
     @Published var authStatus: CodexLoginStatus? { didSet { scheduleOperationalObservation() } }
     @Published var logs: [HelperLogEntry] = []
     @Published private(set) var setupDiscovery: TunnelSetupDiscovery?
@@ -713,6 +732,10 @@ final class AppModel: ObservableObject {
 
     var bridgeConnected: Bool {
         isRemoteClient ? remoteHello != nil : helperStatus?.bridge.connected == true
+    }
+
+    var tunnelConnected: Bool {
+        isRemoteClient ? remoteHello != nil : helperStatus?.tunnel.connected == true
     }
 
     private var retainedHelperObservation: Bool {
@@ -1177,25 +1200,28 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func configureRemoteManagement(
-        enabled: Bool,
-        endpoint: String,
-        displayName: String
-    ) async -> Bool {
-        guard !isRemoteClient, bridgeConnected else { return false }
+    func configureRemoteManagement(enabled: Bool, endpoint: String, displayName: String) async -> Bool {
+        await submitRemoteManagementSettings(enabled: enabled, endpoint: endpoint, displayName: displayName) != nil
+    }
+
+    func submitRemoteManagementSettings(enabled: Bool, endpoint: String, displayName: String,
+                                        expected: RemoteManagementConfiguration? = nil) async -> RemoteManagementStatus? {
+        guard !isRemoteClient, bridgeConnected else { return nil }
         isBusy = true
         defer { isBusy = false }
         let generation = connectionGeneration
         remoteManagementErrorMessage = nil
+        remoteConfigurationHadConflict = false
         setRemotePairingInvitation(nil)
         do {
             let client = await localBridgeClient()
             let status = try await client.configureRemoteManagement(
                 enabled: enabled,
                 endpoint: endpoint,
-                displayName: displayName
+                displayName: displayName,
+                expectedConfiguration: expected
             )
-            guard generation == connectionGeneration, !isRemoteClient else { return false }
+            guard generation == connectionGeneration, !isRemoteClient else { return nil }
             remoteManagementStatus = status
             if enabled, !status.listening {
                 remoteManagementErrorMessage = BridgeAppLocalization.statusProblemDescription(
@@ -1208,13 +1234,14 @@ final class AppModel: ObservableObject {
                         "macos.theremotemanagementserverdidnotstartat",
                         locale: interfaceLocale
                     )
-                return false
+                return nil
             }
-            return true
+            return status
         } catch {
-            guard generation == connectionGeneration, !isRemoteClient else { return false }
+            guard generation == connectionGeneration, !isRemoteClient else { return nil }
+            remoteConfigurationHadConflict = error.localizedDescription.contains("REMOTE_CONFIGURATION_CONFLICT")
             remoteManagementErrorMessage = localizedErrorDescription(error)
-            return false
+            return nil
         }
     }
 
@@ -1467,8 +1494,22 @@ final class AppModel: ObservableObject {
 
     func recordLocalConnectionStatus(_ next: HelperStatus?, at now: Date = Date()) {
         guard let next else { recordLocalConnectionFailure(LocalRPCError.emptyResponse, at: now); return }
+        let previous = lastConfirmedHelperStatus
+        let targetChanged = previous.map {
+            $0.pid != next.pid || $0.startedAt != next.startedAt ||
+                $0.bridge.socketPath != next.bridge.socketPath
+        } ?? false
+        if targetChanged {
+            invalidateContentObservations()
+            dashboard = nil
+            lastDashboardRefresh = nil
+            dashboardObservationDate = nil
+            clearDashboardHistoryDetails()
+            settings = nil
+            clearSkillObservations()
+        }
         statusRequestGeneration += 1
-        let refreshContent = systemObservationPending || helperStatus?.bridge.connected != true
+        let refreshContent = targetChanged || systemObservationPending || helperStatus?.bridge.connected != true
         systemObservationPending = false
         helperStatus = next
         lastConfirmedHelperStatus = next
@@ -2001,10 +2042,17 @@ final class AppModel: ObservableObject {
     private func observeProjectRegistry(_ next: SettingsSnapshot) {
         guard let current = settings, next.settings.registryRevision != current.settings.registryRevision else { return }
         dashboardRequestGeneration += 1
+        skillLibraryRequestGeneration += 1
+        bridgeSkillSelectionRequestGeneration += 1
+        bridgeSkillFileRequestGeneration += 1
         dashboardEnrichmentTask?.cancel()
         dashboardEnrichmentTask = nil
+        dashboardEnrichmentRequest = nil
         dashboard = nil
+        lastDashboardRefresh = nil
+        dashboardObservationDate = nil
         clearDashboardHistoryDetails()
+        clearSkillObservations()
         if bridgeConnected { enqueueRefresh(["dashboard"]) }
     }
 
@@ -2044,11 +2092,11 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func loadBridgeSkill(_ summary: BridgeSkillSummary) async {
-        await loadBridgeSkill(summary.reference)
+    func loadBridgeSkill(_ summary: BridgeSkillSummary, accepting: () -> Bool = { true }) async {
+        await loadBridgeSkill(summary.reference, accepting: accepting)
     }
 
-    func loadBridgeSkill(_ reference: BridgeSkillReference) async {
+    func loadBridgeSkill(_ reference: BridgeSkillReference, accepting: () -> Bool = { true }) async {
         guard bridgeConnected, reference.source == "bridge" else { return }
         bridgeSkillSelectionRequestGeneration += 1
         let request = bridgeSkillSelectionRequestGeneration
@@ -2058,7 +2106,7 @@ final class AppModel: ObservableObject {
             let skill = try await client.readBridgeSkill(reference)
             guard !Task.isCancelled,
                   generation == connectionGeneration,
-                  request == bridgeSkillSelectionRequestGeneration else { return }
+                  request == bridgeSkillSelectionRequestGeneration, accepting() else { return }
             selectedBridgeSkill = skill
             selectedBridgeSkillFile = nil
             selectedBridgeSkillVersions = nil
@@ -2118,6 +2166,11 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func readBridgeSkillAttachment(_ reference: BridgeSkillReference, path: String) async throws -> String {
+        let client = try await bridgeClient()
+        return try await client.readBridgeSkillFile(reference, path: path).content
+    }
+
     func selectBridgeSkillContent() {
         bridgeSkillFileRequestGeneration += 1
         bridgeSkillFileLoading = false
@@ -2125,24 +2178,12 @@ final class AppModel: ObservableObject {
     }
 
     @discardableResult
-    func createBridgeSkill(_ request: BridgeSkillCreateRequest) async -> Bool {
-        guard !skillMutationInProgress else { return false }
-        skillMutationInProgress = true
-        defer { skillMutationInProgress = false }
-        skillMutationErrorMessage = nil
-        let generation = connectionGeneration
-        do {
-            let client = try await bridgeClient()
-            let created = try await client.createBridgeSkill(request)
-            guard generation == connectionGeneration else { return false }
-            await refreshSkillLibrary()
-            await loadBridgeSkill(created)
-            return true
-        } catch {
-            guard generation == connectionGeneration else { return false }
-            skillMutationErrorMessage = localizedErrorDescription(error)
-            return false
-        }
+    func createBridgeSkill(_ request: BridgeSkillCreateRequest, shouldSelect: () -> Bool = { true }) async -> Bool {
+        await submitBridgeSkillCreation(request, shouldSelect: shouldSelect) != nil
+    }
+
+    func submitBridgeSkillCreation(_ request: BridgeSkillCreateRequest, shouldSelect: () -> Bool) async -> BridgeSkillSummary? {
+        await submitBridgeSkillMutation(shouldSelect: shouldSelect) { client in try await client.createBridgeSkill(request) }
     }
 
     func inspectBridgeSkillPackage(at url: URL) async -> BridgeSkillPackageInspection? {
@@ -2157,13 +2198,20 @@ final class AppModel: ObservableObject {
     }
 
     @discardableResult
-    func createBridgeSkillPackage(_ request: BridgeSkillPackageCreateRequest) async -> Bool {
-        await mutateBridgeSkill { client in try await client.createBridgeSkillPackage(request) }
+    func createBridgeSkillPackage(_ request: BridgeSkillPackageCreateRequest, shouldSelect: () -> Bool = { true }) async -> Bool {
+        await submitBridgeSkillPackageCreation(request, shouldSelect: shouldSelect) != nil
     }
 
     @discardableResult
-    func updateBridgeSkillPackage(_ request: BridgeSkillPackageUpdateRequest) async -> Bool {
-        await mutateBridgeSkill { client in try await client.updateBridgeSkillPackage(request) }
+    func updateBridgeSkillPackage(_ request: BridgeSkillPackageUpdateRequest, shouldSelect: () -> Bool = { true }) async -> Bool {
+        await submitBridgeSkillPackageUpdate(request, shouldSelect: shouldSelect) != nil
+    }
+
+    func submitBridgeSkillPackageCreation(_ request: BridgeSkillPackageCreateRequest, shouldSelect: () -> Bool) async -> BridgeSkillSummary? {
+        await submitBridgeSkillMutation(shouldSelect: shouldSelect) { client in try await client.createBridgeSkillPackage(request) }
+    }
+    func submitBridgeSkillPackageUpdate(_ request: BridgeSkillPackageUpdateRequest, shouldSelect: () -> Bool) async -> BridgeSkillSummary? {
+        await submitBridgeSkillMutation(shouldSelect: shouldSelect) { client in try await client.updateBridgeSkillPackage(request) }
     }
 
     func exportBridgeSkillPackage(_ reference: BridgeSkillReference) async -> BridgeSkillPackageExport? {
@@ -2177,46 +2225,101 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func mutateBridgeSkill(
+    private func submitBridgeSkillMutation(
+        shouldSelect: () -> Bool = { true },
         _ operation: (any BridgeApplicationClient) async throws -> BridgeSkillSummary
-    ) async -> Bool {
-        guard !skillMutationInProgress else { return false }
+    ) async -> BridgeSkillSummary? {
+        guard !skillMutationInProgress else { return nil }
         skillMutationInProgress = true
         defer { skillMutationInProgress = false }
         skillMutationErrorMessage = nil
+        skillMutationHadConflict = false
         let generation = connectionGeneration
+        let selection = bridgeSkillSelectionRequestGeneration
         do {
             let client = try await bridgeClient()
             let updated = try await operation(client)
-            guard generation == connectionGeneration else { return false }
+            guard generation == connectionGeneration else { return nil }
             await refreshSkillLibrary()
-            await loadBridgeSkill(updated)
-            return true
+            if shouldSelect(), selection == bridgeSkillSelectionRequestGeneration { await loadBridgeSkill(updated, accepting: shouldSelect) }
+            return updated
         } catch {
-            guard generation == connectionGeneration else { return false }
+            guard generation == connectionGeneration else { return nil }
+            skillMutationHadConflict = error.localizedDescription.contains("SKILL_VERSION_CHANGED")
             skillMutationErrorMessage = localizedErrorDescription(error)
-            return false
+            return nil
         }
     }
 
     @discardableResult
-    func updateBridgeSkill(_ request: BridgeSkillUpdateRequest) async -> Bool {
-        guard !skillMutationInProgress else { return false }
+    func updateBridgeSkill(_ request: BridgeSkillUpdateRequest, shouldSelect: () -> Bool = { true }) async -> Bool {
+        let selection = bridgeSkillSelectionRequestGeneration
+        guard let updated = await submitBridgeSkillUpdate(request) else { return false }
+        if shouldSelect(), selection == bridgeSkillSelectionRequestGeneration, selectedBridgeSkill?.skill.skillId == request.skillId {
+            await loadBridgeSkill(updated, accepting: shouldSelect)
+        }
+        return true
+    }
+
+    /// Returns a receipt without selecting a document. Draft ownership and the
+    /// decision to close an editor belong to the submitting edit session.
+    func submitBridgeSkillUpdate(_ request: BridgeSkillUpdateRequest, shouldSelect: () -> Bool = { false }) async -> BridgeSkillSummary? {
+        guard !skillMutationInProgress else { return nil }
         skillMutationInProgress = true
         defer { skillMutationInProgress = false }
         skillMutationErrorMessage = nil
+        skillMutationHadConflict = false
         let generation = connectionGeneration
+        let selection = bridgeSkillSelectionRequestGeneration
         do {
             let client = try await bridgeClient()
             let updated = try await client.updateBridgeSkill(request)
-            guard generation == connectionGeneration else { return false }
+            guard generation == connectionGeneration else { return nil }
             await refreshSkillLibrary()
-            await loadBridgeSkill(updated)
-            return true
+            if shouldSelect(), selection == bridgeSkillSelectionRequestGeneration { await loadBridgeSkill(updated, accepting: shouldSelect) }
+            return updated
         } catch {
-            guard generation == connectionGeneration else { return false }
+            guard generation == connectionGeneration else { return nil }
+            skillMutationHadConflict = error.localizedDescription.contains("SKILL_VERSION_CHANGED")
             skillMutationErrorMessage = localizedErrorDescription(error)
-            return false
+            return nil
+        }
+    }
+
+    func readLatestBridgeSkill(skillID: String) async -> BridgeSkill? {
+        let generation = connectionGeneration
+        do {
+            let client = try await bridgeClient()
+            let library = try await client.skillLibrary()
+            guard let summary = library.skills.first(where: { $0.skillId == skillID }) else { return nil }
+            let result = try await client.readBridgeSkill(summary.reference)
+            return generation == connectionGeneration ? result : nil
+        } catch { skillLibraryErrorMessage = localizedErrorDescription(error); return nil }
+    }
+
+    func refreshSubmittedBridgeSkill(_ updated: BridgeSkillSummary, replacing reference: BridgeSkillReference,
+                                     path: String?, stillEditing: () -> Bool) async {
+        guard stillEditing(), selectedBridgeSkill?.skill.reference == reference,
+              selectedBridgeSkillFile?.path == path else { return }
+        let selection = bridgeSkillSelectionRequestGeneration
+        let fileRequest = bridgeSkillFileRequestGeneration
+        let generation = connectionGeneration
+        do {
+            let client = try await bridgeClient()
+            let document = try await client.readBridgeSkill(updated.reference)
+            let file: BridgeSkillFile?
+            if let path { file = try await client.readBridgeSkillFile(updated.reference, path: path) }
+            else { file = nil }
+            let versions = try? await client.bridgeSkillVersions(skillId: updated.skillId)
+            guard stillEditing(), generation == connectionGeneration,
+                  selection == bridgeSkillSelectionRequestGeneration, fileRequest == bridgeSkillFileRequestGeneration,
+                  selectedBridgeSkill?.skill.reference == reference else { return }
+            selectedBridgeSkill = document
+            selectedBridgeSkillFile = file
+            selectedBridgeSkillVersions = versions
+        } catch {
+            guard stillEditing(), generation == connectionGeneration else { return }
+            skillLibraryErrorMessage = localizedErrorDescription(error)
         }
     }
 
@@ -2334,6 +2437,7 @@ final class AppModel: ObservableObject {
     func scheduleSettingsAutosave(_ draft: SettingsDraft) {
         if !settingsAutosaveInProgress,
            let snapshot = settings,
+           !draft.modelPolicyDirty,
            draft.hasSameEditableValues(as: SettingsDraft(snapshot: snapshot)) {
             settingsAutosaveDebounceTask?.cancel()
             settingsAutosaveDebounceTask = nil
@@ -2399,7 +2503,7 @@ final class AppModel: ObservableObject {
                 return
             }
             let draft = requestedDraft.rebased(on: snapshot)
-            if draft.hasSameEditableValues(as: SettingsDraft(snapshot: snapshot)) {
+            if !draft.modelPolicyDirty && draft.hasSameEditableValues(as: SettingsDraft(snapshot: snapshot)) {
                 continue
             }
             generalSettingsSaveState = .saving
@@ -2537,15 +2641,18 @@ final class AppModel: ObservableObject {
         return succeeded
     }
 
-    func manageCodex(_ request: CodexRuntimeRequest) async {
-        guard !isRemoteClient else { return }
+    func manageCodex(_ request: CodexRuntimeRequest) async { _ = await submitCodexRequest(request) }
+
+    func submitCodexRequest(_ request: CodexRuntimeRequest) async -> Bool {
+        guard !isRemoteClient else { return false }
+        let generation = connectionGeneration
         let kind = request.kind ?? "cli"
         if request.action == "status" {
             await loadCodexRuntime(kind: kind, includeAccount: request.includeAccount ?? true)
-            return
+            return generation == connectionGeneration
         }
         if request.action == "check-updates" {
-            guard !checkingCodexUpdates.contains(kind) else { return }
+            guard !checkingCodexUpdates.contains(kind) else { return false }
             checkingCodexUpdates.insert(kind)
         }
         defer { checkingCodexUpdates.remove(kind) }
@@ -2555,9 +2662,12 @@ final class AppModel: ObservableObject {
             // Actions return installation state only. Publish a complete status so
             // account/authentication sections do not disappear between requests.
             await loadCodexRuntime(kind: kind, force: true)
+            return generation == connectionGeneration
         } catch {
             await loadCodexRuntime(kind: kind, force: true)
+            guard generation == connectionGeneration else { return false }
             setCodexRuntimeError(localizedErrorDescription(error), kind: kind)
+            return false
         }
     }
 
@@ -2729,6 +2839,13 @@ final class AppModel: ObservableObject {
                 let allowed: AllowedSelections
                 if draft.allowedKind == "explicit" {
                     let selectedKeys = draft.explicitSelectionKeys
+                    if let missing = draft.modelAllowlist.modelIDs.sorted().first(where: { id in
+                        !selectedKeys.contains { displayedChoices[$0]?.model == id }
+                    }) {
+                        settingsErrorMessage = BridgeAppLocalization.string("settings.modelEffortRequired", locale: interfaceLocale)
+                            .replacingOccurrences(of: "{model}", with: missing)
+                        return false
+                    }
                     guard selectedKeys.allSatisfy({ key in
                         guard let choice = displayedChoices[key] else { return false }
                         return draft.canRetainExplicitChoice(choice, in: snapshot)
@@ -2792,16 +2909,24 @@ final class AppModel: ObservableObject {
     func saveModelDescription(
         modelID: String,
         description: String?,
-        expectedOverride: String?
+        expectedOverride: String?,
+        expectedSettingsRevision: Int? = nil
     ) async -> Bool {
+        await submitModelDescription(modelID: modelID, description: description, expectedOverride: expectedOverride,
+                                     expectedSettingsRevision: expectedSettingsRevision) != nil
+    }
+
+    func submitModelDescription(modelID: String, description: String?, expectedOverride: String?,
+                                expectedSettingsRevision: Int? = nil) async -> SettingsSnapshot? {
         guard let snapshot = settings, var overrides = snapshot.settings.modelDescriptionOverrides,
-              !isBusy, !generalSettingsSaveState.isActive else { return false }
+              !isBusy, !generalSettingsSaveState.isActive else { return nil }
         guard overrides[modelID] == expectedOverride else {
+            settingsConflictMessage = BridgeAppLocalization.string("settings.modelDescriptions.conflict", locale: interfaceLocale)
             settingsErrorMessage = BridgeAppLocalization.string(
                 "settings.modelDescriptions.conflict",
                 locale: interfaceLocale
             )
-            return false
+            return nil
         }
         let next: String?
         do {
@@ -2823,17 +2948,19 @@ final class AppModel: ObservableObject {
             settingsErrorMessage = BridgeAppLocalization.string(
                 "settings.modelDescriptions.tooLong", locale: interfaceLocale
             )
-            return false
+            return nil
         }
-        if next == overrides[modelID] { return true }
+        if next == overrides[modelID] { return snapshot }
         overrides[modelID] = next
         modelDescriptionSaveInProgress = true
         defer { modelDescriptionSaveInProgress = false }
-        return await performSettingsMutation(SettingsMutation(
-            expectedSettingsRevision: snapshot.settings.settingsRevision,
+        var receipt: SettingsSnapshot?
+        _ = await performSettingsMutation(SettingsMutation(
+            expectedSettingsRevision: expectedSettingsRevision ?? snapshot.settings.settingsRevision,
             expectedRegistryRevision: nil,
             operation: .patch(SettingsPatch(modelDescriptionOverrides: overrides))
-        ))
+        ), onSaved: { receipt = $0 })
+        return receipt
     }
 
     func resetGeneralSettings() async -> Bool {
@@ -2845,13 +2972,19 @@ final class AppModel: ObservableObject {
         ))
     }
 
-    func applyProjectOperation(_ operation: ProjectOperation) async -> Bool {
-        guard let snapshot = settings else { return false }
-        return await performSettingsMutation(SettingsMutation(
+    func applyProjectOperation(_ operation: ProjectOperation, expectedRegistryRevision: Int? = nil) async -> Bool {
+        await submitProjectOperations([operation], expectedRegistryRevision: expectedRegistryRevision) != nil
+    }
+
+    func submitProjectOperations(_ operations: [ProjectOperation], expectedRegistryRevision: Int? = nil) async -> SettingsSnapshot? {
+        guard let snapshot = settings else { return nil }
+        var receipt: SettingsSnapshot?
+        _ = await performSettingsMutation(SettingsMutation(
             expectedSettingsRevision: nil,
-            expectedRegistryRevision: snapshot.settings.registryRevision,
-            operation: .patch(SettingsPatch(projectOperations: [operation]))
-        ))
+            expectedRegistryRevision: expectedRegistryRevision ?? snapshot.settings.registryRevision,
+            operation: .patch(SettingsPatch(projectOperations: operations))
+        ), onSaved: { receipt = $0 })
+        return receipt
     }
 
     func loadMoreRecent() async {
@@ -2930,7 +3063,8 @@ final class AppModel: ObservableObject {
     private func performSettingsMutation(
         _ mutation: SettingsMutation,
         tracksGlobalBusyState: Bool = true,
-        autosavedDraft: SettingsDraft? = nil
+        autosavedDraft: SettingsDraft? = nil,
+        onSaved: ((SettingsSnapshot) -> Void)? = nil
     ) async -> Bool {
         if tracksGlobalBusyState { isBusy = true }
         defer {
@@ -2948,6 +3082,7 @@ final class AppModel: ObservableObject {
                 mutation.withPresentationLocale(presentationLocale)
             )
             guard generation == connectionGeneration else { return false }
+            onSaved?(updated)
             guard request == settingsRequestGeneration else {
                 // The mutation completed, but its presentation locale is no
                 // longer current. Keep any in-progress draft and fetch a

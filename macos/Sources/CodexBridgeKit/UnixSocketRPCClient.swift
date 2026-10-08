@@ -74,6 +74,19 @@ public enum LocalRPCError: LocalizedError, Sendable {
     }
 }
 
+extension LocalRPCError {
+    /// Replay only a potentially lost lifecycle receipt, with its original ID
+    /// and payload. Queue, decoding, identity and remote failures are final.
+    var allowsLifecycleReceiptReplay: Bool {
+        switch self {
+        case .connectionFailed, .writeFailed, .emptyResponse: return true
+        case .transport(let phase, _), .deadlineExceeded(let phase):
+            return [.connect, .send, .receive].contains(phase)
+        default: return false
+        }
+    }
+}
+
 public struct UnixSocketRPCClient: Sendable {
     public let socketPath: String
     public let timeout: TimeInterval

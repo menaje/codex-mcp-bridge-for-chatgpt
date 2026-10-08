@@ -126,6 +126,7 @@ type SerializableProtocolOptions = Pick<
   | "versionCheckTimeoutMs"
   | "requestTimeoutMs"
   | "initializeTimeoutMs"
+  | "threadInitializationTimeoutMs"
   | "interruptTimeoutMs"
 >;
 
@@ -1534,6 +1535,9 @@ function serializableOptions(
       : {}),
     ...(options.initializeTimeoutMs !== undefined
       ? { initializeTimeoutMs: options.initializeTimeoutMs }
+      : {}),
+    ...(options.threadInitializationTimeoutMs !== undefined
+      ? { threadInitializationTimeoutMs: options.threadInitializationTimeoutMs }
       : {}),
     ...(options.interruptTimeoutMs !== undefined
       ? { interruptTimeoutMs: options.interruptTimeoutMs }

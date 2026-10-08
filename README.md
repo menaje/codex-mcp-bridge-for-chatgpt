@@ -1,179 +1,178 @@
 # Codex MCP Bridge for ChatGPT
-Use ChatGPT to run Codex against projects on your own computer, keep work organized, and check progress without repeatedly copying commands and results between apps.
 
-[Download releases](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/releases) · [Detailed setup guide](docs/setup.md) · [Security model](docs/security.md)
+Use ChatGPT to work with Codex on your own computer. Register your projects, reuse your working procedures, continue existing work, and check progress from ChatGPT or the native macOS menu-bar app.
 
-## What it gives you
+[Download releases](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/releases) · [Setup guide](docs/setup.md) · [Skill library](docs/skills.md) · [Security model](docs/security.md)
 
-- Run and continue local Codex work from a ChatGPT conversation.
-- Organize work as reusable Agents and goal-oriented Activities instead of isolated terminal calls.
-- See running work, requests needing a response, and problems from the native macOS menu-bar app or the ChatGPT status card. Select a summary count to filter current work, or open Run History. The card starts with this conversation when it has retained work, with a switch to all conversations.
-- New ordinary Jobs use direct-wait: ChatGPT repeats bounded reads of the same Job, handles current questions and approvals, reviews the original result, and continues only already-approved work. Open the status card only when you request it; the card displays and manages work without sending chat messages.
-- For complex choices, GPT can create a standalone HTML file for full-window comparison and local interaction. The user sends the chosen summary back to this conversation; the file does not call Bridge tools or approve Codex execution.
-- Choose which project folders Codex may use, find reusable procedures through the bridge skill library, and control model, reasoning, concurrency, and access policy centrally.
-- Run one Mac as the server and use another Mac as a client for status and settings.
-- Keep the normal starting policy read-only and place an operator-controlled ceiling on broader access.
+This README and its screenshots describe the current **development branch**. A downloaded release can have different features and screens; use the README at that release's Git tag. The latest published stable release as of October 4, 2026 is [v0.4.1](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/tree/v0.4.1). A development build can retain the same product version while its features change.
 
-System-issued preapproved followups and duplicate-request protection work in the ordinary path. [MCP Events](docs/mcp-events.md) is a separate disabled-by-default experiment requiring an explicit experimental profile and authenticated HTTP configuration; ordinary setup does not require it.
+## What you can do
 
-```text
-ChatGPT
-  → OpenAI Secure MCP Tunnel
-  → Codex MCP Bridge for ChatGPT on your server computer
-  → Codex working in a registered project folder
-```
+- **Work on local projects from ChatGPT.** Ask Codex to inspect a registered folder, make an approved change, or continue an existing Agent. Activities group work around a goal; Agents keep execution context; Jobs record individual runs.
+- **Reuse your procedures.** Keep review checklists, release instructions, and reference Markdown in the Bridge skill library. Import a folder or ZIP, edit the source, and restore earlier versions.
+- **Choose your installation and account.** Use an existing Codex installation or a Bridge-managed CLI, and choose an existing login, a separate ChatGPT login, or a Bridge API-key connection.
+- **Control model and execution settings.** Choose fixed or automatic model selection, edit model descriptions with version history, select processing speed, and set access and concurrency limits.
+- **Keep track of work.** See running work, questions, approvals, issues, retained runs, and available account usage. Save new conversations across restarts and choose app visibility separately.
+- **Manage another Mac.** Pair a client Mac with a server on your private LAN or VPN and switch between saved servers.
 
-## What the menu-bar app shows
+ChatGPT → OpenAI Secure MCP Tunnel → Bridge on your server computer → Codex in a registered project folder.
 
-On macOS, open the menu-bar icon to check the selected server without opening ChatGPT:
+## Choose a setup
 
-- **Connection and Codex usage:** server/client target, Bridge health, and—when available—weekly Codex usage remaining with its reset time.
-- **Work state:** running, response-required, and issue counts, plus a conditional background-process indicator. Selecting a count filters the loaded current-work snapshot without another server read.
-- **Work details:** filtered current-work lists or 12-row on-demand run history, with project, conversation, Agent, actual model, canonical lowercase reasoning effort, conditional next-run settings, snapshot work time, and background processes.
-- **Quick actions:** refresh status, continue a conversation in Codex after verified connection release, open Settings, control the server, or quit the app. See [conversation connections and retention](docs/thread-lifecycle.md) for waiting reasons, persistence constraints and returning to the bridge.
-
-<p align="center">
-  <img src="docs/images/macos-menubar-usage-light-en.png" alt="English macOS menu-bar app in light appearance showing weekly Codex usage and the three current work-state counts" width="360" valign="top">
-  <img src="docs/images/macos-dashboard-light-en.png" alt="English macOS menu-bar app in light appearance with Work and Run History selected, showing current Agents and their actual execution settings" width="360" valign="top">
-</p>
-
-## Choose how to use it
-
-| Your situation | Recommended setup | What runs on this computer |
+| Your situation | Setup | What runs on this computer |
 | --- | --- | --- |
-| This Mac will run Codex work | macOS app in **Run Server on This Mac** mode | App, helper, Bridge, Tunnel, and Codex |
-| This Mac will only manage another Mac | macOS app in **Connect to Existing Server** mode | Client app only |
-| Windows or Linux will run Codex work | Node.js server | Bridge, Tunnel, and Codex |
-| macOS without the native app | Node.js server | Bridge, Tunnel, and Codex |
+| This Mac will run Codex | macOS app: **Run Server on This Mac** | App, helper, Bridge, Tunnel, and Codex |
+| This Mac will manage another Mac | macOS app: [**Connect to Existing Server**](#manage-another-mac) | Client app only |
+| Windows, Linux, or Mac managed from a terminal | Node.js server | Bridge, Tunnel, and Codex |
 
-The native client-only mode is currently available on macOS. Windows and Linux users run the Node.js server and use the ChatGPT Settings and Dashboard cards.
+The native app requires macOS 13 or later. Server setups also need Node.js 22 or later, `tunnel-client`, an OpenAI Secure MCP Tunnel, and authenticated Codex. A client-only Mac needs the app and a pairing invitation. See [prerequisites and setup paths](docs/setup.md#what-you-need).
 
-<p align="center">
-  <img src="docs/images/macos-connection-setup-light-en.png" alt="English macOS first-run assistant in light appearance showing the local server and existing server roles" width="720">
-</p>
-
-## Quick start
+## Get started
 
 ### macOS app
 
-1. Download the DMG for your Mac from [Releases](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/releases): `arm64` for Apple Silicon or `x64` for Intel.
+1. Download the DMG matching your Mac from [Releases](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/releases): `arm64` for Apple Silicon or `x64` for Intel. For the development screens shown here, [build the current app from source](#development).
 2. Move **Codex MCP Bridge for ChatGPT** to Applications and open it.
-3. Choose one role:
-   - **Run Server on This Mac** to run Codex locally.
-   - **Connect to Existing Server** to use this Mac only as a client.
+3. Choose **Run Server on This Mac**. The assistant checks existing connection settings before asking for a Tunnel runtime key and Tunnel ID.
+4. In **Codex Account & Installation**, explicitly select an existing installation or install a Bridge-managed CLI, then choose and verify an authentication connection.
+5. Register your first existing project folder and confirm that the Bridge and Tunnel are ready.
 
-Server mode requires macOS 13 or later, Node.js 22 or later, and `tunnel-client`. In **Settings → Codex Account & Installation**, use an existing app/terminal Codex or install a bridge-managed CLI. New setups recommend a bridge-managed CLI and require an explicit installation or external selection; saved choices and manual update preferences are preserved. The first-run assistant checks supported existing connection settings before asking for a Tunnel runtime key and Tunnel ID, then guides you through Codex browser login and the first project.
+<p align="center">
+  <img src="docs/images/macos-connection-setup-light-en.png" alt="English macOS connection assistant showing the server and client roles" width="720">
+</p>
 
-The bridge connects directly to the selected Codex through App Server. See [Codex installation and updates](docs/codex-runtimes.md) for ownership, compatibility, authentication and recovery.
-
-Client mode does not start or require a local Bridge, Tunnel, or Codex runtime. Paste the one-time invitation copied from the server Mac, then select that saved server.
-
-The current app is ad-hoc signed and not notarized. On first launch, macOS may require approval in **System Settings → Privacy & Security**.
+The app is ad-hoc signed and not notarized. macOS may require approval in **System Settings → Privacy & Security** on first launch. Setup, installation ownership, and manual updates are covered in [Setup](docs/setup.md#macos-server-mode) and [Codex installations](docs/codex-runtimes.md).
 
 ### Windows, Linux, or a terminal-managed server
 
-Install Node.js 22 or later, the Codex CLI, and `tunnel-client`, then authenticate Codex:
+Install [Node.js 22 or later](https://nodejs.org/en/download), the [Codex CLI](https://learn.chatgpt.com/docs/cli), and [`tunnel-client`](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels#set-up-tunnel-client). Authenticate the CLI in the Codex home you intend this server to use. A new login in a shared home can affect other Codex clients; see [authentication connections](docs/codex-auth-connections.md).
 
-```bash
-codex login
-git clone https://github.com/menaje/codex-mcp-bridge-for-chatgpt.git
-cd codex-mcp-bridge-for-chatgpt
-npm ci
-npm run build
-```
+Build the development branch using the [development commands](#development), then create the private runtime configuration outside your project folders using the [shell or PowerShell instructions](docs/setup.md#nodejs-server-on-windows-or-linux).
 
-Copy `.env.example` to the private runtime configuration location, set `CONTROL_PLANE_API_KEY` and `CONTROL_PLANE_TUNNEL_ID`, then start the server:
+Set `CONTROL_PLANE_API_KEY` and `CONTROL_PLANE_TUNNEL_ID`, then run `npm run bridge:secure` and keep the process running. `npm run bridge:local` is for loopback development. Windows and Linux use the ChatGPT Settings and Dashboard cards for ordinary management.
 
-```bash
-npm run bridge:secure
-```
+### Connect to ChatGPT
 
-Use `npm run bridge:local` only for loopback development. ChatGPT access normally uses the Secure MCP Tunnel. See the [detailed setup guide](docs/setup.md) for Linux/macOS shell commands, Windows PowerShell commands, and configuration locations.
+1. Associate your Tunnel with the target ChatGPT workspace in [Platform tunnel settings](https://platform.openai.com/settings/organization/tunnels).
+2. Enable **Developer mode** in ChatGPT **Settings → Security and login**. Workspace policy can control access.
+3. Open [ChatGPT Plugins](https://chatgpt.com/plugins), create a developer connection, and choose **Connection → Tunnel**.
+4. Select or enter the server's Tunnel ID and choose **No Auth** for the ordinary Bridge connection.
+5. Add the connection in a new ChatGPT conversation and ask it to open Bridge settings. Register a project if you have not already done so.
 
-## Connect it to ChatGPT
+Tunnel creation needs **Read + Manage** permission; running or selecting it needs **Read + Use**. Follow the [official Tunnel guide](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels) if the Tunnel is absent. Refresh the connection after an upgrade that changes tools, authentication, or card UI; close old cards and reopen the current ones. Routine restarts with the same build do not require Refresh.
 
-After the server reports that the Bridge and Tunnel are ready:
+## Try your first task
 
-1. Enable Developer mode in ChatGPT.
-2. Create a developer-mode connection and choose Secure MCP Tunnel.
-3. Select the Tunnel ID used by the server.
-4. Choose **No Auth** for the ChatGPT connection.
-5. Ask ChatGPT to open the bridge settings and register at least one project folder.
+Use the exact name of a registered project. For a project named **Bridge Demo**, start with:
 
-Routine computer, app, Bridge, or Tunnel restarts do not require a ChatGPT connection refresh. Refresh the connection after installing a release that changes tools or card UI.
+> Use Codex to inspect the registered project "Bridge Demo". Explain its structure and suggest one small improvement. Keep this task read-only.
 
-<p align="center">
-  <img src="docs/images/chatgpt-dashboard-light-en.png" alt="English ChatGPT Codex status card in light appearance showing conversation scope, three current work-state counts, Run History, and a background-process indicator" width="645">
-</p>
+Then continue the existing context:
 
-## Settings at a glance
+> Continue the same Agent and investigate the improvement you suggested. Explain which files would change and how to verify it.
 
-The resizable native Settings window separates General, Models & Execution, Projects, Codex Account & Installation, Connection, and Server in a macOS sidebar. Shared changes save automatically, server limits require an explicit apply and restart, and skill management remains in the separate **Skill Library** window. See [Native macOS app](docs/macos-app.md#settings-and-skill-management) for scope and behavior details.
+For an implementation, first allow the required access in Bridge settings and the server's access ceiling, then approve the specific change. Ask for the work's status or open the Codex Dashboard to see running work and run history.
 
-Direct-wait is the default for new ordinary Jobs on new and existing installations. The retired experimental preference is normalized during upgrade and cannot reactivate card delivery. Timeouts, navigation, or connection loss do not cancel Codex; recover retained results in the originating conversation through an exact Job read. User-confirmed resume evidence and measured 30/60-minute results are preserved in the [#222 final evidence](docs/audits/2026-10-03-issue-222-final-evidence.md), with their original scope of verification. macOS operational notifications remain a separate local feature.
+ChatGPT follows the same Job while it runs, asks for needed decisions in the conversation, and reads the original result before continuing approved work. Closing a screen or losing a connection does not cancel Codex. Return to the originating conversation and ask to read the existing work before starting anything again. See [task and result recovery](docs/chatgpt-setup.md#5-use-the-current-task-contract).
+
+## Reuse procedures with the skill library
+
+Bridge skills store your instructions as `SKILL.md` with optional reference Markdown files. ChatGPT searches and reads the selected version, then applies the procedure to your request. Reading a skill does not start Codex or change task permissions.
+
+Open **Skill Library** (the book icon) in the macOS menu-bar popover. Create or import a skill, review the content and files, then save. Each save creates a version you can restore or export. See [the first-skill walkthrough](docs/skills.md#create-and-use-your-first-skill) for import and management details. Ask ChatGPT to find and use it:
+
+> Find the Bridge skill "Code Review" and read it and its checklist. Use that procedure to review the registered project "Bridge Demo", then report the findings here.
 
 <p align="center">
-  <img src="docs/images/chatgpt-settings-light-en.png" alt="English ChatGPT settings card in light appearance showing access strategy, execution model policy, project registration, interface language, and concurrency" width="645">
+  <img src="docs/images/macos-skill-library-light-en.png" alt="English native Skill Library showing a reusable Code Review skill, its Markdown file tree, and rendered preview" width="820">
 </p>
 
-For every option and its effect, see [Setup and settings](docs/setup.md#settings-reference).
+## Choose settings for your work
 
-## Remote client mode
+The native Settings sidebar separates General, Models & Execution, Projects, Codex Account & Installation, Connection, and Server. Shared changes save automatically in the native app; the ChatGPT card uses **Save settings**. Server limits use an explicit apply and restart. See [all settings](docs/setup.md#settings-reference).
 
-On the server Mac, open **Settings → Connection**, enable **Manage This Server from Another Mac**, and select **Create and copy a new pairing invitation valid for 5 minutes**. Paste that invitation into the client Mac. It contains the server address and security identity together, expires after five minutes, and can be used once.
+| Setting | How it helps |
+| --- | --- |
+| Codex installation and [authentication](docs/codex-auth-connections.md) | Choose the executable separately from its account. Reuse an existing login, prepare a separate ChatGPT login, or explicitly select API billing. |
+| Fixed or automatic model | Keep one model/effort pair, or let ChatGPT choose within your allowed catalog. In automatic mode, edit [model descriptions](docs/model-selection.md#user-model-descriptions) and restore earlier descriptions from history. |
+| [Processing speed](docs/processing-speed.md#choose-a-speed) | Inherit the conversation speed, select Standard, Fast, or Ultrafast for each new Job, or preserve earlier settings. Availability depends on the selected model, CLI, and account. |
+| Conversation storage | Save new conversations across restarts or use memory-only context. App visibility is a separate choice; opening a conversation also needs accessible original storage and a released connection. |
+| Projects and history | Rename, relocate, archive, or restore registrations without moving project files. Recover deleted registrations that still own resumable work. Choose a run-history retention period. |
+| Language and concurrency | Apply an explicit language to the app and cards and limit concurrent Jobs. Automatic language follows the host showing each surface. |
 
 <p align="center">
-  <img src="docs/images/macos-pairing-invitation-light-en.png" alt="English macOS server setting in light appearance for creating and copying a five-minute one-time pairing invitation" width="720">
+  <img src="docs/images/chatgpt-settings-light-en.png" alt="English ChatGPT Settings with processing speed, model policy, registered projects, conversation storage, and history retention" width="645">
 </p>
 
-You can save more than one server on the client, but only one is active at a time. Switching servers changes the Dashboard and the target of shared settings. A project path entered on a client is always a path on the selected server.
+<p align="center">
+  <img src="docs/images/macos-codex-account-light-en.png" alt="English native Codex Account and Installation settings showing separate authentication and installation choices" width="820">
+</p>
 
-Use remote management only on a private LAN or private VPN that you control. See [Remote client mode](docs/remote-client.md) for the network and security boundaries.
+## Check work and usage
 
-## Safety notes
+Open the menu-bar icon for server health, available weekly Codex usage, and **Running / Response needed / Issues** counts. Select a count to filter current work; **Work & Run History** opens retained runs. Refresh explicitly to get a new snapshot.
 
-- The Bridge binds to loopback by default and begins with read-only access.
-- Project folders must be registered explicitly; the Bridge does not guess a working folder.
-- Broader write or full access must be allowed by the server before a task can use it.
-- This is a personal bridge for one trusted operator. Shared settings are not isolated by ChatGPT account.
-- These controls are policy boundaries, not operating-system isolation. Use a separate OS user, container, VM, or disposable project copy when stronger isolation is required.
-- Execution uses the selected Codex CLI through App Server. Compatibility depends on the public protocol and required features, without a bridge-owned version allowlist.
+<p align="center">
+  <img src="docs/images/macos-menubar-usage-light-en.png" alt="English macOS menu-bar summary with weekly usage and current work counts" width="360" valign="top">
+  <img src="docs/images/macos-dashboard-light-en.png" alt="English macOS work and run history showing Agents and the requested execution settings" width="360" valign="top">
+</p>
+
+The ChatGPT Dashboard switches between **This conversation** and **All conversations**. It shows retained work known to this Bridge, available weekly usage, questions, approvals, and run history. Execution details distinguish requested settings, accepted requests, and any server-confirmed values; an accepted request does not prove the actual processing speed.
+
+<p align="center">
+  <img src="docs/images/chatgpt-dashboard-light-en.png" alt="English ChatGPT Dashboard showing conversation scope, weekly usage, current work, and retained run history" width="645">
+</p>
+
+The Dashboard opens when requested. It manages and displays work without sending results into the chat or starting automatic followups. Read more about [questions](docs/gpt-questions.md), [history](docs/work-history.md), and [conversation handoff](docs/thread-lifecycle.md).
+
+## Manage another Mac
+
+On the server Mac, open **Settings → Connection**, enable **Manage This Server from Another Mac**, and create a pairing invitation. Paste it on the client Mac. It includes the server address and security identity, expires after five minutes, and can be used once.
+
+<p align="center">
+  <img src="docs/images/macos-pairing-invitation-light-en.png" alt="English macOS setting for creating a five-minute one-time pairing invitation" width="720">
+</p>
+
+Only one saved server is active at a time. Switching changes the source of status and shared settings. Project paths refer to folders on that server. Use a private LAN or VPN you control; see [remote client mode](docs/remote-client.md).
+
+## Access and safety
+
+- The Bridge begins with read-only access and binds to loopback by default.
+- Register each permitted project folder explicitly. Keep runtime credentials outside those folders.
+- Write or full access requires the server to allow it; settings cannot exceed that ceiling.
+- The Bridge is for one trusted operator. Shared settings are not isolated by ChatGPT account.
+- For stronger isolation, use a separate OS user, container, VM, or disposable project copy.
+
+[MCP Events](docs/mcp-events.md) is a separate experiment disabled by default. Ordinary setup and approved followups use the normal conversation path. See [security boundaries](docs/security.md) before broadening access.
 
 ## Documentation
 
-- [Setup and settings](docs/setup.md) — macOS server/client setup, Windows/Linux Node.js setup, ChatGPT connection, and every user-facing setting
-- [Native macOS app](docs/macos-app.md) — app architecture, lifecycle, local files, recovery, and build details; [localization](docs/localization.md) and [text integrity](docs/text-integrity.md) cover generated copy and Unicode policy
-- [Remote client mode](docs/remote-client.md) — pairing, server switching, network scope, and credential handling
-- [ChatGPT integration](docs/chatgpt-setup.md) — connection, refresh, current tool use, and smoke checks
-- [MCP 2026-07-28 migration](docs/mcp-2026-07-28-migration.md) — breaking protocol, tool-contract, and card-resource changes
-- [Security model](docs/security.md) — trust boundaries, authentication, access policy, and remaining risks
-- [Standalone decision HTML](docs/standalone-decision-html.md) — full-window decision aids, copyable summaries, and Codex question boundaries; [retired Decision Cards](docs/decision-cards.md) explains migration
-- [Database schema and lifecycle](docs/database-schema.md) — state ownership, every table, upgrades, retention, capacity, backups, and offline compaction
-- [State upgrade and recovery runbook](docs/state-upgrade-recovery.md) — release-stage profiles, migration preflight, verified restore, and post-service recovery
-- [Input/output contracts](docs/input-contracts.md), [bridge skill library](docs/skills.md) — public and app-private protocol details, versioned bridge skills, model-facing lookup, and per-turn Codex delivery
-- [Release process](docs/releasing.md) and [release governance](docs/release-governance.md) — maintainer workflow and distribution gates
-- [UI release policy](docs/ui-release-compatibility.md) — single-file cards, stable URI versions, cache limits, and release checks
+| Guide | Contents |
+| --- | --- |
+| [Setup and settings](docs/setup.md) | Prerequisites, platform setup, first task, and every user-facing setting |
+| [Bridge skill library](docs/skills.md) | Create, import, use, version, restore, and export reusable procedures |
+| [Codex installations](docs/codex-runtimes.md) and [authentication](docs/codex-auth-connections.md) | CLI ownership, manual updates, account choices, storage, and billing |
+| [Model selection](docs/model-selection.md) and [processing speed](docs/processing-speed.md) | Allowed models, description history, speed scope, and execution evidence |
+| [Native macOS app](docs/macos-app.md) and [remote client](docs/remote-client.md) | Native settings, lifecycle, pairing, and recovery |
+| [ChatGPT integration](docs/chatgpt-setup.md), [card tools](docs/card-tools.md), and [decision files](docs/standalone-decision-html.md) | Connection refresh, task contracts, questions, comparisons, and smoke checks |
+| [Security](docs/security.md), [database](docs/database-schema.md), and [recovery](docs/state-upgrade-recovery.md) | Trust boundaries, retained data, backups, and upgrades |
+| [MCP migration](docs/mcp-2026-07-28-migration.md), [input](docs/input-contracts.md), and [output](docs/output-contracts.md) | Current protocol and tool contracts |
+| [UI releases](docs/ui-release-compatibility.md), [release process](docs/releasing.md), and [governance](docs/release-governance.md) | Card cache behavior, validation, and distribution gates |
+| [Localization](docs/localization.md) and [text integrity](docs/text-integrity.md) | Translation source and Unicode policy |
 
 ## Development
 
 ```bash
+git clone --branch dev https://github.com/menaje/codex-mcp-bridge-for-chatgpt.git
+cd codex-mcp-bridge-for-chatgpt
 npm ci
 npm run check
 ```
 
-On macOS:
-
-```bash
-npm run macos:check
-npm run macos:bundle
-```
+On macOS, run `npm run macos:check` and `npm run macos:bundle`, then open `macos/build/Codex MCP Bridge for ChatGPT.app`.
 
 Release identity and supported targets are defined in `release-manifest.json`. Historical attribution is in [UPSTREAM.md](UPSTREAM.md).
 
 ## License
 
 MIT
-
-GPT handles ordinary Codex questions through `codex_status` (input query) and `codex_answer`. When the user’s opinion is needed, GPT asks in the current ChatGPT conversation, verifies that the original question remains valid, and sends the answer to the exact Codex turn. See [question orchestration](docs/gpt-questions.md) for the protocol, retention policy, and host validation limits.
-
-The current card and tool contract is described in [Card tools](docs/card-tools.md). Open the Dashboard for current work and Settings to manage the bridge.

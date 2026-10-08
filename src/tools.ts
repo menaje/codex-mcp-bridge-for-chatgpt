@@ -2049,7 +2049,7 @@ export type CodexJobRegistryOptions = {
   /** Read-worker snapshot: load persisted state without recovery mutations. */
   projectionOnly?: boolean;
   /** Query-only worker: detail hydrates one Agent; Settings hydrates no Jobs. */
-  projectionJobs?: { agentId: string } | false;
+  projectionJobs?: { agentId?: string; scopeId?: string } | false;
   allowedRoots?: string[];
 };
 
@@ -4487,9 +4487,9 @@ export class CodexJobRegistry {
     }
   }
 
-  private load(filter?: { agentId: string } | false): void {
+  private load(filter?: { agentId?: string; scopeId?: string } | false): void {
     if (!this.stateStore || filter === false) return;
-    const stored = this.stateStore.listJobs(filter?.agentId);
+    const stored = this.stateStore.listJobs(filter?.agentId, filter?.scopeId);
     const changed = this.loadJobs(stored);
     for (const job of this.jobs.values()) {
       this.progressPersisted.set(job.jobId, {
@@ -11582,11 +11582,8 @@ function projectDashboardHandoffs(view: DashboardView, jobs: CodexJobRegistry): 
 
 /** Resolve the opaque row identity from fresh Agent rows, never a cwd lookup. */
 export function dashboardAgentForDetail(store: BridgeStateStore, options: BridgeDashboardHistoryDetailOptions): BridgeAgent | undefined {
-  for (let offset = 0; ; offset += 1_000) {
-    const page = store.listAgents(options.scopeId, 1_000, offset);
-    const match = page.find(agent => dashboardRowKey(agent.agentId) === options.rowKey);
-    if (match || page.length < 1_000) return match;
-  }
+  const id = store.listDashboardAgentIds(options.scopeId).find(id => dashboardRowKey(id) === options.rowKey);
+  return id ? store.getAgent(id) : undefined;
 }
 
 function dashboardRuntimeProblemIdentity(jobs: CodexJobRegistry, agent: BridgeAgent) {
@@ -13289,13 +13286,17 @@ async function buildDashboardView(
       const observed = inspectionFailed ? cachedRuntime?.attemptedAt : cachedRuntime?.observedAt;
       const runtimeRow = {...row,controlKind:null,status:kind === "unknown" ? "liveness-unknown" as const : row.status,
         history:[],historyCount:0};
+      // Resolve this identity once; doing it inside find() repeated the same
+      // database query for every historical recovery record.
+      const automaticKey = automaticRecords.length === 0 ? undefined
+        : kind === "termination-failed" && currentJob
+          ? automaticRecoveryKey("retry-stop",[currentJob.jobId,currentJob.workerId,currentJob.workerGeneration,currentJob.upstreamRequestId,currentJob.cancelRequestedAt])
+          : jobs.admissionStateStore.automaticRecovery.recheckCandidate(recheckRecoveryIdentity(jobs,agent))?.key;
       entries.push({problemKey:problemKey("runtime",agent.agentId),revision:identity.revision,kind,source:"runtime",
         review:resolvedAt ? "acknowledged" : "pending",acknowledgedAt:resolvedAt ? new Date(resolvedAt).toISOString() : null,
         observedAt:new Date(observed || agent.updatedAt).toISOString(),
         reason:currentJob?.error ? redactSensitiveText(currentJob.error).slice(0,1000) : null,
-        automatic:automaticSummary(automaticRecords.find(automatic => automatic.key === (kind === "termination-failed" && currentJob
-          ? automaticRecoveryKey("retry-stop",[currentJob.jobId,currentJob.workerId,currentJob.workerGeneration,currentJob.upstreamRequestId,currentJob.cancelRequestedAt])
-          : jobs.admissionStateStore.automaticRecovery.recheckCandidate(recheckRecoveryIdentity(jobs,agent))?.key))),
+        automatic:automaticSummary(automaticRecords.find(automatic => automatic.key === automaticKey)),
         canAcknowledge:false,canUnacknowledge:false,canRecheck:!resolvedAt && Boolean(thread && backendSupports(thread.backendKind,"supportsThreadInspection")),
         canRetryStop:currentJob?.status === "termination-failed" && Boolean(identity.stopImpact),
         ...(identity.stopImpact ? {stopImpact:identity.stopImpact} : {}),projectRow:()=>runtimeRow});

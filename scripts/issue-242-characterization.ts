@@ -122,7 +122,7 @@ try {
       sqlite: (f.database.prepare("SELECT sqlite_version() AS v").get() as { v: string }).v },
     fixture: { retainedJobs: size, agents: Math.ceil(size / 10), sessions: Math.ceil(size / 10),
       jobsPerAgent: 10, failedFraction: .2, resultBytesPerJob: 9, pageSize: 12,
-      firstRead: "new child; OS filesystem cache uncontrolled", warm: "same child; registries rebuilt each request" },
+      firstRead: "new child with preopened query-only lane connections; OS filesystem cache uncontrolled", warm: "same child; registries rebuilt each request" },
     groups, uninstrumentedControl: control,
     overNative3sBudgetFraction: [...observations.filter(row => row.method === "dashboardSnapshot" && !physicalBurst.includes(row))
       .map(row => row.endToEndMs), ...burstLatencies].filter(ms => ms > 3_000).length / 30,
@@ -134,7 +134,7 @@ try {
       dueRetry: { ...dueRetry, result: undefined } },
     integrity: { sqlite: integrity, foreignKeyViolations: foreignKeys.length },
     parentEventLoopDelayMs: { p50: lag.percentile(50) / 1e6, p95: lag.percentile(95) / 1e6, max: lag.max / 1e6 },
-    limits: ["Child SQL counts include connection PRAGMAs; parent revision SELECT/PRAGMA checks are separate and not counted. No per-statement duration or lock-wait measurement.",
+    limits: ["Child SQL counts cover the current projection only; per-lane connection initialization runs before requests. Parent revision SELECT/PRAGMA checks are separate and not counted. No per-statement duration or lock-wait measurement.",
       "projectionMs includes SQL and model/presentation work. jsonPreflightMs excludes IPC's second encoding.",
       "endToEndMs includes parent send/child queue/encoding/receive; transport-only time is not isolated.",
       "WAL file length delta is not WAL frame writes, fsync or physical I/O.",

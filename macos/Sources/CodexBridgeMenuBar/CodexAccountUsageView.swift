@@ -7,9 +7,7 @@ struct CodexAccountUsageView: View {
     let account: CodexAccountUsage
     var runtimeKind: String? = nil
     @State private var showBilling = false
-    @State private var adminKey = ""
-    @State private var organizationId = ""
-    @State private var projectId = ""
+    @StateObject private var inputSession = BridgeEditSession(target: "billing", values: [.adminKey: "", .organizationID: "", .projectID: ""])
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -80,15 +78,23 @@ struct CodexAccountUsageView: View {
                     FullRowDisclosure("macos.apicostconnection", isExpanded: $showBilling) {
                         Text("macos.usesaseparateadminkeyforcostsyour")
                             .font(.caption).foregroundStyle(.secondary)
-                        SecureField("macos.openaiadminapikey", text: $adminKey)
-                        TextField("macos.organizationid", text: $organizationId)
-                        TextField("macos.projectidoptional", text: $projectId)
+                        SecureField("macos.openaiadminapikey", text: inputSession.binding(.adminKey))
+                            .bridgeInput(inputSession, field: .adminKey)
+                        TextField("macos.organizationid", text: inputSession.binding(.organizationID))
+                            .bridgeInput(inputSession, field: .organizationID)
+                        TextField("macos.projectidoptional", text: inputSession.binding(.projectID))
+                            .bridgeInput(inputSession, field: .projectID)
                         Button("macos.connectcostreporting") {
-                            let input = CodexBillingInput(adminKey: adminKey, organizationId: organizationId.trimmingCharacters(in: .whitespacesAndNewlines),
-                                projectId: projectId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : projectId.trimmingCharacters(in: .whitespacesAndNewlines))
-                            adminKey = ""
-                            Task { await model.manageCodex(.init(action: "configure-billing", kind: runtimeKind, billing: input)) }
-                        }.disabled(adminKey.isEmpty || organizationId.isEmpty)
+                            inputSession.submit(validate: {
+                                if $0.targetID != billingTargetID || $0.value(.adminKey).isEmpty || $0.value(.organizationID).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { throw BridgeEditError.invalidValue }
+                            }, operation: { submitted, _ in
+                                let project = submitted.value(.projectID).trimmingCharacters(in: .whitespacesAndNewlines)
+                                let input = CodexBillingInput(adminKey: submitted.value(.adminKey),
+                                    organizationId: submitted.value(.organizationID).trimmingCharacters(in: .whitespacesAndNewlines), projectId: project.isEmpty ? nil : project)
+                                return await model.submitCodexRequest(.init(action: "configure-billing", kind: runtimeKind, billing: input))
+                            })
+                        }.disabled(inputSession.isSubmitting || model.isBusy || (!inputSession.hasMarkedText && (inputSession.value(.adminKey).isEmpty || inputSession.value(.organizationID).isEmpty)))
+                        BridgeEditStatus(session: inputSession)
                         if account.billing?.actualCosts?.configured == true {
                             Button("macos.disconnectcostreporting") { Task { await model.manageCodex(.init(action: "remove-billing", kind: runtimeKind)) } }
                         }
@@ -99,6 +105,19 @@ struct CodexAccountUsageView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onAppear { synchronizeBillingTarget() }
+        .onChange(of: account.ownershipKey) { _ in synchronizeBillingTarget() }
+        .onChange(of: runtimeKind) { _ in synchronizeBillingTarget() }
+        .onChange(of: model.connectionContextID) { _ in synchronizeBillingTarget() }
+        .bridgeEditForm(inputSession)
+        .onDisappear { inputSession.discard() }
+    }
+
+    private var billingTargetID: String { "billing:\(model.connectionContextID):\(runtimeKind ?? "unknown"):\(account.ownershipKey ?? "unknown")" }
+    private func synchronizeBillingTarget() {
+        guard inputSession.targetID != billingTargetID else { return }
+        inputSession.discard()
+        inputSession.reset(target: billingTargetID, values: [.adminKey: "", .organizationID: "", .projectID: ""])
     }
 
     private var sortedWindows: [CodexAccountUsage.Window] {

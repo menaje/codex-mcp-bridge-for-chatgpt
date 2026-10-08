@@ -29,7 +29,43 @@ conversation, its existing knowledge, and instructions from its host. The
 absence of a bridge recommendation table does not guarantee that GPT reasons
 only from the catalog.
 
+## Selecting models and reasoning
+
+In automatic mode, **Only models and efforts I choose** presents separate
+**Models to use** and **Reasoning levels to use** lists in both Settings editors.
+A reasoning checkbox applies to all selected models that support that effort,
+within operator limits. Only supported exact pairs are saved; the execution
+policy, wire format and fixed-mode selectors are unchanged. Selecting a model
+with no saved reasoning choice shows a warning and prevents saving that policy.
+The summary counts executable pairs, so retained disabled Ultra choices do not
+inflate it.
+
+Both model and effort changes recompute the complete set of supported pairs from
+one common effort list. There are no per-model effort overrides or partial
+checkboxes. An effort is shown only when at least one selected model supports it
+within operator limits. Removing its last supporting model hides that effort and
+removes it from the common selection. A selected effort unsupported by another
+selected model produces a notice naming the model and its excluded efforts;
+those combinations are absent from executable discovery and policy enforcement.
+The notice uses catalog support, so operator restrictions do not falsely describe
+an effort as unsupported by a model.
+
+Existing per-model selections are converted using the union of their saved
+efforts, then projected onto supported pairs. The Settings card persists this
+conversion with its next Settings save. The native app autosaves a valid converted
+policy when loading Settings. A conversion with a selected model that has no
+supported selected effort waits for the user to choose another common effort or
+remove that model. The persisted policy remains the existing exact-pair format.
+Disabled Ultra stays saved and inactive until re-enabled, as before.
+
 ## User model descriptions
+
+Model descriptions default to currently executable allowed models. **Show all
+models** includes the remaining catalog and retained descriptions/history.
+Descriptions follow the model chooser's catalog order, with removed model IDs
+appended in alphabetical order. An open description edit remains visible when
+its model is deselected. Display filters and disclosure state are local to the
+editor and never change saved model descriptions or execution policy.
 
 In automatic mode, the native app and Settings card show **Model descriptions**.
 Each model initially shows its official catalog description. **Edit** starts with
@@ -62,8 +98,8 @@ the comparison for modified models. Restoring uses the current catalog result,
 not a copy saved when editing began.
 
 Fixed mode retains user descriptions but ignores them. A model removed from the
-catalog keeps its saved text and history and remains visible in the editor for
-editing or restoration; that does not make the model executable. **Use official
+catalog keeps its saved text and history and remains available under **Show all
+models** for editing or restoration; that does not make the model executable. **Use official
 description** and a general Settings reset remove active overrides while retaining
 history. Those changes are also recorded as versions that reference the current
 official description without copying its text. Older saved settings without the

@@ -67,6 +67,7 @@ const REASONING_NOTIFICATIONS = [
 ];
 
 const DEFAULT_APP_SERVER_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_THREAD_INITIALIZATION_TIMEOUT_MS = 60_000;
 const DEFAULT_APP_SERVER_INTERRUPT_TIMEOUT_MS = 5_000;
 export const CODEX_WEEKLY_WINDOW_MINUTES = 7 * 24 * 60;
 export const ACCOUNT_RATE_LIMITS_CACHE_TTL_MS = 60_000;
@@ -90,6 +91,8 @@ export type CodexAppServerProtocolOptions = {
   requestTimeoutMs?: number;
   /** Defaults to requestTimeoutMs when omitted. */
   initializeTimeoutMs?: number;
+  /** Thread start/fork/resume includes shell snapshot setup. Defaults to at least 60 seconds. */
+  threadInitializationTimeoutMs?: number;
   /** Per-stage deadline for the interrupt acknowledgement and completion confirmation. */
   interruptTimeoutMs?: number;
   /**
@@ -108,6 +111,7 @@ type ResolvedCodexAppServerProtocolOptions = {
   versionCheckTimeoutMs: number;
   requestTimeoutMs: number;
   initializeTimeoutMs: number;
+  threadInitializationTimeoutMs: number;
   interruptTimeoutMs: number;
   onLateResponse?: (response: CodexAppServerLateResponse) => void;
   onWorkerProcessStarted?: (identity: JsonRpcProcessIdentity) => Promise<void> | void;
@@ -1162,7 +1166,7 @@ class AppServerConnection {
         experimentalRawEvents: false,
         ephemeral: args.ephemeral === true
       },
-      { timeoutMs: this.protocolOptions.requestTimeoutMs }
+      { timeoutMs: this.protocolOptions.threadInitializationTimeoutMs }
     );
     const thread = isRecord(response.thread) ? response.thread : undefined;
     const threadId = requiredString(thread?.id, "thread/start thread.id");
@@ -1226,7 +1230,7 @@ class AppServerConnection {
       "thread/fork",
       { threadId: sourceThreadId, ephemeral: args.ephemeral === true, ...threadAccessParams(expectedAccess) },
       {
-        timeoutMs: this.protocolOptions.requestTimeoutMs,
+        timeoutMs: this.protocolOptions.threadInitializationTimeoutMs,
         lateResponseContext: { sourceThreadId }
       }
     );
@@ -1439,7 +1443,7 @@ class AppServerConnection {
       "thread/resume",
       { threadId, ...(expectedAccess ? threadAccessParams(expectedAccess) : {}) },
       {
-        timeoutMs: this.protocolOptions.requestTimeoutMs,
+        timeoutMs: this.protocolOptions.threadInitializationTimeoutMs,
         lateResponseContext: { threadId, loadRevision }
       }
     );
@@ -2369,6 +2373,10 @@ function resolveProtocolOptions(
     initializeTimeoutMs: positiveTimeout(
       options.initializeTimeoutMs ?? requestTimeoutMs,
       "initializeTimeoutMs"
+    ),
+    threadInitializationTimeoutMs: positiveTimeout(
+      options.threadInitializationTimeoutMs ?? Math.max(DEFAULT_THREAD_INITIALIZATION_TIMEOUT_MS, requestTimeoutMs),
+      "threadInitializationTimeoutMs"
     ),
     interruptTimeoutMs: positiveTimeout(
       options.interruptTimeoutMs ?? DEFAULT_APP_SERVER_INTERRUPT_TIMEOUT_MS,

@@ -1,0 +1,12 @@
+[
+  {
+    "manifest": "issue-242-integration-20261008",
+    "checked": 85,
+    "mismatches": []
+  },
+  {
+    "manifest": "issue-242-independent-20261008",
+    "checked": 33,
+    "mismatches": []
+  }
+]

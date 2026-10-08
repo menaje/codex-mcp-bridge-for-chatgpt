@@ -744,6 +744,75 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
+    func testHelperReplacementClearsPreviousContentAndFencesLateDashboard() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-target-change-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.bridgeSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let previous = try dashboardStatus(scope: "previous-helper")
+        let body = String(decoding: try JSONEncoder().encode(previous), as: UTF8.self)
+        let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { _ in
+            NativeFixtureReply(body: "{\"result\":\(body)}", delay: 0.3)
+        }
+        let model = AppModel(paths: paths)
+        defer { model.cancelAllPolling(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+        model.recordLocalConnectionStatus(try helperStatus())
+        model.dashboard = previous
+        model.settings = try issue242Settings(registry: 2, id: UUID().uuidString.lowercased(), name: "Previous", cwd: root.path)
+        let pending = Task { await model.refreshDashboard(enrich: false) }
+        for _ in 0..<100 {
+            if bridge.count("dashboard.snapshot") > 0 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(bridge.count("dashboard.snapshot"), 1)
+        model.recordLocalConnectionStatus(try helperStatus(pid: 43, bridgeConnected: false, tunnelConnected: false))
+        await pending.value
+        XCTAssertEqual(model.helperStatus?.pid, 43)
+        XCTAssertNil(model.dashboard)
+        XCTAssertNil(model.settings)
+        XCTAssertNil(model.lastDashboardRefresh)
+    }
+
+    @MainActor
+    func testProjectRegistryChangeClearsSkillsAndFencesLateLibraryRead() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-skill-target-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.bridgeSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let id = UUID().uuidString.lowercased()
+        let first = try issue242Settings(registry: 2, id: id, name: "Project", cwd: root.path)
+        let archived = try issue242Settings(registry: 3, id: id, name: "Project", cwd: root.path, archived: true)
+        let settingsBody = String(decoding: try JSONEncoder().encode(archived), as: UTF8.self)
+        let libraries = TestDashboardReplySequence([
+            NativeFixtureReply(body: #"{"result":{"skills":[]}}"#),
+            NativeFixtureReply(body: #"{"result":{"skills":[]}}"#, delay: 0.3)
+        ])
+        let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { method in
+            switch method {
+            case "skills.snapshot": return libraries.next()
+            case "settings.update": return NativeFixtureReply(body: "{\"result\":\(settingsBody)}")
+            default: return NativeFixtureReply(body: "")
+            }
+        }
+        let model = AppModel(paths: paths)
+        defer { model.cancelAllPolling(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+        model.recordLocalConnectionStatus(try helperStatus())
+        model.settings = first
+        await model.refreshSkillLibrary()
+        XCTAssertNotNil(model.skillLibrary)
+        let pending = Task { await model.refreshSkillLibrary() }
+        for _ in 0..<100 {
+            if bridge.count("skills.snapshot") == 2 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(bridge.count("skills.snapshot"), 2)
+        let accepted = await model.applyProjectOperation(.archive(projectId: id))
+        XCTAssertTrue(accepted)
+        await pending.value
+        XCTAssertEqual(model.settings?.settings.registryRevision, 3)
+        XCTAssertNil(model.skillLibrary)
+        XCTAssertNil(model.selectedBridgeSkill)
+    }
+
+    @MainActor
     func testIssue242ArchiveDeleteSameCwdRegistrationFencesLateDashboardAndDetail() async throws {
         let root = URL(fileURLWithPath: "/tmp/cb-242-projects-\(UUID().uuidString.prefix(8))")
         let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
@@ -1278,6 +1347,19 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertFalse(SettingsDraft(snapshot: disabledSnapshot).experimentalDirectResultDelivery)
     }
 
+    func testEmptyCatalogDoesNotRewriteAnExplicitPolicyForUnrelatedPreferences() throws {
+        let saved = ModelChoice(model: "temporarily-unavailable", reasoningEffort: "high")
+        let snapshot = try settingsSnapshot(policy: [
+            "mode": "automatic", "allowedSelections": ["kind": "explicit", "selections": [choiceObject(saved)]],
+            "constraints": ["allowDelegation": true]
+        ], catalogModels: [])
+        var draft = SettingsDraft(snapshot: snapshot)
+        draft.accessStrategy = "read-only"
+        XCTAssertFalse(draft.modelPolicyDirty)
+        XCTAssertEqual(draft.rebased(on: snapshot).explicitSelectionKeys, [saved.key])
+        XCTAssertFalse(draft.rebased(on: snapshot).modelPolicyDirty)
+    }
+
     func testSettingsDraftIgnoresRetiredAutomaticDefaultsWithoutDirtyingPolicy() throws {
         let snapshot = try settingsSnapshot(
             policy: [
@@ -1365,6 +1447,19 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertEqual(custom.valueToSave(officialDescription: "User text"), "User text")
     }
 
+    func testModelDescriptionLimitCountsCanonicalUnicodeScalarsWithoutRewritingTheDraft() {
+        var edit = ModelDescriptionEdit(officialDescription: nil, override: nil)
+        edit.text = String(repeating: "한", count: 2_000)
+        XCTAssertFalse(edit.isTooLong)
+        XCTAssertEqual(edit.text.utf8.count, 18_000)
+        edit.text += "글"
+        XCTAssertTrue(edit.isTooLong)
+        edit.text = String(repeating: "😀", count: 2_000)
+        XCTAssertFalse(edit.isTooLong)
+        edit.text += "😀"
+        XCTAssertTrue(edit.isTooLong)
+    }
+
     @MainActor
     func testModelDescriptionHistoryDecodesAndLoadsThroughRemoteClient() async throws {
         let policy: [String: Any] = [
@@ -1427,8 +1522,10 @@ final class AppPresentationTests: XCTestCase {
                 remoteClientFactory: { _, _ in client }
             )
             await model.start()
-            let saved = await model.saveModelDescription(modelID: "gpt-current", description: restoring ? nil : "  User text  ", expectedOverride: initial["gpt-current"])
-            XCTAssertTrue(saved)
+            let result = await model.submitModelDescription(modelID: "gpt-current", description: restoring ? nil : "  User text  ", expectedOverride: initial["gpt-current"], expectedSettingsRevision: 4)
+            let receipt = try XCTUnwrap(result)
+            XCTAssertEqual(receipt.settings.settingsRevision, 5)
+            XCTAssertEqual(receipt.settings.modelDescriptionOverrides, expected)
             XCTAssertEqual(client.settingsUpdateCallCount, 1)
             let mutation = try XCTUnwrap(client.lastSettingsMutation)
             XCTAssertEqual(mutation.expectedSettingsRevision, 4)
@@ -1559,6 +1656,63 @@ final class AppPresentationTests: XCTestCase {
         model.scheduleSettingsAutosave(SettingsDraft(snapshot: snapshot))
 
         XCTAssertEqual(model.generalSettingsSaveState, .idle)
+    }
+
+    @MainActor
+    func testAutosaveRejectsASelectedModelWithoutAnySupportedCommonEffort() async throws {
+        let high = ModelChoice(model: "gpt-current", reasoningEffort: "high")
+        let snapshot = try settingsSnapshot(policy: [
+            "mode": "automatic", "allowedSelections": ["kind": "explicit", "selections": [choiceObject(high)]],
+            "constraints": ["allowDelegation": true]
+        ], catalogModels: [catalogModel(id: high.model, efforts: ["high"]), catalogModel(id: "ultra-only", efforts: ["ultra"])])
+        let model = AppModel()
+        model.settings = snapshot
+        var draft = SettingsDraft(snapshot: snapshot)
+        let choices = SettingsDraft.selectableChoices(in: snapshot, allowDelegation: true)
+        draft.updateAllowlist(choices: choices) { $0.setModel("ultra-only", selected: true, choices: choices) }
+        XCTAssertTrue(draft.modelPolicyDirty)
+        XCTAssertEqual(draft.explicitSelectionKeys, [high.key])
+        model.scheduleSettingsAutosave(draft)
+        let saved = await model.flushSettingsAutosave()
+        XCTAssertFalse(saved)
+        XCTAssertTrue(model.settingsErrorMessage?.contains("ultra-only") == true)
+        XCTAssertEqual(model.settings?.settings.settingsRevision, snapshot.settings.settingsRevision)
+        model.cancelPendingSettingsAutosave()
+    }
+
+    @MainActor
+    func testLegacyModelSpecificChoicesAreAutosavedAsOneCommonEffortList() async throws {
+        let newHigh = ModelChoice(model: "new", reasoningEffort: "high")
+        let olderLow = ModelChoice(model: "older", reasoningEffort: "low")
+        let normalized = [newHigh, olderLow, ModelChoice(model: "new", reasoningEffort: "low"), ModelChoice(model: "older", reasoningEffort: "high")]
+        let catalog = [catalogModel(id: "new", efforts: ["low", "high"]), catalogModel(id: "older", efforts: ["low", "high"])]
+        func policy(_ choices: [ModelChoice]) -> [String: Any] {
+            ["mode": "automatic", "allowedSelections": ["kind": "explicit", "selections": choices.map(choiceObject)],
+             "constraints": ["allowDelegation": true]]
+        }
+        let snapshot = try settingsSnapshot(policy: policy([newHigh, olderLow]), catalogModels: catalog)
+        let updated = try settingsSnapshot(settingsRevision: 5, policy: policy(normalized), catalogModels: catalog)
+        let profile = remoteProfile(id: "11111111-1111-4111-8111-111111111111", name: "Common reasoning test")
+        let client = TestRemoteClient(profile: profile, dashboard: try dashboardStatus(scope: "common-reasoning-test"),
+            settings: snapshot, settingsAfterUpdate: updated)
+        let model = AppModel(loginItemController: TestLoginItemController(status: .notRegistered),
+            connectionStore: TestConnectionStore(BridgeConnectionPreferences(mode: .remoteClient, activeServerId: profile.serverId, profiles: [profile])),
+            credentialStore: TestCredentialStore([profile.serverId: "device_abcdefghijklmnopqrstuvwxyz1234567890ABCDE"]),
+            remoteClientFactory: { _, _ in client })
+        await model.start()
+        let draft = SettingsDraft(snapshot: snapshot)
+        XCTAssertTrue(draft.modelPolicyDirty)
+        XCTAssertEqual(draft.explicitSelectionKeys, Set(normalized.map(\.key)))
+        model.scheduleSettingsAutosave(draft)
+        let saved = await model.flushSettingsAutosave()
+        XCTAssertTrue(saved)
+        XCTAssertEqual(client.settingsUpdateCallCount, 1)
+        let mutation = try XCTUnwrap(client.lastSettingsMutation)
+        guard case .patch(let patch) = mutation.operation else { return XCTFail("Expected a policy patch") }
+        XCTAssertEqual(Set(patch.modelPolicy?.allowedSelections?.selections ?? []), Set(normalized))
+        XCTAssertFalse(SettingsDraft(snapshot: updated).modelPolicyDirty)
+        let stopped = await model.shutdownApplication(force: false)
+        XCTAssertTrue(stopped)
     }
 
     @MainActor
@@ -2521,6 +2675,7 @@ private final class TestDashboardReplySequence: @unchecked Sendable {
 }
 
 private func helperStatus(
+    pid: Int = 42,
     phase: String = "running",
     bridgeConnected: Bool = true,
     tunnelConnected: Bool = true,
@@ -2541,7 +2696,7 @@ private func helperStatus(
     let json = #"""
     {
       "kind":"helper-status","generatedAt":"2026-09-03T00:00:00.000Z",
-      "phase":"\#(phase)","pid":42,"startedAt":null,"lastExit":null,"lastError":null,
+      "phase":"\#(phase)","pid":\#(pid),"startedAt":null,"lastExit":null,"lastError":null,
       "restartAttempt":0,
       "configuration":{"path":"/private/.env","exists":true,"valid":\#(configurationValid),"hasApiKey":true,"hasTunnelId":true,"tunnelId":"tunnel_native123","issue":null},
       "bridge":{"socketPath":"/private/bridge.sock","connected":\#(bridgeConnected)\#(bridgeObservationJSON)\#(bridgeLastSuccessfulAtJSON)\#(readServiceStatusJSON)\#(stateServiceStorageErrorJSON),"acceptingNewJobs":true,"activeJobs":0,"pendingAdmissions":0,"backgroundProcessState":"confirmed","backgroundProcesses":0,"backgroundProcessAgents":0,"backgroundProcessUnknownAgents":0},

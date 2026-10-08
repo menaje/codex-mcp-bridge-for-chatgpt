@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Preserve IME composition in every native multiline editor, protect connection drafts during refresh, and align model description length checks with canonical Unicode text.",
+  "breaking": false,
+  "migration": null
+}

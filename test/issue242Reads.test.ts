@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { issue242Fixture, fixtureScope } from "../scripts/issue-242-fixture.js";
 import { ChildProcessStateReadService, type StateReadObservation } from "../src/stateReadProcess.js";
+import { SessionRegistry } from "../src/sessionRegistry.js";
+import { CodexJobRegistry } from "../src/tools.js";
 
 async function drained(service: ChildProcessStateReadService) {
   const until = Date.now() + 5_000;
@@ -10,6 +12,41 @@ async function drained(service: ChildProcessStateReadService) {
 }
 
 describe("issue 242 shared read contract", () => {
+  it("hydrates only the requested scope and omits Session payloads from Settings and detail", async () => {
+    const f = await issue242Fixture(20);
+    const service = await ChildProcessStateReadService.start(f.file, f.environment);
+    try {
+      const baseline = await service.dashboardSnapshot({ scopeId: fixtureScope, includeHistory: true });
+      const otherScope = "22222222-2222-4222-8222-222222222222";
+      const otherAgent = f.store.createAgent({ scopeId: otherScope, agentName: "Other scope" });
+      const otherJob = randomUUID();
+      f.store.upsertSession({ threadId: "other-thread", scopeId: otherScope, backendKind: "mcp-server",
+        cwd: f.root, sandbox: "read-only", lastUsedAt: Date.now() });
+      f.store.upsertJob({ jobId: otherJob, agentId: otherAgent.agentId, activityId: randomUUID(),
+        scopeId: otherScope, requestId: "other-request", status: "completed", updatedAt: Date.now() });
+      // Valid JSON satisfies SQLite's constraint; its unpaired surrogate is
+      // rejected by the application's text-integrity parser if hydrated.
+      const unreadable = JSON.stringify({ fixture: String.fromCharCode(0xd800) });
+      f.database.prepare("UPDATE sessions SET selection=? WHERE thread_id=?").run(unreadable, "other-thread");
+      f.database.prepare("UPDATE jobs SET payload=? WHERE job_id=?").run(unreadable, otherJob);
+      const view = await service.dashboardSnapshot({ scopeId: fixtureScope, includeHistory: true });
+      expect(view.counts.retainedJobs).toBe(20);
+      expect(view.counts).toEqual(baseline.counts);
+      expect(view.terminalRows).toEqual(baseline.terminalRows);
+      const row = view.terminalRows[0]!;
+      expect(row).toBeDefined();
+      // These paths do not use Session content, even in the selected scope.
+      f.database.prepare("UPDATE sessions SET selection=? WHERE scope_id=?").run(unreadable, fixtureScope);
+      const detail = await service.dashboardHistoryDetail({ scopeId: fixtureScope, rowKey: row.rowKey });
+      expect(detail.historyRevision).toBe(row.historyRevision);
+      expect((await service.settingsSnapshot()).settings.registryRevision).toBe(f.settings.current.registryRevision);
+      expect(() => new SessionRegistry({ stateStore: f.store, projectionOnly: true,
+        projectionSessions: false })).toThrow("query-only projection");
+      expect(() => new CodexJobRegistry({ stateStore: f.store, projectionOnly: true,
+        projectionJobs: { scopeId: fixtureScope } })).toThrow("query-only projection");
+    } finally { await service.close(); await f.close(); }
+  }, 15_000);
+
   it("preserves paged ordering, counts and detail revisions with bounded SQL", async () => {
     const f = await issue242Fixture(120), observations: StateReadObservation[] = [];
     const service = await ChildProcessStateReadService.start(f.file, f.environment, { onMeasurement: x => observations.push(x) });

@@ -1,4 +1,5 @@
 import CodexBridgeKit
+import AppKit
 import Foundation
 import SwiftUI
 
@@ -16,7 +17,10 @@ struct ModelDescriptionEdit: Equatable {
         expectedOverride = override
     }
 
-    var isTooLong: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).utf16.count > Self.maximumLength }
+    var isTooLong: Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .precomposedStringWithCanonicalMapping.unicodeScalars.count > Self.maximumLength
+    }
 
     func valueToSave(officialDescription: String?) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -29,7 +33,9 @@ struct ModelDescriptionEdit: Equatable {
 
 struct ModelDescriptionsSettingsSection: View {
     let snapshot: SettingsSnapshot
-    @State private var edits: [String: ModelDescriptionEdit] = [:]
+    let allowedModelIDs: Set<String>
+    @State private var edits: [String: BridgeEditSession] = [:]
+    @State private var showAll = false
 
     private var models: [String: CatalogModel] {
         snapshot.catalog.models.filter { $0.hidden != true }.reduce(into: [:]) { result, model in
@@ -38,11 +44,12 @@ struct ModelDescriptionsSettingsSection: View {
     }
 
     private var modelIDs: [String] {
-        Set(models.keys)
+        let retained = Set(models.keys)
             .union(snapshot.settings.modelDescriptionOverrides?.keys.map { $0 } ?? [])
             .union(snapshot.modelDescriptionHistoryModelIds ?? [])
             .union(edits.keys)
-            .sorted()
+        return ModelSettingsOrder.ids(catalog: snapshot.catalog.models, retained: retained)
+            .filter { showAll || allowedModelIDs.contains($0) || edits[$0] != nil }
     }
 
     var body: some View {
@@ -50,6 +57,10 @@ struct ModelDescriptionsSettingsSection: View {
             Text("settings.modelDescriptions.hint")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            Toggle("settings.modelDescriptions.showAll", isOn: $showAll)
+            if modelIDs.isEmpty {
+                Text("settings.modelDescriptions.noAllowed").font(.caption).foregroundStyle(.secondary)
+            }
             ForEach(modelIDs, id: \.self) { id in
                 ModelDescriptionSettingsRow(
                     modelID: id,
@@ -71,7 +82,7 @@ private struct ModelDescriptionSettingsRow: View {
     let override: String?
     let settingsRevision: Int
     let historyAvailable: Bool
-    @Binding var edit: ModelDescriptionEdit?
+    @Binding var edit: BridgeEditSession?
     @State private var officialExpanded = false
     @State private var failed = false
     @State private var historyOpen = false
@@ -99,7 +110,9 @@ private struct ModelDescriptionSettingsRow: View {
                     .foregroundStyle(.secondary)
                 if edit == nil {
                     Button("macos.edit") {
-                        edit = ModelDescriptionEdit(officialDescription: catalogModel?.description, override: override)
+                        edit = BridgeEditSession(target: "model-description:\(modelID)",
+                            values: [.description: override ?? catalogModel?.description ?? "", .content: encodedOverride(override)],
+                            version: String(settingsRevision), policies: [.description: .human(maximum: ModelDescriptionEdit.maximumLength, multiline: true)])
                         failed = false
                     }
                     .disabled(busy)
@@ -116,42 +129,11 @@ private struct ModelDescriptionSettingsRow: View {
                         .font(.caption)
                         .textSelection(.enabled)
                 }
-                TextEditor(text: Binding(get: { edit?.text ?? "" }, set: { edit?.text = $0 }))
-                    .font(.body)
-                    .frame(minHeight: 90, maxHeight: 180)
-                    .padding(5)
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
-                    .accessibilityLabel(BridgeAppLocalization.string("settings.modelDescriptions.label", locale: model.interfaceLocale))
-                    .disabled(busy)
-                Text("settings.modelDescriptions.limit")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                if currentEdit.isTooLong {
-                    Text("settings.modelDescriptions.tooLong")
-                        .font(.caption)
-                        .foregroundStyle(.red)
+                ModelDescriptionDraftEditor(session: currentEdit, modelID: modelID,
+                    officialDescription: catalogModel?.description, failed: $failed) {
+                    if edit === currentEdit { edit = nil; failed = false }
                 }
-                HStack {
-                    Button("settings.modelDescriptions.save") {
-                        Task {
-                            let saved = await model.saveModelDescription(
-                                modelID: modelID,
-                                description: currentEdit.valueToSave(officialDescription: catalogModel?.description),
-                                expectedOverride: currentEdit.expectedOverride
-                            )
-                            if saved {
-                                edit = nil; failed = false
-                            }
-                            else {
-                                failed = true
-                                edit?.expectedOverride = model.settings?.settings.modelDescriptionOverrides?[modelID]
-                            }
-                        }
-                    }
-                    .disabled(busy || currentEdit.isTooLong)
-                    Button("common.cancel") { edit = nil; failed = false }
-                        .disabled(busy)
-                }
+
             } else {
                 Text(override ?? officialText)
                     .font(.callout)
@@ -244,6 +226,8 @@ private struct ModelDescriptionSettingsRow: View {
         }
         .padding(.vertical, 6)
         .onChange(of: settingsRevision) { _ in
+            edit?.receive([.description: override ?? catalogModel?.description ?? "", .content: encodedOverride(override)],
+                          version: String(settingsRevision))
             if historyOpen { Task { await loadHistory() } }
         }
     }
@@ -289,5 +273,57 @@ private struct ModelDescriptionSettingsRow: View {
             historyError = error.localizedDescription
         }
         historyLoading = false
+    }
+}
+
+private func encodedOverride(_ value: String?) -> String {
+    String(decoding: (try? JSONEncoder().encode(value)) ?? Data("null".utf8), as: UTF8.self)
+}
+
+private struct ModelDescriptionDraftEditor: View {
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject var session: BridgeEditSession
+    let modelID: String
+    let officialDescription: String?
+    @Binding var failed: Bool
+    let close: () -> Void
+
+    private var tooLong: Bool {
+        session.value(.description).trimmingCharacters(in: .whitespacesAndNewlines)
+            .precomposedStringWithCanonicalMapping.unicodeScalars.count > ModelDescriptionEdit.maximumLength
+    }
+    var body: some View {
+        BridgeTextEditor(text: session.binding(.description))
+            .bridgeInput(session, field: .description)
+            .frame(minHeight: 90, maxHeight: 180)
+            .padding(5)
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
+            .accessibilityLabel(BridgeAppLocalization.string("settings.modelDescriptions.label", locale: model.interfaceLocale))
+        Text("settings.modelDescriptions.limit").font(.caption).foregroundStyle(.secondary)
+        if tooLong { Text("settings.modelDescriptions.tooLong").font(.caption).foregroundStyle(.red) }
+        BridgeEditStatus(session: session, reloadLatest: { Task { await model.refreshSettings() } })
+        HStack {
+            Button("settings.modelDescriptions.save") {
+                guard let submitted = session.prepareSubmission() else { return }
+                let expected = (try? JSONDecoder().decode(String?.self, from: Data(submitted.value(.content).utf8))) ?? nil
+                var edit = ModelDescriptionEdit(officialDescription: officialDescription, override: expected)
+                edit.text = submitted.value(.description)
+                let description = edit.valueToSave(officialDescription: officialDescription)
+                Task { @MainActor in
+                    let receipt = await model.submitModelDescription(modelID: modelID, description: description,
+                        expectedOverride: expected, expectedSettingsRevision: submitted.expectedVersion.flatMap(Int.init))
+                    guard session.accepts(submitted) else { return }
+                    if let receipt {
+                        let clean = session.acknowledge(submitted, version: String(receipt.settings.settingsRevision),
+                                                        confirmed: [.content: encodedOverride(description)])
+                        if clean { close() }
+                        failed = false
+                    } else { session.fail(submitted, conflict: model.settingsConflictMessage != nil); failed = true }
+                }
+            }
+            .disabled(session.isSubmitting || model.isBusy || model.generalSettingsSaveState.isActive || (tooLong && !session.hasMarkedText))
+            Button("common.cancel") { session.discard(); close() }
+        }
+        .onDisappear { session.discard() }
     }
 }

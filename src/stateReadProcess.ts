@@ -461,6 +461,8 @@ export class ChildProcessStateReadService implements BridgeReadProjectionService
     if (this.restartTimer) clearTimeout(this.restartTimer);
     for (const pending of this.pending.values()) pending.reject(new Error("STATE_READ_CLOSED: Read projection closed."));
     this.pending.clear();
+    this.activeOperation = undefined;
+    this.operations.clear();
     this.reads.invalidate(() => true);
     this.revisionStore.close();
     const child = this.child;
@@ -495,7 +497,17 @@ async function runChild(file: string): Promise<void> {
   const codexService = new CodexService(process.env);
   let closing = false;
   let inFlight = 0;
-  const lanes = { dashboard: Promise.resolve(), settings: Promise.resolve() };
+  // Model discovery can await the CLI. Each lane owns a reusable query-only
+  // connection and holds no transaction between its fresh projections.
+  const lanes: Record<"dashboard" | "settings", {
+    tail: Promise<void>;
+    inFlight: number;
+    store?: BridgeStateStore;
+    measurement?: StateReadMeasurement;
+  }> = {
+    dashboard: { tail: Promise.resolve(), inFlight: 0 },
+    settings: { tail: Promise.resolve(), inFlight: 0 }
+  };
   const requests = new Map<string, { cancelled: boolean }>();
   const send = (message: ChildMessage) => {
     if (!process.connected || !process.send) return;
@@ -512,13 +524,20 @@ async function runChild(file: string): Promise<void> {
     if (closing) return;
     closing = true;
     clearInterval(heartbeat);
-    await Promise.all(Object.values(lanes).map(tail => tail.catch(() => undefined)));
+    await Promise.all(Object.values(lanes).map(lane => lane.tail.catch(() => undefined)));
+    for (const lane of Object.values(lanes)) lane.store?.close();
     if (process.connected) process.disconnect();
   };
   try {
-    // Validate the query-only connection before advertising readiness.
-    const validation = new BridgeStateStore({ file, readOnly: true });
-    validation.close();
+    // Validate both connections before advertising readiness. Measurements
+    // count only the current request on that lane, never another lane's SQL.
+    for (const lane of Object.values(lanes)) {
+      lane.store = new BridgeStateStore({ file, readOnly: true, traceSql: sql => {
+        if (!lane.measurement) return;
+        lane.measurement.sqlStatements += 1;
+        if (/^\s*SELECT\b/i.test(sql)) lane.measurement.selectStatements += 1;
+      } });
+    }
     send({
       type: "ready",
       version: PROTOCOL_VERSION,
@@ -539,8 +558,9 @@ async function runChild(file: string): Promise<void> {
       }
       const request = { cancelled: false };
       requests.set(value.requestId, request);
-      const lane = value.method === "settingsSnapshot" ? "settings" : "dashboard";
+      const lane = lanes[value.method === "settingsSnapshot" ? "settings" : "dashboard"];
       inFlight += 1;
+      lane.inFlight += 1;
       const startedAt = Date.now();
       const queuedAt = performance.now();
       const measurement: StateReadMeasurement | undefined = value.measure ? {
@@ -557,8 +577,8 @@ async function runChild(file: string): Promise<void> {
         startedAt,
         observedAt: Date.now()
       });
-      observe(inFlight > 1 ? "queue-wait" : "read-snapshot");
-      const run = lanes[lane].then(async () => {
+      observe(lane.inFlight > 1 ? "queue-wait" : "read-snapshot");
+      const run = lane.tail.then(async () => {
         if (measurement) measurement.queueMs = performance.now() - queuedAt;
         // Yield once so a queued cancellation can be consumed before synchronous SQL.
         await new Promise<void>(resolve => setImmediate(resolve));
@@ -566,7 +586,8 @@ async function runChild(file: string): Promise<void> {
         if (Date.now() >= value.deadlineAt) throw new Error("STATE_READ_STALE: Queue deadline expired.");
         observe("read-snapshot");
         // Bridge read permissions do not depend on an execution login snapshot.
-        const result = await executeProjection(file, value.method, value.args, codexService, measurement);
+        lane.measurement = measurement;
+        const result = await executeProjection(file, lane.store!, value.method, value.args, codexService, measurement);
         if (request.cancelled) throw new Error("STATE_READ_CANCELLED: Observation cancelled.");
         if (Date.now() >= value.deadlineAt) throw new Error("STATE_READ_STALE: Projection deadline expired.");
         observe("serializing");
@@ -597,10 +618,12 @@ async function runChild(file: string): Promise<void> {
         error: error instanceof Error ? error.message : String(error),
         ...(measurement ? { measurement } : {})
       })).finally(() => {
+        lane.measurement = undefined;
         requests.delete(value.requestId);
         inFlight = Math.max(0, inFlight - 1);
+        lane.inFlight = Math.max(0, lane.inFlight - 1);
       });
-      lanes[lane] = run;
+      lane.tail = run;
     });
     process.once("disconnect", () => { void close(); });
     process.once("SIGTERM", () => { void close(); });
@@ -614,6 +637,7 @@ async function runChild(file: string): Promise<void> {
 
 async function executeProjection(
   file: string,
+  stateStore: BridgeStateStore,
   method: ReadMethod,
   args: unknown[],
   codexService: CodexService,
@@ -635,12 +659,8 @@ async function executeProjection(
   // selection for model discovery, even though no task worker runs here.
   config.codexService = codexService;
   mark("configMs");
-  const stateStore = new BridgeStateStore({ file, readOnly: true,
-    ...(measurement ? { traceSql: (sql: string) => {
-      measurement.sqlStatements += 1;
-      if (/^\s*SELECT\b/i.test(sql)) measurement.selectStatements += 1;
-    } } : {}) });
-  mark("databaseOpenMs");
+  // The lane opens its connection at startup; databaseOpenMs stays zero for
+  // requests. Registries below are reconstructed to observe current WAL data.
   const upstream = new ProjectionUpstream();
   let jobs: CodexJobRegistry | undefined;
   try {
@@ -649,13 +669,17 @@ async function executeProjection(
       allowedRoots: config.allowedRoots,
       maxSessions: 1_000_000,
       projectionOnly: true,
+      projectionSessions: method === "settingsSnapshot" || method === "dashboardHistoryDetail"
+        ? false : { scopeId: (args[0] as BridgeDashboardSnapshotOptions)?.scopeId },
     });
     mark("sessionsMs");
     const detailAgent = method === "dashboardHistoryDetail"
       ? dashboardAgentForDetail(stateStore, args[0] as BridgeDashboardHistoryDetailOptions) : undefined;
     jobs = new CodexJobRegistry({
       ...(method === "settingsSnapshot" ? { projectionJobs: false as const }
-        : method === "dashboardHistoryDetail" ? { projectionJobs: detailAgent ? { agentId: detailAgent.agentId } : false as const } : {}),
+        : method === "dashboardHistoryDetail" ? { projectionJobs: detailAgent
+          ? { agentId: detailAgent.agentId, scopeId: detailAgent.scopeId } : false as const }
+        : { projectionJobs: { scopeId: (args[0] as BridgeDashboardSnapshotOptions)?.scopeId } }),
       maxConcurrentJobs: config.maxConcurrentJobs,
       ttlMs: config.jobTtlMs,
       maxJobs: Math.max(config.maxRetainedJobs, config.maxConcurrentJobs),
@@ -697,7 +721,6 @@ async function executeProjection(
   } finally {
     await jobs?.closeThreadConnections();
     await upstream.close();
-    stateStore.close();
     mark("cleanupMs");
   }
 }

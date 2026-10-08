@@ -1,0 +1,23 @@
+- main [ref=e2]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - heading "Codex 현황" [level=1] [ref=e5]
+      - paragraph
+    - button "새로고침" [ref=e6] [cursor=pointer]:
+      - generic [aria-hidden] [ref=e7]: ↻
+  - paragraph [ref=e8]: 상태는 Codex 실행을 기준으로 표시합니다. 한 번의 실행 완료와 전체 목표의 완료는 다를 수 있습니다.
+  - generic [ref=e9]:
+    - group "전체 현황 집계" [ref=e10]:
+      - button "실행 중 0" [ref=e11] [cursor=pointer]:
+        - generic [ref=e12]: 실행 중
+        - strong [ref=e16]: "0"
+      - button "응답 필요 0" [ref=e17] [cursor=pointer]:
+        - generic [ref=e18]: 응답 필요
+        - strong [ref=e22]: "0"
+      - button "문제 0" [ref=e23] [cursor=pointer]:
+        - generic [ref=e24]: 문제
+        - strong [ref=e28]: "0"
+    - button "실행 기록" [ref=e29] [cursor=pointer]
+  - generic [ref=e30]:
+    - status
+    - generic [ref=e31]: 26. 9. 3. 오전 9:00:00 새로고침

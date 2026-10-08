@@ -193,6 +193,7 @@ try {
     check((await tool('codex_models')).structuredContent.models.find(x=>x.id==='gpt-6-astra').description==='Keep this draft after a conflict.','Returning to automatic restores override');
     await scenario({hideAstra:true,advanceMs:600001});
     await page.reload();
+    await page.locator('#show-all-model-descriptions').check();
     await row.locator('[data-description-source="user"]').waitFor();
     check(!(await tool('codex_models')).structuredContent.models.some(x=>x.id==='gpt-6-astra'),'Description must not make an unavailable model executable');
     check((await tool('codex_ui_read',{view:'settings'})).structuredContent.settings.modelDescriptionOverrides['gpt-6-astra'],'Keep description while model is absent');
@@ -227,6 +228,7 @@ try {
     await row.locator('[data-description-source="catalog"]').waitFor();
     await scenario({hideAstra:true,advanceMs:600001});
     await page.reload();
+    await page.locator('#show-all-model-descriptions').check();
     await row.locator('[data-description-source="catalog"]').waitFor();
     const historyOnly=(await tool('codex_ui_read',{view:'settings'})).structuredContent;
     check(!historyOnly.settings.modelDescriptionOverrides['gpt-6-astra']&&historyOnly.modelDescriptionHistoryModelIds.includes('gpt-6-astra'),'A removed model with history only remains in Settings');

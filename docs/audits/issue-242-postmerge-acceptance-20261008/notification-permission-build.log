@@ -1,0 +1,14 @@
+/tmp/cb242-accept/query-notification.swift:5:161: error: 'ephemeral' is unavailable in macOS
+ 3 | import Darwin
+ 4 | UNUserNotificationCenter.current().getNotificationSettings { settings in
+ 5 |     let states: [UNAuthorizationStatus: String] = [.notDetermined: "notDetermined", .denied: "denied", .authorized: "authorized", .provisional: "provisional", .ephemeral: "ephemeral"]
+   |                                                                                                                                                                 `- error: 'ephemeral' is unavailable in macOS
+ 6 |     let result: [String: Any] = ["bundleIdentifier": Bundle.main.bundleIdentifier ?? "missing", "authorization": states[settings.authorizationStatus] ?? "unknown", "alertSetting": settings.alertSetting.rawValue, "soundSetting": settings.soundSetting.rawValue, "permissionRequested": false, "scope": "Distinct isolated probe app; cannot establish operational app permission"]
+ 7 |     let data = try! JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
+
+UserNotifications.UNAuthorizationStatus.ephemeral:3:8: note: 'ephemeral' has been explicitly marked unavailable here
+1 | enum UNAuthorizationStatus {
+2 | @available(macOS, unavailable)
+3 |   case ephemeral}
+  |        `- note: 'ephemeral' has been explicitly marked unavailable here
+4 | 
