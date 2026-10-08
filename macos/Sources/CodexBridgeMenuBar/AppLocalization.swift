@@ -372,6 +372,12 @@ enum BridgeAppLocalization {
         locale: Locale
     ) -> String {
         switch error {
+        case .transport(_, let code, let timedOut):
+            let key: String
+            if timedOut { key = "macos.localService.responseTimedOut" }
+            else if [EACCES, EPERM].contains(code) { key = "macos.localService.permissionDenied" }
+            else { key = "macos.localService.unavailable" }
+            return string(key, locale: locale)
         case .invalidSocketPath:
             return string("macos.thelocalconnectionpathisinvalid", locale: locale)
         case .peerIdentityMismatch:

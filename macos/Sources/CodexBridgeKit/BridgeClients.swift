@@ -363,12 +363,9 @@ public struct MacOSHelperClient: Sendable {
         let operation: RuntimeLifecycleOperation
         do { operation = try await rpc.call("lifecycle.request", params: request, timeout: 20) }
         catch let error as LocalRPCError {
-            switch error {
-            case .connectionFailed, .writeFailed, .emptyResponse:
-                try Task.checkCancellation()
-                operation = try await rpc.call("lifecycle.request", params: request, timeout: 20)
-            default: throw error
-            }
+            guard error.allowsLifecycleReceiptReplay else { throw error }
+            try Task.checkCancellation()
+            operation = try await rpc.call("lifecycle.request", params: request, timeout: 20)
         }
         // Application startup may observe the newer/pending operation that
         // supersedes its intent. Explicit controls still require their own ID.

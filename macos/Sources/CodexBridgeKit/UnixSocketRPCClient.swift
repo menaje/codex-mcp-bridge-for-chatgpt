@@ -1,7 +1,39 @@
 import Darwin
 import Foundation
 
+public enum LocalRPCPhase: String, Sendable, Equatable {
+    case socket, connect, write, read, decode, remote
+}
+
+/// Numeric evidence is independent of strerror's language and presentation text.
+public struct LocalRPCFailure: Sendable, Equatable {
+    public let phase: LocalRPCPhase
+    public let errnoCode: Int32?
+    public let timedOut: Bool
+    public let cancelled: Bool
+    public let remoteCode: Int?
+
+    public init?(error: Error) {
+        guard !(error is CancellationError) else { return nil }
+        cancelled = false
+        remoteCode = (error as? LocalRPCError)?.remoteCode
+        if case let .transport(phase, code, timedOut) = error as? LocalRPCError {
+            self.phase = phase; errnoCode = code; self.timedOut = timedOut
+        } else {
+            errnoCode = nil; timedOut = false
+            switch error as? LocalRPCError {
+            case .connectionFailed, .invalidSocketPath, .peerIdentityMismatch: phase = .connect
+            case .writeFailed: phase = .write
+            case .emptyResponse, .responseTooLarge: phase = .read
+            case .remote: phase = .remote
+            default: phase = .decode
+            }
+        }
+    }
+}
+
 public enum LocalRPCError: LocalizedError, Sendable {
+    case transport(phase: LocalRPCPhase, errnoCode: Int32, timedOut: Bool)
     case invalidSocketPath
     case peerIdentityMismatch
     case connectionFailed(String)
@@ -13,6 +45,9 @@ public enum LocalRPCError: LocalizedError, Sendable {
 
     public var errorDescription: String? {
         switch self {
+        case .transport(let phase, let code, _):
+            let message = String(cString: strerror(code))
+            return phase == .write ? "로컬 서비스에 요청을 보낼 수 없습니다: \(message)" : "로컬 서비스에 연결할 수 없습니다: \(message)"
         case .invalidSocketPath:
             return "로컬 연결 경로가 올바르지 않습니다."
         case .peerIdentityMismatch:
@@ -29,6 +64,30 @@ public enum LocalRPCError: LocalizedError, Sendable {
             return "로컬 서비스 응답을 읽을 수 없습니다: \(message)"
         case .remote(_, let message):
             return message
+        }
+    }
+}
+
+extension LocalRPCError {
+    public var remoteCode: Int? {
+        if case .remote(let code, _) = self { return code }
+        return nil
+    }
+
+    /// Exactly the existing response-loss replay set, including its old socket,
+    /// connect, write and read errno paths. Never retry decoding or remote errors.
+    var allowsLifecycleReceiptReplay: Bool {
+        switch self {
+        case .connectionFailed, .writeFailed, .emptyResponse: return true
+        case .transport(let phase, _, _): return [.socket, .connect, .write, .read].contains(phase)
+        default: return false
+        }
+    }
+
+    public var isObservationConnectionFailure: Bool {
+        switch self {
+        case .transport, .connectionFailed, .writeFailed, .emptyResponse: return true
+        default: return false
         }
     }
 }
@@ -54,6 +113,8 @@ public struct UnixSocketRPCClient: Sendable {
         as resultType: Result.Type = Result.self,
         timeout requestTimeout: TimeInterval? = nil
     ) async throws -> Result {
+        let started = ProcessInfo.processInfo.systemUptime
+        try Task.checkCancellation()
         let requestID = UUID().uuidString.lowercased()
         let request = RPCRequest(
             jsonrpc: "2.0",
@@ -77,7 +138,7 @@ public struct UnixSocketRPCClient: Sendable {
                     DispatchQueue.global(qos: .userInitiated).async {
                         do {
                             continuation.resume(returning: try transact(socketPath: socketPath,
-                                request: requestData, timeout: timeout,
+                                request: requestData, deadline: started + timeout,
                                 maximumResponseBytes: maximumResponseBytes, cancellation: cancellation))
                         } catch { continuation.resume(throwing: error) }
                     }
@@ -136,7 +197,7 @@ private struct RPCRemoteError: Decodable {
 private func transact(
     socketPath: String,
     request: Data,
-    timeout: TimeInterval,
+    deadline: TimeInterval,
     maximumResponseBytes: Int,
     cancellation: SocketCancellation
 ) throws -> Data {
@@ -146,7 +207,7 @@ private func transact(
     }
     let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
     guard descriptor >= 0 else {
-        throw LocalRPCError.connectionFailed(posixMessage())
+        throw transportError(.socket)
     }
     defer { cancellation.close(descriptor) }
     try cancellation.attach(descriptor)
@@ -154,26 +215,9 @@ private func transact(
     _ = setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout<Int32>.size))
     _ = fcntl(descriptor, F_SETFD, FD_CLOEXEC)
 
-    var socketTimeout = timeval(
-        tv_sec: Int(timeout),
-        tv_usec: Int32((timeout - floor(timeout)) * 1_000_000)
-    )
-    withUnsafePointer(to: &socketTimeout) { pointer in
-        _ = setsockopt(
-            descriptor,
-            SOL_SOCKET,
-            SO_RCVTIMEO,
-            pointer,
-            socklen_t(MemoryLayout<timeval>.size)
-        )
-        _ = setsockopt(
-            descriptor,
-            SOL_SOCKET,
-            SO_SNDTIMEO,
-            pointer,
-            socklen_t(MemoryLayout<timeval>.size)
-        )
-    }
+    _ = fcntl(descriptor, F_SETFL, O_NONBLOCK)
+    try cancellation.check()
+    try checkDeadline(deadline, phase: .connect)
 
     var address = sockaddr_un()
     address.sun_family = sa_family_t(AF_UNIX)
@@ -187,8 +231,13 @@ private func transact(
             Darwin.connect(descriptor, $0, addressLength)
         }
     }
-    guard connected == 0 else {
-        throw LocalRPCError.connectionFailed(posixMessage())
+    if connected != 0 {
+        guard errno == EINPROGRESS || errno == EAGAIN || errno == EINTR else { throw transportError(.connect) }
+        try waitForSocket(descriptor, events: Int16(POLLOUT), deadline: deadline, phase: .connect, cancellation: cancellation)
+        var code: Int32 = 0
+        var length = socklen_t(MemoryLayout<Int32>.size)
+        guard getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &code, &length) == 0 else { throw transportError(.connect) }
+        if code != 0 { throw LocalRPCError.transport(phase: .connect, errnoCode: code, timedOut: code == ETIMEDOUT) }
     }
     var peerUser = uid_t()
     var peerGroup = gid_t()
@@ -204,9 +253,10 @@ private func transact(
         guard let base = rawBuffer.baseAddress else { return }
         var sent = 0
         while sent < rawBuffer.count {
+            try waitForSocket(descriptor, events: Int16(POLLOUT), deadline: deadline, phase: .write, cancellation: cancellation)
             let count = Darwin.write(descriptor, base.advanced(by: sent), rawBuffer.count - sent)
-            if count < 0 && errno == EINTR { continue }
-            guard count > 0 else { throw LocalRPCError.writeFailed(posixMessage()) }
+            if count < 0 && [EINTR, EAGAIN, EWOULDBLOCK].contains(errno) { continue }
+            guard count > 0 else { throw transportError(.write) }
             sent += count
         }
     }
@@ -214,9 +264,10 @@ private func transact(
     var response = Data()
     var buffer = [UInt8](repeating: 0, count: 16 * 1_024)
     while true {
+        try waitForSocket(descriptor, events: Int16(POLLIN), deadline: deadline, phase: .read, cancellation: cancellation)
         let count = Darwin.read(descriptor, &buffer, buffer.count)
-        if count < 0 && errno == EINTR { continue }
-        if count < 0 { throw LocalRPCError.connectionFailed(posixMessage()) }
+        if count < 0 && [EINTR, EAGAIN, EWOULDBLOCK].contains(errno) { continue }
+        if count < 0 { throw transportError(.read) }
         if count == 0 { throw LocalRPCError.emptyResponse }
         // Each prior chunk was known not to contain a line terminator. Scan
         // only this chunk, rather than rescanning the full accumulated response
@@ -231,8 +282,33 @@ private func transact(
     }
 }
 
-private func posixMessage() -> String {
-    String(cString: strerror(errno))
+private func transportError(_ phase: LocalRPCPhase) -> LocalRPCError {
+    let code = errno
+    return .transport(phase: phase, errnoCode: code, timedOut: [EAGAIN, EWOULDBLOCK, ETIMEDOUT].contains(code))
+}
+
+private func checkDeadline(_ deadline: TimeInterval, phase: LocalRPCPhase) throws {
+    if ProcessInfo.processInfo.systemUptime >= deadline {
+        throw LocalRPCError.transport(phase: phase, errnoCode: ETIMEDOUT, timedOut: true)
+    }
+}
+
+private func waitForSocket(_ descriptor: Int32, events: Int16, deadline: TimeInterval,
+                           phase: LocalRPCPhase, cancellation: SocketCancellation) throws {
+    while true {
+        try cancellation.check()
+        try checkDeadline(deadline, phase: phase)
+        let remaining = deadline - ProcessInfo.processInfo.systemUptime
+        var entry = pollfd(fd: descriptor, events: events, revents: 0)
+        let milliseconds = Int32(min(Double(Int32.max), max(1, ceil(remaining * 1_000))))
+        let result = Darwin.poll(&entry, 1, milliseconds)
+        try cancellation.check()
+        if result < 0 && errno == EINTR { continue }
+        if result < 0 { throw transportError(phase) }
+        if result == 0 { continue }
+        try checkDeadline(deadline, phase: phase)
+        return
+    }
 }
 
 // Cancellation interrupts a blocking read without closing/reusing its descriptor

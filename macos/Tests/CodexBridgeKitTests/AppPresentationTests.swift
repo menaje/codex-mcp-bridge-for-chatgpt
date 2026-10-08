@@ -555,8 +555,8 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
-    func testIssue242HelperRPCFailureLosesRetainedObservationAfterGrace() async throws {
-        // Characterizes the latest-dev catch path; W2 will change these expectations.
+    func testIssue242HelperRPCFailureRetainsObservationAfterGrace() async throws {
+        // Regression for the P0 catch path after its first successful observation.
         let model = AppModel()
         let start = Date(timeIntervalSince1970: 100)
         model.recordLocalConnectionStatus(try helperStatus(), at: start)
@@ -568,11 +568,12 @@ final class AppPresentationTests: XCTestCase {
         await model.refreshDashboard()
         XCTAssertEqual(model.dashboard?.scope, "issue-242-retained")
         model.recordLocalConnectionStatus(nil, at: start.addingTimeInterval(9))
-        XCTAssertFalse(model.hasRetainedBridgeObservation)
-        XCTAssertEqual(model.health, .unavailable)
-        XCTAssertEqual(model.operationalProblem, .runtime)
+        XCTAssertTrue(model.hasRetainedBridgeObservation)
+        XCTAssertFalse(model.bridgeConnected)
+        XCTAssertEqual(model.health, .attention)
+        XCTAssertEqual(model.operationalProblem, .responseUnconfirmed)
         await model.refreshDashboard()
-        XCTAssertNil(model.dashboard)
+        XCTAssertEqual(model.dashboard?.scope, "issue-242-retained")
     }
 
     @MainActor

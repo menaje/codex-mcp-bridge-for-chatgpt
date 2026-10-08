@@ -161,3 +161,91 @@ private func makeListener(at socketPath: String) throws -> Int32 {
     }
     return descriptor
 }
+
+extension UnixSocketRPCClientTests {
+    func testNumericFailureEvidenceAndLifecycleReplayBoundary() async throws {
+        let path = "/tmp/cb-missing-\(UUID().uuidString.prefix(8)).sock"
+        do {
+            let _: EmptyParameters = try await UnixSocketRPCClient(socketPath: path).call("helper.health", params: EmptyParameters())
+            XCTFail("Missing fixture socket must fail")
+        } catch {
+            let evidence = try XCTUnwrap(LocalRPCFailure(error: error))
+            XCTAssertEqual(evidence.phase, .connect)
+            XCTAssertEqual(evidence.errnoCode, ENOENT)
+            XCTAssertFalse(evidence.timedOut)
+            XCTAssertFalse(evidence.cancelled)
+            XCTAssertTrue(try XCTUnwrap(error as? LocalRPCError).allowsLifecycleReceiptReplay)
+        }
+        XCTAssertNil(LocalRPCFailure(error: CancellationError()))
+        for phase: LocalRPCPhase in [.socket, .connect, .write, .read] {
+            XCTAssertTrue(LocalRPCError.transport(phase: phase, errnoCode: ETIMEDOUT, timedOut: true).allowsLifecycleReceiptReplay)
+        }
+        for error: LocalRPCError in [.invalidSocketPath, .peerIdentityMismatch, .responseTooLarge,
+                                    .malformedResponse("contract"), .remote(code: -32000, message: "timeout"),
+                                    .transport(phase: .decode, errnoCode: ETIMEDOUT, timedOut: true)] {
+            XCTAssertFalse(error.allowsLifecycleReceiptReplay)
+        }
+    }
+
+    func testFragmentedResponseCannotResetAbsoluteDeadline() async throws {
+        let path = "/tmp/cb-fragment-\(UUID().uuidString.prefix(8)).sock"
+        let listener = try makeListener(at: path)
+        defer { Darwin.close(listener); unlink(path) }
+        let server = Task.detached {
+            let descriptor = Darwin.accept(listener, nil, nil)
+            guard descriptor >= 0 else { return }
+            defer { Darwin.close(descriptor) }
+            var noSignal: Int32 = 1
+            _ = setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout<Int32>.size))
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            guard Darwin.read(descriptor, &buffer, buffer.count) > 0 else { return }
+            // Each fragment arrives before an idle timeout, but the total exceeds the budget.
+            for _ in 0..<20 {
+                try? await Task.sleep(for: .milliseconds(30))
+                var byte: UInt8 = 0x20
+                if Darwin.write(descriptor, &byte, 1) != 1 { return }
+            }
+        }
+        let started = Date()
+        do {
+            let _: EmptyParameters = try await UnixSocketRPCClient(socketPath: path, timeout: 0.12)
+                .call("dashboard.snapshot", params: EmptyParameters())
+            XCTFail("Fragment trickle must exceed the absolute deadline")
+        } catch {
+            let evidence = try XCTUnwrap(LocalRPCFailure(error: error))
+            XCTAssertEqual(evidence.phase, .read)
+            XCTAssertEqual(evidence.errnoCode, ETIMEDOUT)
+            XCTAssertTrue(evidence.timedOut)
+            XCTAssertFalse(evidence.cancelled)
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.5)
+        await server.value
+    }
+
+    func testReceiptReplayUsesSameLifecycleIDAndExactPayloadAfterResponseLoss() async throws {
+        let path = "/tmp/cb-replay-\(UUID().uuidString.prefix(8)).sock"
+        let received = LifecycleReplayRequests()
+        let server = try NativeRPCFixture(path: path, requestReply: { _, params in
+            let count = received.append(params)
+            // An invalid fixture reply closes the socket without a response.
+            if count == 1 { return NativeFixtureReply(body: "") }
+            return NativeFixtureReply(body: #"{"result":{"requestId":"same-receipt","kind":"start","force":false,"state":"queued","phase":"queued","createdAt":"now","updatedAt":"now","impact":null,"result":null,"error":null,"cancellable":true}}"#)
+        })
+        defer { server.stop() }
+        let request = RuntimeLifecycleRequest(requestId: "same-receipt", kind: "start", force: false)
+        _ = try await MacOSHelperClient(socketPath: path).requestLifecycle(request)
+        let payloads = received.values
+        XCTAssertEqual(payloads.count, 2)
+        let first = try JSONSerialization.jsonObject(with: Data(payloads[0].utf8)) as? NSDictionary
+        let second = try JSONSerialization.jsonObject(with: Data(payloads[1].utf8)) as? NSDictionary
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(first?["requestId"] as? String, "same-receipt")
+    }
+}
+
+private final class LifecycleReplayRequests: @unchecked Sendable {
+    private let lock = NSLock()
+    private var payloads: [String] = []
+    func append(_ value: String) -> Int { lock.withLock { payloads.append(value); return payloads.count } }
+    var values: [String] { lock.withLock { payloads } }
+}

@@ -360,7 +360,7 @@ struct DashboardPopoverView: View {
                         .foregroundStyle(.orange)
                         .textSelection(.enabled)
                 }
-                if !model.isRemoteClient, model.helperStatus?.tunnel.connected != true {
+                if !model.isRemoteClient, !model.tunnelConnected {
                     if model.isTunnelConnectionChecking {
                         Label(
                             "macos.checkingthesecuremcptunnelconnection",

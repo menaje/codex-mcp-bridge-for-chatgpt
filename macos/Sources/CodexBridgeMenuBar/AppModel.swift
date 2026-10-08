@@ -322,7 +322,18 @@ final class AppModel: ObservableObject {
     var dashboardDetailLoading: Bool {
         dashboardPanel == .history && dashboard.map { $0.historyIncluded ?? true } != true
     }
-    @Published var settings: SettingsSnapshot?
+    @Published var settings: SettingsSnapshot? {
+        didSet { fenceChangedProjects(previous: oldValue, next: settings) }
+    }
+    @Published private(set) var helperObservationFailure: LocalRPCFailure?
+    @Published private(set) var lastHelperObservation: Date?
+    @Published private(set) var dashboardObservationFailure: LocalRPCFailure?
+    @Published private(set) var settingsObservationFailure: LocalRPCFailure?
+    @Published private(set) var lastSettingsObservation: Date?
+    @Published private(set) var skillObservationFailure: LocalRPCFailure?
+    @Published private(set) var lastSkillLibraryObservation: Date?
+    private var helperConnectionUnconfirmed = false
+    private var projectionGeneration = 0
     @Published private(set) var skillLibrary: BridgeSkillLibrarySnapshot?
     @Published private(set) var selectedBridgeSkill: BridgeSkill?
     @Published private(set) var selectedBridgeSkillFile: BridgeSkillFile?
@@ -504,7 +515,7 @@ final class AppModel: ObservableObject {
         if !status.configuration.valid { return .problem(.configuration) }
         // An intentional stop is healthy. Failed/retrying starts still have a grace period.
         if status.phase == "stopped", status.lastError == nil, status.lastProblem == nil { return .healthy }
-        if status.phase == "running", status.bridge.observation == "timed-out" {
+        if bridgeResponseUnconfirmed {
             return .problem(.responseUnconfirmed)
         }
         if status.phase == "running", status.bridge.stateServiceStorageError != nil {
@@ -515,6 +526,7 @@ final class AppModel: ObservableObject {
            stateServiceStatus != "ready" {
             return .problem(.responseUnconfirmed)
         }
+        if helperObservationFailure != nil { return .problem(.runtime) }
         if status.phase != "running" || !status.bridge.connected { return .problem(.runtime) }
         if networkAvailable == false || !status.tunnel.connected { return .problem(.tunnel) }
         guard let auth = authStatus else { return authErrorMessage == nil ? .unknown : .problem(.authenticationStatus) }
@@ -694,12 +706,17 @@ final class AppModel: ObservableObject {
     }
 
     var bridgeConnected: Bool {
-        isRemoteClient ? remoteHello != nil : helperStatus?.bridge.connected == true
+        isRemoteClient ? remoteHello != nil : helperObservationFailure == nil && helperStatus?.bridge.connected == true
+    }
+
+    var tunnelConnected: Bool {
+        isRemoteClient ? remoteHello != nil : helperObservationFailure == nil && helperStatus?.tunnel.connected == true
     }
 
     var bridgeResponseUnconfirmed: Bool {
         guard !isRemoteClient, let status = helperStatus else { return false }
         guard status.phase == "running" else { return false }
+        if helperConnectionUnconfirmed { return true }
         if status.bridge.observation == "timed-out" { return true }
         if status.bridge.stateServiceStorageError != nil { return false }
         if let stateServiceStatus = status.bridge.stateServiceStatus {
@@ -723,7 +740,7 @@ final class AppModel: ObservableObject {
 
     var hasRetainedBridgeObservation: Bool {
         (bridgeResponseUnconfirmed || bridgeStateStorageError != nil) &&
-            helperStatus?.bridge.lastSuccessfulAt != nil
+            (lastHelperObservation != nil || helperStatus?.bridge.lastSuccessfulAt != nil)
     }
 
     var hasConnectionTarget: Bool {
@@ -832,7 +849,7 @@ final class AppModel: ObservableObject {
         }
         guard let helperStatus,
               helperStatus.configuration.valid,
-              helperStatus.bridge.connected,
+              bridgeConnected,
               helperStatus.tunnel.connected,
               helperStatus.phase == "running" else {
             return .unavailable
@@ -1359,7 +1376,7 @@ final class AppModel: ObservableObject {
         statusRequestGeneration += 1
         let requestGeneration = statusRequestGeneration
         defer {
-            if generation == connectionGeneration, requestGeneration == statusRequestGeneration {
+            if !Task.isCancelled, generation == connectionGeneration, requestGeneration == statusRequestGeneration {
                 systemObservationPending = false
                 scheduleOperationalObservation()
             }
@@ -1378,7 +1395,7 @@ final class AppModel: ObservableObject {
             do {
                 guard let client = try remoteClientIfSelected() else { return }
                 let hello = try await client.hello()
-                guard generation == connectionGeneration, requestGeneration == statusRequestGeneration, isRemoteClient else { return }
+                guard !Task.isCancelled, generation == connectionGeneration, requestGeneration == statusRequestGeneration, isRemoteClient else { return }
                 let refreshContent = systemObservationPending || remoteHello == nil
                 remoteHello = hello
                 remoteOperationalProblem = nil
@@ -1387,14 +1404,15 @@ final class AppModel: ObservableObject {
                 updateActiveProfile(from: hello)
                 resumeDeferredDashboardReadIfNeeded()
                 let remoteRuntime = try? await client.runtimeStatus(inspectBackgroundProcesses: false)
-                guard generation == connectionGeneration, requestGeneration == statusRequestGeneration, isRemoteClient else { return }
+                guard !Task.isCancelled, generation == connectionGeneration, requestGeneration == statusRequestGeneration, isRemoteClient else { return }
                 remoteAuthConnection = remoteRuntime?.authConnection
                 if refreshContent {
                     lastDashboardEnrichment = nil
                     enqueueRefresh(["settings"])
                 }
             } catch {
-                guard generation == connectionGeneration, requestGeneration == statusRequestGeneration, isRemoteClient else { return }
+                guard !(error is CancellationError) else { return }
+                guard !Task.isCancelled, generation == connectionGeneration, requestGeneration == statusRequestGeneration, isRemoteClient else { return }
                 remoteHello = nil
                 remoteOperationalProblem = OperationalProblem.remoteError(error)
                 let message = localizedErrorDescription(error)
@@ -1409,14 +1427,14 @@ final class AppModel: ObservableObject {
         do {
             let client = await helperClient()
             let next = try await client.health()
-            guard generation == connectionGeneration, requestGeneration == statusRequestGeneration, !isRemoteClient else { return }
+            guard !Task.isCancelled, generation == connectionGeneration, requestGeneration == statusRequestGeneration, !isRemoteClient else { return }
             recordLocalConnectionStatus(next)
             statusErrorMessage = nil
             beginChangeWatchingIfNeeded()
         } catch {
-            guard generation == connectionGeneration, requestGeneration == statusRequestGeneration, !isRemoteClient else { return }
-            recordLocalConnectionStatus(nil)
-            statusErrorMessage = localizedErrorDescription(error)
+            guard !Task.isCancelled, generation == connectionGeneration, requestGeneration == statusRequestGeneration, !isRemoteClient else { return }
+            guard !(error is CancellationError) else { return }
+            recordLocalConnectionFailure(error)
             logger.error("helper status check failed: \(error.localizedDescription, privacy: .public)")
         }
         beginBridgeReadinessPollingIfNeeded()
@@ -1435,24 +1453,104 @@ final class AppModel: ObservableObject {
     }
 
     func recordLocalConnectionStatus(_ next: HelperStatus?, at now: Date = Date()) {
-        let refreshContent = systemObservationPending || helperStatus?.bridge.connected != true
+        guard let next else {
+            recordLocalConnectionFailure(LocalRPCError.emptyResponse, at: now)
+            return
+        }
+        let refreshContent = systemObservationPending || !bridgeConnected
+        let previous = helperStatus
+        if let previous,
+           previous.pid != next.pid || previous.startedAt != next.startedAt ||
+           previous.bridge.socketPath != next.bridge.socketPath {
+            invalidateProjectedObservations()
+            settings = nil
+            lastSettingsObservation = nil
+            settingsObservationFailure = nil
+        }
+        if next.phase == "stopped" || next.phase == "backoff" || next.phase == "failed" {
+            invalidateProjectedObservations()
+            settings = nil
+            lastSettingsObservation = nil
+            settingsObservationFailure = nil
+        }
+        helperObservationFailure = nil
+        helperConnectionUnconfirmed = false
+        lastHelperObservation = now
+        statusErrorMessage = nil
         systemObservationPending = false
         helperStatus = next
-        if let next { observeLifecycle(next.lifecycle) }
+        observeLifecycle(next.lifecycle)
         localConnectionRecovery.observe(
-            available: next?.bridge.connected == true && next?.tunnel.connected == true,
-            retryable: next.map { $0.phase == "running" && $0.configuration.valid } ?? true,
+            available: next.bridge.connected == true && next.tunnel.connected == true,
+            retryable: next.phase == "running" && next.configuration.valid,
             at: now
         )
         scheduleConnectionRecoveryExpiry(at: now)
         resumeDeferredDashboardReadIfNeeded()
-        if refreshContent, next?.bridge.connected == true {
+        if refreshContent, next.bridge.connected == true {
             lastDashboardEnrichment = nil
             enqueueRefresh(["settings"])
         }
-        if next?.bridge.connected == true {
+        if next.bridge.connected == true {
             scheduleCompletionNotificationDelivery()
         }
+    }
+
+    /// A failed local observation says nothing about process termination.
+    func recordLocalConnectionFailure(_ error: Error, at now: Date = Date()) {
+        guard !Task.isCancelled, let evidence = LocalRPCFailure(error: error) else { return }
+        helperObservationFailure = evidence
+        helperConnectionUnconfirmed = (error as? LocalRPCError)?.isObservationConnectionFailure == true
+        systemObservationPending = false
+        statusErrorMessage = localizedErrorDescription(error)
+        localConnectionRecovery.observe(available: false, retryable: helperStatus == nil ||
+            (helperStatus?.phase == "running" && helperStatus?.configuration.valid == true), at: now)
+        scheduleConnectionRecoveryExpiry(at: now)
+    }
+
+    /// UUID/ref/revision and archive state participate; cwd alone is never identity.
+    private struct ProjectObservationTarget: Equatable {
+        let id: String
+        let ref: String
+        let revision: Int
+        let cwd: String
+        let archiveState: String?
+        let archiveRevision: Int?
+        init(_ project: BridgeProject) {
+            id = project.id; ref = project.projectRef; revision = project.projectRevision
+            cwd = project.cwd; archiveState = project.archiveState; archiveRevision = project.archiveRevision
+        }
+    }
+
+    private func fenceChangedProjects(previous: SettingsSnapshot?, next: SettingsSnapshot?) {
+        guard let previous, let next else { return }
+        let oldTargets = previous.settings.projects.sorted { $0.id < $1.id }.map(ProjectObservationTarget.init)
+        let newTargets = next.settings.projects.sorted { $0.id < $1.id }.map(ProjectObservationTarget.init)
+        if oldTargets != newTargets { invalidateProjectedObservations() }
+    }
+
+    private func invalidateProjectedObservations() {
+        projectionGeneration += 1
+        dashboardRequestGeneration += 1
+        skillLibraryRequestGeneration += 1
+        bridgeSkillSelectionRequestGeneration += 1
+        bridgeSkillFileRequestGeneration += 1
+        dashboardEnrichmentRequest = nil
+        dashboard = nil
+        lastDashboardRefresh = nil
+        dashboardObservationDate = nil
+        dashboardObservationFailure = nil
+        dashboardErrorMessage = nil
+        clearDashboardHistoryDetails()
+        skillLibrary = nil
+        selectedBridgeSkill = nil
+        selectedBridgeSkillFile = nil
+        selectedBridgeSkillVersions = nil
+        bridgeSkillFileCache.removeAll()
+        bridgeSkillFileLoading = false
+        skillObservationFailure = nil
+        skillLibraryErrorMessage = nil
+        lastSkillLibraryObservation = nil
     }
 
     func toggleDashboardPanel(_ panel: DashboardPanel) async {
@@ -1657,6 +1755,7 @@ final class AppModel: ObservableObject {
               !dashboardHistoryLoading.contains(row.rowKey) else { return }
         let rowKey = row.rowKey
         let connection = connectionGeneration
+        let projection = projectionGeneration
         let dashboardRequest = dashboardRequestGeneration
         let requestID = UUID()
         dashboardHistoryRequestIDs[rowKey] = requestID
@@ -1671,8 +1770,9 @@ final class AppModel: ObservableObject {
         do {
             let client = try await bridgeClient()
             let detail = try await client.dashboardHistoryDetail(rowKey: rowKey)
-            guard connection == connectionGeneration,
+            guard !Task.isCancelled, connection == connectionGeneration, projection == projectionGeneration,
                   dashboardRequest == dashboardRequestGeneration,
+                  dashboardHistoryRequestIDs[rowKey] == requestID,
                   detail.kind == "dashboard-history", detail.rowKey == rowKey else { return }
             if let expectedRevision = row.historyRevision,
                let receivedRevision = detail.historyRevision,
@@ -1685,7 +1785,8 @@ final class AppModel: ObservableObject {
             }
             dashboardHistoryDetails[rowKey] = detail
         } catch {
-            guard connection == connectionGeneration,
+            guard !(error is CancellationError) else { return }
+            guard !Task.isCancelled, connection == connectionGeneration, projection == projectionGeneration,
                   dashboardRequest == dashboardRequestGeneration else { return }
             dashboardHistoryErrors[rowKey] = localizedErrorDescription(error)
         }
@@ -1733,6 +1834,7 @@ final class AppModel: ObservableObject {
         }
         deferredDashboardRead = nil
         let connection = connectionGeneration
+        let projection = projectionGeneration
         let filter = DashboardStatusFilter.all
         let includeHistory = dashboardPanel == .history
         do {
@@ -1746,7 +1848,7 @@ final class AppModel: ObservableObject {
                 problems: self.dashboardProblemQuery,
                 includeHistory: includeHistory
             )
-            guard !Task.isCancelled, connection == connectionGeneration,
+            guard !Task.isCancelled, connection == connectionGeneration, projection == projectionGeneration,
                   generation == dashboardRequestGeneration else { return }
             dashboard = dashboardWithCurrentUsage(next, previous: dashboard)
             clearDashboardHistoryDetails()
@@ -1757,6 +1859,7 @@ final class AppModel: ObservableObject {
             }
             lastDashboardRefresh = Date()
             dashboardErrorMessage = nil
+            dashboardObservationFailure = nil
             if applyCachedEnrichment, next.enrichment?.pendingReads != nil {
                 recordDashboardEnrichment(next)
             }
@@ -1764,8 +1867,10 @@ final class AppModel: ObservableObject {
                 scheduleDashboardEnrichment(generation: generation, terminalOffset: 0, idleOffset: 0)
             }
         } catch {
-            guard !Task.isCancelled, connection == connectionGeneration,
+            guard !(error is CancellationError) else { return }
+            guard !Task.isCancelled, connection == connectionGeneration, projection == projectionGeneration,
                   generation == dashboardRequestGeneration else { return }
+            dashboardObservationFailure = LocalRPCFailure(error: error)
             dashboardErrorMessage = localizedErrorDescription(error)
         }
     }
@@ -1798,6 +1903,7 @@ final class AppModel: ObservableObject {
         let taskID = UUID()
         dashboardEnrichmentTaskID = taskID
         let connection = connectionGeneration
+        let projection = projectionGeneration
         lastDashboardEnrichment = Date()
         dashboardEnrichmentTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -1823,7 +1929,7 @@ final class AppModel: ObservableObject {
                             problems: target.problems,
                             includeHistory: target.includeHistory
                         )
-                        guard !Task.isCancelled, connection == self.connectionGeneration,
+                        guard !Task.isCancelled, connection == self.connectionGeneration, projection == self.projectionGeneration,
                               let latest = self.dashboardEnrichmentRequest,
                               latest.generation == self.dashboardRequestGeneration else { return }
                         if latest.generation != target.generation {
@@ -1847,7 +1953,8 @@ final class AppModel: ObservableObject {
                         self.recordDashboardEnrichment(enriched)
                         return
                     } catch {
-                        guard !Task.isCancelled, connection == self.connectionGeneration,
+            guard !(error is CancellationError) else { return }
+                        guard !Task.isCancelled, connection == self.connectionGeneration, projection == self.projectionGeneration,
                               let latest = self.dashboardEnrichmentRequest,
                               latest.generation == self.dashboardRequestGeneration else { return }
                         if latest.generation != target.generation {
@@ -1861,9 +1968,10 @@ final class AppModel: ObservableObject {
                     }
                 }
             } catch {
+            guard !(error is CancellationError) else { return }
                 guard !Task.isCancelled,
                       self.dashboardEnrichmentRequest?.generation == self.dashboardRequestGeneration,
-                      connection == self.connectionGeneration else { return }
+                      connection == self.connectionGeneration, projection == self.projectionGeneration else { return }
                 self.dashboardEnrichmentFailed = true
                 self.dashboardEnrichmentPending = false
             }
@@ -1886,13 +1994,14 @@ final class AppModel: ObservableObject {
             return
         }
         let generation = connectionGeneration
+        let projection = projectionGeneration
         do {
             let client = try await bridgeClient()
             let next = try await client.settings(
                 refreshModels: refreshModels,
                 locale: interfaceLocaleIdentifier
             )
-            guard !Task.isCancelled, generation == connectionGeneration,
+            guard !Task.isCancelled, generation == connectionGeneration, projection == projectionGeneration,
                   request == settingsRequestGeneration,
                   settingsSnapshotIsCurrent(next) else { return }
             settings = next
@@ -1900,10 +2009,14 @@ final class AppModel: ObservableObject {
                 interfaceLocalePreference = next.settings.uiLocalePreference
             }
             settingsLoadErrorMessage = nil
+            settingsObservationFailure = nil
+            lastSettingsObservation = Date()
             scheduleCompletionNotificationDelivery()
         } catch {
-            guard !Task.isCancelled, generation == connectionGeneration,
+            guard !(error is CancellationError) else { return }
+            guard !Task.isCancelled, generation == connectionGeneration, projection == projectionGeneration,
                   request == settingsRequestGeneration else { return }
+            settingsObservationFailure = LocalRPCFailure(error: error)
             settingsLoadErrorMessage = localizedErrorDescription(error)
         }
     }
@@ -1928,18 +2041,23 @@ final class AppModel: ObservableObject {
             return
         }
         let generation = connectionGeneration
+        let projection = projectionGeneration
         do {
             let client = try await bridgeClient()
             let next = try await client.skillLibrary()
             guard !Task.isCancelled,
-                  generation == connectionGeneration,
+                  generation == connectionGeneration, projection == projectionGeneration,
                   request == skillLibraryRequestGeneration else { return }
             skillLibrary = next
+            lastSkillLibraryObservation = Date()
+            skillObservationFailure = nil
             skillLibraryErrorMessage = nil
         } catch {
+            guard !(error is CancellationError) else { return }
             guard !Task.isCancelled,
-                  generation == connectionGeneration,
+                  generation == connectionGeneration, projection == projectionGeneration,
                   request == skillLibraryRequestGeneration else { return }
+            skillObservationFailure = LocalRPCFailure(error: error)
             skillLibraryErrorMessage = localizedErrorDescription(error)
         }
     }
@@ -1953,12 +2071,14 @@ final class AppModel: ObservableObject {
         bridgeSkillSelectionRequestGeneration += 1
         let request = bridgeSkillSelectionRequestGeneration
         let generation = connectionGeneration
+        let projection = projectionGeneration
         do {
             let client = try await bridgeClient()
             let skill = try await client.readBridgeSkill(reference)
             guard !Task.isCancelled,
-                  generation == connectionGeneration,
+                  generation == connectionGeneration, projection == projectionGeneration,
                   request == bridgeSkillSelectionRequestGeneration else { return }
+            skillObservationFailure = nil
             selectedBridgeSkill = skill
             selectedBridgeSkillFile = nil
             selectedBridgeSkillVersions = nil
@@ -1966,22 +2086,25 @@ final class AppModel: ObservableObject {
             do {
                 let versions = try await client.bridgeSkillVersions(skillId: reference.skillId)
                 guard !Task.isCancelled,
-                      generation == connectionGeneration,
+                      generation == connectionGeneration, projection == projectionGeneration,
                       request == bridgeSkillSelectionRequestGeneration else { return }
                 selectedBridgeSkillVersions = versions
             } catch {
+            guard !(error is CancellationError) else { return }
                 // Skill content remains usable even if a legacy remote server has
                 // not yet exposed version history. The next explicit refresh
                 // will retry this optional management view.
                 guard !Task.isCancelled,
-                      generation == connectionGeneration,
+                      generation == connectionGeneration, projection == projectionGeneration,
                       request == bridgeSkillSelectionRequestGeneration else { return }
                 selectedBridgeSkillVersions = nil
             }
         } catch {
+            guard !(error is CancellationError) else { return }
             guard !Task.isCancelled,
-                  generation == connectionGeneration,
+                  generation == connectionGeneration, projection == projectionGeneration,
                   request == bridgeSkillSelectionRequestGeneration else { return }
+            skillObservationFailure = LocalRPCFailure(error: error)
             skillLibraryErrorMessage = localizedErrorDescription(error)
         }
     }
@@ -1990,14 +2113,15 @@ final class AppModel: ObservableObject {
         guard let skill = selectedBridgeSkill else { return }
         let reference = skill.skill.reference
         let cacheKey = "\(reference.skillId)\u{0}\(reference.version)\u{0}\(path)"
+        bridgeSkillFileRequestGeneration += 1
         if let cached = bridgeSkillFileCache[cacheKey] {
             selectedBridgeSkillFile = cached
             return
         }
-        selectedBridgeSkillFile = nil
-        bridgeSkillFileRequestGeneration += 1
+
         let request = bridgeSkillFileRequestGeneration
         let generation = connectionGeneration
+        let projection = projectionGeneration
         bridgeSkillFileLoading = true
         defer {
             if request == bridgeSkillFileRequestGeneration { bridgeSkillFileLoading = false }
@@ -2005,15 +2129,18 @@ final class AppModel: ObservableObject {
         do {
             let client = try await bridgeClient()
             let file = try await client.readBridgeSkillFile(reference, path: path)
-            guard !Task.isCancelled, generation == connectionGeneration,
+            guard !Task.isCancelled, generation == connectionGeneration, projection == projectionGeneration,
                   request == bridgeSkillFileRequestGeneration,
                   selectedBridgeSkill?.skill.reference == reference else { return }
+            skillObservationFailure = nil
             bridgeSkillFileCache[cacheKey] = file
             selectedBridgeSkillFile = file
             skillLibraryErrorMessage = nil
         } catch {
-            guard !Task.isCancelled, generation == connectionGeneration,
+            guard !(error is CancellationError) else { return }
+            guard !Task.isCancelled, generation == connectionGeneration, projection == projectionGeneration,
                   request == bridgeSkillFileRequestGeneration else { return }
+            skillObservationFailure = LocalRPCFailure(error: error)
             skillLibraryErrorMessage = localizedErrorDescription(error)
         }
     }
@@ -2546,6 +2673,7 @@ final class AppModel: ObservableObject {
             return false
         }
         if isRemoteClient {
+            finishShutdownObservation()
             applicationShutdownCompleted = true
             cancelAllPolling()
             setRemotePairingInvitation(nil)
@@ -2566,6 +2694,7 @@ final class AppModel: ObservableObject {
                !FileManager.default.fileExists(atPath: paths.helperSocket.path) {
                 do {
                     try await bootstrapper.shutdown(paths: paths)
+                    finishShutdownObservation()
                     applicationShutdownCompleted = true
                     runtimeErrorMessage = nil
                     cancelAllPolling()
@@ -2861,6 +2990,8 @@ final class AppModel: ObservableObject {
                 lastAutosavedDraft = autosavedDraft
             }
             settings = updated
+            settingsObservationFailure = nil
+            lastSettingsObservation = Date()
             settingsConflictMessage = nil
             return true
         } catch {
@@ -2988,6 +3119,7 @@ final class AppModel: ObservableObject {
                 await refreshAll()
             } else {
                 try RuntimeLifecycleHandoffStore.write(requestId: operation.requestId, completed: true, runtimeLockDirectory: paths.runtimeLockDirectory)
+                finishShutdownObservation()
                 applicationShutdownCompleted = true
                 cancelAllPolling()
                 setRemotePairingInvitation(nil)
@@ -3085,7 +3217,28 @@ final class AppModel: ObservableObject {
         )
     }
 
+    private func finishShutdownObservation() {
+        connectionGeneration += 1
+        statusRequestGeneration += 1
+        settingsRequestGeneration += 1
+        invalidateProjectedObservations()
+        helperStatus = nil
+        helperObservationFailure = nil
+        helperConnectionUnconfirmed = false
+        lastHelperObservation = nil
+        settings = nil
+        settingsObservationFailure = nil
+        lastSettingsObservation = nil
+    }
+
     private func resetConnectionContext() {
+        invalidateProjectedObservations()
+        helperStatus = nil
+        helperObservationFailure = nil
+        helperConnectionUnconfirmed = false
+        lastHelperObservation = nil
+        settingsObservationFailure = nil
+        lastSettingsObservation = nil
         authRefreshTask?.cancel()
         authRefreshTask = nil
         authRefreshPending = false
