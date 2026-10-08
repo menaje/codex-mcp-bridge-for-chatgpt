@@ -36,11 +36,12 @@ final class UnixSocketRPCClientTests: XCTestCase {
         let server = try NativeRPCFixture(path: path, requestReply: { _, params in
             let count = received.append(params)
             if count == 1 { return NativeFixtureReply(body: "") }
-            return NativeFixtureReply(body: #"{"result":{"requestId":"same-receipt","kind":"start","force":false,"state":"queued","phase":"queued","createdAt":"now","updatedAt":"now","impact":null,"result":null,"error":null,"cancellable":true}}"#)
+            return NativeFixtureReply(body: #"{"result":{"requestId":"same-receipt","kind":"start","force":false,"phase":"waiting","createdAt":"2026-10-08T00:00:00Z","updatedAt":"2026-10-08T00:00:00Z","reasons":[],"error":null,"cancellable":true}}"#)
         })
         defer { server.stop() }
         let request = RuntimeLifecycleRequest(requestId: "same-receipt", kind: "start", force: false)
-        _ = try await MacOSHelperClient(socketPath: path).requestLifecycle(request)
+        let receipt = try await MacOSHelperClient(socketPath: path).requestLifecycle(request)
+        XCTAssertEqual(receipt.requestId, request.requestId)
         let payloads = received.values
         XCTAssertEqual(payloads.count, 2)
         let first = try JSONSerialization.jsonObject(with: Data(payloads[0].utf8)) as? NSDictionary
