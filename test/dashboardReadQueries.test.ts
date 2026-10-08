@@ -115,4 +115,32 @@ describe("Dashboard query cost", () => {
       expect(statements).toEqual([]);
     } finally { store.close(); }
   });
+
+  it("keeps scoped retained-history totals and global ordering across Agent filter batches", () => {
+    const statements: string[] = [];
+    const store = new BridgeStateStore({ file: ":memory:", traceSql: sql => statements.push(sql) });
+    try {
+      const now = Date.now();
+      const older = store.createAgent({ scopeId, agentName: "Older" });
+      const newer = store.createAgent({ scopeId, agentName: "Newer" });
+      for (const [agent, age] of [[older, 2], [newer, 1]] as const) {
+        const jobId = randomUUID();
+        store.upsertJob({ jobId, agentId: agent.agentId, activityId: randomUUID(), scopeId,
+          requestId: randomUUID(), status: "completed", createdAt: now - age, updatedAt: now - age });
+        store.deleteJob(jobId);
+      }
+      const missing = Array.from({ length: 520 }, () => randomUUID());
+      statements.length = 0;
+      const result = store.dashboardReadModel.archivedByAgent(scopeId, 13, "updated",
+        [older.agentId, ...missing, newer.agentId, older.agentId]);
+      expect(result.rows.map(row => row.agent_id)).toEqual([newer.agentId, older.agentId]);
+      expect(result.totalsByAgent).toEqual(new Map([[older.agentId, 1], [newer.agentId, 1]]));
+      expect(statements).toHaveLength(2);
+      const otherScope = "22222222-2222-4222-8222-222222222222";
+      expect(store.dashboardReadModel.archivedByAgent(otherScope, 13, "updated", [older.agentId]).rows).toEqual([]);
+      statements.length = 0;
+      expect(store.dashboardReadModel.archivedByAgent(scopeId, 13, "updated", []).rows).toEqual([]);
+      expect(statements).toEqual([]);
+    } finally { store.close(); }
+  });
 });

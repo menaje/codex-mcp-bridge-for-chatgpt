@@ -83,6 +83,8 @@ export class DashboardReadModel {
         rows.push(...page.rows);
         for (const [id, total] of page.totalsByAgent) totalsByAgent.set(id, total);
       }
+      rows.sort((a, b) => b.updated_at - a.updated_at ||
+        (a.job_id < b.job_id ? 1 : a.job_id > b.job_id ? -1 : 0));
       return { rows, totalsByAgent };
     }
     const historyLimit = limit - 1;
