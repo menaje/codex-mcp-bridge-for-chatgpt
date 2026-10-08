@@ -1,0 +1,8 @@
+{
+  "alertSetting" : 0,
+  "authorization" : "notDetermined",
+  "bundleIdentifier" : "com.menaje.issue242-permission-probe",
+  "permissionRequested" : false,
+  "scope" : "Distinct isolated probe app; cannot establish operational app permission",
+  "soundSetting" : 0
+}

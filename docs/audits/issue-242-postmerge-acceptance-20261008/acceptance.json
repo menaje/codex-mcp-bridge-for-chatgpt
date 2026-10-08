@@ -1,0 +1,59 @@
+{
+  "verdict": "NO-GO for Issue #242 closure",
+  "source": {
+    "observedAt": "2026-10-07T21:03:38.524836+00:00",
+    "remoteDev": "612f230b16d8ad37ddfdc718d4d3f2856c4565b0",
+    "mergeCommit": "612f230b16d8ad37ddfdc718d4d3f2856c4565b0",
+    "mergeTree": "d84c60eaba624efaf2e4a7280b6ebdb460213406",
+    "testedSelectionTree": "d84c60eaba624efaf2e4a7280b6ebdb460213406",
+    "productSourceDiff": "",
+    "issue": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/242",
+    "issueState": "OPEN",
+    "auditOnlyBranch": "codex/issue-242-postmerge-acceptance-20261008",
+    "integration": "User requested separate audit evidence; no dev integration or GitHub mutation performed"
+  },
+  "tests": {
+    "native": {
+      "passed": 244,
+      "skipped": 2,
+      "failed": 0,
+      "scope": "exact-merge full Swift tests; live companion and HTTPS pairing skipped"
+    },
+    "focused": {
+      "passed": 85,
+      "failed": 0,
+      "skipped": 0,
+      "files": 10
+    },
+    "isolatedNativeReleaseStartup": "PASS after correcting audit-only copied runtime layout; first failure retained",
+    "browser": {
+      "simulatedBundleCards": "PASS",
+      "operationalBundleCardHTMLWithFakeHost": "PASS",
+      "summaryChecks": 9
+    },
+    "readProfiles": [
+      "1200 short payload",
+      "6000 short payload",
+      "1200 heterogeneous 512B/4KiB/16KiB/256KiB payload"
+    ],
+    "completionCounts": "PASS",
+    "localTunnelClassificationAndObservation": "PASS",
+    "realCodexExecutions": 0
+  },
+  "blocked": [
+    "Operational installed app still old build 9be3bb6c70b8:2dd00dba8f3d; no new-merge operational installation/user-flow acceptance",
+    "Clean npm-ci/full release-distribution bundle gate interrupted under ENOSPC; simulated bundle used cloned dependencies and host Node",
+    "Audit-process Accessibility and Screen Recording denied; no OS automation/capture permission changes",
+    "Distinct notification probe notDetermined; operational notification authorization and real delivery unverified",
+    "Hosted failure/hang recovery and observed production method rates not tested; no allowed fault injection into active services",
+    "Production 502 request/termination-phase joins absent; no causal conclusion or linked investigation transfer established"
+  ],
+  "sharedCodexStateReview": {
+    "priorIsolationViolation": "Real CLI account fixture could access shared home; no pre-run DB baseline",
+    "authAndConfig": "Prior modification timestamps predate failed integration wrapper; current metadata unchanged",
+    "sharedSQLite": "Historical non-modification and attribution remain unverified; current metadata unchanged is not semantic proof",
+    "remediation": "No rollback/deletion/checkpoint or credential change justified from available evidence. Preserve state and isolation incident; fresh owned HOME/CODEX_HOME and no global real-CLI selection used here."
+  },
+  "preservation": "Existing branch heads/root dev and production PIDs/native hash preserved; live operational DB metadata advanced under active services, no audit DB access",
+  "scope": "SAFE acceptance only; no production service controls, real task submission, production DB opening, credential reading/writing, issue closure, Actions change, or existing-worktree removal"
+}

@@ -1,0 +1,65 @@
+{
+  "at": "2026-10-07T20:59:28.479012+00:00",
+  "metadataOnly": [
+    {
+      "path": "/Users/seongsik/.codex/auth.json",
+      "bytes": 4339,
+      "mtime_ns": 1790637154167217315,
+      "mode": "0o600",
+      "beforeEqual": true
+    },
+    {
+      "path": "/Users/seongsik/.codex/config.toml",
+      "bytes": 8875,
+      "mtime_ns": 1791358352295974066,
+      "mode": "0o600",
+      "beforeEqual": true
+    },
+    {
+      "path": "/Users/seongsik/.codex/state_5.sqlite",
+      "bytes": 201433088,
+      "mtime_ns": 1791405186749853358,
+      "mode": "0o644",
+      "beforeEqual": true
+    },
+    {
+      "path": "/Users/seongsik/.codex/state_5.sqlite-wal",
+      "bytes": 0,
+      "mtime_ns": 1791405478676870377,
+      "mode": "0o644",
+      "beforeEqual": true
+    },
+    {
+      "path": "/Users/seongsik/.codex-mcp-bridge/state.sqlite",
+      "bytes": 15724544,
+      "mtime_ns": 1791406747599785390,
+      "mode": "0o600",
+      "beforeEqual": false
+    },
+    {
+      "path": "/Users/seongsik/.codex-mcp-bridge/.env",
+      "exists": false
+    },
+    {
+      "path": "/Users/seongsik/.config/codex-mcp-bridge/.env",
+      "bytes": 774,
+      "mtime_ns": 1789267399511014765,
+      "mode": "0o600",
+      "beforeEqual": true
+    }
+  ],
+  "existingBranchDeltas": {},
+  "rootDev": "ea8f93e2acbb9f4b6deca113165d27e8c9c23857",
+  "rootStatus": "",
+  "originalProductionPidsStillAlive": {
+    "81462": true,
+    "81468": true,
+    "81488": true,
+    "81493": true,
+    "81526": true,
+    "81685": true
+  },
+  "operationalInstalledNativeSha256": "931457b14c5f101b116fc7b34bf3e54099f8600da7b01dcc2a65922712a46554",
+  "worktrees": "worktree /Volumes/Data/Dev/codex-mcp-bridge\nHEAD ea8f93e2acbb9f4b6deca113165d27e8c9c23857\nbranch refs/heads/dev\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-candidate-20261008\nHEAD b9cb19d49e8ef9192e1044ddd5880e66c06e1cca\nbranch refs/heads/codex/issue-242-candidate-20261008\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008\nHEAD d1a36b52e84c90c5a3738d2d845ecb2595e0b394\nbranch refs/heads/codex/issue-242-independent-20261008\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review\nHEAD de037d99d82aa42c5a792c1d3bd9c88afb45b173\nbranch refs/heads/codex/issue-242-integration-review\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-p0-w0\nHEAD f710974b33fc40432653c815d175058cba1adaee\nbranch refs/heads/codex/issue-242-p0-w0\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-postmerge-acceptance-20261008\nHEAD 612f230b16d8ad37ddfdc718d4d3f2856c4565b0\nbranch refs/heads/codex/issue-242-postmerge-acceptance-20261008\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-r502\nHEAD e550798fe16bd5944f69f1941a98d249e84adefc\nbranch refs/heads/codex/issue-242-r502\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w1-baseline\nHEAD 8474165e523b47d881f688bd09caf2e4c78ac7af\ndetached\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w1-read-path\nHEAD 5353458221aa65aa1768f434379801d09761344c\nbranch refs/heads/codex/issue-242-w1-read-path\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w2-native\nHEAD 8474165e523b47d881f688bd09caf2e4c78ac7af\nbranch refs/heads/codex/issue-242-w2-native\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w3-completion\nHEAD 6580a196a36dacaa94fff7a6b5a101f58efff9a8\nbranch refs/heads/codex/issue-242-w3-completion\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w4-runtime\nHEAD 2eb315d529e57164b3e4a53cf24737ef3f4649e1\nbranch refs/heads/codex/issue-242-w4-runtime\n\n",
+  "limitations": "Mutable shared SQLite metadata may advance due active Codex and bridge jobs; no DB handles opened, no rollback attempted; metadata is not attribution or full data-integrity proof"
+}

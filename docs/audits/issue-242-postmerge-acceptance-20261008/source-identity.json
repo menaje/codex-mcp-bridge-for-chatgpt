@@ -1,0 +1,12 @@
+{
+  "observedAt": "2026-10-07T21:03:38.524836+00:00",
+  "remoteDev": "612f230b16d8ad37ddfdc718d4d3f2856c4565b0",
+  "mergeCommit": "612f230b16d8ad37ddfdc718d4d3f2856c4565b0",
+  "mergeTree": "d84c60eaba624efaf2e4a7280b6ebdb460213406",
+  "testedSelectionTree": "d84c60eaba624efaf2e4a7280b6ebdb460213406",
+  "productSourceDiff": "",
+  "issue": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/242",
+  "issueState": "OPEN",
+  "auditOnlyBranch": "codex/issue-242-postmerge-acceptance-20261008",
+  "integration": "User requested separate audit evidence; no dev integration or GitHub mutation performed"
+}
