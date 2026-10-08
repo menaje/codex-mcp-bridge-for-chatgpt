@@ -21,9 +21,11 @@ describe("issue 242 shared read contract", () => {
       cwd: f.root, sandbox: "read-only", lastUsedAt: Date.now() });
     f.store.upsertJob({ jobId: otherJob, agentId: otherAgent.agentId, activityId: randomUUID(),
       scopeId: otherScope, requestId: "other-request", status: "completed", updatedAt: Date.now() });
-    // A scoped observer must not decode unrelated payloads at all.
-    f.database.prepare("UPDATE sessions SET selection=? WHERE thread_id=?").run("{", "other-thread");
-    f.database.prepare("UPDATE jobs SET payload=? WHERE job_id=?").run("{", otherJob);
+    // Valid JSON satisfies SQLite's constraint; its unpaired surrogate is
+    // rejected by the application's text-integrity parser if hydrated.
+    const unreadable = JSON.stringify({ fixture: String.fromCharCode(0xd800) });
+    f.database.prepare("UPDATE sessions SET selection=? WHERE thread_id=?").run(unreadable, "other-thread");
+    f.database.prepare("UPDATE jobs SET payload=? WHERE job_id=?").run(unreadable, otherJob);
     const service = await ChildProcessStateReadService.start(f.file, f.environment);
     try {
       const view = await service.dashboardSnapshot({ scopeId: fixtureScope, includeHistory: true });
@@ -32,7 +34,7 @@ describe("issue 242 shared read contract", () => {
       const row = view.terminalRows[0]!;
       expect(row).toBeDefined();
       // These paths do not use Session content, even in the selected scope.
-      f.database.prepare("UPDATE sessions SET selection=? WHERE scope_id=?").run("{", fixtureScope);
+      f.database.prepare("UPDATE sessions SET selection=? WHERE scope_id=?").run(unreadable, fixtureScope);
       const detail = await service.dashboardHistoryDetail({ scopeId: fixtureScope, rowKey: row.rowKey });
       expect(detail.historyRevision).toBe(row.historyRevision);
       expect((await service.settingsSnapshot()).settings.registryRevision).toBe(f.settings.current.registryRevision);
