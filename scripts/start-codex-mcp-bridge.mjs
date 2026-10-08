@@ -32,7 +32,7 @@ import {
   readTunnelClientVersion,
   recordTunnelProfileMetadata
 } from "./tunnel-profile.mjs";
-import { writeManagedRuntimeStatus } from "./runtime-status.mjs";
+import { createStartupDiagnostics, writeManagedRuntimeStatus } from "./runtime-status.mjs";
 import { createTunnelHealthObserver } from "./tunnel-health.mjs";
 import {
   assertWellFormedUnicode,
@@ -86,6 +86,8 @@ const runtimeEnvLoaded = args.help
         : undefined
     });
 if (!args.help) Object.assign(process.env, codexChildEnvironment(runtimeEnvFile, inheritedEnvironment));
+const startup = createStartupDiagnostics("launcher");
+startup("environment-loaded");
 const mode = args.mode || process.env.CODEX_MCP_BRIDGE_MODE || "local";
 const tunnelTransport =
   args.transport || process.env.CODEX_MCP_BRIDGE_TUNNEL_TRANSPORT || "http";
@@ -162,7 +164,9 @@ async function main() {
         )
       : undefined;
   enforceManagedAppAuthenticationBoundary();
+  startup("build-check-start");
   ensureBuilt();
+  startup("build-check-complete");
   if (mcpOAuthRequested(process.env)) {
     const { loadConfig } = await import(resolve(repoRoot, "dist/config.js"));
     // Validate the explicit settings before acquiring locks or starting children.
@@ -176,8 +180,10 @@ async function main() {
   ownsRuntimeState = true;
   publishRuntimeStatus();
   if (tunnelTransport === "http") {
+    startup("bridge-start");
     startBridge();
     await waitForHealth(`${localOriginUrl}/healthz`);
+    startup("bridge-healthy");
   }
 
   if (mode === "local") {
@@ -355,6 +361,7 @@ async function startSecureTunnel({ apiKey, tunnelId }) {
     if (init.status !== 0) throw new Error("tunnel-client init failed.");
   }
 
+  startup("tunnel-doctor-start");
   const doctor = spawnSync(tunnelClient, ["doctor", "--profile", profile, "--explain"], {
     cwd: repoRoot,
     env: childEnvironment
@@ -366,6 +373,7 @@ async function startSecureTunnel({ apiKey, tunnelId }) {
   if (doctor.status !== 0 && (mcpOAuthRequested(process.env) || !isIgnorableNoAuthDoctorFailure(`${doctorStdout}\n${doctorStderr}`))) {
     throw new Error("tunnel-client doctor failed. Fix the tunnel or API-key setup first.");
   }
+  startup("tunnel-doctor-complete");
   recordTunnelProfileMetadata({
     tunnelClient,
     profile,
@@ -395,6 +403,7 @@ async function startSecureTunnel({ apiKey, tunnelId }) {
     lastProblem: null
   };
   publishRuntimeStatus();
+  startup("tunnel-spawn-start");
   const tunnel = spawnChild(tunnelClient, [
     "run",
     "--profile",
@@ -415,13 +424,15 @@ async function startSecureTunnel({ apiKey, tunnelId }) {
       process.env.CODEX_MCP_BRIDGE_OAUTH_RESOURCE_METADATA_URL ?? process.env.CODEX_GPT_BRIDGE_OAUTH_RESOURCE_METADATA_URL ?? "",
       host, port
     ) ? ["--harpoon.allow-plaintext-http=true"] : [])
-  ], { env: childEnvironment });
+  ], { env: childEnvironment, privateFileCreation: true });
+  startup("tunnel-spawned");
   tunnelState = { ...tunnelState, processRunning: true };
   publishRuntimeStatus();
   tunnelHealthObserver = createTunnelHealthObserver({
     urlFile: tunnelHealthUrlFile, pidFile: tunnelPidFile, expectedPid: tunnel.pid
   });
   await waitForTunnelReady(tunnel);
+  startup("tunnel-ready");
   runtimePhase = "running";
   tunnelState = {
     ...tunnelState,
@@ -490,11 +501,22 @@ function shellQuote(value) {
 }
 
 function spawnChild(command, childArgs, options = {}) {
-  const child = spawn(command, childArgs, {
-    cwd: repoRoot,
-    env: options.env || process.env,
-    stdio: ["ignore", "pipe", "pipe"]
-  });
+  // tunnel-client writes its PID with mode 0644. Restrict the inherited mask
+  // before it can create either locator; chmod after creation leaves a race.
+  // Restore synchronously so other children retain the launcher's own mask.
+  const previousMask = options.privateFileCreation && process.platform !== "win32"
+    ? process.umask() : undefined;
+  let child;
+  try {
+    if (previousMask !== undefined) process.umask(previousMask | 0o077);
+    child = spawn(command, childArgs, {
+      cwd: repoRoot,
+      env: options.env || process.env,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+  } finally {
+    if (previousMask !== undefined) process.umask(previousMask);
+  }
   children.add(child);
   child.stdout.on("data", (chunk) => process.stdout.write(chunk));
   child.stderr.on("data", (chunk) => process.stderr.write(chunk));

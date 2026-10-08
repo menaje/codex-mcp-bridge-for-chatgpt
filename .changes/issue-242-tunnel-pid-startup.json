@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Create private tunnel PID locators at startup and add opt-in startup phase timings for diagnosing runtime delays.",
+  "breaking": false,
+  "migration": null
+}

@@ -84,3 +84,20 @@ The [2026-09-10 direct acceptance record](audits/2026-09-10-direct-acceptance.md
 Runtime usage leases are written outside the enumerated lease directory and atomically published before acquisition returns. Concurrent status reads cannot observe a partially written lease. Corrupt published leases still stop unsafe activation.
 
 A locally healthy Tunnel daemon and one past control-plane success do not prove current connectivity. The launcher requires a successful poll within 75 seconds, allowing two supported 30-second polls with 5-second guardrails and one monitor interval. The native app also observes the current network path, so a missing network immediately shows a connection check even while local IPC remains reachable. Longer outages use the existing operational-notification grace and recovery policy.
+
+The managed Tunnel daemon inherits a private file-creation mask on POSIX hosts.
+Its PID locator remains current-user-only even when `tunnel-client` requests
+mode `0644`; readiness still rejects permissive, foreign-owned or symlinked
+locators. The launcher restores its own mask immediately after spawning the
+daemon, including when spawning throws.
+
+Set `CODEX_MCP_BRIDGE_STARTUP_DIAGNOSTICS=1` in the private runtime environment
+for a controlled restart to diagnose startup delays. Helper runtime logs then
+contain `[bridge-startup]` records for launcher, server, runtime-parent and
+state-owner stages. `elapsedMs` measures time since each Node process started
+(including import time); `stepMs` measures time since that role's previous
+record. Cumulative `cpuUserMs` and `cpuSystemMs` help distinguish CPU work from
+elapsed waits. Records contain only fixed role/stage names, PID and timings,
+with no configuration values or paths. Diagnostics are disabled by default;
+remove the flag after collecting evidence. The runtime's 20-second startup
+deadline is unchanged.

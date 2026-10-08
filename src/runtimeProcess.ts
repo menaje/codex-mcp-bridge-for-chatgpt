@@ -36,6 +36,7 @@ import type {
 import { decodeUtf8Strict } from "./textIntegrity.js";
 import { BoundedHttpDiagnostics, HTTP_DIAGNOSTIC_HEADER, isChildHttpObservation, httpDiagnosticContext,
   type HttpDiagnosticSession, type HttpObservation } from "./httpDiagnostics.js";
+import { createStartupDiagnostics } from "../scripts/runtime-status.mjs";
 
 type RuntimeStateServiceStatus = NonNullable<
   BridgeRuntimeAdmissionSnapshot["stateService"]
@@ -1072,6 +1073,7 @@ class IsolatedRuntimeController {
 
   private async spawnAndWait(): Promise<void> {
     if (this.closed) throw new Error("RUNTIME_CLOSED: Isolated Bridge runtime closed.");
+    const startup = createStartupDiagnostics("runtime-parent");
     const ready = new Promise<void>((resolve, reject) => {
       this.startupResolve = resolve;
       this.startupReject = reject;
@@ -1083,11 +1085,13 @@ class IsolatedRuntimeController {
     if (this.transport === "stdio") args.push(CHILD_STDIO_FLAG);
     if (this.conformanceFixtures) args.push("--conformance-fixtures");
     if (this.httpDiagnostics) args.push("--http-diagnostics");
+    startup("child-spawn-start");
     const child = spawn(process.execPath, args, {
       cwd: process.cwd(),
       env: this.childEnvironment,
       stdio: [this.transport === "stdio" ? "pipe" : "ignore", "pipe", "pipe", "ipc"]
     });
+    startup("child-spawned");
     this.child = child;
     if (child.pid !== undefined) this.onRuntimeProcessSpawn?.(child.pid);
     this.stderr = "";
@@ -1114,6 +1118,7 @@ class IsolatedRuntimeController {
       : this.restartStartupTimeoutMs;
     this.startupTimer = setTimeout(() => {
       if (this.child !== child || this.generation !== undefined) return;
+      startup("child-start-timeout");
       child.kill("SIGKILL");
       this.startupReject?.(new Error(
         `RUNTIME_START_TIMEOUT: Isolated Bridge runtime did not start within ` +
@@ -1121,7 +1126,13 @@ class IsolatedRuntimeController {
       ));
     }, startupTimeoutMs);
     this.startupTimer.unref();
-    await ready;
+    try {
+      await ready;
+      startup("child-ready");
+    } catch (error) {
+      startup("child-start-failed");
+      throw error;
+    }
   }
 
   private onMessage(value: unknown): void {
@@ -1247,6 +1258,8 @@ class IsolatedRuntimeController {
 }
 
 async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
+  const startup = createStartupDiagnostics("state-owner");
+  startup("imports-complete");
   if (process.platform === "darwin") process.title = "Codex MCP Bridge State Owner";
   const generation = randomUUID();
   const conformanceFixtures = process.argv.includes("--conformance-fixtures");
@@ -1412,7 +1425,10 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
   };
 
   try {
+    startup("config-start");
     const config = loadConfig();
+    startup("config-complete");
+    startup("state-store-start");
     store = new BridgeStateStore({
       file: config.stateDatabaseFile,
       traceSql: observeSql,
@@ -1420,6 +1436,8 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
       onTransactionCommitted: observeTransactionCommitted,
       onTransactionFailure: observeTransactionFailure
     });
+    startup("state-store-ready");
+    startup("telemetry-start");
     try {
       telemetry = await ChildProcessTelemetryService.start(
         config.telemetryDatabaseFile,
@@ -1432,12 +1450,16 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
         `${error instanceof Error ? error.message : String(error)}\n`
       );
     }
+    startup("telemetry-ready");
+    startup("read-service-start");
     readProjection = await ChildProcessStateReadService.start(
       config.stateDatabaseFile,
       process.env,
       { authBoundary: () => config.codexService?.sessionAuthBoundary() || null }
     );
+    startup("read-service-ready");
     const appServerLateResponses = new AppServerLateResponseJournal(store);
+    startup("execution-start");
     upstream = createExecutionRuntime(
       config,
       { onLateResponse: response => appServerLateResponses.observe(response) },
@@ -1483,10 +1505,12 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
         }
       }
     );
+    startup("execution-created");
     const canAcceptExecution = () => {
       const status = upstream?.executionHealth?.().status;
       return status === undefined || status === "idle" || status === "ready";
     };
+    startup("transport-start");
     if (transport === "http") {
       httpServer = createHttpServer(config, upstream, undefined, {
         stateStore: store,
@@ -1518,6 +1542,7 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
       await stdioRuntime.start();
       applicationService = stdioRuntime.applicationService;
     }
+    startup("transport-ready");
     applicationService.setStorageAdmissionError?.(storageFault?.error);
     if (
       process.env.NODE_ENV === "test" &&
@@ -1602,6 +1627,7 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
         } : {})
       };
     };
+    startup("ready-sent");
     send({
       type: "ready",
       protocol: STATE_OWNER_PROTOCOL,
