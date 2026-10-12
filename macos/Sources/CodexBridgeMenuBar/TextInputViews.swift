@@ -142,6 +142,9 @@ struct BridgeTextEditor: NSViewRepresentable {
         guard !editor.string.utf8.elementsEqual(text.utf8) else { return }
         let selection = editor.selectedRange()
         editor.string = text
+        // Older AppKit versions defer sizing a programmatically replaced document.
+        editor.minSize.height = scrollView.contentSize.height
+        editor.sizeToFit()
         let length = (text as NSString).length
         let location = min(selection.location, length)
         editor.setSelectedRange(NSRange(location: location, length: min(selection.length, length - location)))

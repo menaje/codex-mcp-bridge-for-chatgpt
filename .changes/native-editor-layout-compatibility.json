@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Resize native text editors after external draft updates so older macOS versions can scroll the complete document.",
+  "breaking": false,
+  "migration": null
+}
