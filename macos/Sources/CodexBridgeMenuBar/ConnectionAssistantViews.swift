@@ -132,9 +132,8 @@ enum ConnectionRecoveryPlan {
         case .codex:
             guard !isRemoteClient else { return [] }
             switch codexInstalled {
-            case true: return [.openCodexSettings]
-            case false: return [.openCodexSettings]
-            case nil: return []
+            case .some: return [.openCodexSettings]
+            case .none: return []
             }
         }
     }

@@ -2078,15 +2078,20 @@ enum BridgeSkillDropLoader {
         var urls: [URL] = []
         var seen = Set<String>()
         for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-            guard let item = try? await provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier),
-                  let url = decodeURL(from: item) else { continue }
+            // Decode the provider item before returning a sendable URL to the main actor.
+            let loadedURL = await withCheckedContinuation { (continuation: CheckedContinuation<URL?, Never>) in
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, error in
+                    continuation.resume(returning: error == nil ? decodeURL(from: item) : nil)
+                }
+            }
+            guard let url = loadedURL else { continue }
             let key = bridgeSkillPathComparisonKey(url.standardizedFileURL.path)
             if seen.insert(key).inserted { urls.append(url) }
         }
         return urls
     }
 
-    static func decodeURL(from item: NSSecureCoding?) -> URL? {
+    nonisolated static func decodeURL(from item: NSSecureCoding?) -> URL? {
         if let url = item as? URL { return url }
         if let data = item as? Data { return URL(dataRepresentation: data, relativeTo: nil) }
         return nil

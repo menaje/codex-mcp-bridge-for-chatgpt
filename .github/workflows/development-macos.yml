@@ -31,6 +31,8 @@ jobs:
         name: Verify development stage and native Intel runner
         run: |
           test "$(uname -m)" = "x86_64"
+          swift --version
+          xcodebuild -version
           node scripts/release-policy.mjs assert-stage development
           node scripts/release-manifest.mjs github-output >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v7
