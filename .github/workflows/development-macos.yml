@@ -1,0 +1,63 @@
+name: Development macOS app
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - .github/workflows/development-macos.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: development-macos-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  intel-app:
+    name: Build Intel macOS development app
+    if: ${{ github.ref == 'refs/heads/dev' }}
+    runs-on: macos-15-intel
+    timeout-minutes: 30
+    env:
+      MACOS_TARGET_ARCHITECTURE: x64
+      MACOS_BUNDLE_VERSION: ${{ github.run_number }}
+      CODEX_MCP_BRIDGE_SKIP_IMAGE_RENDER_TESTS: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - id: metadata
+        name: Verify development stage and native Intel runner
+        run: |
+          test "$(uname -m)" = "x86_64"
+          node scripts/release-policy.mjs assert-stage development
+          node scripts/release-manifest.mjs github-output >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ steps.metadata.outputs.node_version }}
+          cache: npm
+      - name: Install pinned npm and build dependencies
+        env:
+          NPM_VERSION: ${{ steps.metadata.outputs.npm_version }}
+        run: |
+          npm install --global "npm@$NPM_VERSION"
+          npm ci
+      - run: npm run macos:input:check
+      - name: Build, test, sign, and package the Intel app
+        env:
+          MACOS_FILE: ${{ steps.metadata.outputs.macos_x64_archive_filename }}
+        run: |
+          npm run macos:package -- \
+            --architecture x64 \
+            --output "release-assets/$MACOS_FILE"
+          cp dist/build-info.json release-assets/build-info.json
+          cp release-manifest.json release-assets/release-manifest.json
+          cd release-assets
+          shasum -a 256 "$MACOS_FILE" > SHA256SUMS.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: codex-mcp-bridge-development-macos-x64-${{ github.sha }}
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14

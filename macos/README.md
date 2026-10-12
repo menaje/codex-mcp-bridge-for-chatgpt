@@ -181,7 +181,13 @@ language coverage.
 
 The current build is an ad-hoc-signed development artifact for the host
 architecture. Node.js, Codex CLI, and `tunnel-client` remain managed external
-prerequisites. Public packaging is a separate command and requires the exact
+prerequisites. The **Development macOS app** Actions workflow builds `dev` on a
+native Intel runner and retains an x64 DMG, source build identity, manifest, and
+SHA-256 checksum as a development artifact. It runs on explicit dispatch or when
+its own workflow file changes on `dev`, with read-only repository permissions.
+It creates no tag or GitHub release.
+
+Public packaging is a separate command and requires the exact
 manifest-derived DMG filename. Follow [release governance](../docs/release-governance.md)
 to select and validate a publishable release stage first:
 
