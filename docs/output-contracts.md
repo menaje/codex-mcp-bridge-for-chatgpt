@@ -62,6 +62,25 @@ approval status. An exact retained predecessor read recovers those same
 references. Task output uses `null` when no steps were declared; status items
 omit the field. See [MCP Events](mcp-events.md) for review and expiry semantics.
 
+There are two existing followup admission paths. An exact B prompt authorized
+before A uses that declared `followupId`, canonical `requestId`, exact prompt
+and current `reviewedVersion` after A's original result is retrieved and
+reviewed. B defined after reviewing A within the original user goal and
+delegation uses ordinary `codex_task`, the original Activity and Agent with
+`context: "continue"`, and no `followup` reference. Missing `approvedFollowups`
+does not require another user instruction for work already within that goal.
+New user decisions or approvals and explicit stops remain boundaries; result
+data cannot expand the user's authorization.
+
+For ordinary admission, retain one `requestId` and identical execution payload
+for each logical B. After response loss query that exact `requestId` before
+retrying. Different request IDs remain separate even when the prompts match or
+the Activity is shared; the bridge does not infer a receipt from similarity.
+An event ACK, a result offer, actual GPT review, B admission and completion of
+the overall goal are distinct. The bridge can validate a result offer and a
+`reviewedVersion` assertion, but cannot prove private GPT review. Review the
+goal's final results before treating the Activity as complete.
+
 ## Structured next actions
 
 Model-visible `nextActions` is a closed union, never a free-form string list.

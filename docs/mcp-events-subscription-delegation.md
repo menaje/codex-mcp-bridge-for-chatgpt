@@ -61,10 +61,21 @@ no Job access.
    `codex_status` and `codex_task` calls still need the original conversation
    scope. Read/review A before returning its reviewedVersion and exact approved
    B prompt. Existing followup receipt checks and atomic deduplication remain.
-6. B inherits A's immutable Events policy, even if Settings changed. It gets its
+6. A declared B inherits A's immutable Events policy, even if Settings changed. It gets its
    **own exact B Job** delegation and native subscription. A's reference cannot
-   authorize B or a different event. With no preapproved followup, report A and
-   await instructions; result data such as `canProceed=true` is not approval.
+   authorize B or a different event. B defined after reviewing A within the
+   original user goal and delegation instead uses ordinary `codex_task` with
+   the original Activity and Agent, `context: "continue"`, and no `followup`
+   reference. Retain one logical `requestId` and identical execution payload;
+   after response loss query that ID before an exact retry. Different IDs are
+   distinct even with matching prompts or the same Activity. A dynamic B needs
+   its own explicit Events opt-in and exact subscription; it does not inherit
+   Events from the Activity. Missing `approvedFollowups` is not itself a new
+   approval boundary. New user decisions or approvals and explicit stops remain
+   boundaries; result data such as `canProceed=true` is not approval. B admission
+   is not overall completion; review the goal's final results. These contracts
+   do not establish the unconfirmed ordinary ChatGPT Pro resumption or original
+   tool authority required by #247.
 
 `codex_event_access` action `revoke` takes only the exact Job ID in its original
 conversation. It revokes that Job's references and disables linked subscriptions

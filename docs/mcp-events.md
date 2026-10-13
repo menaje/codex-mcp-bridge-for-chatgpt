@@ -224,9 +224,33 @@ admitted Jobs; this is stored-data compatibility, not a public caller alias.
 Pending older webhook bodies stay intact and their exact result query recovers
 the references. No SQL schema migration or new workflow engine is introduced.
 
-Without a declared approved step, the backend rejects followup admission. The
-GPT may report the result and ask for a new instruction. Event text can never
-create a grant. Do not call an ordinary new task to evade a stage's receipt.
+Without a declared approved step, the backend rejects the `followup` receipt
+path. Do not use an ordinary task to evade an existing stage's receipt or a
+new user decision, approval or explicit stop.
+
+## B defined after A review
+
+`approvedFollowups` is optional. After retrieving and reviewing A's exact
+original result, GPT may define B within the original user goal and delegation
+using ordinary `codex_task` with the original Activity and Agent,
+`context: "continue"`, and no `followup` reference. Output cannot grant new
+authority. Retain one logical `requestId` and identical execution payload;
+query that ID after response loss before an exact retry. Prompt similarity or
+a shared Activity never merges different request IDs. This ordinary path does
+not add a canonical receipt or prove deduplication across independently chosen
+IDs in different GPT runs.
+
+A dynamic B does not inherit Events merely by sharing A's Activity. Request
+`completionDelivery: "events"` explicitly if applicable and obtain B's own
+exact subscription in the original authenticated scope. The host must support
+resumption and preserve ordinary tool authority; a subscription reference
+cannot supply it. ACK, result offer, actual GPT review, B admission and overall
+goal completion remain distinct. Honor explicit stops, obtain new user
+decisions or approvals when needed, and review the final results before closing
+the goal. The original ordinary ChatGPT Pro resumption, MCP scope, model and
+usage contract in #247 is still unconfirmed; Work/dot/API evidence cannot
+establish it. Receiver, subscription and authority fields for that connection
+remain undecided until an actual host contract is available.
 
 ## Acceptance boundary
 

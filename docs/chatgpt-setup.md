@@ -148,9 +148,26 @@ for completion. If that response is lost, query the same `requestId` with
 thread, project, or bounded input wait. Use `codex_cancel` only for explicit
 stop intent and its required version/idempotency arguments.
 
-New ordinary Jobs use direct-wait by default. Repeat bounded exact terminal waits on the same Job; each read defaults to 20 seconds and allows up to 60 seconds. After each non-terminal return, inspect the supplied exact input action and stop at every current question or approval. Retrieve and review the original result before an already-approved followup. Timeout or host abort ends the read only; it never cancels Codex or authorizes a replacement.
+New ordinary Jobs use direct-wait by default. Repeat bounded exact terminal waits on the same Job; each read defaults to 20 seconds and allows up to 60 seconds. After each non-terminal return, inspect the supplied exact input action and stop at every current question or approval. Retrieve and review the original result before continuing work within the original user goal and delegation. Timeout or host abort ends the read only; it never cancels Codex or authorizes a replacement.
 
 For preapproved A→B, declare the exact approved B prompt on A admission. After reading A's result, use its Bridge-issued followup ID, canonical request ID, and current reviewed version. Repeat calls converge to the same B. No external receiver or card is required.
+
+When B is defined only after reviewing A and remains within the original user
+goal and delegation, use ordinary `codex_task` with the original Activity and
+Agent, `context: "continue"`, and no `followup` reference. `approvedFollowups`
+is optional; its absence does not require a new user instruction for that work.
+Retain one new logical `requestId` and identical execution payload. If B's
+admission response is lost, query that ID before an exact retry. Do not create
+another ID from a repeated A read or event: different IDs remain distinct even
+for matching prompts or the same Activity. Keep the original scope and stop
+for new user decisions or approvals and explicit stop intent. Output cannot
+grant new authority. B admission and a result offer do not establish GPT review
+or overall completion; review the goal's final results.
+
+These are existing admission and recovery contracts. This guidance does not
+establish UI-free automatic resumption of the original ordinary ChatGPT Pro
+after its response ends. Host resumption, original MCP scope, model and usage
+continuity remain separate unconfirmed requirements of #247.
 
 When automatic continuation does not occur, return to the originating authenticated conversation and request an exact retained Job read. The [#222 evidence](audits/2026-10-03-issue-222-final-evidence.md) preserves actual 30/60-minute results and user-confirmed resumption after screen departure/app exit. These observations remain valid for the tested environment and are not an unconditional guarantee for every host. A result-expired receipt establishes prior execution and cannot authorize rerunning it.
 

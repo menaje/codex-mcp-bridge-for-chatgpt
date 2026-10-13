@@ -6323,7 +6323,7 @@ export function registerBridgeTools(
     {
       title: `${PRODUCT_INFO.displayName} Status`,
       description:
-        "Read project selectors, exact Job state, current questions and original results in this conversation. Repeat bounded terminal waits on the same ordinary Job; timeout or host abort never cancels it or permits replacement. A terminal wait wakes only for terminal lifecycle state; inspect its exact input action after every non-terminal return. At a current question or approval, do not keep a parallel terminal wait. Stop at current approval or user-input boundaries, review the original result before approved followups, and keep the original scope. Summary reads contain no original answer; retrieve the supplied exact Job action. A response offer is not proof of GPT review. Status checks never require opening Dashboard.",
+        "Read project selectors, exact Job state, current questions and original results in this conversation. Repeat bounded terminal waits on the same ordinary Job; timeout or host abort never cancels it or permits replacement. A terminal wait wakes only for terminal lifecycle state; inspect its exact input action after every non-terminal return. At a current question or approval, do not keep a parallel terminal wait. Review the original result before continuing within the original user goal and delegation; use the declared followup receipt or ordinary codex_task continue as appropriate. Keep the original scope and honor explicit stops and new user decision or approval boundaries. Summary reads contain no original answer; retrieve the supplied exact Job action. A response offer is not proof of GPT review. Status checks never require opening Dashboard.",
       inputSchema: codexStatusInput,
       outputSchema: config.experimentalProfile === "events" && config.eventsEnabled
         ? MODEL_VISIBLE_OUTPUT_SCHEMAS.codex_status
@@ -8080,7 +8080,7 @@ export function registerBridgeTools(
     {
       title: "Run or Continue Codex Task",
       description:
-        "Durably admit one asynchronous Codex turn and return its exact Job identity immediately. Ordinary Jobs use direct-wait. Follow the returned Job nextActions: repeat bounded exact terminal waits, inspect input after each non-terminal return, review the original result, and continue only already-approved work. Never replace a Job after timeout or host abort. Open Dashboard only when the user explicitly requests its display; it never sends results or starts followups. Historical admission policy remains in records without enabling retired delivery." + (config.experimentalProfile === "events" && config.eventsEnabled ? " Explicit experimental completionDelivery=events requires original OAuth scope and codex_event_access for each exact Job; never fall back to another receiver." : ""),
+        "Durably admit one asynchronous Codex turn and return its exact Job identity immediately. Ordinary Jobs use direct-wait. Follow the returned Job nextActions: repeat bounded exact terminal waits, inspect input after each non-terminal return, review the original result, and continue within the original user goal and delegation. For B fixed before A use the optional approvedFollowups receipt; for B defined after reviewing A use ordinary codex_task with the original Activity and Agent context='continue', without a followup reference. Keep one requestId and identical execution payload for exact retries; query it after response loss. Different requestIds are distinct even for similar prompts or the same Activity. Honor explicit stops and new user decision or approval boundaries; B admission is not overall completion. Never replace a Job after timeout or host abort. Open Dashboard only when the user explicitly requests its display; it never sends results or starts followups. Historical admission policy remains in records without enabling retired delivery." + (config.experimentalProfile === "events" && config.eventsEnabled ? " Explicit experimental completionDelivery=events requires original OAuth scope and codex_event_access for each exact Job; never fall back to another receiver." : ""),
       inputSchema: codexTaskInputSchema(config, taskExecutionEnvelopeRef()),
       outputSchema: config.experimentalProfile === "events" && config.eventsEnabled ? codexTaskOutputSchema : ordinaryTaskOutputSchema,
       annotations: codexTaskEnvelopeAnnotations(config)
@@ -10661,7 +10661,7 @@ function formatJobStatus(
               }
             },
             userPrompt:
-              "Wait for this exact Job in bounded intervals. After any non-terminal return, inspect the supplied exact-Job input action before repeating this same wait. A timeout or aborted read never authorizes a replacement Job. Review the terminal result before continuing only work the user already approved."
+              "Wait for this exact Job in bounded intervals. After any non-terminal return, inspect the supplied exact-Job input action before repeating this same wait. A timeout or aborted read never authorizes a replacement Job. Review the terminal result before continuing within the original user goal and delegation through its declared receipt or ordinary codex_task continue; honor explicit stops and new user decision or approval boundaries."
           },
           {
             tool: "codex_status",
@@ -13875,7 +13875,7 @@ function codexTaskInputSchema(
     approvedFollowups: z.array(z.strictObject({
       prompt: verbatimInput(config.maxPromptChars, "Approved followup prompt")
     })).min(1).max(8).optional().describe(
-      "Exact prompts already explicitly approved before this Job. The bridge issues opaque followupIds and canonical requestIds, returned in declaration order by admission and exact status reads. Each may continue this Activity/Agent once after result review; never name or recreate an ID or infer approval from output."
+      "Optional exact prompts authorized before this Job. The bridge issues opaque followupIds and canonical requestIds, returned in declaration order by admission and exact status reads. Each may continue this Activity/Agent once after result review; never name or recreate an ID or infer authority from output. B defined after result review within the original user goal uses ordinary codex_task continue without a followup reference."
     ),
     followup: z.strictObject({
       followupId: z.string().regex(FOLLOWUP_ID_PATTERN),
@@ -15686,12 +15686,12 @@ function taskProjectionForJob(
         ? []
         : [guidance(
             semantic.completionDeliveryPolicy !== "events"
-              ? "Direct result delivery applies to this Job. After every non-terminal return, inspect the supplied exact-Job input action before repeating a bounded terminal wait on this same Job. Review the terminal result and continue only already-approved work; stop at any new approval or user-input boundary. If the GPT run ends, the user must request an exact-Job read in the originating conversation; there is no automatic live-card fallback."
+              ? "Direct result delivery applies to this Job. After every non-terminal return, inspect the supplied exact-Job input action before repeating a bounded terminal wait on this same Job. Review the terminal result before continuing within the original user goal and delegation through its declared receipt or ordinary codex_task continue; honor explicit stops and new user decision or approval boundaries. After response loss, query the same requestId before an identical retry. If the GPT run ends without automatic continuation, recover the exact Job in the originating conversation; no UI-free host resumption contract is established here."
               : semantic.completionDeliveryPolicy === "events" && semantic.eventSubscription
                 ? eventMonitoringStopGuidance(semantic.eventSubscription) || eventDeliveryFailureGuidance(semantic.eventSubscription) ||
                   (semantic.eventSubscription?.state === "unavailable" && semantic.eventSubscription.reason !== "expired"
                     ? "This Job's Events monitoring is unavailable. Report that state and preserve the original Job for manual exact reads; do not automatically issue access, restore card delivery, schedule tasks or repeatedly poll."
-                    : "This exact Job uses card-free native Events. Complete its exact Events subscription before ending orchestration. An event ACK is not result review: resumed ordinary tools must retain the original conversation scope. Retrieve and review this Job's exact original result, then admit only an already-approved followup and subscribe to that new exact Job. Do not call Dashboard for completion, send ui/message, schedule tasks or repeatedly poll. Surface subscription or input failures without fallback.")
+                    : "This exact Job uses card-free native Events. Complete its exact Events subscription before ending orchestration. An event ACK is receipt only, not result review: resumed ordinary tools must retain the original conversation scope. Retrieve and review this Job's exact original result before continuing within the original user goal and delegation through its declared receipt or ordinary codex_task continue. A dynamic B needs its own explicit Events opt-in and exact subscription. Honor explicit stops and new user decision or approval boundaries; B admission is not overall completion. Do not call Dashboard for completion, send ui/message, schedule tasks or repeatedly poll. Surface subscription or input failures without fallback.")
               : "This Job continues independently of the current GPT response. Query the exact Job when needed, answer pending questions, and retrieve its terminal result before reporting completion."
           )])
     ]
