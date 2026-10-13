@@ -132,3 +132,25 @@ scope 별칭이나 권한 완화로 채우지 않았다. 이는 실환경 시험
 새 Job, 추가 에이전트, 이슈 게시/상태 변경, 새 dev 통합/푸시, 영구 삭제는
 수행하지 않았다. root consent는 코드 계약과 fixture에서만 생성했다.
 작업 브랜치·worktree·기존 9b126dac 자료와 새 build/검사 output을 보존한다.
+
+## 독립 P1 수정 — 등록 이전 child revoke
+
+6b370293의 독립 검토에서 A lifecycle reference 발급 → B 접수 → B lifecycle
+revoke → B 완료 → A late subscribe 순서로 중단 기록이 없고 B가 전달되는
+P1을 재현했다. 기록 저장이 기존 subscription 순회 안에 있어 수신 등록
+전의 중단을 보존하지 못했다.
+
+`McpEventAccessStore.revoke`는 subscription/grant 존재와 무관하게 같은
+UoW에서 retained exact Job의 lifecycle 중단 의도를 저장하도록 최소
+수정했다. 기존 enqueue/reconciliation의 중단 검사가 late root backfill을
+거부하며, 원본 B 결과는 보존한다. terminal subscription ID 호환성 지적은
+잘못된 검토 fixture로 철회됐으므로 관련 코드는 수정하지 않았다.
+
+독립 재현과 같은 회귀검사를 추가했다. 수정 전 `monitoringStopped`가
+undefined인 실패를 확인했고, 수정 후 중단 기록 revoked, 늦은 등록 및
+재대조 이후 B 전달 0회, B completed 상태 보존을 확인했다. lifecycle 검사는
+15개로 늘었다. 기존 선별 목록 전체를 새 수정에 다시 실행해 총 82개
+검사와 빌드가 모두 통과했다.
+최종 결과·실행 명령은 `output/issue-247-stop-fix/validation-commands.json`과
+동일 폴더의 로그에 보존한다. 이전 81개 검사 기록은 역사적 결과로 유지한다.
+실환경/지속시간 시험, 운영 변경 및 dev 통합/푸시는 수행하지 않는다.

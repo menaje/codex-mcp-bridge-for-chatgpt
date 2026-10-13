@@ -253,6 +253,23 @@ describe("#247 lifecycle receiver contracts", () => {
     expect(f.state.mcpEvents.list(c.jobId)).toHaveLength(0);
   });
 
+  it("preserves an exact child revoke before the original root first registers", async () => {
+    const f = await start(); const a = f.seed(); const grant = await f.access(a.jobId);
+    const b = f.seed();
+    expect(f.state.mcpEvents.list(b.jobId)).toHaveLength(0);
+    await f.access(b.jobId, JOB_LIFECYCLE_EVENT, "revoke");
+    expect(f.state.mcpEventAccess.monitoringStopped(f.state.getEventJobSnapshot(b.jobId)!, JOB_LIFECYCLE_EVENT)).toBe("revoked");
+    f.finish(b.jobId);
+    await f.subscribe(grant);
+    await f.deliver();
+    f.state.mcpEvents.reconcileLifecycle(f.state.mcpEvents.lifecycleRoots()[0]!);
+    await f.deliver();
+    expect(f.packets.filter(packet => packet.body.name === JOB_LIFECYCLE_EVENT && packet.body.data.jobId === b.jobId)).toHaveLength(0);
+    expect(f.state.mcpEvents.list(b.jobId)).toHaveLength(0);
+    expect(f.state.getEventJobSnapshot(b.jobId)!.status).toBe("completed");
+    expect(f.state.mcpEventAccess.monitoringStopped(f.state.getEventJobSnapshot(b.jobId)!, JOB_LIFECYCLE_EVENT)).toBe("revoked");
+  });
+
   it("fences an exact child revoke and then a root revoke without affecting unrelated consent", async () => {
     const f = await start(); const a = f.seed(); await f.subscribe(await f.access(a.jobId));
     const otherActivity = f.state.createActivity({ scopeId: f.scopeId, projectId: f.project.id,

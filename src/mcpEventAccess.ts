@@ -172,8 +172,11 @@ export class McpEventAccessStore {
       for (const subscription of this.state.mcpEvents.list(jobId).filter(record => record.name === JOB_LIFECYCLE_EVENT && record.scopeId === scopeId && record.principal === principal)) {
         if (subscription.disabled !== "revoked") this.state.mcpEvents.save({ ...subscription, disabled: "revoked", revision: subscription.revision + 1 }, subscription.revision);
         if (subscription.lifecycleRoot?.jobId === jobId) this.state.mcpEvents.stopLifecycleChildren(subscription, "revoked");
-        this.rememberStop(jobId, { principal, scopeId, event: JOB_LIFECYCLE_EVENT, reason: "revoked", stoppedAt: now });
       }
+      // Consent can exist before native registration. Preserve the exact Job's
+      // stop even when no child delivery/grant exists yet, so late root
+      // registration and source reconciliation cannot create that delivery.
+      this.rememberStop(jobId, { principal, scopeId, event: JOB_LIFECYCLE_EVENT, reason: "revoked", stoppedAt: now });
     });
   }
 
