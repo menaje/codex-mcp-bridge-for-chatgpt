@@ -2,7 +2,7 @@
 
 This is a separate disabled-by-default experiment. Startup requires `CODEX_MCP_BRIDGE_EXPERIMENTAL_PROFILE=events` and `CODEX_MCP_BRIDGE_EVENTS_ENABLED=1` in addition to the authentication configuration below. A legacy enable flag alone does not activate it. Ordinary direct-wait setup requires none of these services.
 
-Status: **implemented for opt-in OAuth Events Jobs; actual ChatGPT host acceptance remains pending**.
+Status: **implemented for opt-in OAuth Events Jobs; ordinary Chat Pro host support remains unconfirmed. Real-host trials are excluded from #247 code completion.**
 The user explicitly authorized this design in [#213's card-free acceptance supplement](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/213#issuecomment-5942805508).
 This replaces the proposal status recorded at `01392e9`. It does not change
 ordinary result/task scope or assert independent callback-conversation proof.
@@ -62,15 +62,15 @@ no Job access.
    scope. Read/review A before returning its reviewedVersion and exact approved
    B prompt. Existing followup receipt checks and atomic deduplication remain.
 6. A declared B inherits A's immutable Events policy, even if Settings changed. It gets its
-   **own exact B Job** delegation and native subscription. A's reference cannot
+   **own exact B Job** delegation and native subscription when using terminal-only consent. With an explicit lifecycle root, B uses that existing finite receiver; no B delegation is minted. A's reference cannot
    authorize B or a different event. B defined after reviewing A within the
    original user goal and delegation instead uses ordinary `codex_task` with
    the original Activity and Agent, `context: "continue"`, and no `followup`
    reference. Retain one logical `requestId` and identical execution payload;
    after response loss query that ID before an exact retry. Different IDs are
    distinct even with matching prompts or the same Activity. A dynamic B needs
-   its own explicit Events opt-in and exact subscription; it does not inherit
-   Events from the Activity. Missing `approvedFollowups` is not itself a new
+   explicit Events opt-in. A matching lifecycle root connects it without another
+   native subscription; it does not inherit Events merely from the Activity. Missing `approvedFollowups` is not itself a new
    approval boundary. New user decisions or approvals and explicit stops remain
    boundaries; result data such as `canProceed=true` is not approval. B admission
    is not overall completion; review the goal's final results. These contracts
@@ -234,3 +234,20 @@ unverified; no result/task authority is added to the monitoring reference.
 Dashboard iframe deployment acceptance remains a separate UI test. The prepared
 OpenAI inquiry is still unsent. Issue #213 stays **OPEN** until the real card-free
 Events A-to-B acceptance succeeds.
+
+## #247 lifecycle and revised acceptance
+
+`codex_event_access` optionally accepts `event: "codex.job.lifecycle"` for an
+exact root Events Job. Its original-scope issue and native callback challenge
+explicitly consent to current input and later Events Jobs in the same original
+Activity/Agent/project. The root's arguments and finite authority remain exact;
+never pass a child ID with a root reference. Terminal references cannot authorize
+this broader receiver. Derived records are delivery intents, never child grants
+or ordinary-tool authority. Read [the lifecycle contract](mcp-events.md#lifecycle-root-receiver)
+for source-transaction registration, late/restart recovery, renewal and closure.
+
+Historical actual-host acceptance notes above are retained as evidence, not a
+new #247 prerequisite. The latest user decision excludes real GPT-resume/A→B
+trials and duration/soak/accelerated substitutes from completion. Use the
+[updated W0~W5 plan](issue-247-implementation-plan.md); do not repeat old trials,
+wait for user observation or relax scope to fill a missing host API.

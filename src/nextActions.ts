@@ -68,7 +68,8 @@ export type ModelNextAction = z.infer<typeof modelNextActionOutputSchema>;
 
 const monitoringIssueActionSchema = z.strictObject({
   kind: z.literal("tool"), tool: z.literal("codex_event_access"),
-  arguments: z.strictObject({ action: z.literal("issue"), jobId: z.string().uuid() }),
+  arguments: z.strictObject({ action: z.literal("issue"), jobId: z.string().uuid(),
+    event: z.enum(["codex.job.terminal", "codex.job.lifecycle"]).optional() }),
   message: message.optional()
 });
 

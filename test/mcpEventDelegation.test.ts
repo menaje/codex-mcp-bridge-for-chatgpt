@@ -424,6 +424,74 @@ describe("card-free OAuth Events delegation", () => {
     } finally { releaseA(); }
   });
 
+  it("#247 lifecycle keeps a preapproved B connected through one original root receiver", async () => {
+    const aReceived = deferred(), bReceived = deferred();
+    const packets: any[] = []; let aId: string;
+    const f = await start({ sender: async (_url, body) => {
+      const packet = JSON.parse(body);
+      if (packet.type === "verification") return { status: 200, body: JSON.stringify({ challenge: packet.challenge }) };
+      packets.push(packet);
+      if (packet.name === "codex.job.lifecycle") (packet.data.jobId === aId ? aReceived : bReceived).resolve();
+      return { status: 200, body: "{}" };
+    } });
+    const token = await accessToken(); const releaseA = f.upstream.hold();
+    const a = await task(f, token, { approvedFollowups: [{ prompt: "Read fixture B" }] }); aId = a.jobId;
+    const grant = (await call(f, "codex_event_access", { action: "issue", jobId: aId, event: "codex.job.lifecycle" }, token)).result.structuredContent;
+    expect((await rpc(f, "events/subscribe", { ...delegated(grant), name: grant.event }, token, {})).body.error).toBeUndefined();
+    releaseA(); await aReceived.promise;
+    const reference = a.approvedFollowups[0];
+    const version = f.state.getEventJobSnapshot(aId)!.version;
+    const next = { requestId: reference.requestId, prompt: "Read fixture B", project: undefined, selection: undefined,
+      followup: { followupId: reference.followupId, reviewedVersion: version } };
+    const premature = await call(f, "codex_task", { ...(await taskInput(f, token)), ...next }, token);
+    expect(premature.result.structuredContent.error.code).toBe("FOLLOWUP_REVIEW_REQUIRED");
+    await completed(f, aId, token);
+    const releaseB = f.upstream.hold();
+    // Drop the application-level receipt and recover it by the exact canonical
+    // request, rather than registering or authorizing B again.
+    await task(f, token, next);
+    const recovered = await call(f, "codex_status", { query: { kind: "request", requestId: reference.requestId } }, token);
+    const bId = recovered.result.structuredContent.items[0].id;
+    expect(recovered.result.structuredContent.items[0].eventSubscription).toMatchObject({ state: "active", rootJobId: aId });
+    expect((await task(f, token, next)).jobId).toBe(bId);
+    releaseB(); await bReceived.promise;
+    expect((await completed(f, bId, token)).items[0].answer).toContain("Original OAuth fixture result");
+    expect(f.upstream.calls).toBe(2);
+    expect(f.state.mcpEventAccess.list()).toHaveLength(1);
+    expect(f.requests.filter(request => request.method === "events/subscribe")).toHaveLength(1);
+    expect(f.state.getActivity(a.activityId)!.lifecycle).toBe("open");
+    expect(packets.map(packet => packet.data.jobId)).toEqual([aId, bId]);
+    expect(JSON.stringify(packets)).not.toMatch(/subscriptionRef|Original OAuth fixture result|whsec_/);
+  });
+
+  it("#247 lifecycle connects an ordinary dynamic B with exact retry and the original tool scope", async () => {
+    const aReceived = deferred(), bReceived = deferred(); let aId: string;
+    const f = await start({ sender: async (_url, body) => {
+      const packet = JSON.parse(body);
+      if (packet.type === "verification") return { status: 200, body: JSON.stringify({ challenge: packet.challenge }) };
+      if (packet.name === "codex.job.lifecycle") (packet.data.jobId === aId ? aReceived : bReceived).resolve();
+      return { status: 200, body: "{}" };
+    } });
+    const token = await accessToken(); const releaseA = f.upstream.hold();
+    const a = await task(f, token); aId = a.jobId;
+    const grant = (await call(f, "codex_event_access", { action: "issue", jobId: aId, event: "codex.job.lifecycle" }, token)).result.structuredContent;
+    expect((await rpc(f, "events/subscribe", { ...delegated(grant), name: grant.event }, token, {})).body.error).toBeUndefined();
+    releaseA(); await aReceived.promise; await completed(f, aId, token);
+    const releaseB = f.upstream.hold();
+    const next = { requestId: randomUUID(), prompt: "Apply the correction found in A", project: undefined, selection: undefined,
+      activity: { mode: "existing", id: a.activityId }, agent: { mode: "existing", id: a.agentId, context: "continue" } };
+    const b = await task(f, token, next);
+    expect(b.approvedFollowups).toBeNull();
+    expect(b.eventSubscription).toMatchObject({ state: "active", rootJobId: aId });
+    const retry = await task(f, token, next); expect(retry.jobId).toBe(b.jobId);
+    const foreign = await call(f, "codex_status", { query: { kind: "job", id: b.jobId } }, token, { "openai/session": "foreign" });
+    expect(foreign.result.isError).toBe(true);
+    releaseB(); await bReceived.promise;
+    expect((await completed(f, b.jobId, token)).items[0].state).toBe("completed");
+    expect(f.upstream.calls).toBe(2); expect(f.state.mcpEventAccess.list()).toHaveLength(1);
+    expect(f.requests.filter(request => request.method === "events/subscribe")).toHaveLength(1);
+  });
+
   it("recovers the same opaque grant and exact subscription after response loss, token refresh and restart", async () => {
     const f = await start(); const token = await accessToken();
     const a = await task(f, token); await completed(f, a.jobId, token);

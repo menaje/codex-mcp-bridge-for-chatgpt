@@ -260,3 +260,19 @@ connection to work around it.
 - **Unauthorized or Origin denied:** confirm the local auth setting, host
   allowlist, and browser Origin allowlist. Do not broaden them merely to make a
   failed request pass.
+
+## #247 optional lifecycle receiver
+
+Ordinary admission remains direct-wait. In the explicit OAuth Events experiment,
+follow the returned original-root `codex_event_access` action. The optional
+`codex.job.lifecycle` choice connects current questions and later Events Jobs
+in the original Activity/Agent/project through one verified native receiver.
+B admission/result/receipt still use the normal task/status APIs; a dynamic B
+must request Events explicitly. Do not create another native subscription for
+B when exact status reports an active lifecycle `rootJobId`. Preserve the
+returned root name and arguments during native refresh/unsubscribe.
+
+The [updated W0~W5 plan](issue-247-implementation-plan.md) excludes real GPT
+resumption and real A→review→B acceptance trials as well as duration substitutes.
+The user checks real operation while using it. Missing ordinary Chat Pro host
+APIs remain explicit implementation dependencies, never invented permissions.

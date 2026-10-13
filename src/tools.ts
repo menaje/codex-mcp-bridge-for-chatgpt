@@ -8080,7 +8080,7 @@ export function registerBridgeTools(
     {
       title: "Run or Continue Codex Task",
       description:
-        "Durably admit one asynchronous Codex turn and return its exact Job identity immediately. Ordinary Jobs use direct-wait. Follow the returned Job nextActions: repeat bounded exact terminal waits, inspect input after each non-terminal return, review the original result, and continue within the original user goal and delegation. For B fixed before A use the optional approvedFollowups receipt; for B defined after reviewing A use ordinary codex_task with the original Activity and Agent context='continue', without a followup reference. Keep one requestId and identical execution payload for exact retries; query it after response loss. Different requestIds are distinct even for similar prompts or the same Activity. Honor explicit stops and new user decision or approval boundaries; B admission is not overall completion. Never replace a Job after timeout or host abort. Open Dashboard only when the user explicitly requests its display; it never sends results or starts followups. Historical admission policy remains in records without enabling retired delivery." + (config.experimentalProfile === "events" && config.eventsEnabled ? " Explicit experimental completionDelivery=events requires original OAuth scope and codex_event_access for each exact Job; never fall back to another receiver." : ""),
+        "Durably admit one asynchronous Codex turn and return its exact Job identity immediately. Ordinary Jobs use direct-wait. Follow the returned Job nextActions: repeat bounded exact terminal waits, inspect input after each non-terminal return, review the original result, and continue within the original user goal and delegation. For B fixed before A use the optional approvedFollowups receipt; for B defined after reviewing A use ordinary codex_task with the original Activity and Agent context='continue', without a followup reference. Keep one requestId and identical execution payload for exact retries; query it after response loss. Different requestIds are distinct even for similar prompts or the same Activity. Honor explicit stops and new user decision or approval boundaries; B admission is not overall completion. Never replace a Job after timeout or host abort. Open Dashboard only when the user explicitly requests its display; it never sends results or starts followups. Historical admission policy remains in records without enabling retired delivery." + (config.experimentalProfile === "events" && config.eventsEnabled ? " Explicit experimental completionDelivery=events requires original OAuth scope. The returned lifecycle root monitoring action connects current input and later Events Jobs in this Activity/Agent/project; terminal-only consent needs separate exact Job subscriptions. Never fall back to another receiver." : ""),
       inputSchema: codexTaskInputSchema(config, taskExecutionEnvelopeRef()),
       outputSchema: config.experimentalProfile === "events" && config.eventsEnabled ? codexTaskOutputSchema : ordinaryTaskOutputSchema,
       annotations: codexTaskEnvelopeAnnotations(config)
@@ -10552,6 +10552,7 @@ function steeringFailureResult(
 }
 
 function eventMonitoringStopGuidance(subscription: EventSubscriptionState | undefined): string | undefined {
+  if (subscription?.reason === "goal_ended") return "This goal has ended; its lifecycle receiver is closed. Preserve exact result reads and do not reissue monitoring or start late followups.";
   if (subscription?.reason !== "revoked" && subscription?.reason !== "unsubscribed") return undefined;
   return `Events monitoring was explicitly ${subscription.reason}. Resume it only when the user asks, by issuing a new subscriptionRef in the original conversation. Do not automatically issue, resubscribe or replace this Job; keep manual exact-result reads available without card, schedule or polling fallback.`;
 }
@@ -10644,8 +10645,9 @@ function formatJobStatus(
   const nextActions = eventSubscription
     ? !canIssueEventAccess ? [] : [{
         tool: "codex_event_access",
-        arguments: { action: "issue", jobId: job.jobId },
-        userPrompt: "Obtain or recover this exact Job's Bridge-issued subscriptionRef in the original conversation. Preserve its event arguments through native subscribe, refresh and unsubscribe. If subscription fails, report the failure and preserve the Job; do not mount Dashboard, send ui/message, schedule a task or repeatedly poll for completion."
+        arguments: { action: "issue", jobId: eventSubscription?.rootJobId || job.jobId,
+          event: eventSubscription?.rootJobId ? "codex.job.lifecycle" : registry!.admissionStateStore.mcpEventAccess.preferredEvent(job) },
+        userPrompt: "Obtain or recover this original receiver root's Bridge-issued subscriptionRef in the original conversation. Lifecycle consent connects later Events Jobs in the same Activity/Agent/project and current input without a B grant; exact terminal consent covers only one Job. Preserve the returned name and exact arguments through native subscribe, refresh and unsubscribe. Host OAuth renewal and native subscription refresh remain the host's responsibility; delegation reissue still requires original tool scope. If the root is no longer retained, inspect the exact live Job before deliberately selecting a new receiver root; never rerun the work. If subscription fails, report it and preserve the Job; do not mount Dashboard, send ui/message, schedule a task or repeatedly poll for completion."
       }]
     : active
     ? job.completionDeliveryPolicy !== "events"
@@ -10673,7 +10675,7 @@ function formatJobStatus(
               }
             },
             userPrompt:
-              "If the Job requests input or approval, stop automatic continuation at that boundary and surface it to the user."
+              "Inspect current input before another terminal wait. Answer ordinary Codex questions within the original user goal using codex_answer and the exact current questionRef; ask the user only for a new decision. Stop at native approval boundaries, explicit stop intent and uncertain answer delivery; notifications never grant approval."
           }
         ]
       : [{ tool: "codex_status", arguments: { query: { kind: "input", jobId: job.jobId, waitMs: DEFAULT_CODEX_STATUS_WAIT_MS } } }]
@@ -15691,7 +15693,7 @@ function taskProjectionForJob(
                 ? eventMonitoringStopGuidance(semantic.eventSubscription) || eventDeliveryFailureGuidance(semantic.eventSubscription) ||
                   (semantic.eventSubscription?.state === "unavailable" && semantic.eventSubscription.reason !== "expired"
                     ? "This Job's Events monitoring is unavailable. Report that state and preserve the original Job for manual exact reads; do not automatically issue access, restore card delivery, schedule tasks or repeatedly poll."
-                    : "This exact Job uses card-free native Events. Complete its exact Events subscription before ending orchestration. An event ACK is receipt only, not result review: resumed ordinary tools must retain the original conversation scope. Retrieve and review this Job's exact original result before continuing within the original user goal and delegation through its declared receipt or ordinary codex_task continue. A dynamic B needs its own explicit Events opt-in and exact subscription. Honor explicit stops and new user decision or approval boundaries; B admission is not overall completion. Do not call Dashboard for completion, send ui/message, schedule tasks or repeatedly poll. Surface subscription or input failures without fallback.")
+                    : "This exact Job uses card-free native Events. Complete its exact Events subscription before ending orchestration. An event ACK is receipt only, not result review: resumed ordinary tools must retain the original conversation scope. Retrieve and review this Job's exact original result before continuing within the original user goal and delegation through its declared receipt or ordinary codex_task continue. A dynamic B needs explicit Events opt-in; the same authorized lifecycle root connects it without another subscription. Native OAuth/subscription renewal belongs to the host; Bridge delegation reissue still requires original tool scope. Honor explicit stops and new user decision or approval boundaries; B admission is not overall completion. Do not call Dashboard for completion, send ui/message, schedule tasks or repeatedly poll. Surface subscription or input failures without fallback.")
               : "This Job continues independently of the current GPT response. Query the exact Job when needed, answer pending questions, and retrieve its terminal result before reporting completion."
           )])
     ]

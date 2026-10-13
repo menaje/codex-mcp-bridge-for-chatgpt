@@ -43,11 +43,12 @@ connection. The access-JWT adapter and authenticated HTTP launcher are implement
 and synthetically tested. A separate OpenAI/Bridge issuer is configured in an
 approved temporary HTTPS trial; actual ChatGPT discovery, composed OAuth
 connection and event catalog discovery succeeded in the In-app Browser.
-Actual Events subscription/resume and successful A-review → one B acceptance
-remain pending. Conversation metadata and
-callback verification cannot replace authentication. Enabling Events on the
-default No Auth connection still does not make the feature usable. Issue #213
-remains open.
+The 2026-10-02 Work record subsequently demonstrated native subscription,
+callback delivery and GPT resume, while the ordinary result call failed its
+original scope check. This is historical Work evidence, not ordinary Chat Pro
+support. Conversation metadata and callback verification cannot replace
+authentication. No Auth still cannot enable Events. #247's latest decision
+excludes new actual-host trials from implementation completion.
 
 Observed native subscriptions omit the original tool-call conversation field.
 The implemented [restricted subscription delegation](mcp-events-subscription-delegation.md)
@@ -55,7 +56,8 @@ authorizes the same OAuth principal to monitor an exact Events Job without a
 native session. The reference is issued/recovered by `codex_event_access` in the
 original authenticated host conversation. Present bad/different sessions remain
 denied; result reads and B execution still require original tool scope. Actual
-host argument preservation and resumed scope remain acceptance gates.
+host argument preservation and resumed scope remain unconfirmed API capabilities;
+new real-host trials are not #247 completion gates.
 
 Discovery advertises `events` when the opt-in configuration is enabled. Use
 `events/list`, `events/subscribe` and `events/unsubscribe` on the same
@@ -252,23 +254,56 @@ usage contract in #247 is still unconfirmed; Work/dot/API evidence cannot
 establish it. Receiver, subscription and authority fields for that connection
 remain undecided until an actual host contract is available.
 
-## Acceptance boundary
+## Lifecycle root receiver
 
-Protocol and synthetic regression tests cover the implementation. Actual
-ChatGPT / Tunnel must first have an officially supported connection that supplies
-a verified subscriber principal. Its discovery, callback support, resumed-call
-metadata and original scope equality then need an isolated authenticated trial.
-Record webhook receipt separately from exact result retrieval, actual review,
-and B admission. The test must include a B-not-approved control and two distinct
-GPT runs delivering the same logical step.
+The explicit OAuth-only `codex.job.lifecycle` event uses the same native Events
+protocol and callback verification as terminal subscriptions. In the original
+conversation, call `codex_event_access` with `event: "codex.job.lifecycle"` and
+the exact root Events Job ID. Subscribe using the returned event name and exact
+arguments. Terminal-only grants retain their original single-Job scope and
+cannot be used for lifecycle subscriptions.
 
-Card closure, conversation switching, backgrounding, connectivity loss and
-bridge restart each require actual host evidence. The upper Chat model, Pro
-mode and usage contract are unconfirmed until publicly documented or observed;
-webhook success cannot establish their preservation. No automatic host-resume
-claim or default delivery switch is made before those checks.
+One verified root receiver observes that root and later Events Jobs in the
+same original scope, principal, Activity, Agent and project. A declared B keeps
+its immutable Events policy; a dynamic B still opts into Events explicitly.
+The Job admission transaction creates B's waiting delivery record using the
+existing root consent, without creating a B grant or executing any work.
+Native subscriber arguments continue to identify the original root; never
+substitute B's ID into A's reference. Different Agents/Activities need their own
+original-scope consent. Ordinary direct-wait Jobs remain outside this receiver.
 
-This first event only covers terminal results. A Job blocked on an intermediate
-question has no terminal event. Continue to use `codex_status kind=input` and
-`codex_answer`; response-required events are a subsequent scope after actual
-terminal-event acceptance. No new question engine or automatic approval is added.
+Current blocking input and committed terminal results produce stable event IDs.
+Input payloads contain an exact `codex_status kind=input` query, never question
+text, an answer, approval or secrets. A superseded/resolved input is discarded.
+The ordinary input/answer API still checks current questionRef, execution owner,
+original scope and uncertain delivery. GPT answers delegated ordinary questions
+and asks the user only when a new decision is required; native approval remains
+behind its existing boundary.
+
+Late registration, refresh and startup read retained, indexed, result-free Job
+snapshots and restore missing waiting/input/terminal intents. Root native refresh
+atomically updates derived receiver expiry and verified signing keys. OAuth token
+and native subscription refresh belong to the host. Finite delegation reissue
+uses the original authenticated `codex_event_access` API; Bridge cannot mint host
+credentials or conversation authority. Receiver capacity is bounded: an overflow
+records recovery status without rolling back the real Job/result or rerunning it.
+
+Unsubscribe/revoke fences derived intents and late ACKs. An exact child monitoring
+stop affects that child; root stop closes its chain. Activity completion,
+verification-passed, cancellation and abandonment close only that goal's lifecycle
+receivers. A Job's terminal event or ACK alone never closes the whole goal.
+No ACK releases the retained original result or proves GPT review.
+
+## Implementation acceptance
+
+[The updated #247 plan](issue-247-implementation-plan.md) uses source/contract
+review, builds and deterministic unit/integration regressions. Actual GPT resume,
+actual A→review→B host execution and all duration/soak/accelerated substitutes
+are excluded from implementation completion. The user evaluates real behavior
+in ordinary use; no manual host checklist or observation approval is required.
+
+The ordinary ChatGPT Pro host resume/permission/model/usage API remains
+unconfirmed and is not fabricated here. Work/dot/API evidence cannot establish
+that contract. Its API dependency is distinct from an unperformed real-host
+experiment. Lifecycle receiver code does not imply native Events support in
+ordinary Chat Pro or an automatic host-resume guarantee.

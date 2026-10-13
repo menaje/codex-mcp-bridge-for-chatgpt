@@ -111,13 +111,25 @@ configuration.
 ## Validation
 
 `test/outputContracts.test.ts` supplies fixtures for setup, replay, running,
-completed, failed, and cancelled task results; all twelve model-visible tools;
+completed, failed, and cancelled task results; all current model-visible tool contracts;
 root expansion; state contradictions; and structured action validation. The
 output-contract audit measures the current model-visible output schemas at
-47,340 UTF-8 JSON bytes. The total descriptor budget is 64,000 bytes and no
+54,658 UTF-8 JSON bytes. The total descriptor budget is 64,000 bytes and no
 single public output schema may exceed 18,000 bytes. These are descriptor
 measurements, not model-token counts or result-payload limits.
 
 See [Input contracts](input-contracts.md) for the corresponding request
 boundary and [the migration guide](mcp-2026-07-28-migration.md) for the
 breaking-change procedure.
+
+## Optional lifecycle receiver projection
+
+Experimental Events output may include `eventSubscription.rootJobId`. It
+identifies the existing finite lifecycle receiver used by an exact later Job;
+it is not a tool-scope alias, a B grant or an execution receipt. `goal_ended`
+closes that receiver; `delivery_capacity` reports bounded intent recovery without
+changing the Job's execution state. The returned monitoring action carries the
+exact root Job and optional terminal/lifecycle event choice. A pending lifecycle
+reference is not callback verification, ACK, result offer or GPT review.
+The [#247 implementation plan](issue-247-implementation-plan.md) records the
+revised code-only acceptance boundary and the separate unavailable host API.
