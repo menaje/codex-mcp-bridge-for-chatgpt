@@ -247,7 +247,11 @@ or ordinary-tool authority. Read [the lifecycle contract](mcp-events.md#lifecycl
 for source-transaction registration, late/restart recovery, renewal and closure.
 
 Historical actual-host acceptance notes above are retained as evidence, not a
-new #247 prerequisite. The latest user decision excludes real GPT-resume/A→B
-trials and duration/soak/accelerated substitutes from completion. Use the
-[updated W0~W5 plan](issue-247-implementation-plan.md); do not repeat old trials,
-wait for user observation or relax scope to fill a missing host API.
+new #247 prerequisite. The latest user decision assigns automatic resume/A→B,
+model-setting continuity and long-running real-use evaluation to the user and
+excludes them from development completion. Separate duration/soak/accelerated
+substitute trials are not planned or run. The [updated W0~W5 plan](issue-247-implementation-plan.md)
+records the implemented Bridge scope separately from unimplemented host-specific
+additions and unperformed user evaluation. Current automatic-resume connection support and actual
+operation remain unverified; API absence is not asserted and authority is not
+relaxed to claim success.

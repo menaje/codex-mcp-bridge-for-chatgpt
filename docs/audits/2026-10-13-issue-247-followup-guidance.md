@@ -3,28 +3,27 @@
 > 이 문서는 9b126dac 단계의 역사적 인계다. 해당 커밋은 독립 검증 후 dev와
 > origin/dev에 통합됐다. 최신 사용자 결정으로 실제 GPT 재개·A→검토→B
 > 실환경 시험도 완료 조건에서 제외됐다. 이전 표의 미확인은 시험 대기
-> 조건이 아니며, 현재 구현 범위·실제 API 의존성은
+> 조건이 아니며, 현재 구현 범위·연결 지원/작동 미확인과 최종 독립 결과는
 > [갱신한 W0~W5 계획](../issue-247-implementation-plan.md)을 따른다.
 
 
 이번 변경은 W1의 호스트 없이 유효한 안내 정합화와 기존 기능 계약 검증이다.
 일반 ChatGPT Pro의 최초 응답 종료 후 자동 재개를 구현하거나 #247 전체를
-완료한 결과가 아니다. 독립 Verifier 배정과 `dev` 통합은 부모 작업에 남긴다.
+완료한 결과가 아니다. 당시 독립 검토와 통합을 후속 작업으로 인계했으며,
+최종 d231bd2b는 독립 검사 86개·빌드 통과 후 dev/origin 반영과 앱 적용,
+일반 Chat 기본 연결 확인을 완료했다. 실사용 평가는 사용자 담당이다.
 
 기준은 [#247](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/247),
 [지속시간 시험 제외 결정](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/247#issuecomment-6134929204),
-첨부 W0~W5 계획 `libfile_8c6be77f227081919b3cc07364012ad9` 및 이번 bounded
-Worker 지시다. 첨부는 Library에서 전체 252줄을 읽었다.
+이슈의 W0~W5 계획 및 당시 bounded Worker 지시를 기준으로 했다.
 
 ## 작업 식별
 
 | 항목 | 값 |
 | --- | --- |
-| 원본 저장소 | `/Volumes/Data/Dev/codex-mcp-bridge` |
-| 작업 worktree | `/Users/seongsik/Documents/Codex/2026-10-13/task/codex-mcp-bridge-issue-247-w1` |
 | 작업 브랜치 | `codex/issue-247-followup-guidance` |
 | 기준선 | `6f0695914a0b08152d2c851b75a42df0fb099f5b` — 착수 시 `dev == origin/dev`, 원본 worktree clean |
-| 통합 대상 | `dev`, 이번에는 통합하지 않음 |
+| 당시 통합 대상 | `dev`, bounded Worker 인계 뒤 독립 검토와 통합 수행 |
 | 실행 | 직접 로컬 Git/파일/Node 도구. Bridge 플러그인 호출·Bridge Job·추가 에이전트 없음 |
 | 검사 런타임 | Node `v24.11.1`, Vitest `4.1.11`, 기존 로컬 의존성 복사본 |
 
@@ -72,9 +71,9 @@ receipt·hash·구독·DB 처리 로직, 입력/출력의 필수 필드와 계�
 | 명시적 목표 중단 | 기능 검사 통과 | fixture Activity를 명시적으로 abandon한 후 늦은 두 B 경로 모두 새 접수 거부 |
 | ACK/offer/검토 구분 | 기능 검사 통과 | 기존 OAuth Events ACK만으로 B 접수 불가; subscriptionRef는 ordinary 도구 권한이 아니며 `canProceed` 출력도 approval이 아님 |
 | 실제 GPT의 A 검토/최종 목표 검토 | 미확인 | harness가 정확한 결과를 읽고 reviewedVersion을 선언한 기능 검사. 실제 GPT의 검토를 관측한 근거가 아님 |
-| UI 로드 0회·최초 응답 종료 후 원래 일반 Chat Pro 자동 재개 | 호스트 의존 차단 | 원래 대화를 실행하고 원래 MCP scope를 유지하는 실제 호스트 계약이 없음. Work/dot/API 성공으로 대체하지 않음 |
+| UI 로드 0회·최초 응답 종료 후 원래 일반 Chat Pro 자동 재개 | 사용자 평가·현재 연결 지원/작동 미확인 | 원래 대화·MCP scope를 유지하는 실제 자동 재개는 확인하지 않음. API 부재로 단정하지 않고 Work/dot/API 성공으로 대체하지 않음 |
 | 원래 GPT 모델/추론·문맥·사용량 연속성 | 미확인 | 호스트 근거 없음; Codex 지표를 대체 근거로 쓰지 않음 |
-| W2/W3 receiver·구독·권한 연결 및 수명 필드 | 미설계/차단 | 실제 호스트 계약 후 결정. 가짜 참조, 새 DB, 범용 엔진, 권한 완화 없음 |
+| W2/W3 receiver·구독·권한 연결 및 수명 필드 | 후속 Bridge 구현으로 갱신 | 이 표는 bounded W1 당시 범위다. 최종 lifecycle 수신은 갱신한 계획을 따르며 일반 Chat Pro 전용 추가 연결은 미확인 |
 | 독립 검증·dev 통합 | 대기 | 부모가 새 Verifier를 배정한 후 통과 변경만 통합 |
 
 `test/issue247Followups.test.ts`는 disposable SQLite, 가짜 upstream,
@@ -83,30 +82,28 @@ receipt·hash·구독·DB 처리 로직, 입력/출력의 필수 필드와 계�
 expiry 단축이나 지속시간 관찰을 사용하지 않는다. direct-wait의 정상
 20초 상한은 abort 사건으로 즉시 종료하며 시간을 기다리지 않는다.
 
-| 실행 | 실제 결과 | 로그 (`output/issue-247-worker/`) |
-| --- | --- | --- |
-| 새 기능 검사 | 8 passed | `functional-tests.txt` |
-| 기존 output/guidance/ordinary summary/profile/input 계약 | 45 passed | `contracts-regression.txt` |
-| 선별 OAuth Events 기능 검사 | 3 passed, 41 skipped | `events-regression.txt` |
-| 선별 pre-send/restart 답변 검사 | 1 passed, 2 skipped | `presend-regression.txt` |
-| `npm run build` | exit 0; localization/release checks와 TypeScript compilation 통과 | `build.txt` |
-| `git diff --check` | exit 0 | 최종 Git 확인 |
+| 실행 | 실제 결과 |
+| --- | --- |
+| 새 기능 검사 | 8 passed |
+| 기존 output/guidance/ordinary summary/profile/input 계약 | 45 passed |
+| 선별 OAuth Events 기능 검사 | 3 passed, 41 skipped |
+| 선별 pre-send/restart 답변 검사 | 1 passed, 2 skipped |
+| `npm run build` | exit 0; localization/release checks와 TypeScript compilation 통과 |
+| `git diff --check` | exit 0 |
 
 초기 실행은 sandbox의 loopback/tsx IPC socket 제한으로 중단됐다. 승인
 검토를 거친 격리 검사 실행으로 해결했다. 첫 허용된 기능 실행은 6 passed,
 1 failed였으며 검사에서 Activity의 `status`를 참조한 오류를 `lifecycle`
-로 수정했다. 최종 8개 검사는 모두 통과했다. 해당 초기 결과는
-`functional-tests-initial.txt`에 보존했다. 남은 기능 검사 실패는 없다.
+로 수정했다. 최종 8개 검사는 모두 통과했다. 초기 결과와 수정의 검증
+자료는 보존했다. 남은 기능 검사 실패는 없다.
 
 ## 독립 검증 명령
 
-다음 명령은 위 작업 worktree에서 실행한다. HTTP fixture와 tsx는 로컬
+다음 명령은 해당 검토 커밋을 checkout한 저장소 루트에서 실행한다. HTTP fixture와 tsx는 로컬
 socket을 사용하므로 이 실행기의 sandbox에서는 승인된 실행이 필요했다.
 모든 상태와 인증 자료는 테스트 fixture의 임시 경로를 사용한다.
 
 ```sh
-cd /Users/seongsik/Documents/Codex/2026-10-13/task/codex-mcp-bridge-issue-247-w1
-export PATH=/Users/seongsik/.nvm/versions/node/v24.11.1/bin:/usr/bin:/bin
 git rev-parse HEAD
 git diff 6f0695914a0b08152d2c851b75a42df0fb099f5b..HEAD -- src/server.ts src/tools.ts docs test/issue247Followups.test.ts .changes/issue-247-followup-guidance.json
 npm run build

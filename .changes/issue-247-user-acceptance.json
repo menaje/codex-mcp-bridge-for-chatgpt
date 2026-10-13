@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Clarify the #247 handoff and assign automatic-resume, model-setting and long-running real-use evaluation to the user without gating development completion.",
+  "breaking": false,
+  "migration": null
+}

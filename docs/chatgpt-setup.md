@@ -272,7 +272,10 @@ must request Events explicitly. Do not create another native subscription for
 B when exact status reports an active lifecycle `rootJobId`. Preserve the
 returned root name and arguments during native refresh/unsubscribe.
 
-The [updated W0~W5 plan](issue-247-implementation-plan.md) excludes real GPT
-resumption and real A→review→B acceptance trials as well as duration substitutes.
-The user checks real operation while using it. Missing ordinary Chat Pro host
-APIs remain explicit implementation dependencies, never invented permissions.
+The [updated W0~W5 plan](issue-247-implementation-plan.md) assigns automatic
+resumption, real A→review→B behavior, original model/effort/context/usage continuity
+and long-running real-use evaluation to the user. These observations are excluded
+from development completion; no separate duration or accelerated substitute trials
+are required. Current ordinary Chat Pro automatic-resume connection support and actual automatic
+operation remain unverified. This is not evidence that a host API is absent or
+that automatic resumption has been demonstrated.

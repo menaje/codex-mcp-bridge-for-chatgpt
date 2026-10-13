@@ -252,7 +252,8 @@ decisions or approvals when needed, and review the final results before closing
 the goal. The original ordinary ChatGPT Pro resumption, MCP scope, model and
 usage contract in #247 is still unconfirmed; Work/dot/API evidence cannot
 establish it. Receiver, subscription and authority fields for that connection
-remain undecided until an actual host contract is available.
+remain unverified. Any additional host-specific integration has not been implemented
+in this Bridge change; whether it is needed is also unconfirmed.
 
 ## Lifecycle root receiver
 
@@ -297,13 +298,22 @@ No ACK releases the retained original result or proves GPT review.
 ## Implementation acceptance
 
 [The updated #247 plan](issue-247-implementation-plan.md) uses source/contract
-review, builds and deterministic unit/integration regressions. Actual GPT resume,
-actual A→review→B host execution and all duration/soak/accelerated substitutes
-are excluded from implementation completion. The user evaluates real behavior
-in ordinary use; no manual host checklist or observation approval is required.
+review, builds and deterministic unit/integration regressions. The existing
+[d231bd2b implementation](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/commit/d231bd2b9f4d4b55cc1283b698c499828eff2d0f)
+passed 86 independent checks and its build, was integrated into dev, and was
+applied to the app with ordinary Chat basic connectivity confirmed. These are
+prior implementation/handoff results, not new code or tests in this docs change.
 
-The ordinary ChatGPT Pro host resume/permission/model/usage API remains
-unconfirmed and is not fabricated here. Work/dot/API evidence cannot establish
-that contract. Its API dependency is distinct from an unperformed real-host
-experiment. Lifecycle receiver code does not imply native Events support in
-ordinary Chat Pro or an automatic host-resume guarantee.
+Automatic GPT resume, actual A→review→B behavior, original model/effort/context/
+usage continuity and long-running real-use evaluation belong to the user and
+are excluded from development completion. No user observation approval or manual
+host checklist blocks this handoff. Separate duration/soak/accelerated substitute
+trials are not planned or run.
+
+Current ordinary Chat Pro automatic-resume connection support and actual operation
+remain unverified. That does not establish that a host API is absent. This Bridge change
+reuses existing native contracts and does not implement a separate host-specific
+binding or extension API; whether such an addition is required is unconfirmed.
+Unimplemented additions and unperformed real-use evaluation remain distinct.
+Work/dot/API evidence is not substituted for ordinary Chat Pro behavior. Receiver
+code and basic connectivity do not prove automatic host resumption.

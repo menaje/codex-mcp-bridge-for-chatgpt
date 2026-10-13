@@ -132,4 +132,7 @@ changing the Job's execution state. The returned monitoring action carries the
 exact root Job and optional terminal/lifecycle event choice. A pending lifecycle
 reference is not callback verification, ACK, result offer or GPT review.
 The [#247 implementation plan](issue-247-implementation-plan.md) records the
-revised code-only acceptance boundary and the separate unavailable host API.
+development acceptance boundary and user-owned evaluation of automatic resume,
+model-setting continuity and long-running use. Current host automatic-resume
+connection support and actual operation remain unverified; that does not establish
+API absence or prove that an unimplemented host-specific addition already works.

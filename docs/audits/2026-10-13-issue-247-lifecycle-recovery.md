@@ -6,16 +6,20 @@
 조건으로 두지 않는다. 이전 9b126dac의 안내 보완에서 더 나아가 Bridge의
 수신 연결·input 전달·복구·중단·수명 코드와 결정적 검사를 구현했다.
 
-## 식별과 작업 상태
+## 최종 인계와 수락 상태
 
-- 원본: `/Volumes/Data/Dev/codex-mcp-bridge`
-- 작업 worktree: `/Users/seongsik/Documents/Codex/2026-10-13/task/codex-mcp-bridge-issue-247-w1`
-- 브랜치: `codex/issue-247-recovery-lifecycle`
-- 기준선: `9b126dace7512113b2c50560fd162d5fd0756418` (`dev == origin/dev` 재확인)
+- 최종 구현: [d231bd2b9f4d4b55cc1283b698c499828eff2d0f](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/commit/d231bd2b9f4d4b55cc1283b698c499828eff2d0f)
+- 검토 tree: `d06bfa51063e05fc4e826503ac1eafebc8ef8678`
+- 독립 재검토: 선별 기능 검사 82개, 원본 중단/호환성 probe 2개, 추가
+  scope/재발급 경계 probe 2개, 합계 **86개 통과** 및 정확한 SHA 빌드 통과
+- 독립 재검토의 신규 P0/P1/P2 지적 없음
+- dev/origin 반영, 앱 적용 및 일반 Chat의 기본 연결 확인 완료
 - Node: `v24.11.1`, Vitest: `4.1.11`
-- 이번 고정 커밋의 SHA는 최종 인계와 `git rev-parse HEAD`로 확인한다.
-- 이번 새 변경의 dev 통합/푸시는 하지 않는다. 부모가 고정 SHA의 독립
-  검토 후 통합 여부를 결정한다. 기존 worktree/브랜치/독립 검증 자료를 보존한다.
+
+이 결과는 기존 구현의 인계 근거이며 현재 문서 PR의 코드 diff나 새로 실행한
+86개 검사 결과가 아니다. 자동 재개·모델/추론 설정·문맥/사용량 유지 및
+장시간 실사용 평가는 사용자 담당으로 개발 완료 조건에서 제외한다. 기본
+연결 확인은 자동 재개나 A → 실제 GPT 검토 → B의 실증을 의미하지 않는다.
 
 ## 실제 변경과 재사용
 
@@ -62,7 +66,7 @@ scope resolver, execution admission 및 question answer journal은 변경하지 
 
 | 최신 구현 항목 | 결과/근거 | 제한 |
 | --- | --- | --- |
-| UI 없는 최초 등록/인계 | 기존 durable admission + 명시적 lifecycle root native API | 일반 Chat Pro를 실제 실행하는 호스트 API는 제공되지 않음 |
+| UI 없는 최초 등록/인계 | 기존 durable admission + 명시적 lifecycle root native API | 현재 일반 Chat Pro 자동 재개 연결 지원 및 실제 자동 재개 작동은 미확인 |
 | 원래 도구 권한·원본·후행 접수 | 기존 scope/principal/result offer/reviewedVersion/payload 및 receipt 검사 유지 | monitoring ref는 ordinary read/task/answer 권한이 아님 |
 | A 이후 B 수신 연결·응답 유실 | Job과 waiting receiver 같은 UoW, canonical/ordinary 두 OAuth HTTP 검사 통과 | 같은 Activity/Agent/project의 Events opt-in chain; 다른 Agent에는 별도 consent |
 | 등록 전 완료·restart 누락 회수 | retained indexed source에서 stable event/receiver 복구 | bounded 기존 journal capacity와 finite retention 적용 |
@@ -71,43 +75,42 @@ scope resolver, execution admission 및 question answer journal은 변경하지 
 | 중단·전체 종료 | goal closure 및 root/child revoke/unsubscribe, 늦은 ACK 차단 | explicit final-review decision의 Activity API 사용; ACK 자체는 검토 아님 |
 | #242 비용/격리 | dedicated commit-ready signal, result-free indexed reads, 다른 consent 보존 검사 | full-state progress polling이나 새로운 범용 엔진 없음 |
 | 모델/문맥/사용량 | 미확인 호스트 지원 범위를 계획에 기록 | Codex/Work/dot/API로 일반 Chat Pro 조건을 대체하지 않음 |
-| W4/W5 | 고정 커밋 독립 검토용 인계 | 새 변경 dev 통합/푸시는 부모 승인 전 대기 |
+| W4/W5 | 고정 커밋 독립 검사 86개와 빌드 통과 | dev/origin 반영 및 적용 완료; 사용자 실사용 평가는 별도 |
 
 ## 실제 검사 결과
 
-총 81개 서로 다른 기능/회귀 검사 통과 및 `npm run build` exit 0이다.
+아래는 6b370293 구현 단계의 역사적 Worker 결과다. 당시 총 81개 기능/회귀
+검사와 `npm run build`가 통과했다. 최종 d231bd2b의 독립 결과는 위의
+86개이며, 이후 P1 발견·수정과 독립 재검토를 포함한다.
 source-only guard 보완 이후 영향받는 14개 lifecycle module 및 2개 OAuth
 HTTP 검사는 다시 통과했다. 광범위 suite, 실환경 GPT 재개/후행 시험,
 duration/soak/clock acceleration/expiry 축약 시험은 실행하지 않았다.
 
-| 검사 | 결과 | 로그 (`output/issue-247-recovery/`) |
-| --- | --- | --- |
-| 새 lifecycle module | 14 passed | `lifecycle-tests-final.txt` |
-| output/guidance/ordinary profile/summary | 43 passed | `contracts-unit-tests.txt` (그 실행에는 당시 lifecycle 13개도 포함) |
-| 기존 exact followup/input | 10 passed | `followup-input-regression.txt` |
-| OAuth HTTP lifecycle 2 + 기존 권한/ACK/출력 3 | 5 passed, 41 skipped | `oauth-regression.txt`; 영향 검사 재실행은 `lifecycle-http-tests-final.txt` |
-| 기존 terminal UoW/race | 4 passed, 45 skipped | `terminal-regression.txt` |
-| #242 commit-ready/empty-writer/bounded-drain | 4 passed, 1 skipped | `ready-signal-regression.txt` |
-| pre-send/restart answer | 1 passed, 2 skipped | `presend-regression.txt` |
-| build | exit 0 | `build.txt` |
-| output JSON schema budget | 54,658 bytes; largest 16,732 | 64,000/18,000 제한 및 관련 검사 통과 |
-| diff check | exit 0 | 최종 Git 확인 |
+| 검사 | 구현 단계 결과 |
+| --- | --- |
+| 새 lifecycle module | 14 passed |
+| output/guidance/ordinary profile/summary | 43 passed |
+| 기존 exact followup/input | 10 passed |
+| OAuth HTTP lifecycle 2 + 기존 권한/ACK/출력 3 | 5 passed |
+| 기존 terminal UoW/race | 4 passed |
+| #242 commit-ready/empty-writer/bounded-drain | 4 passed |
+| pre-send/restart answer | 1 passed |
+| build 및 diff check | exit 0 |
+| output JSON schema budget | 54,658 bytes; largest 16,732; 64,000/18,000 제한 통과 |
 
 초기 검사에서 fixture 완료 저장의 projectName 누락과 재시작 전 writer
 lease 미종료를 수정했다. HTTP 검사에서 발견한 B의 첫 사건 이전 waiting
-receiver 누락도 admission UoW에서 보완했다. 최종 검사 실패는 없다. 초기
-실패 로그는 작업 output에 보존했다. 실제 계정 grant나 운영 DB를 사용한
-검사가 아니다.
+receiver 누락도 admission UoW에서 보완했다. 최종 검사 실패는 없다.
+초기 실패와 수정의 검증 자료는 보존했다. 이 기능 검사는 격리 fixture로
+수행했으며 실제 GPT 재개나 사용자 실사용의 증거로 해석하지 않는다.
 
 ## 독립 검증 명령
 
-아래는 이 작업 worktree에서 실행한다. HTTP fixture/tsx는 이 실행기의
+아래는 해당 검토 커밋을 checkout한 저장소 루트에서 실행한다. HTTP fixture/tsx는 이 실행기의
 sandbox에서 로컬 socket 허용이 필요했다. npm의 광범위 `test/check`는
 지속시간 사례를 포함하므로 사용하지 않는다.
 
 ```sh
-cd /Users/seongsik/Documents/Codex/2026-10-13/task/codex-mcp-bridge-issue-247-w1
-export PATH=/Users/seongsik/.nvm/versions/node/v24.11.1/bin:/usr/bin:/bin
 git rev-parse HEAD
 git diff 9b126dace7512113b2c50560fd162d5fd0756418..HEAD --check
 npm run build
@@ -121,17 +124,17 @@ node node_modules/vitest/vitest.mjs run test/questionStore.test.ts -t 'persists 
 
 ## 남은 실제 의존성과 보존
 
-원래 일반 Chat Pro 대화를 최초 응답 종료 후 추론/도구 실행으로 재개하고
-원래 MCP scope·모델/추론/문맥·사용량을 이어 주는 공식 API/대상 참조가
-현재 제공되지 않았다. 그 호스트 연결은 구현하지 못했으며 가짜 API,
-scope 별칭이나 권한 완화로 채우지 않았다. 이는 실환경 시험을 실행하지
-않은 것과 구분되는 실제 API 의존성이다. Bridge의 독립 기능은 그 시험을
-기다리지 않고 구현·검사했으며 사용자 실사용 확인을 대기 조건으로 두지 않는다.
+현재 일반 Chat Pro의 최초 응답 종료 후 자동 재개와 원래 MCP scope·
+모델/추론·문맥/사용량 연속성의 연결 지원 및 실제 작동은 미확인이다.
+“공식 API가 없다”는 이전 단정은 충분한 근거가 없어 정정한다. 이번 코드는
+기존 native 계약을 재사용하는 Bridge 구현이다. 별도 일반 Chat Pro 전용
+호스트 바인딩/확장 API 구현은 포함되지 않았으며, 그 추가 구현이 필요한지도
+미확인이다. 이 코드 범위와 실사용 평가를 수행하지 않은 사실을 구분한다.
 
-운영 앱/설치본/DB/설정/실제 자격증명을 변경하지 않았고 Bridge 도구나
-새 Job, 추가 에이전트, 이슈 게시/상태 변경, 새 dev 통합/푸시, 영구 삭제는
-수행하지 않았다. root consent는 코드 계약과 fixture에서만 생성했다.
-작업 브랜치·worktree·기존 9b126dac 자료와 새 build/검사 output을 보존한다.
+사용자는 실제 자동 재개, 원래 모델 설정 유지, 장시간 동작을 일상 사용에서
+평가한다. 그 평가의 완료나 추가 승인 요청은 개발 완료를 막지 않는다.
+가짜 참조나 권한 완화로 미확인을 채우지 않으며, Work/dot/API 동작을
+일반 Chat Pro의 검증으로 대체하지 않는다. 기존 작업과 검증 자료를 보존한다.
 
 ## 독립 P1 수정 — 등록 이전 child revoke
 
@@ -151,6 +154,7 @@ undefined인 실패를 확인했고, 수정 후 중단 기록 revoked, 늦은 �
 재대조 이후 B 전달 0회, B completed 상태 보존을 확인했다. lifecycle 검사는
 15개로 늘었다. 기존 선별 목록 전체를 새 수정에 다시 실행해 총 82개
 검사와 빌드가 모두 통과했다.
-최종 결과·실행 명령은 `output/issue-247-stop-fix/validation-commands.json`과
-동일 폴더의 로그에 보존한다. 이전 81개 검사 기록은 역사적 결과로 유지한다.
-실환경/지속시간 시험, 운영 변경 및 dev 통합/푸시는 수행하지 않는다.
+이후 d231bd2b 독립 재검토에서 원본 probe 2개와 추가 scope/재발급 경계
+probe 2개도 통과해 최종 합계는 86개다. 이전 81/82개 Worker 결과는
+역사적 기록으로 유지한다. 검토된 구현의 dev 통합·앱 적용은 완료했고,
+실사용/지속시간 평가는 사용자에게 맡긴다.
