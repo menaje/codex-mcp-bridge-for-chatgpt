@@ -155,6 +155,48 @@ export class AutomaticRecoveryStore {
     return candidate;
   }
 
+  /** Reuse only a provably continuous, still-active legacy control. The
+   * journal, original clock and exhausted/expired budget remain untouched.
+   * One current alias per Agent contains control IDs only, not history.
+   * A Thread link changes Agent version; a newer Job starts a new context. */
+  handoffRecheckIdentity(candidate: AutomaticRecoveryCandidate, allowHandoff=true): AutomaticRecoveryCandidate | undefined {
+    if (candidate.kind!=="recheck") return candidate;
+    return this.db.transaction(()=>{
+      if (this.incident(candidate.key)) return candidate;
+      const aliasKey=`recheck_identity/${candidate.agentId}`;
+      const saved=this.db.prepare("SELECT value FROM bridge_meta WHERE key=?").get(aliasKey) as {value:string}|undefined;
+      if(saved) {
+        const alias=JSON.parse(saved.value) as {key:string;identityKey:string};
+        if(alias.key===candidate.key && this.incident(alias.identityKey)) return {...candidate,key:alias.identityKey};
+      }
+      if(!allowHandoff) return candidate;
+      const agent=this.db.prepare("SELECT version,updated_at,current_thread_id FROM agents WHERE agent_id=? AND scope_id=?")
+        .get(candidate.agentId,candidate.scopeId) as {version:number;updated_at:number;current_thread_id:string|null}|undefined;
+      if (!agent?.current_thread_id) return candidate;
+      const latest=this.db.prepare("SELECT job_id,thread_id,created_at FROM jobs WHERE agent_id=? ORDER BY created_at DESC,job_id DESC LIMIT 1")
+        .get(candidate.agentId) as {job_id:string;thread_id:string|null;created_at:number}|undefined;
+      const job=latest?.thread_id===agent.current_thread_id ? latest : undefined;
+      if (candidate.key!==automaticRecoveryKey("recheck",[candidate.agentId,job?.job_id,agent.current_thread_id])) return candidate;
+      const legacyKeys=[...new Set([job?.job_id,undefined].map(id=>automaticRecoveryKey("recheck",[candidate.agentId,agent.version,id])))];
+      const compatible=this.db.prepare(`SELECT i.identity_key,i.updated_at,c.job_id,r.thread_id,r.occurred_at
+        FROM automatic_recovery_incidents i JOIN recovery_controls c ON c.recovery_key=i.recovery_key
+        LEFT JOIN automatic_recovery r ON r.recovery_key=i.recovery_key
+        WHERE i.agent_id=? AND i.active=1 AND c.state IN ('retrying','blocked')
+          AND i.identity_key IN (${legacyKeys.map(()=>"?").join(",")})`)
+        .all(candidate.agentId,...legacyKeys) as Array<{identity_key:string;updated_at:number;job_id:string|null;thread_id:string|null;occurred_at:number|null}>;
+      const matches=compatible.filter(row=>agent.updated_at<=row.updated_at &&
+        (!row.thread_id || row.thread_id===agent.current_thread_id) &&
+        (row.job_id ? row.job_id===candidate.jobId : !job || job.created_at<=(row.occurred_at ?? agent.updated_at)));
+      // Ambiguous old origins are history, not permission to merge incidents.
+      if(matches.length>1) return;
+      if(matches.length===0) return candidate;
+      const identityKey=matches[0]!.identity_key;
+      this.db.prepare("INSERT INTO bridge_meta(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+        .run(aliasKey,JSON.stringify({key:candidate.key,identityKey}));
+      return {...candidate,key:identityKey};
+    })();
+  }
+
   private incident(identityKey: string): {recovery_key:string;active:number} | undefined {
     return this.db.prepare("SELECT recovery_key,active FROM automatic_recovery_incidents WHERE identity_key=?")
       .get(identityKey) as {recovery_key:string;active:number} | undefined;
@@ -278,6 +320,10 @@ export class AutomaticRecoveryStore {
       SELECT identity_key FROM automatic_recovery_incidents WHERE agent_id NOT IN (SELECT agent_id FROM agents)
       AND recovery_key NOT IN (SELECT recovery_key FROM automatic_recovery) ORDER BY identity_key LIMIT ?)`)
       .run(Math.max(1,Math.min(64,limit))).changes;
+    this.db.prepare(`DELETE FROM bridge_meta WHERE key IN (
+      SELECT key FROM bridge_meta WHERE key GLOB 'recheck_identity/*'
+      AND substr(key,18) NOT IN (SELECT agent_id FROM agents) ORDER BY key LIMIT ?)`)
+      .run(Math.max(1,Math.min(64,limit)));
     return {recordsRemoved,incidentsRemoved:incidentsRemoved+controlsRemoved};
   }
 

@@ -5471,7 +5471,8 @@ export function registerBridgeTools(
           cached.observation = observation;
           cached.unavailable = false;
           jobs.resolveHistoryRuntimeProblem(fresh,target.expectedRevision);
-          jobs.admissionStateStore.automaticRecovery.observeRecheck(recheckRecoveryIdentity(jobs,fresh),false,Date.now(),"not-loaded-no-background");
+          const recheckIdentity=recheckRecoveryIdentity(jobs,fresh);
+          if(recheckIdentity) jobs.admissionStateStore.automaticRecovery.observeRecheck(recheckIdentity,false,Date.now(),"not-loaded-no-background");
           return {ok:true,changed:1};
         }
         return {ok:true,changed:0};
@@ -8611,12 +8612,25 @@ export function registerBridgeTools(
   };
 }
 
-function recheckRecoveryIdentity(jobs: CodexJobRegistry, agent: BridgeAgent,
-  latest = jobs.observedLatestJobForAgent(agent.agentId)): AutomaticRecoveryCandidate {
+function recheckRecoveryIdentity(jobs: CodexJobRegistry, agent: BridgeAgent, handoff=false): AutomaticRecoveryCandidate | undefined {
   const latestControl=jobs.admissionStateStore.latestControlJob(agent.agentId);
   const control=latestControl?.threadId === (agent.currentThreadId || null) ? latestControl : undefined;
-  return {key:automaticRecoveryKey("recheck",[agent.agentId,control?.jobId,agent.currentThreadId]),
+  const identity:AutomaticRecoveryCandidate={key:automaticRecoveryKey("recheck",[agent.agentId,control?.jobId,agent.currentThreadId]),
     scopeId:agent.scopeId,agentId:agent.agentId,jobId:agent.currentJobId || control?.jobId,kind:"recheck"};
+  return jobs.admissionStateStore.automaticRecovery.handoffRecheckIdentity(identity,handoff);
+}
+
+/** An unavailable historical thread is a display limitation, not a new
+ * incident. Keep investigating actual work and connections whose shutdown
+ * is still unconfirmed, independently of whether their Job history expired. */
+function hasCurrentRecheckContext(jobs: CodexJobRegistry, agent: BridgeAgent,
+  thread: BridgeAgentThread, observation?: DashboardRuntimeObservation, knownConnection?: ThreadConnectionRecord): boolean {
+  const store=jobs.admissionStateStore;
+  const connection=knownConnection || store.threadConnections.get(thread.threadId);
+  if (connection?.agentId===agent.agentId && connection.scopeId===agent.scopeId &&
+      connection.phase!=="released" && !connection.evidence) return true;
+  return store.threadConnections.hasUnfinishedWork(thread.threadId) ||
+    observation?.state==="busy" || (observation?.backgroundProcessCount || 0)>0;
 }
 
 export function configureAutomaticRecovery(
@@ -8641,11 +8655,19 @@ export function configureAutomaticRecovery(
     const releasableConnection = connection?.persistence === "persistent" &&
       connection.lastJobId && !["released", "releasing"].includes(connection.phase)
       ? connection : undefined;
-    const recheckIdentity = recheckRecoveryIdentity(jobs, agent, latest);
+    const observation = dashboardRuntimeCaches.get(upstream)?.get(dashboardRuntimeCacheKey(thread));
+    const currentObservation=observation?.stamp===dashboardRuntimeStamp(agent,latest) ? observation : undefined;
+    const currentContext=hasCurrentRecheckContext(jobs,agent,thread,currentObservation?.observation,connection);
+    const unknown = currentObservation &&
+      (currentObservation.unavailable || currentObservation.observation.state === "unknown" || currentObservation.observation.backgroundProcessState === "unknown");
+    const unresolvedOrphan = agent.lifecycle === "orphaned" && !store.workHistory.runtimeResolution(
+      agent.agentId,dashboardRuntimeProblemIdentity(jobs,agent).revision);
+    const discover=Boolean(unknown || unresolvedOrphan) && currentContext;
+    const recheckIdentity = recheckRecoveryIdentity(jobs, agent,discover);
     const couldRelease = releasableConnection &&
       !store.automaticRecovery.isBlocked(automaticRecoveryKey("release",
         [releasableConnection.threadId,releasableConnection.lastJobId]));
-    if (store.automaticRecovery.isBlockedRecheckIdentity(recheckIdentity.key) && !couldRelease &&
+    if (recheckIdentity && store.automaticRecovery.isBlockedRecheckIdentity(recheckIdentity.key) && !couldRelease &&
         current?.status !== "termination-failed") return [];
     const result: AutomaticRecoveryCandidate[] = [];
     if (current?.status === "termination-failed" && current.cancellationIntentId) {
@@ -8660,12 +8682,7 @@ export function configureAutomaticRecovery(
       }
       return result;
     }
-    const observation = dashboardRuntimeCaches.get(upstream)?.get(dashboardRuntimeCacheKey(thread));
-    const unknown = observation?.stamp === dashboardRuntimeStamp(agent,latest) &&
-      (observation.unavailable || observation.observation.state === "unknown" || observation.observation.backgroundProcessState === "unknown");
-    const identity = dashboardRuntimeProblemIdentity(jobs,agent);
-    const unresolvedOrphan = agent.lifecycle === "orphaned" && !store.workHistory.runtimeResolution(agent.agentId,identity.revision);
-    const recheck = store.automaticRecovery.recheckCandidate(recheckIdentity,Boolean(unknown || unresolvedOrphan));
+    const recheck = recheckIdentity && store.automaticRecovery.recheckCandidate(recheckIdentity,discover);
     if (recheck && !store.automaticRecovery.isBlocked(recheck.key)) result.push(recheck);
     const retained = releasableConnection && !current ? store.workHistory.latestJob(agent.agentId) : undefined;
     if (!current && releasableConnection?.lastJobId &&
@@ -12183,8 +12200,12 @@ function cacheDashboardRuntime(
       const current = cache.get(cacheKey)!;
       const confirmed = !current.unavailable && current.observation.backgroundProcessState === "confirmed" &&
         ["confirmed","idle","not-loaded","busy"].includes(current.observation.state);
-      jobs.admissionStateStore.automaticRecovery.observeRecheck(recheckRecoveryIdentity(jobs,agent,latest),!confirmed,Date.now(),
-        confirmed ? current.observation.state === "busy" ? "active-turn-observed" : "runtime-observed" : undefined);
+      const currentContext=hasCurrentRecheckContext(jobs,agent,candidate.thread,current.observation);
+      if (confirmed || currentContext) {
+        const identity=recheckRecoveryIdentity(jobs,agent,currentContext);
+        if(identity) jobs.admissionStateStore.automaticRecovery.observeRecheck(identity,!confirmed,Date.now(),
+          confirmed ? current.observation.state === "busy" ? "active-turn-observed" : "runtime-observed" : undefined);
+      }
     }
     while (cache.size > CARD_RUNTIME_CACHE_MAX_ENTRIES) {
       const oldestKey = cache.keys().next().value;
