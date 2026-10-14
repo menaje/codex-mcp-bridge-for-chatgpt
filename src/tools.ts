@@ -12292,7 +12292,10 @@ function cacheDashboardRuntime(
 ): void {
   const cacheKey = dashboardRuntimeCacheKey(candidate.thread);
   const previous = cache.get(cacheKey);
+  const conclusiveUnloaded=result.observation.state==="not-loaded" &&
+    result.observation.backgroundProcessState==="confirmed" && result.observation.backgroundProcessCount===0;
   const canRetainLiveness =
+    !conclusiveUnloaded &&
     result.coverage === "background" &&
     previous?.stamp === candidate.stamp &&
     previous.coverage === "liveness" &&
