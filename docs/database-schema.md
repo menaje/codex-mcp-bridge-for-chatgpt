@@ -353,3 +353,41 @@ operational writer is added. Generic measurements/events use their own fixed
 occurrence time. Transport attached to live work waits for that exact run's end.
 Queue/memory bounds and a bounded local ACK receipt window remain control limits,
 with no persistent diagnostic body retained in those receipts.
+
+## Policy/deletion serialization and independent Activity materials (#251 review)
+
+The normal state owner is still the only operational DB writer. Settings writes
+and destructive telemetry slices acquire the same private sibling
+`<canonical-state-file>.history-policy-gate.sqlite`. This empty SQLite file has
+no tables, settings, record bodies or leases; it is solely an OS-backed mutex.
+Telemetry continues to open the operational source read-only. The state owner
+holds this mutex until its outer settings transaction commits or rolls back,
+including updates nested inside project/settings commands. Telemetry obtains it
+before reading the policy and holds it through its own delete commit/rollback.
+Both owners use timeout zero. Contention fails with SQLITE_BUSY without waiting
+or applying a fallback; the normal retry path must obtain fresh policy. A
+read/storage failure rolls back and releases the mutex, and process death releases
+SQLite locks. The file contains nothing to include in a history/backup archive.
+
+Activity completion material uses its immutable outbox `created_at`, independent
+of the last Job end. Reads, pending alerts and claims apply the saved policy even
+before cleanup. Existing history maintenance also scrubs a bounded 64 outbox
+payloads without waiting for another Job expiry; its compact outbox identity and
+attempt/lease/delivery outcome remain as an idempotency fence. Expired payloads
+carry only `historyExpired:true`, so a later unlimited setting cannot revive
+physically removed material. Delivered and undelivered completion records follow
+the same history period; an offer/lease does not restart it.
+
+Cancellation reason text uses immutable operation `created_at` for both Job and
+Activity targets. Reads omit expired prose and history maintenance clears it in
+bounded slices. Identity, action hash, root/child intent, status, machine reason
+code and outcome are unaffected, including active cancellation. An unavailable
+policy cannot authorize deletion; the direct control getter omits prose while
+remaining usable to settle/replay an existing action.
+
+History cache revision v3 includes the stored mutation revision plus the visible
+retained count and earliest retained end clock. Logical expiry therefore changes
+page/cursor validity before a physical sweep. Runtime incident recurrence uses
+its distinct incident identity. Only the initial canonical incident or a direct
+execution-recovery action is correlated with the failed execution's progression;
+association to the same Job alone does not collapse a new occurrence.

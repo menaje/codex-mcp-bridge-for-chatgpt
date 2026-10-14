@@ -18,7 +18,7 @@ Snapshot rows retain `history: DashboardTurn[]`, `historyCount: number` and add:
 | Field | Type | Meaning |
 |---|---|---|
 | historyHasMore | boolean | count exceeds delivered summaries |
-| historyRevision | 64-hex string | actual admission/terminal/history content change; unrelated progress is excluded |
+| historyRevision | 64-hex string | actual admission/terminal/history content change AND logical retained-set change; unrelated progress is excluded |
 | representativeExecutionKey | 32-hex string or null | exact execution represented by this Agent row |
 | policyRevision | 64-hex string | applied retention policy identity; unrelated settings edits do not invalidate it |
 | nextExpiryAt | ISO timestamp or null | earliest retained record's expiry for this Agent; null for unlimited retention |
@@ -44,7 +44,7 @@ On-demand `dashboard-history` / native `dashboard.history-detail` takes existing
 `rowKey`, optional `historyCursor: string`, and the unchanged authorized scope.
 It returns at most 12 summaries, `historyCount`, the same cache fields above,
 `historyHasMore`, and `nextCursor: string | null`. Cursor validation binds scope,
-Agent, policy and actual history revision. A stale cursor fails with
+Agent, policy and actual history revision, including time-based expiry before physical cleanup. A stale cursor fails with
 `DASHBOARD_HISTORY_TARGET_CHANGED`; refresh that target. Merge pages by
 executionKey. Do not fetch on unfolding already supplied/cached summaries;
 loading additional records is a separate explicit action.
@@ -54,7 +54,9 @@ or all-work scope, project identity, row key, representativeExecutionKey,
 historyRevision and policyRevision. Expiry is a freshness boundary, not a disk
 deletion policy. Reject late responses before publishing them, including an
 A-to-B-to-A scope round trip. Preserve valid caches across ordinary refresh and
-pane changes. Older responses without the new identity fields require a
+pane changes. Check the cached page's OWN nextExpiryAt independently, as well as
+matching count and expiry boundary against the fresh row. A later snapshot's new
+boundary cannot revive an expired cached page. Older responses without the new identity fields require a
 conservative refresh rather than being treated as matching current responses.
 
 Problems are one occurrence-ordered list. The deprecated request fields

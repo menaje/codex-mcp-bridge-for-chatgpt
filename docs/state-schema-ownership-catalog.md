@@ -170,3 +170,15 @@ persistent row deletion. Policy read failure retains records and reports failure
 every non-SQLite-internal table, explicit index and trigger in `sqlite_master` to
 appear in this catalog. Adding or renaming a schema object without updating its
 owner and destination therefore fails the test.
+
+## Cross-owner policy mutex (#251)
+
+`<canonical-state-file>.history-policy-gate.sqlite` is an empty coordination
+file, not a second operational/telemetry record store. It has no SQLite schema
+objects or historical contents. The operational owner acquires it for a settings
+write through its outer commit/rollback; the telemetry owner acquires it for
+policy read plus destructive telemetry transaction. Timeout-zero SQLite locking
+serializes these boundaries across processes and releases on crash, without
+allowing telemetry to write the operational source. Busy/failure preserves data
+and does not change policy. No new cleanup daemon, manual approval or alternate
+history TTL is introduced. The existing state/telemetry table owners stay intact.

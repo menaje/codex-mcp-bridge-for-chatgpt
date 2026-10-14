@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BridgeStateStore,
   COMPLETION_OUTBOX_UNCERTAIN_HOLD_AT
@@ -11,6 +11,10 @@ import {
 import { historicalCompletion } from "./fixtures/historicalCompletion.js";
 
 describe("BridgeStateStore", () => {
+  // These fixtures deliberately use small fixed timestamps. Evaluate policy
+  // at the same fixture clock, not decades after those records were created.
+  beforeEach(()=>vi.spyOn(Date,"now").mockReturnValue(2_000_000));
+  afterEach(()=>vi.restoreAllMocks());
   it("lists only retryable notify events for the local native delivery path", () => {
     const store = new BridgeStateStore({ file: ":memory:" });
     const notifyActivityId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -153,15 +157,15 @@ describe("BridgeStateStore", () => {
     try {
       store.upsertJob(job(jobId, "15151515-1515-4515-8515-151515151515"));
       const original = historicalCompletion(store, jobId, "host-accepted", { host_accepted_at: 5_021 });
-      expect(store.retentionProtection(jobId, 5_021)).toContain("undelivered-chatgpt-result");
+      expect(store.retentionProtection(jobId, 5_021)).not.toContain("undelivered-chatgpt-result");
       expect(store.recordJobCompletionResultOffer({ scopeId: SCOPE_A, source: "direct-job-query", jobId, now: 5_022 }))
         .toMatchObject({ ...original, directResultOfferedAt: 5_022, updatedAt: 5_022 });
-      expect(store.retentionProtection(jobId, 5_022)).toContain("undelivered-chatgpt-result");
+      expect(store.retentionProtection(jobId, 5_022)).not.toContain("undelivered-chatgpt-result");
       expect(store.getJobCompletionDelivery(jobId)?.resultReadAt).toBeUndefined();
     } finally { store.close(); }
   });
 
-  it("bounds unresolved ChatGPT completion results by run-history retention", () => {
+  it("retains delivery uncertainty without granting a separate result-retention exception", () => {
     const store = new BridgeStateStore({ file: ":memory:" });
     const jobId = "34343434-3434-4434-8434-343434343434";
     const requestId = "35353535-3535-4535-8535-353535353535";
@@ -178,7 +182,7 @@ describe("BridgeStateStore", () => {
         .not.toContain("undelivered-chatgpt-result");
       historicalCompletion(store, jobId, "host-accepted", { host_accepted_at: terminalAt + 2 });
       expect(store.retentionProtection(jobId, terminalAt + 7 * day - 1, recoveryMs))
-        .toContain("undelivered-chatgpt-result");
+        .not.toContain("undelivered-chatgpt-result");
       expect(store.retentionProtection(jobId, terminalAt + 7 * day, recoveryMs))
         .not.toContain("undelivered-chatgpt-result");
 
@@ -190,7 +194,7 @@ describe("BridgeStateStore", () => {
         now: offeredAt
       });
       expect(store.retentionProtection(jobId, terminalAt + 7 * day, recoveryMs))
-        .toContain("chatgpt-result-recovery");
+        .not.toContain("chatgpt-result-recovery");
       expect(store.retentionProtection(jobId, offeredAt + recoveryMs, recoveryMs))
         .not.toContain("chatgpt-result-recovery");
     } finally {
@@ -244,7 +248,7 @@ describe("BridgeStateStore", () => {
         resultReadSource: undefined
       });
       expect(store.retentionProtection(rejectedJobId, 32))
-        .toContain("undelivered-chatgpt-result");
+        .not.toContain("undelivered-chatgpt-result");
 
       store.upsertJob(job(unknownJobId, "32323232-3232-4232-8232-323232323232"));
       historicalCompletion(store, unknownJobId, "acceptance-unknown", { acceptance_unknown_at: 41 });
@@ -259,7 +263,7 @@ describe("BridgeStateStore", () => {
         resultReadSource: undefined
       });
       expect(store.retentionProtection(unknownJobId, 42))
-        .toContain("undelivered-chatgpt-result");
+        .not.toContain("undelivered-chatgpt-result");
     } finally {
       store.close();
     }
@@ -468,7 +472,7 @@ describe("BridgeStateStore", () => {
     expect(readFileSync(file).includes(Buffer.from(rawPrompt))).toBe(false);
 
     const reopened = new BridgeStateStore({ file });
-    expect(reopened.schemaVersion).toBe(31);
+    expect(reopened.schemaVersion).toBe(32);
     expect(reopened.listSteeringDeliveries(SCOPE_A)).toEqual([
       expect.objectContaining({
         requestId,
@@ -536,7 +540,7 @@ describe("BridgeStateStore", () => {
     store.close();
 
     const restored = new BridgeStateStore({ file });
-    expect(restored.schemaVersion).toBe(31);
+    expect(restored.schemaVersion).toBe(32);
     expect(restored.getActivityProjectAdmission(activityId)?.projectId).toBe(project.id);
     expect(restored.listJobs()).toEqual([
       expect.objectContaining({ projectId: project.id, projectName: "Codex MCP Bridge" })
@@ -789,7 +793,7 @@ describe("BridgeStateStore", () => {
     store.close();
 
     const restored = new BridgeStateStore({ file });
-    expect(restored.schemaVersion).toBe(31);
+    expect(restored.schemaVersion).toBe(32);
     expect(restored.getCancellationOperation(SCOPE_A, requestId)).toMatchObject({
       source: "model-tool",
       reason: "The user changed direction. Stop the obsolete job."

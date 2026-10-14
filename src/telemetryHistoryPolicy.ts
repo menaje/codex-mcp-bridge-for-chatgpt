@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { withHistoryPolicyGate } from "./historyPolicyGate.js";
 import { historyExpired, readAppliedHistoryPolicy, type AppliedHistoryPolicy } from "./historyPolicy.js";
 
 type TransportClock = {job_id?:string|null;created_at:number};
@@ -32,10 +33,11 @@ export function visibleTransportRecords<T extends {jobId?:string;createdAt:numbe
   });
 }
 
-/** A bounded slice in the telemetry owner's transaction. Every actual delete
- * rereads the persisted source policy; no policy/cutoff crosses IPC as a plan. */
+/** Policy writers and destructive telemetry slices share a crash-safe mutex.
+ * Read the latest committed policy only AFTER acquiring it, and hold it until
+ * the telemetry commit/rollback, closing the separate-database final-read race. */
 export function sweepTelemetryHistory(database:Database.Database,source?:Database.Database,now=Date.now(),limit=64):number {
-  return database.transaction(()=>{
+  return withHistoryPolicyGate(source?.name,()=>database.transaction(()=>{
     const initial=policy(source,now);
     let removed=0;
     const domains=[['transport','transport_observations','observation_id'],
@@ -70,5 +72,5 @@ export function sweepTelemetryHistory(database:Database.Database,source?:Databas
       ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(JSON.stringify({policyRevision:initial.policyRevision,
         retentionDays:initial.retentionDays,evaluatedAt:now,removed}));
     return removed;
-  })();
+  })());
 }

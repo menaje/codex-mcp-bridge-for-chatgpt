@@ -8,6 +8,8 @@ export type AutomaticRecoveryState = "retrying" | "resolved" | "blocked";
 export type AutomaticRecoveryRecord = {
   key: string; scopeId: string; agentId: string; jobId?: string;
   projectId?: string; activityId?: string; threadId?: string;
+  /** Exact initial incident/direct execution-recovery origin, never recurrence. */
+  executionFailureJobId?: string;
   kind: AutomaticRecoveryKind; state: AutomaticRecoveryState;
   attempts: number; occurredAt: number; createdAt: number; updatedAt: number; nextAttemptAt: number;
   reason: string; evidence?: string;
@@ -96,7 +98,12 @@ export class AutomaticRecoveryStore {
    * expired, so the selected page can hydrate exact Job IDs after pagination. */
   listForDashboard(scopeId?: string): AutomaticRecoveryRecord[] {
     const policy=this.policy();
-    return this.db.prepare(`SELECT recovery.* FROM automatic_recovery recovery
+    return this.db.prepare(`SELECT recovery.*,
+      CASE WHEN recovery.kind IN ('release','retry-stop') OR EXISTS (
+        SELECT 1 FROM automatic_recovery_incidents i WHERE i.identity_key=recovery.recovery_key
+          AND i.agent_id=recovery.agent_id)
+        THEN recovery.job_id ELSE NULL END AS execution_failure_job_id
+      FROM automatic_recovery recovery
       WHERE ${scopeId ? "recovery.scope_id=? AND" : ""}
       ${policy.cutoffAt===null ? "1" : "recovery.occurred_at>?"}
       ORDER BY recovery.occurred_at DESC,recovery.recovery_key`)
@@ -308,6 +315,7 @@ export class AutomaticRecoveryStore {
   private decode(row: Record<string, unknown>): AutomaticRecoveryRecord {
     return {key:String(row.recovery_key),scopeId:String(row.scope_id),agentId:String(row.agent_id),
       ...(row.job_id ? {jobId:String(row.job_id)} : {}),
+      ...(row.execution_failure_job_id ? {executionFailureJobId:String(row.execution_failure_job_id)} : {}),
       ...(row.project_id ? {projectId:String(row.project_id)} : {}),
       ...(row.activity_id ? {activityId:String(row.activity_id)} : {}),
       ...(row.thread_id ? {threadId:String(row.thread_id)} : {}),kind:row.kind as AutomaticRecoveryKind,state:row.state as AutomaticRecoveryState,

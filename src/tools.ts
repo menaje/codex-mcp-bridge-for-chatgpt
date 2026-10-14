@@ -13209,9 +13209,11 @@ async function buildDashboardView(
     const fullJobs=new Map(allJobs.map(job=>[job.jobId,job]));
     const failedJobs=new Set(problemJobRecords.map(record=>record.jobId));
     const recoveriesByJob=new Map<string,typeof automaticRecords>();
-    for(const record of automaticRecords) if(record.jobId) {
-      const records=recoveriesByJob.get(record.jobId)||[];records.push(record);recoveriesByJob.set(record.jobId,records);
+    for(const record of automaticRecords) if(record.executionFailureJobId) {
+      const records=recoveriesByJob.get(record.executionFailureJobId)||[];
+      records.push(record);recoveriesByJob.set(record.executionFailureJobId,records);
     }
+    const currentControls=jobs.admissionStateStore.latestControlJobs(automaticRecords.map(record=>record.agentId));
     const retainedById=new Map<string,DashboardRetainedJobSummary>();
     const projectsByActivity=new Map<string,{projectId?:string;projectName?:string}>();
     const automaticSummary=(record:typeof automaticRecords[number]|undefined)=>record ? {
@@ -13244,14 +13246,18 @@ async function buildDashboardView(
         canAcknowledge:false,canUnacknowledge:false,canRecheck:false,canRetryStop:false,automatic:automaticSummary(recovery)}});
     }
     for(const record of automaticRecords) {
-      // Recovery of an execution failure is its progression, not another incident.
-      if(record.jobId && failedJobs.has(record.jobId)) continue;
+      // Only the exact initial incident/direct recovery belongs to a failure.
+      // A new incident key after confirmed recovery remains a distinct occurrence.
+      if(record.executionFailureJobId && failedJobs.has(record.executionFailureJobId)) continue;
       const agent=agentById.get(record.agentId),runtime=runtimeByAgent.get(record.agentId);
-      const sameExecution=record.jobId ? record.jobId===agent?.currentJobId : !agent?.currentJobId && record.threadId===agent?.currentThreadId;
+      const control=currentControls.get(record.agentId);
+      const sameThread=(record.threadId || null)===(agent?.currentThreadId || null);
+      const sameExecution=Boolean(agent && sameThread && (record.jobId
+        ? record.jobId===(agent.currentJobId || control?.jobId) : !agent.currentJobId));
       const current=record.jobId ? fullJobs.get(record.jobId) : undefined;
       const impact: "none"|"confirmed"|"unknown"=record.state==="resolved"||!sameExecution ? "none"
         : current?.status==="termination-failed" || (runtime?.backgroundProcessCount || 0)>0 ? "confirmed"
-        : runtime?.state==="unknown" || agent?.lifecycle==="orphaned" ? "unknown" : "none";
+        : runtime?.state==="unknown" || agent?.lifecycle==="orphaned" || record.kind==="recheck" && !runtime ? "unknown" : "none";
       entries.push({recoveryKeys:[record.key],jobId:record.jobId,activityId:record.activityId,
         row:()=>sourceRow(record.jobId,record.agentId,record.scopeId,record.occurredAt,record.activityId,record.projectId),value:{problemKey:problemKey("automatic",record.key),revision:problemRevision(record),
         kind:record.kind==="retry-stop" ? "termination-failed" : "unknown",source:record.kind==="recheck" ? "runtime" : "recovery",

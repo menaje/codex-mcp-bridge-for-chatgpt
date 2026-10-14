@@ -1,3 +1,4 @@
+import { acquireHistoryPolicyGate } from "./historyPolicyGate.js";
 import { readAppliedHistoryPolicy, retainedJobSql, historyExpired, strictRetentionDays } from "./historyPolicy.js";
 import { ProjectLifecycleStore } from "./projectLifecycle.js";
 import { nativeCompletionRetryMs, type NativeCompletionAvailability } from "./completionDelivery.js";
@@ -1115,6 +1116,8 @@ export class BridgeStateStore {
     }
   }
 
+  private releaseSettingsPolicyGate?: () => void;
+
   transaction<T>(
     operation: () => T,
     observePhase?: (phase: OperationalStateOperationPhase) => void
@@ -1160,6 +1163,9 @@ export class BridgeStateStore {
       throw error;
     } finally {
       this.transactionDepth -= 1;
+      const releasePolicyGate=this.releaseSettingsPolicyGate;
+      this.releaseSettingsPolicyGate=undefined;
+      releasePolicyGate?.();
       const eventReady = [...this.mcpEventReadyPending.values()];
       this.mcpEventReadyPending.clear();
       const inserted = [...this.insertedNotifyCompletions];
@@ -1706,6 +1712,19 @@ export class BridgeStateStore {
     return row ? {jobId:row.job_id,threadId:row.thread_id} : undefined;
   }
 
+  latestControlJobs(agentIds:readonly string[]):Map<string,{jobId:string;threadId:string|null}> {
+    const result=new Map<string,{jobId:string;threadId:string|null}>(),ids=[...new Set(agentIds)];
+    for(let offset=0;offset<ids.length;offset+=500) {
+      const part=ids.slice(offset,offset+500);
+      const rows=this.database.prepare(`SELECT agent_id,job_id,thread_id FROM (
+        SELECT agent_id,job_id,thread_id,ROW_NUMBER() OVER (PARTITION BY agent_id ORDER BY created_at DESC,job_id DESC) rank
+        FROM jobs WHERE agent_id IN (${part.map(()=>"?").join(",")})) WHERE rank=1`)
+        .all(...part) as Array<{agent_id:string;job_id:string;thread_id:string|null}>;
+      for(const row of rows) result.set(row.agent_id,{jobId:row.job_id,threadId:row.thread_id});
+    }
+    return result;
+  }
+
   appliedHistoryPolicy(now = Date.now()) { return readAppliedHistoryPolicy(this.database, now); }
 
   /** Protection of actual execution is separate from the age of its history. */
@@ -1731,11 +1750,12 @@ export class BridgeStateStore {
     for(let start=0;start<agentIds.length;start+=500) {
       const part=agentIds.slice(start,start+500);if(!part.length) continue;
       const rows=this.database.prepare(`SELECT a.agent_id,COALESCE(r.revision,0) revision,
-        (SELECT MIN(ended_at) FROM jobs WHERE agent_id=a.agent_id AND ${retainedJobSql(policy)}) next_basis
+        (SELECT MIN(ended_at) FROM jobs WHERE agent_id=a.agent_id AND ${retainedJobSql(policy)}) next_basis,
+        (SELECT COUNT(*) FROM jobs WHERE agent_id=a.agent_id AND ${retainedJobSql(policy)}) retained_count
         FROM agents a LEFT JOIN agent_history_revisions r ON r.agent_id=a.agent_id
-        WHERE a.agent_id IN (${part.map(()=>"?").join(",")})`).all(...part) as Array<{agent_id:string;revision:number;next_basis:number|null}>;
+        WHERE a.agent_id IN (${part.map(()=>"?").join(",")})`).all(...part) as Array<{agent_id:string;revision:number;next_basis:number|null;retained_count:number}>;
       for(const row of rows) result.set(row.agent_id,{historyRevision:createHash("sha256")
-        .update(JSON.stringify(["history-v2",row.agent_id,row.revision])).digest("hex"),
+        .update(JSON.stringify(["history-v3",row.agent_id,row.revision,row.retained_count,row.next_basis])).digest("hex"),
         nextExpiryAt:policy.retentionDays===0||row.next_basis===null ? null : new Date(row.next_basis+policy.retentionDays*86_400_000).toISOString()});
     }
     return result;
@@ -1799,6 +1819,7 @@ export class BridgeStateStore {
         jobId => this.historyExecutionProtected(jobId),
         now
       );
+      this.sweepActivityHistoryMaterials(now);
       if (historyRemoved > 0) {
         this.setMeta("state_history_retention_last_run", JSON.stringify({
           reason: "configured-retention-policy",
@@ -1809,6 +1830,30 @@ export class BridgeStateStore {
       }
       return { historyRemoved };
     });
+  }
+
+  private completionHistoryPredicate(now=Date.now()):string {
+    const policy=this.appliedHistoryPolicy(now);
+    return "COALESCE(json_extract(payload,'$.historyExpired'),0)=0"+
+      (policy.cutoffAt===null ? "" : ` AND created_at>${Math.floor(policy.cutoffAt)}`);
+  }
+
+  /** Completion text and cancellation prose have immutable capture clocks;
+   * their control identities survive independently from their visible history. */
+  private sweepActivityHistoryMaterials(now:number):void {
+    const policy=this.appliedHistoryPolicy(now);
+    if(policy.cutoffAt===null) return;
+    this.database.prepare(`UPDATE completion_outbox SET payload='{"historyExpired":true}'
+      WHERE outbox_id IN (SELECT outbox_id FROM completion_outbox WHERE created_at<=?
+        AND COALESCE(json_extract(payload,'$.historyExpired'),0)=0 ORDER BY created_at,outbox_id LIMIT 64)`)
+      .run(policy.cutoffAt);
+    this.database.prepare(`UPDATE cancellation_operations SET reason_text=NULL
+      WHERE rowid IN (SELECT rowid FROM cancellation_operations WHERE created_at<=? AND reason_text IS NOT NULL
+        ORDER BY created_at,rowid LIMIT 64)`).run(policy.cutoffAt);
+  }
+
+  private cancellationHistoryProjection(row:Record<string,unknown>):Record<string,unknown> {
+    return historyExpired(Number(row.created_at),this.appliedHistoryPolicy()) ? {...row,reason_text:null} : row;
   }
 
   maintainRecoveryRetention(now = Date.now()): ReturnType<AutomaticRecoveryStore["prune"]> {
@@ -1893,9 +1938,6 @@ export class BridgeStateStore {
     this.database.prepare("DELETE FROM job_result_bodies WHERE job_id=?").run(candidate.jobId);
     // Retain outcome/hash/request identity only; never interpret expiry as delivery.
     this.database.prepare("UPDATE steering_deliveries SET result=NULL WHERE job_id=?").run(candidate.jobId);
-    this.database.prepare("UPDATE cancellation_operations SET reason_text=NULL WHERE target_job_id=?").run(candidate.jobId);
-    this.database.prepare(`DELETE FROM completion_outbox WHERE activity_id=? AND created_at<=?`)
-      .run(candidate.activityId,current.cutoffAt);
     this.mcpEventAccess.forgetJob(candidate.jobId);
     this.eventRetention.deleteJobEventsForHistory(candidate.jobId);
     this.database.prepare("DELETE FROM job_completion_deliveries WHERE job_id=?")
@@ -2741,7 +2783,14 @@ export class BridgeStateStore {
         "SELECT * FROM cancellation_operations WHERE scope_id = ? AND request_id = ?"
       )
       .get(scopeId, requestId) as Record<string, unknown> | undefined;
-    return row ? readCancellationOperationRow(row) : undefined;
+    if(!row) return;
+    // Control replay/settlement remains usable when history policy is unavailable.
+    // Omit prose from this projection; never discard the durable control or use
+    // an invented retention period to delete its original.
+    let projected:Record<string,unknown>;
+    try {projected=this.cancellationHistoryProjection(row);}
+    catch {projected={...row,reason_text:null};}
+    return readCancellationOperationRow(projected);
   }
 
   listCancellationOperations(scopeId?: string): CancellationOperationRecord[] {
@@ -2754,7 +2803,7 @@ export class BridgeStateStore {
       : this.database
           .prepare("SELECT * FROM cancellation_operations ORDER BY created_at ASC")
           .all();
-    return (rows as Array<Record<string, unknown>>).map(readCancellationOperationRow);
+    return (rows as Array<Record<string, unknown>>).map(row=>readCancellationOperationRow(this.cancellationHistoryProjection(row)));
   }
 
   beginCancellationOperation(input: BeginCancellationOperationInput): {
@@ -3530,9 +3579,9 @@ export class BridgeStateStore {
   listCompletionOutbox(activityId?: string): CompletionOutboxRecord[] {
     const rows = activityId
       ? this.database
-          .prepare("SELECT * FROM completion_outbox WHERE activity_id = ? ORDER BY outbox_id ASC")
+          .prepare(`SELECT * FROM completion_outbox WHERE activity_id = ? AND ${this.completionHistoryPredicate()} ORDER BY outbox_id ASC`)
           .all(activityId)
-      : this.database.prepare("SELECT * FROM completion_outbox ORDER BY outbox_id ASC").all();
+      : this.database.prepare(`SELECT * FROM completion_outbox WHERE ${this.completionHistoryPredicate()} ORDER BY outbox_id ASC`).all();
     return (rows as Array<Record<string, unknown>>).map(readCompletionOutboxRow);
   }
 
@@ -3541,7 +3590,7 @@ export class BridgeStateStore {
     const rows = this.database
       .prepare(`
           SELECT * FROM completion_outbox
-         WHERE scope_id = ? AND delivered_at IS NULL AND acknowledged_at IS NULL
+         WHERE scope_id = ? AND ${this.completionHistoryPredicate()} AND delivered_at IS NULL AND acknowledged_at IS NULL
            AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
          ORDER BY created_at ASC LIMIT ?
       `)
@@ -3559,7 +3608,7 @@ export class BridgeStateStore {
     const rows = this.database
       .prepare(`
           SELECT * FROM completion_outbox
-           WHERE channel = 'notify' AND delivered_at IS NULL AND acknowledged_at IS NULL
+           WHERE ${this.completionHistoryPredicate(now)} AND channel = 'notify' AND delivered_at IS NULL AND acknowledged_at IS NULL
              AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
              AND (lease_owner IS NULL OR lease_expires_at <= ?)
            ORDER BY created_at ASC LIMIT ?
@@ -3575,7 +3624,7 @@ export class BridgeStateStore {
       SELECT MIN(MAX(COALESCE(next_attempt_at, 0),
                      CASE WHEN lease_owner IS NULL THEN 0 ELSE COALESCE(lease_expires_at, 0) END)) AS due
         FROM completion_outbox
-       WHERE channel = 'notify' AND delivered_at IS NULL AND acknowledged_at IS NULL
+       WHERE ${this.completionHistoryPredicate(now)} AND channel = 'notify' AND delivered_at IS NULL AND acknowledged_at IS NULL
     `).get() as { due: number | null };
     return row.due === null ? { available: false } : {
       available: row.due <= now, nextAvailableAt: Math.max(now, row.due)
@@ -3585,7 +3634,7 @@ export class BridgeStateStore {
   getCompletionOutbox(outboxId: number): CompletionOutboxRecord | undefined {
     if (!Number.isSafeInteger(outboxId) || outboxId < 1) return undefined;
     const row = this.database
-      .prepare("SELECT * FROM completion_outbox WHERE outbox_id = ?")
+      .prepare(`SELECT * FROM completion_outbox WHERE outbox_id = ? AND ${this.completionHistoryPredicate()}`)
       .get(outboxId) as Record<string, unknown> | undefined;
     return row ? readCompletionOutboxRow(row) : undefined;
   }
@@ -3595,7 +3644,7 @@ export class BridgeStateStore {
       .prepare(`
         SELECT DISTINCT activity_id
           FROM completion_outbox
-         WHERE scope_id = ? AND delivered_at IS NULL AND acknowledged_at IS NULL
+         WHERE scope_id = ? AND ${this.completionHistoryPredicate()} AND delivered_at IS NULL AND acknowledged_at IS NULL
          ORDER BY activity_id ASC
       `)
       .all(normalizeUuid(scopeId, "completion outbox scopeId")) as Array<{ activity_id: string }>;
@@ -3615,7 +3664,7 @@ export class BridgeStateStore {
           UPDATE completion_outbox
              SET lease_owner = ?, lease_expires_at = ?, next_attempt_at = NULL,
                  attempt_count = attempt_count + 1
-           WHERE outbox_id = ? AND scope_id = ?
+           WHERE outbox_id = ? AND scope_id = ? AND ${this.completionHistoryPredicate(now)}
              AND delivered_at IS NULL AND acknowledged_at IS NULL
              AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
              AND (lease_owner IS NULL OR lease_expires_at <= ? OR lease_owner = ?)
@@ -3623,7 +3672,7 @@ export class BridgeStateStore {
         .run(leaseOwner, now + leaseMs, outboxId, scopeId, now, now, leaseOwner);
       if (result.changes !== 1) return undefined;
       const row = this.database
-        .prepare("SELECT * FROM completion_outbox WHERE outbox_id = ?")
+        .prepare(`SELECT * FROM completion_outbox WHERE outbox_id = ? AND ${this.completionHistoryPredicate()}`)
         .get(outboxId) as Record<string, unknown> | undefined;
       return row ? readCompletionOutboxRow(row) : undefined;
     });
@@ -3756,6 +3805,8 @@ export class BridgeStateStore {
   ): SettingsStorageRecord {
     return this.transaction(() => {
       this.assertSettingsRevision(expectedRevision);
+      if(this.options.readOnly) throw new Error("STATE_READ_ONLY: Cannot change settings in a projection.");
+      this.releaseSettingsPolicyGate ||= acquireHistoryPolicyGate(this.database.name);
       const nextRevision = expectedRevision + 1;
       this.database
         .prepare(`

@@ -53,6 +53,8 @@ describe("#251 telemetry shares the persisted history policy",()=>{
         if(sql.includes("user_settings") && ++reads===2) f.store.writeSettings({historyRetentionDays:0},1,now);
         return original(sql);
       });
+      expect(()=>sweepTelemetryHistory(f.telemetry,f.source,now)).toThrow(/locked/);
+      f.store.writeSettings({historyRetentionDays:0},1,now);
       expect(sweepTelemetryHistory(f.telemetry,f.source,now)).toBe(0);
       f.source.prepare("UPDATE user_settings SET payload='{}'").run();
       expect(()=>sweepTelemetryHistory(f.telemetry,f.source,now)).toThrow(/HISTORY_POLICY_UNAVAILABLE/);
