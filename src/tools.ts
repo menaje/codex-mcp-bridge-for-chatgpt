@@ -11874,7 +11874,7 @@ function applyExecutionContract(view:DashboardView,store:BridgeStateStore,option
       ...(template?.conversationUrl ? {conversationUrl:template.conversationUrl} : {}),...(template?.codexThreadUrl ? {codexThreadUrl:template.codexThreadUrl} : {}),
       bucket:isActiveActivityJobStatus(record.status) ? "active" : "recent",...dashboardProjectIdentity({projectId:record.projectId || undefined,projectName:record.projectName || undefined}),
       agentName:dashboardAgentName(record.agentName || undefined),activityTitle:record.activityTitle,status:turn.status,createdAt:turn.startedAt!,updatedAt:turn.updatedAt,
-      elapsedMs:turn.durationMs ?? Math.max(0,now-record.createdAt),backgroundProcessCount:template?.backgroundProcessCount || 0,controlKind:template?.controlKind || null,latestTurn:{...turn,
+      elapsedMs:turn.durationMs ?? Math.max(0,now-record.createdAt),backgroundProcessCount:isActiveActivityJobStatus(record.status) ? template?.backgroundProcessCount || 0 : 0,controlKind:template?.controlKind || null,latestTurn:{...turn,
         ...(template?.latestTurn?.execution ? {execution:template.latestTurn.execution} : {}),...(template?.latestTurn?.tokenUsage ? {tokenUsage:template.latestTurn.tokenUsage} : {})},
       history:[],historyCount:0,historyHasMore:false,historyRevision:turn.executionRevision,policyRevision:policy.policyRevision,representativeExecutionKey:turn.executionKey,
       nextExpiryAt:policy.retentionDays===0 || record.endedAt===null ? null : new Date(record.endedAt+policy.retentionDays*86400000).toISOString(),

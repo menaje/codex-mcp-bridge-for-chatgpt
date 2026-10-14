@@ -1,5 +1,7 @@
 import {randomUUID} from 'node:crypto';
-import {mkdtempSync} from 'node:fs';
+import {mkdtempSync,writeFileSync} from 'node:fs';
+import vm from 'node:vm';
+import {DASHBOARD_CARD_HTML} from '../src/dashboardCard.js';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {afterEach,describe,it,expect,vi} from 'vitest';
@@ -154,6 +156,49 @@ describe('Job-unit execution tabs and read-only exact detail',()=>{
    expect(enriched.counts.progressJobCount).toBe(1);expect(enriched.counts.executionCount).toBe(0);
    expect(enriched.activeRows.find(x=>x.jobId===live.jobId)?.backgroundProcessCount).toBe(1);
    expect(enriched.statusRows?.filter(x=>x.backgroundProcessCount>0).map(x=>x.jobId)).toContain(live.jobId);
+  }finally{await f.close();}
+ });
+
+ it('assigns a completed Job background observation to one current runtime owner without losing history or exact detail',async()=>{
+  const f=fixture();try{
+   const ended=f.seed('completed',1,{threadId:'completed-with-background',executionName:'Terminal execution'});
+   const first=await f.service().dashboardSnapshot(query);
+   const view=await f.service().dashboardSnapshotWithEnrichment!(query,{runtimeByAgent:[[f.agent.agentId,{state:'idle',backgroundProcessState:'confirmed',backgroundProcessCount:1}]],runtimeProbeSkippedAgents:0,weeklyUsage:null,summary:{...first.enrichment,state:'enriched'}} as any);
+   if(process.env.CAPTURE_BACKGROUND_PROJECTION==='1')writeFileSync('test/fixtures/terminal-background-projection.json',JSON.stringify(view,null,2)+'\n');
+   expect(view.counts.backgroundProcesses).toBe(1);expect(view.counts.progressJobCount).toBe(0);expect(view.counts.executionCount).toBe(1);
+   const owners=[...view.activeRows,...view.terminalRows].filter(row=>row.backgroundProcessCount>0);
+   expect(owners).toHaveLength(1);expect(owners[0]?.bucket).toBe('active');expect(view.terminalRows.find(row=>row.jobId===ended.jobId)?.backgroundProcessCount).toBe(0);
+   expect(await f.service().dashboardExecutionDetail!({scopeId:scope,jobId:ended.jobId})).toMatchObject({jobId:ended.jobId,execution:{status:'completed'}});
+   const c=vm.createContext({next:view,selectedStatus:'background',activeRows:[],terminalRows:[],dashboardRowMatchesStatus:(row:any)=>row.backgroundProcessCount>0});
+   const line=DASHBOARD_CARD_HTML.split('\n').find(x=>/^\s*function applyLocalStatus\(/.test(x))!;
+   vm.runInContext(line,c);vm.runInContext('applyLocalStatus(next)',c);expect(c.activeRows.length+c.terminalRows.length).toBe(1);
+  }finally{await f.close();}
+ });
+ it('keeps current background ownership independent of the terminal history page and logical expiry',async()=>{
+  const f=fixture(7);try{
+   const old=f.seed('completed',(7*day-1000)/day,{threadId:'same-current-thread'});
+   for(let i=0;i<8;i++)f.seed('completed',1+i/10,{threadId:'same-current-thread'});
+   const first=await f.service().dashboardSnapshot(query),enrichment={runtimeByAgent:[[f.agent.agentId,{state:'idle',backgroundProcessState:'confirmed',backgroundProcessCount:1}]],runtimeProbeSkippedAgents:0,weeklyUsage:null,summary:{...first.enrichment,state:'enriched'}};
+   for(const offset of [0,5]){const v=await f.service().dashboardSnapshotWithEnrichment!({...query,terminalOffset:offset},enrichment as any);expect([...v.activeRows,...v.terminalRows].filter(x=>x.backgroundProcessCount>0)).toHaveLength(1);expect(v.terminalRows.every(x=>x.backgroundProcessCount===0)).toBe(true);}
+   vi.spyOn(Date,'now').mockReturnValue(now+1000);
+   const expired=await f.service().dashboardSnapshotWithEnrichment!(query,enrichment as any);
+   expect(expired.counts.executionCount).toBe(8);expect(expired.activeRows.filter(x=>x.backgroundProcessCount>0)).toHaveLength(1);
+   await expect(f.service().dashboardExecutionDetail!({scopeId:scope,jobId:old.jobId})).rejects.toThrow(/UNAVAILABLE/);
+  }finally{await f.close();}
+ });
+ it('keeps unrelated same-name Agents as distinct current background owners',async()=>{
+  const f=fixture();try{
+   f.seed('completed',1,{threadId:'owner-one-thread'});
+   const second=f.writer.createAgent({scopeId:other,agentName:'Job owner'}),activity=f.writer.createActivity({scopeId:other,title:'Other work'});
+   f.seed('completed',1,{scopeId:other,agentId:second.agentId,activityId:activity.activityId,threadId:'owner-two-thread'});
+   const options={...query,scopeId:undefined},first=await f.service().dashboardSnapshot(options);
+   const v=await f.service().dashboardSnapshotWithEnrichment!(options,{runtimeByAgent:[f.agent.agentId,second.agentId].map(id=>[id,{state:'idle',backgroundProcessState:'confirmed',backgroundProcessCount:1}]),runtimeProbeSkippedAgents:0,weeklyUsage:null,summary:{...first.enrichment,state:'enriched'}} as any);
+   const owners=[...v.activeRows,...v.terminalRows].filter(x=>x.backgroundProcessCount>0);
+   expect(owners).toHaveLength(2);expect(new Set(owners.map(x=>x.rowKey)).size).toBe(2);expect(new Set(owners.map(x=>x.conversationKey)).size).toBe(2);
+   expect(v.counts.backgroundProcesses).toBe(2);expect(v.counts.executionCount).toBe(2);
+   const c=vm.createContext({next:v,selectedStatus:'background',activeRows:[],terminalRows:[],dashboardRowMatchesStatus:(row:any)=>row.backgroundProcessCount>0});
+   vm.runInContext(DASHBOARD_CARD_HTML.split('\n').find(x=>/^\s*function applyLocalStatus\(/.test(x))!,c);vm.runInContext('applyLocalStatus(next)',c);
+   expect(c.activeRows.length+c.terminalRows.length).toBe(2);
   }finally{await f.close();}
  });
 

@@ -477,6 +477,28 @@ final class DashboardPopoverTests: XCTestCase {
         XCTAssertEqual(f.state.historyReadCount, 2)
     }
 
+    func testReviewCompletedJobUsesOneCurrentBackgroundOwnerFromServerProjection() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let snapshot = try JSONDecoder().decode(DashboardSnapshot.self,
+            from: Data(contentsOf: root.appendingPathComponent("test/fixtures/terminal-background-projection.json")))
+        XCTAssertEqual(snapshot.counts.backgroundProcesses, 1)
+        XCTAssertEqual(snapshot.counts.progressJobCount, 0)
+        XCTAssertEqual(snapshot.counts.executionCount, 1)
+        XCTAssertEqual(snapshot.terminalRows.count, 1)
+        XCTAssertEqual(snapshot.terminalRows.first?.status, "completed")
+        XCTAssertEqual(snapshot.terminalRows.first?.backgroundProcessCount, 0)
+        XCTAssertEqual(DashboardPanel.background.rows(in: snapshot).count, 1)
+        XCTAssertEqual(DashboardPanel.history.rows(in: snapshot).count, 1)
+        // Identity cannot be reduced to a name or Activity heading.
+        let original = try XCTUnwrap(DashboardPanel.background.rows(in: snapshot).first)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(original)) as? [String: Any])
+        object["rowKey"] = String(repeating: "b", count: 32); object["conversationKey"] = "another-scope"
+        let distinct = try JSONDecoder().decode(DashboardRow.self, from: JSONSerialization.data(withJSONObject: object))
+        var twoOwners = snapshot; twoOwners.activeRows.append(distinct)
+        XCTAssertEqual(DashboardPanel.background.rows(in: twoOwners).count, 2)
+    }
+
     @MainActor
     func testReviewBackgroundIncludesAnActiveJobOutsideTheTerminalStatusPage() async throws {
         let f = try PopoverFixture(); defer { f.remove() }
