@@ -341,6 +341,8 @@ final class AppModel: ObservableObject {
     private var dashboardHistoryRequestIDs: [String: UUID] = [:]
     private var dashboardHistoryContexts: [String: String] = [:]
     private var dashboardHistoryExpiryTask: Task<Void, Never>?
+    // Injectable wall clock keeps logical-expiry regressions deterministic.
+    var dashboardHistoryNow: () -> Date = Date.init
 
     private func dashboardHistoryContext(_ row: DashboardRow) -> String {
         [String(connectionGeneration), dashboard?.scope ?? "", row.conversationKey, row.projectKey, row.rowKey].joined(separator: "\u{0}")
@@ -353,11 +355,15 @@ final class AppModel: ObservableObject {
     }
 
     private func dashboardHistoryExpired(_ row: DashboardRow) -> Bool {
-        guard let raw = row.nextExpiryAt else { return false }
+        dashboardHistoryExpired(at: row.nextExpiryAt)
+    }
+
+    private func dashboardHistoryExpired(at timestamp: String?) -> Bool {
+        guard let raw = timestamp else { return false }
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         guard let date = formatter.date(from: raw) ?? ISO8601DateFormatter().date(from: raw) else { return true }
-        return date <= Date()
+        return date <= dashboardHistoryNow()
     }
 
     private func scheduleDashboardHistoryExpiry(_ snapshot: DashboardSnapshot) {
@@ -366,8 +372,9 @@ final class AppModel: ObservableObject {
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let rows = (snapshot.statusRows ?? []) + snapshot.activeRows + snapshot.terminalRows
         let dates = rows.compactMap { $0.nextExpiryAt }.compactMap { formatter.date(from: $0) ?? ISO8601DateFormatter().date(from: $0) }
-        guard let date = dates.min(), date > Date() else { return }
-        let delay = min(date.timeIntervalSinceNow, 86_400)
+        let now = dashboardHistoryNow()
+        guard let date = dates.min(), date > now else { return }
+        let delay = min(date.timeIntervalSince(now), 86_400)
         dashboardHistoryExpiryTask = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(max(0.01, delay))) } catch { return }
             guard let self, self.bridgeConnected else { return }
@@ -1814,6 +1821,10 @@ final class AppModel: ObservableObject {
 
     func loadDashboardHistory(_ row: DashboardRow, more: Bool = false) async {
         guard bridgeConnected else { return }
+        if dashboardHistoryExpired(row) {
+            await refreshDashboard(enrich: false)
+            return
+        }
         let historyCount = max(row.historyCount ?? 0, row.history?.count ?? 0)
         if dashboardHistoryDetails[row.rowKey] != nil,
            dashboardHistory(for: row) == nil {
@@ -1849,7 +1860,8 @@ final class AppModel: ObservableObject {
                   dashboardHistoryRequestIDs[rowKey] == requestID,
                   dashboardHistoryContext(row) == context,
                   detail.kind == "dashboard-history", detail.rowKey == rowKey else { return }
-            if !dashboardHistoryMatches(detail, row: row) {
+            if !dashboardHistoryMatches(detail, row: row)
+                || previous.map({ dashboardHistoryExpired(at: $0.nextExpiryAt) }) == true {
                 // The row identifies an Agent, so it can retain its row key
                 // while a new execution replaces the visible one. Refresh the
                 // summary instead of briefly attaching old history to it.
@@ -1869,7 +1881,8 @@ final class AppModel: ObservableObject {
             dashboardHistoryDetails[rowKey] = detail
         } catch {
             guard !Task.isCancelled, connection == connectionGeneration,
-                  dashboardRequest == dashboardRequestGeneration else { return }
+                  dashboardRequest == dashboardRequestGeneration,
+                  !dashboardHistoryExpired(row) else { return }
             dashboardHistoryErrors[rowKey] = localizedErrorDescription(error)
         }
     }
@@ -1891,7 +1904,10 @@ final class AppModel: ObservableObject {
               let execution = row.representativeExecutionKey,
               revision == detail.historyRevision, policy == detail.policyRevision,
               execution == detail.representativeExecutionKey else { return false }
-        if dashboardHistoryExpired(row) { return false }
+        if dashboardHistoryExpired(row) || dashboardHistoryExpired(at: detail.nextExpiryAt) { return false }
+        // A newer snapshot cannot extend a page's own validity or revive its expired entries.
+        guard detail.nextExpiryAt == row.nextExpiryAt,
+              row.historyCount == detail.historyCount else { return false }
         return true
     }
 
