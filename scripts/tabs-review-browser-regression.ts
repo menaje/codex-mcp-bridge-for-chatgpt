@@ -1,7 +1,9 @@
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {createServer} from 'node:http';
-import {mkdirSync,writeFileSync} from 'node:fs';
+import {existsSync,mkdirSync,writeFileSync} from 'node:fs';
+import {homedir} from 'node:os';
+import path from 'node:path';
 import {DASHBOARD_CARD_HTML} from '../src/dashboardCard.js';
 import {dashboardView} from './card-browser-fixtures.js';
 const artifacts='output/playwright/tabs-review';mkdirSync(artifacts,{recursive:true});
@@ -17,7 +19,8 @@ const response={...base,uiLocalePreference:'en',executionContractVersion:2,histo
 window.openai={toolOutput:response,toolResponseMetadata:{},locale:'en-US',notifyIntrinsicHeight:()=>{},callTool:async()=>{__reads++;if(__failReads)throw Error('FIXTURE_REFRESH_FAILED');return {structuredContent:response}}};
 </script></head>`);
 const execute=promisify(execFile),session='tabs-review-'+process.pid;
-async function cli(...args:string[]){const r=await execute('/Users/seongsik/.codex/skills/playwright/scripts/playwright_cli.sh',['--session',session,'--raw',...args],{timeout:40000,maxBuffer:3*1024*1024});if(r.stdout.includes('### Error'))throw Error(r.stdout);return r.stdout}
+const wrapper=path.join(process.env.CODEX_HOME || path.join(homedir(),'.codex'),'skills/playwright/scripts/playwright_cli.sh');
+async function cli(...args:string[]){const r=await execute(existsSync(wrapper)?wrapper:'npx',[...(existsSync(wrapper)?[]:['--yes','--package','@playwright/cli@0.1.19','playwright-cli']),'--session',session,'--raw',...args],{timeout:40000,maxBuffer:3*1024*1024});if(r.stdout.includes('### Error'))throw Error(r.stdout);return r.stdout}
 const server=createServer((_req,res)=>{res.setHeader('Content-Type','text/html');res.end(html)});await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
 try{
  await cli('open','http://127.0.0.1:'+(server.address() as {port:number}).port);writeFileSync(artifacts+'/initial.txt',await cli('snapshot'));
