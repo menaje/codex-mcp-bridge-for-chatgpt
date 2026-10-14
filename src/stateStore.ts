@@ -7542,7 +7542,10 @@ function hydrateJobPayload(row: JobStorageRow): StoredJobRecord {
   if (!isRecord(payload)) throw new Error("Invalid job payload in the bridge state database: expected an object.");
   return {
     ...payload,
-    ...(row.result_body ? {result:parseCurrentPayload({payload:row.result_body},"retained result body"),resultOmitted:false} : {}),
+    // Original availability is independent of the bounded delivery projection.
+    // Hydration must not erase a previously recorded omission merely because
+    // the complete original is still retained on disk.
+    ...(row.result_body ? {result:parseCurrentPayload({payload:row.result_body},"retained result body")} : {}),
     jobId: row.job_id,
     scopeId: row.scope_id,
     requestId: row.request_id,
