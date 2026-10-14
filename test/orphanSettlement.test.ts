@@ -106,6 +106,54 @@ describe("conclusive orphan settlement",()=>{
       expect(f.state.getAgent(f.agentId)?.lifecycle).toBe("idle");expect(f.snapshot()).toBe(original);
     } finally {await f.close();}
   });
+  it.each(["idle","notLoaded","busy","unknown","orphaned","missing","throws"])("requires conclusive foreground evidence for loaded-empty %s",async status=>{
+    const f=fixture();try {
+      f.read.mockImplementation(async()=>[] as any);
+      if(status!=="missing") f.upstream.probeThread=vi.fn(async()=> {
+        if(status==="throws") throw Error("foreground unavailable");
+        return ["idle","notLoaded"].includes(status) ? {state:"resumable",runtimeStatus:status} as any : {state:status} as any;
+      });
+      const original=f.snapshot(),before=f.state.getAgent(f.agentId);
+      expect(await settleReleasedOrphan(f.jobs,f.upstream,f.agentId)).toBe(["idle","notLoaded"].includes(status));
+      expect(f.snapshot()).toBe(original);
+      if(!["idle","notLoaded"].includes(status)) expect(f.state.getAgent(f.agentId)).toEqual(before);
+      else expect(f.state.getAgent(f.agentId)?.lifecycle).toBe("idle");
+      if(status!=="missing") expect(f.upstream.probeThread).toHaveBeenCalledWith(f.threadId,"app-server");
+    } finally {await f.close();}
+  });
+  it.each(["job","thread","connection","admission","question"])("rejects an idle foreground reply after a new %s",async kind=>{
+    const f=fixture();try {
+      f.read.mockImplementation(async()=>[] as any);
+      let resolve!:(value:any)=>void;
+      f.upstream.probeThread=vi.fn(()=>new Promise(r=>{resolve=r;}));
+      const task=settleReleasedOrphan(f.jobs,f.upstream,f.agentId);
+      for(let n=0;n<10&&!resolve;n++) await Promise.resolve();expect(resolve).toBeDefined();
+      if(kind==="job") f.state.upsertJob({...f.source,jobId:randomUUID(),requestId:randomUUID(),status:"running",createdAt:now,updatedAt:now});
+      if(kind==="thread") f.state.linkAgentThread({agentId:f.agentId,threadId:"new-thread",backendKind:"app-server",cwd:f.root,sandbox:"read-only",contextMode:"fresh"});
+      if(kind==="connection") f.state.threadConnections.update(f.threadId,{phase:"connected"});
+      if(kind==="admission") f.jobs.runtimeAdmission.admissionRevision++;
+      if(kind==="question") f.state.upsertJob({...f.source,pendingInteractions:[{interactionId:"late-approval",isBlocking:true}]});
+      const before=f.state.getAgent(f.agentId);resolve({state:"resumable",runtimeStatus:"idle"});
+      expect(await task).toBe(false);expect(f.state.getAgent(f.agentId)).toEqual(before);expect(f.state.hasEndedOrphanProof(f.agentId)).toBe(false);
+    } finally {await f.close();}
+  });
+  it("keeps observing new background work after settlement without editing the past incident or its budget",async()=>{
+    const f=fixture();let server:ReturnType<typeof dashboard>|undefined;try {
+      const original=f.snapshot();expect(await settleReleasedOrphan(f.jobs,f.upstream,f.agentId)).toBe(true);
+      f.read.mockImplementation(async()=>[{processId:"later-background"}] as any);f.read.mockClear();
+      f.upstream.probeThread=vi.fn(async()=>({state:"busy"} as any));server=dashboard(f);
+      const view=await server.applicationService.dashboardSnapshot({scopeId,inspectRuntime:true,includeHistory:false,
+        problems:{review:"pending",kind:"all",offset:0}});
+      expect(f.read).toHaveBeenCalled();expect(f.upstream.probeThread).not.toHaveBeenCalled();
+      expect(view.counts.active).toBe(1);expect(view.counts.backgroundProcesses).toBe(1);
+      expect(view.problems?.currentImpactCount).toBe(1);expect(f.snapshot()).toBe(original);
+      vi.mocked(Date.now).mockReturnValue(now+3600000);f.read.mockImplementation(async()=>{throw Error("later unknown read");});
+      const unknown=await server.applicationService.dashboardSnapshot({scopeId,inspectRuntime:true,includeHistory:false,
+        problems:{review:"pending",kind:"all",offset:0}});
+      expect(f.state.getAgent(f.agentId)?.lifecycle).toBe("idle");expect(unknown.counts.orphanedAgents).toBe(0);
+      expect(f.snapshot()).toBe(original);
+    } finally {await server?.close();await f.close();}
+  });
   it.each(["running","terminating","termination-failed"])("protects a real %s execution",async status=>{
     const f=fixture();try {
       f.state.upsertJob({...f.source,jobId:randomUUID(),requestId:randomUUID(),status,createdAt:now-100,updatedAt:now});
