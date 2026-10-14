@@ -2267,8 +2267,9 @@ export class CodexJobRegistry {
   readonly runtimeAdmission: {
     acceptingNewJobs: boolean;
     pendingAdmissions: number;
+    admissionRevision: number;
     storageError?: BridgeStorageAdmissionError;
-  } = { acceptingNewJobs: true, pendingAdmissions: 0 };
+  } = { acceptingNewJobs: true, pendingAdmissions: 0, admissionRevision: 0 };
   readonly runtimeDrain = new RuntimeDrainGate(this.runtimeAdmission, initialRuntimeDrainBinding());
   private upstream?: CodexUpstream;
   private readonly recoverExecutions: boolean;
@@ -2952,6 +2953,12 @@ export class CodexJobRegistry {
   resolveHistoryRuntimeProblem(agent: BridgeAgent, revision: string): void {
     this.activityStore.transaction(() => this.activityStore.workHistory.resolveRuntimeProblem(agent.agentId, revision));
     this.notifyScope(agent.scopeId, agent.agentId);
+  }
+
+  settleEndedOrphan(input: Parameters<BridgeStateStore["settleEndedOrphan"]>[0]): BridgeAgent | undefined {
+    const agent=this.activityStore.settleEndedOrphan(input);
+    if (agent) this.notifyScope(agent.scopeId,agent.agentId);
+    return agent;
   }
 
   recordAgentMutation(scopeId: string, requestId: string, actionHash: string, result: unknown): void {
@@ -5185,6 +5192,7 @@ export function registerBridgeTools(
       );
     }
     runtimeAdmission.pendingAdmissions += 1;
+    runtimeAdmission.admissionRevision += 1;
     let released = false;
     return () => {
       if (released) return;
@@ -8620,6 +8628,42 @@ function recheckRecoveryIdentity(jobs: CodexJobRegistry, agent: BridgeAgent, han
   return jobs.admissionStateStore.automaticRecovery.handoffRecheckIdentity(identity,handoff);
 }
 
+/** Worker exit plus a fresh non-loading process read can finish a stranded
+ * lifecycle without editing past failures or spending another recovery attempt. */
+export async function settleReleasedOrphan(jobs: CodexJobRegistry, upstream: CodexUpstream,
+  agentId: string): Promise<boolean> {
+  const store=jobs.admissionStateStore,agent=jobs.getAgent(agentId),thread=jobs.currentAgentThread(agentId);
+  const admission=jobs.runtimeAdmission;
+  if (!agent || agent.lifecycle!=="orphaned" || agent.currentJobId || !thread || thread.backendKind!=="app-server" ||
+      !admission.acceptingNewJobs || admission.pendingAdmissions>0 || !upstream.listLoadedBackgroundTerminals) return false;
+  const connection=store.threadConnections.get(thread.threadId),control=store.latestControlJob(agentId);
+  if (connection?.agentId!==agentId || connection.scopeId!==agent.scopeId || connection.phase!=="released" ||
+      connection.evidence!=="worker-exited" || connection.handoffRequested || store.threadConnections.hasUnfinishedWork(thread.threadId)) return false;
+  const cacheKey=dashboardRuntimeCacheKey(thread),before=dashboardRuntimeCaches.get(upstream)?.get(cacheKey);
+  if (before?.stamp===dashboardRuntimeStamp(agent,jobs.observedLatestJobForAgent(agentId)) &&
+      (before.observation.state==="busy" || before.observation.backgroundProcessCount>0)) return false;
+  const admissionRevision=admission.admissionRevision;
+  let settled=false;
+  const read=runtimeReadPool(upstream).start(`orphan-end\0${agentId}\0${agent.version}\0${connection.revision}`,
+    isCurrent=>inspectDashboardRuntime(upstream,{agentId,thread,stamp:dashboardRuntimeStamp(agent),inspectLiveness:false},isCurrent),
+    result=> {
+      if (admission.pendingAdmissions>0 || !admission.acceptingNewJobs || admission.admissionRevision!==admissionRevision ||
+          dashboardRuntimeCaches.get(upstream)?.get(cacheKey)!==before ||
+          result.observation.backgroundProcessState!=="confirmed" || result.observation.backgroundProcessCount!==0) return;
+      settled=Boolean(jobs.settleEndedOrphan({agentId,version:agent.version,threadId:thread.threadId,
+        connectionRevision:connection.revision,controlJobId:control?.jobId}));
+      if (settled) {
+        runtimeReadPool(upstream).invalidate(key=>key!==`orphan-end\0${agentId}\0${agent.version}\0${connection.revision}` &&
+          (key.includes(cacheKey) || key.startsWith(`problem\0${agentId}\0`)));
+        dashboardRuntimeCaches.get(upstream)?.delete(cacheKey);
+        notifyCardObservation(upstream);
+      }
+    });
+  if (!read) return false;
+  await waitForDisplay(read,CARD_RUNTIME_BUDGET_MS);
+  return settled;
+}
+
 /** An unavailable historical thread is a display limitation, not a new
  * incident. Keep investigating actual work and connections whose shutdown
  * is still unconfirmed, independently of whether their Job history expired. */
@@ -8647,6 +8691,11 @@ export function configureAutomaticRecovery(
     if (!agentId) return [];
     const agent = jobs.getAgent(agentId);
     if (!agent) return [];
+    if (agent.lifecycle==="orphaned" && upstream.listLoadedBackgroundTerminals) {
+      if (await settleReleasedOrphan(jobs,upstream,agentId)) return [];
+      // A concurrent admission or settlement may have changed the captured Agent.
+      if (jobs.getAgent(agentId)?.version!==agent.version) return [];
+    }
     const latest = jobs.observedLatestJobForAgent(agentId);
     const current = agent.currentJobId ? jobs.get(agent.currentJobId) : undefined;
     const thread = jobs.currentAgentThread(agentId);
@@ -12201,7 +12250,7 @@ function cacheDashboardRuntime(
       const confirmed = !current.unavailable && current.observation.backgroundProcessState === "confirmed" &&
         ["confirmed","idle","not-loaded","busy"].includes(current.observation.state);
       const currentContext=hasCurrentRecheckContext(jobs,agent,candidate.thread,current.observation);
-      if (confirmed || currentContext) {
+      if ((confirmed || currentContext) && !jobs.admissionStateStore.hasEndedOrphanProof(agent.agentId)) {
         const identity=recheckRecoveryIdentity(jobs,agent,confirmed || currentContext);
         if(identity) jobs.admissionStateStore.automaticRecovery.observeRecheck(identity,!confirmed,Date.now(),
           confirmed ? current.observation.state === "busy" ? "active-turn-observed" : "runtime-observed" : undefined);
@@ -12491,6 +12540,9 @@ async function buildDashboardRuntimePlan(
   const candidates = allAgents.flatMap((agent) => {
     const thread = currentThreads.get(agent.agentId);
     if (!thread || !backendSupports(thread.backendKind, "supportsThreadInspection")) return [];
+    // A durable, ended generation needs no liveness probe. A new Job, Thread
+    // or connection revision invalidates this proof and resumes normal reads.
+    if (jobs.admissionStateStore.hasEndedOrphanProof(agent.agentId)) return [];
     const latestJob = latestJobs.get(agent.agentId);
     const resolvedOrphan = agent.lifecycle === "orphaned" && !agent.currentJobId &&
       jobs.admissionStateStore.workHistory.runtimeResolution(
@@ -13244,6 +13296,7 @@ async function buildDashboardView(
       records.push(record);recoveriesByJob.set(record.executionFailureJobId,records);
     }
     const currentControls=jobs.admissionStateStore.latestControlJobs(automaticRecords.map(record=>record.agentId));
+    const endedProofs=new Map<string,boolean>();
     const retainedById=new Map<string,DashboardRetainedJobSummary>();
     const projectsByActivity=new Map<string,{projectId?:string;projectName?:string}>();
     const automaticSummary=(record:typeof automaticRecords[number]|undefined)=>record ? {
@@ -13287,9 +13340,11 @@ async function buildDashboardView(
       const sameExecution=Boolean(agent && sameThread && (record.jobId
         ? record.jobId===(agent.currentJobId || control?.jobId) : !agent.currentJobId));
       const current=record.jobId ? fullJobs.get(record.jobId) : undefined;
+      if (agent && !endedProofs.has(agent.agentId)) endedProofs.set(agent.agentId,jobs.admissionStateStore.hasEndedOrphanProof(agent.agentId));
+      const ended=agent && endedProofs.get(agent.agentId);
       const impact: "none"|"confirmed"|"unknown"=record.state==="resolved"||!sameExecution ? "none"
         : current?.status==="termination-failed" || (runtime?.backgroundProcessCount || 0)>0 ? "confirmed"
-        : runtime?.state==="unknown" || agent?.lifecycle==="orphaned" || record.kind==="recheck" && !runtime ? "unknown" : "none";
+        : ended ? "none" : runtime?.state==="unknown" || agent?.lifecycle==="orphaned" || record.kind==="recheck" && !runtime ? "unknown" : "none";
       entries.push({recoveryKeys:[record.key],jobId:record.jobId,activityId:record.activityId,
         row:()=>sourceRow(record.jobId,record.agentId,record.scopeId,record.occurredAt,record.activityId,record.projectId),value:{problemKey:problemKey("automatic",record.key),revision:problemRevision(record),
         kind:record.kind==="retry-stop" ? "termination-failed" : "unknown",source:record.kind==="recheck" ? "runtime" : "recovery",
