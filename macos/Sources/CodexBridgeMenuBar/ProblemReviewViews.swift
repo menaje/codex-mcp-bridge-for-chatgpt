@@ -22,7 +22,7 @@ struct DashboardProblemsSection: View {
                     Text(DisplayFormat.relative(problem.occurredAt ?? problem.observedAt, locale: model.interfaceLocale))
                         .font(.caption2).foregroundStyle(.secondary)
                     if let impact = problem.currentImpact, impact != "none" {
-                        Text(BridgeAppLocalization.string("problem.currentImpact." + impact, locale: model.interfaceLocale))
+                        Text(BridgeAppLocalization.string(impact == "confirmed" ? "problem.currentImpact.confirmed" : "problem.currentImpact.unknown", locale: model.interfaceLocale))
                             .font(.caption2).foregroundStyle(impact == "confirmed" ? Color.orange : Color.secondary)
                     }
                     if let reason = problem.reason { Text(reason).font(.caption).textSelection(.enabled) }

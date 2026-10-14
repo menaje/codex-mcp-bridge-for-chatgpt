@@ -157,7 +157,7 @@ const STATE_MIGRATION_DEFINITIONS = [
   [30, 31, "migrateV30ToV31", "cce99c5fdfeaafe2e50861d826dffd15cdd0f6b1", [
     ["src/stateSchema.ts", "V31_PROJECT_LIFECYCLE_MIGRATION_SCHEMA"]
   ]],
-  [31, 32, "migrateV31ToV32", "development-issue-251", [
+  [31, 32, "migrateV31ToV32", "6c1b3974c5218b8e7c0b1612ef1c08904cdce3da", [
     ["src/stateSchema.ts", "V32_HISTORY_POLICY_MIGRATION_SCHEMA"]
   ]]
 ];
