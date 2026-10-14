@@ -587,7 +587,7 @@ final class AppPresentationTests: XCTestCase {
         outbox.enqueue(25)
         model.recordCompletionChangeNotice(try notice(401, ready: true))
         for _ in 0..<200 {
-            if delivery.ids.count == 25 { break }
+            if delivery.ids.count == 25 && server.count("completion.delivered") == 3 { break }
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertEqual(delivery.ids.count, 25)
