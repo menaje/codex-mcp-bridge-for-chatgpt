@@ -12202,7 +12202,7 @@ function cacheDashboardRuntime(
         ["confirmed","idle","not-loaded","busy"].includes(current.observation.state);
       const currentContext=hasCurrentRecheckContext(jobs,agent,candidate.thread,current.observation);
       if (confirmed || currentContext) {
-        const identity=recheckRecoveryIdentity(jobs,agent,currentContext);
+        const identity=recheckRecoveryIdentity(jobs,agent,confirmed || currentContext);
         if(identity) jobs.admissionStateStore.automaticRecovery.observeRecheck(identity,!confirmed,Date.now(),
           confirmed ? current.observation.state === "busy" ? "active-turn-observed" : "runtime-observed" : undefined);
       }

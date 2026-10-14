@@ -155,6 +155,22 @@ describe("#251 current runtime incident boundaries",()=>{
     } finally {await f.close();}
   });
 
+  it.each([[1,true],[1,false],[40,true]] as const)("preserves proven continuity when rename precedes handoff (%i days, Job linkage %s)",async(age,includeJob)=>{
+    const f=fixture(age);
+    try {
+      const legacy=oldIncident(f,age===40 ? now-40*day : now-50000,includeJob);
+      if(age===40) f.state.maintainRecoveryRetention(now);
+      const original=f.state.automaticRecovery.get(legacy.key);
+      f.state.renameAgent(f.agentId,"Metadata change before handoff",now-1000);openContext(f);
+      await f.candidates();
+      expect(f.state.automaticRecovery.handoffRecheckIdentity(f.identity)).toEqual({...f.identity,key:legacy.key});
+      expect(f.state.automaticRecovery.get(legacy.key)).toEqual(original);
+      expect(f.state.automaticRecovery.get(f.identity.key)).toBeUndefined();
+      expect(f.state.automaticRecovery.begin({...f.identity,key:legacy.key},now)).toBeUndefined();
+      expect(f.state.automaticRecovery.list()).toHaveLength(age===40 ? 0 : 1);
+    } finally {await f.close();}
+  });
+
   it("persists the handoff across restart without changing the historical origin or first clock",async()=>{
     const f=fixture();let reopened:BridgeStateStore|undefined;
     try {
@@ -290,6 +306,28 @@ describe("#251 current runtime incident boundaries",()=>{
       await server.applicationService.dashboardSnapshot({scopeId,inspectRuntime:true,includeHistory:false});
       expect(f.state.automaticRecovery.get(legacy.key)).toMatchObject({state:"resolved",attempts:3,occurredAt:first,evidence:"runtime-observed"});
       expect(f.state.automaticRecovery.list()).toHaveLength(1);
+    } finally {await server?.close();await f.close();}
+  });
+
+  it("healthy observation without a prior alias permits recurrence without restoring an expired body",async()=>{
+    const f=fixture(40);let server:ReturnType<typeof dashboard>|undefined;
+    try {
+      const legacy=oldIncident(f,now-40*day);f.state.maintainRecoveryRetention(now);
+      let busy=false;
+      const upstream={probeThread:async()=>busy ? {state:"busy"} : {state:"resumable",runtimeStatus:"notLoaded"},
+        listLoadedBackgroundTerminals:async()=>{throw Error("background unavailable");},listTools:async()=>({tools:[]}),close:async()=>{}} as unknown as CodexUpstream;
+      server=dashboard(f,upstream);
+      await server.applicationService.dashboardSnapshot({scopeId,inspectRuntime:true,includeHistory:false});
+      expect(f.state.automaticRecovery.get(legacy.key)).toBeUndefined();
+      expect(f.state.automaticRecovery.listForDashboard(scopeId)).toEqual([]);
+      busy=true;vi.mocked(Date.now).mockReturnValue(now+3600000);
+      await server.applicationService.dashboardSnapshot({scopeId,inspectRuntime:true,includeHistory:false});
+      const records=f.state.automaticRecovery.listForDashboard(scopeId);
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({attempts:0,occurredAt:now+3600000});
+      expect(records[0]!.key).not.toBe(legacy.key);
+      expect(f.state.automaticRecovery.get(legacy.key)).toBeUndefined();
+      expect(f.state.automaticRecovery.steps(legacy.key)).toEqual([]);
     } finally {await server?.close();await f.close();}
   });
 

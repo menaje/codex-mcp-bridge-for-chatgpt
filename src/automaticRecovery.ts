@@ -158,7 +158,8 @@ export class AutomaticRecoveryStore {
   /** Reuse only a provably continuous, still-active legacy control. The
    * journal, original clock and exhausted/expired budget remain untouched.
    * One current alias per Agent contains control IDs only, not history.
-   * A Thread link changes Agent version; a newer Job starts a new context. */
+   * Durable Job/Thread linkage proves continuity independently of names and
+   * other Agent metadata. A newer Job starts a new context. */
   handoffRecheckIdentity(candidate: AutomaticRecoveryCandidate, allowHandoff=true): AutomaticRecoveryCandidate | undefined {
     if (candidate.kind!=="recheck") return candidate;
     return this.db.transaction(()=>{
@@ -178,15 +179,25 @@ export class AutomaticRecoveryStore {
       const job=latest?.thread_id===agent.current_thread_id ? latest : undefined;
       if (candidate.key!==automaticRecoveryKey("recheck",[candidate.agentId,job?.job_id,agent.current_thread_id])) return candidate;
       const legacyKeys=[...new Set([job?.job_id,undefined].map(id=>automaticRecoveryKey("recheck",[candidate.agentId,agent.version,id])))];
-      const compatible=this.db.prepare(`SELECT i.identity_key,i.updated_at,c.job_id,r.thread_id,r.occurred_at
+      const compatible=this.db.prepare(`SELECT i.identity_key,i.updated_at,c.job_id,r.scope_id,r.thread_id,r.occurred_at
         FROM automatic_recovery_incidents i JOIN recovery_controls c ON c.recovery_key=i.recovery_key
         LEFT JOIN automatic_recovery r ON r.recovery_key=i.recovery_key
         WHERE i.agent_id=? AND i.active=1 AND c.state IN ('retrying','blocked')
-          AND i.identity_key IN (${legacyKeys.map(()=>"?").join(",")})`)
-        .all(candidate.agentId,...legacyKeys) as Array<{identity_key:string;updated_at:number;job_id:string|null;thread_id:string|null;occurred_at:number|null}>;
-      const matches=compatible.filter(row=>agent.updated_at<=row.updated_at &&
-        (!row.thread_id || row.thread_id===agent.current_thread_id) &&
-        (row.job_id ? row.job_id===candidate.jobId : !job || job.created_at<=(row.occurred_at ?? agent.updated_at)));
+          AND (c.job_id=? OR (c.job_id IS NULL AND r.scope_id=? AND r.thread_id=?)
+            OR i.identity_key IN (${legacyKeys.map(()=>"?").join(",")}))
+        ORDER BY i.identity_key LIMIT 33`)
+        .all(candidate.agentId,job?.job_id || null,candidate.scopeId,agent.current_thread_id,...legacyKeys) as
+        Array<{identity_key:string;updated_at:number;job_id:string|null;scope_id:string|null;thread_id:string|null;occurred_at:number|null}>;
+      if(compatible.length===33) return;
+      const matches=compatible.filter(row=>{
+        if(row.scope_id && row.scope_id!==candidate.scopeId || row.thread_id && row.thread_id!==agent.current_thread_id) return false;
+        if(row.job_id) return row.job_id===job?.job_id && row.job_id===candidate.jobId;
+        if(row.thread_id) return !job || row.occurred_at!==null && job.created_at<=row.occurred_at;
+        // Missing legacy linkage is not inferred from a rename. Only an
+        // unchanged legacy fingerprint can supply that otherwise absent proof.
+        return legacyKeys.includes(row.identity_key) && agent.updated_at<=row.updated_at &&
+          (!job || job.created_at<=(row.occurred_at ?? agent.updated_at));
+      });
       // Ambiguous old origins are history, not permission to merge incidents.
       if(matches.length>1) return;
       if(matches.length===0) return candidate;
