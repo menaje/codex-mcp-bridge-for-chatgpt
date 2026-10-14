@@ -485,6 +485,10 @@ struct DashboardPopoverView: View {
                 groupsByActivity: true
             )
             }
+            if panel == .background, dashboard.backgroundPagination?.hasNext == true {
+                Button("macos.showmore") { Task { await model.loadMoreBackground() } }
+                    .disabled(model.loadingMoreBackground)
+            }
             if panel == .running, dashboard.historyModeApplied == "jobs" ? currentRows.count < (dashboard.counts.progressJobCount ?? 0) : dashboard.statusPagination?.hasNext == true {
                 Button("macos.showmore") { Task { await model.loadMoreRunning() } }
                     .disabled(model.loadingMoreRunning)

@@ -843,6 +843,9 @@ const dashboardViewOutputSchema = z.strictObject({
   activeRows: z.array(dashboardRowOutputSchema),
   terminalRows: z.array(dashboardRowOutputSchema),
   idleRows: z.array(dashboardRowOutputSchema),
+  backgroundRows:z.array(dashboardRowOutputSchema).optional(),
+  backgroundPagination:dashboardPageOutputSchema.optional(),
+  backgroundRevision:z.string().regex(/^[a-f0-9]{64}$/).optional(),
   statusRows: z.array(dashboardRowOutputSchema).optional(),
   statusRowsComplete: z.boolean().optional(),
   statusPagination:dashboardPageOutputSchema.optional(),
@@ -5595,7 +5598,9 @@ export function registerBridgeTools(
         options.scopeId,
         options.statusFilter,
         options.problems,
-        options.includeHistory !== false
+        options.includeHistory !== false,
+        options.backgroundOffset || 0,
+        options.historyMode==="jobs"
       );
       applyExecutionContract(view,jobs.admissionStateStore,options);
       projectAccountForDisplay(view, accountRead ? await accountRead : undefined);
@@ -5650,7 +5655,9 @@ export function registerBridgeTools(
         options.scopeId,
         options.statusFilter,
         options.problems,
-        options.includeHistory !== false
+        options.includeHistory !== false,
+        options.backgroundOffset || 0,
+        options.historyMode==="jobs"
       );
       applyExecutionContract(view,jobs.admissionStateStore,options);
       cardPerformance.record("dashboard.enriched.read-projection", Date.now() - startedAt, {
@@ -6214,6 +6221,7 @@ export function registerBridgeTools(
       "Initial auto selects this conversation when it has Activity or Job records; conversation and all retain an explicit selection."
     ),
     limit: z.number().int().min(5).max(50).optional(),
+    backgroundOffset:z.number().int().min(0).max(1_000_000_000).optional(),
     statusOffset:z.number().int().min(0).max(1_000_000_000).optional(),
     terminalOffset: z.number().int().min(0).max(1_000_000_000).optional(),
     idleOffset: z.number().int().min(0).max(1_000_000_000).optional(),
@@ -6298,6 +6306,7 @@ export function registerBridgeTools(
         limit: args.limit || 12,
         terminalOffset: args.terminalOffset || 0,
         statusOffset:args.statusOffset,
+        backgroundOffset:args.backgroundOffset,
         idleOffset: args.idleOffset || 0,
         inspectRuntime: args.enrich !== false,
         includeHistory: args.includeHistory !== false
@@ -11238,6 +11247,7 @@ export type DashboardHistoryDetail = z.infer<typeof dashboardHistoryDetailOutput
 
 export type BridgeDashboardSnapshotOptions = {
   historyMode?: "agents"|"jobs";
+  backgroundOffset?: number;
   problems?: ProblemQuery;
   statusFilter?: DashboardStatusFilter;
   /** Internal resolved conversation filter. Native and retained clients omit it. */
@@ -11835,6 +11845,7 @@ function buildDashboardExecutionDetail(store:BridgeStateStore,input:BridgeDashbo
 }
 
 const snapshotRuntimeOnlyRows=new WeakMap<DashboardView,DashboardRow[]>();
+const snapshotBackgroundOwners=new WeakMap<DashboardView,Array<{row:DashboardRow;jobId?:string}>>();
 
 function applyExecutionContract(view:DashboardView,store:BridgeStateStore,options:BridgeDashboardSnapshotOptions):void {
   const now=Date.now(),counts=store.dashboardExecutionCounts(options.scopeId,now),policy=store.appliedHistoryPolicy(now);
@@ -11867,8 +11878,8 @@ function applyExecutionContract(view:DashboardView,store:BridgeStateStore,option
     returnedConversations:new Set(rows.map(x=>x.conversationKey)).size,conversationTotal,
     hasPrevious:offset>0,hasNext:offset+rows.length<total}});
   const templates=[...view.activeRows,...view.terminalRows,...view.idleRows,...(view.statusRows || [])];
-  const makeRow=(record:DashboardExecutionRecord):DashboardRow=> {
-    const template=templates.find(x=>x.latestTurn?.executionKey===dashboardRowKey(undefined,record.jobId));
+  const makeRow=(record:DashboardExecutionRecord,ownerTemplate?:DashboardRow):DashboardRow=> {
+    const template=ownerTemplate || templates.find(x=>x.latestTurn?.executionKey===dashboardRowKey(undefined,record.jobId));
     const turn=executionTurn(record);
     return {rowKey:turn.executionKey!,activityKey:turn.activityKey!,conversationKey:dashboardConversationKey(record.scopeId),sessionAlias:dashboardSessionAlias(record.scopeId),
       ...(template?.conversationUrl ? {conversationUrl:template.conversationUrl} : {}),...(template?.codexThreadUrl ? {codexThreadUrl:template.codexThreadUrl} : {}),
@@ -11884,13 +11895,24 @@ function applyExecutionContract(view:DashboardView,store:BridgeStateStore,option
   const offset=options.statusOffset ?? options.terminalOffset ?? 0,limit=options.limit || 12;
   const progress=store.dashboardExecutionPage(options.scopeId,["running","terminating","termination-failed"],options.statusFilter==="running" ? offset : 0,limit,now);
   const terminal=store.dashboardExecutionPage(options.scopeId,["completed","failed","interrupted","cancelled"],offset,limit,now);
-  const progressRows=progress.jobs.map(makeRow),runtimeOnly=snapshotRuntimeOnlyRows.get(view) || [];
+  const progressRows=progress.jobs.map(record=>makeRow(record)),runtimeOnly=snapshotRuntimeOnlyRows.get(view) || [];
   const activeTotal=progress.total+runtimeOnly.length;
   const activeOffset=options.statusFilter==="running" ? Math.min(offset,activeTotal ? Math.floor((activeTotal-1)/limit)*limit : 0) : 0;
-  const actualProgressRows=activeOffset>=progress.total ? [] : (activeOffset===progress.offset ? progressRows : store.dashboardExecutionPage(options.scopeId,["running","terminating","termination-failed"],activeOffset,limit,now).jobs.map(makeRow));
+  const actualProgressRows=activeOffset>=progress.total ? [] : (activeOffset===progress.offset ? progressRows : store.dashboardExecutionPage(options.scopeId,["running","terminating","termination-failed"],activeOffset,limit,now).jobs.map(record=>makeRow(record)));
   const runtimeOffset=Math.max(0,activeOffset-progress.total);
   const active=page([...actualProgressRows,...runtimeOnly.slice(runtimeOffset,runtimeOffset+Math.max(0,limit-actualProgressRows.length))],activeTotal,activeOffset,new Set([...progress.scopeIds.map(dashboardConversationKey),...runtimeOnly.map(x=>x.conversationKey)]).size);
-  const history=page(options.includeHistory===false ? [] : terminal.jobs.map(makeRow),terminal.total,terminal.offset,terminal.scopeIds.length);
+  const history=page(options.includeHistory===false ? [] : terminal.jobs.map(record=>makeRow(record)),terminal.total,terminal.offset,terminal.scopeIds.length);
+  const owners=snapshotBackgroundOwners.get(view) || [];
+  const backgroundAt=Math.min(Math.max(0,options.backgroundOffset || 0),owners.length ? Math.floor((owners.length-1)/limit)*limit : 0);
+  const visibleOwners=owners.slice(backgroundAt,backgroundAt+limit);
+  const backgroundJobs=new Map(store.dashboardExecutionRecords(visibleOwners.flatMap(owner=>owner.jobId ? [owner.jobId] : []),options.scopeId,now).map(record=>[record.jobId,record]));
+  const background=page(visibleOwners.flatMap(owner=> {
+    if(!owner.jobId) return [owner.row];
+    const record=backgroundJobs.get(owner.jobId);return record && isActiveActivityJobStatus(record.status) ? [makeRow(record,owner.row)] : [owner.row];
+  }),owners.length,backgroundAt,new Set(owners.map(owner=>owner.row.conversationKey)).size);
+  view.backgroundRows=JSON.parse(JSON.stringify(background.rows)) as DashboardRow[];
+  view.backgroundPagination=background.page;
+  view.backgroundRevision=problemRevision([policy.policyRevision,owners.map(owner=>[owner.row.rowKey,owner.jobId || null,owner.row.codexThreadUrl || null,owner.row.projectKey,owner.row.agentName,owner.row.status,owner.row.controlKind || null,owner.row.backgroundProcessCount])]);
   view.activeRows=active.rows;view.terminalRows=history.rows;view.idleRows=[];view.pagination.active=active.page;view.pagination.terminal=history.page;
   view.pagination.idle=page([],0,0).page;
   const selected=options.statusFilter==="running" || options.statusFilter==="background" ? active : history;
@@ -12915,7 +12937,9 @@ async function buildDashboardView(
   scopeId?: string,
   statusFilter?: DashboardStatusFilter,
   problemQuery?: ProblemQuery,
-  includeHistory = true
+  includeHistory = true,
+  backgroundOffset = 0,
+  prepareBackground = false
 ): Promise<DashboardView> {
   if (problemQuery && statusFilter === undefined) statusFilter = "all";
   const inScope = (row: { scopeId: string }): boolean => !scopeId || row.scopeId === scopeId;
@@ -12955,7 +12979,9 @@ async function buildDashboardView(
       scopeId,
       statusFilter,
       problemQuery,
-      includeHistory
+      includeHistory,
+      backgroundOffset,
+      prepareBackground
     );
   }
   // Read expensive contextual catalog metadata once per backend for this
@@ -13683,7 +13709,10 @@ async function buildDashboardView(
     idleOffset,
     limit
   );
-  const cacheRows=[...activePage.rows,...terminalPage.rows,...idlePage.rows,...statusRows];
+  const backgroundCandidates=activeRows.filter(row=>row.backgroundProcessCount>0);
+  const backgroundPreviewOffset=Math.min(Math.max(0,backgroundOffset),backgroundCandidates.length ? Math.floor((backgroundCandidates.length-1)/limit)*limit : 0);
+  const backgroundCacheRows=prepareBackground ? backgroundCandidates.slice(backgroundPreviewOffset,backgroundPreviewOffset+limit) : [];
+  const cacheRows=[...activePage.rows,...terminalPage.rows,...idlePage.rows,...statusRows,...backgroundCacheRows];
   const previewAgentIds=[...new Set(cacheRows.flatMap(row=>{const id=agentIdByRowKey.get(row.rowKey);return id ? [id] : [];}))];
   const preview=jobs.admissionStateStore.listDashboardArchivedJobsByAgent(scopeId,DASHBOARD_HISTORY_PREVIEW_LIMIT+1,"created",previewAgentIds);
   for(const id of previewAgentIds) archivedJobsByAgent.set(id,[]);
@@ -13775,6 +13804,9 @@ async function buildDashboardView(
     uiLocalePreference: preferences.uiLocalePreference
   });
   snapshotRuntimeOnlyRows.set(parsedView,recoveryRows.map(x=>x.row));
+  const activeJobByExecutionKey=new Map(allJobs.filter(job=>isActiveActivityJobStatus(job.status)).map(job=>[dashboardRowKey(undefined,job.jobId),job.jobId]));
+  snapshotBackgroundOwners.set(parsedView,activeRows.filter(row=>row.backgroundProcessCount>0).map(row=>({row,
+    jobId:agentById.get(agentIdByRowKey.get(row.rowKey) || "")?.currentJobId || (row.latestTurn?.executionKey ? activeJobByExecutionKey.get(row.latestTurn.executionKey) : undefined)})));
   return parsedView;
 }
 

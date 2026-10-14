@@ -477,6 +477,58 @@ final class DashboardPopoverTests: XCTestCase {
         XCTAssertEqual(f.state.historyReadCount, 2)
     }
 
+    func testReviewBackgroundIndependentPageFromActualServerWithTwentySixProgressJobs() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let snapshot = try JSONDecoder().decode(DashboardSnapshot.self,
+            from: Data(contentsOf: root.appendingPathComponent("test/fixtures/background-independent-page.json")))
+        XCTAssertEqual(snapshot.activeRows.count, 12)
+        XCTAssertEqual(snapshot.counts.progressJobCount, 26)
+        XCTAssertEqual(snapshot.counts.executionCount, 1)
+        XCTAssertEqual(snapshot.backgroundPagination?.total, 1)
+        XCTAssertEqual(DashboardPanel.background.rows(in: snapshot).count, 1)
+        XCTAssertEqual(DashboardPanel.running.rows(in: snapshot).count, 12)
+    }
+
+    @MainActor
+    func testReviewBackgroundPagingWorksAndRejectsChangedOrLatePages() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        var first = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("test/fixtures/background-independent-page.json"))) as? [String: Any])
+        let original = (first["backgroundRows"] as! [[String: Any]])[0]
+        func owner(_ i: Int) -> [String: Any] { var row = original; row["rowKey"] = String(format: "%032d", i + 1); row["conversationKey"] = "owner-scope-\(i)"; return row }
+        let initial = (0..<12).map(owner)
+        first["backgroundRows"] = initial; first["backgroundRevision"] = String(repeating: "a", count: 64)
+        first["backgroundPagination"] = ["offset": 0, "limit": 12, "returned": 12, "total": 13, "returnedConversations": 12, "conversationTotal": 13, "hasNext": true, "hasPrevious": false]
+        var counts = first["counts"] as! [String: Any]; counts["backgroundProcesses"] = 13; counts["backgroundProcessAgents"] = 13; first["counts"] = counts
+        var next = first; next["backgroundRows"] = [owner(12)]
+        next["backgroundPagination"] = ["offset": 12, "limit": 12, "returned": 1, "total": 13, "returnedConversations": 1, "conversationTotal": 13, "hasNext": false, "hasPrevious": true]
+        func encoded(_ object: [String: Any]) throws -> String { String(data: try JSONSerialization.data(withJSONObject: object), encoding: .utf8)! }
+        f.state.dashboardJSON = try encoded(first); f.state.backgroundPageJSON = try encoded(next)
+        await f.model.refreshDashboard(enrich: false); await f.model.loadMoreBackground()
+        XCTAssertEqual(f.model.dashboard?.backgroundRows?.count, 13)
+        XCTAssertEqual(f.model.dashboard?.backgroundPagination?.hasNext, false)
+        XCTAssertEqual(f.state.backgroundPageOffsets, [12])
+        XCTAssertEqual(f.model.dashboard?.activeRows.count, 12)
+        XCTAssertEqual(f.model.dashboard?.terminalRows.count, 1)
+
+        await f.model.refreshDashboard(enrich: false)
+        next["backgroundRevision"] = String(repeating: "b", count: 64); f.state.backgroundPageJSON = try encoded(next)
+        let before = f.state.dashboardReadCount
+        await f.model.loadMoreBackground()
+        XCTAssertGreaterThanOrEqual(f.state.dashboardReadCount, before + 2)
+        XCTAssertEqual(f.model.dashboard?.backgroundRows?.count, 12, "Changed owner identities must rebase, not merge")
+
+        next["backgroundRevision"] = first["backgroundRevision"]
+        f.state.backgroundPageJSON = try encoded(next); f.state.backgroundPageDelay = 0.1
+        let beforeLate = f.state.dashboardReadCount
+        let pending = Task { await f.model.loadMoreBackground() }
+        while f.state.dashboardReadCount == beforeLate { await Task.yield() }
+        await f.model.refreshDashboard(enrich: false); await pending.value
+        XCTAssertEqual(f.model.dashboard?.backgroundRows?.count, 12, "A late page cannot cross a newer snapshot generation")
+    }
+
     func testReviewCompletedJobUsesOneCurrentBackgroundOwnerFromServerProjection() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
@@ -1073,6 +1125,12 @@ private final class PopoverReplyState: @unchecked Sendable {
     private var maximumEnrichments = 0
     private var completedEnrichments = 0
     private var dashboardReads = 0
+    private var backgroundPageJSONValue: String?
+    private var backgroundPageDelayValue: TimeInterval = 0
+    private var backgroundOffsets: [Int] = []
+    var backgroundPageJSON: String? { get { lock.withLock { backgroundPageJSONValue } } set { lock.withLock { backgroundPageJSONValue = newValue } } }
+    var backgroundPageDelay: TimeInterval { get { lock.withLock { backgroundPageDelayValue } } set { lock.withLock { backgroundPageDelayValue = newValue } } }
+    var backgroundPageOffsets: [Int] { lock.withLock { backgroundOffsets } }
     private var dashboardJSONValue: String?
     private var failDashboardValue = false
     var dashboardJSON: String? { get { lock.withLock { dashboardJSONValue } } set { lock.withLock { dashboardJSONValue = newValue } } }
@@ -1193,6 +1251,10 @@ private final class PopoverReplyState: @unchecked Sendable {
             let includeHistory = params["includeHistory"] as? Bool ?? true
             lock.withLock { dashboardReads += 1 }
             if failDashboard { return NativeFixtureReply(body: #"{"error":{"code":-32000,"message":"FIXTURE_DASHBOARD_UNAVAILABLE"}}"#) }
+            if let offset = params["backgroundOffset"] as? Int, let body = backgroundPageJSON {
+                lock.withLock { backgroundOffsets.append(offset) }
+                return NativeFixtureReply(body: "{\"result\":\(body)}", delay: backgroundPageDelay)
+            }
             if let dashboardJSON { return NativeFixtureReply(body: "{\"result\":\(dashboardJSON)}") }
             if rejectJobsMode && params["historyMode"] != nil { return NativeFixtureReply(body: #"{"error":{"code":-32602,"message":"Unrecognized key: historyMode"}}"#) }
             if params["enrich"] as? Bool == true {

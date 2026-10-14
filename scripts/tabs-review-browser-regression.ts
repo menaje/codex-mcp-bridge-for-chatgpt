@@ -20,10 +20,16 @@ window.openai={toolOutput:response,toolResponseMetadata:{},locale:'en-US',notify
 </script></head>`);
 const completedProjection=JSON.parse(readFileSync('test/fixtures/terminal-background-projection.json','utf8'));
 const completedHtml=DASHBOARD_CARD_HTML.replace('</head>',`<script>const snapshot=${JSON.stringify({...completedProjection,uiLocalePreference:'en'})};window.openai={toolOutput:snapshot,toolResponseMetadata:{},locale:'en-US',notifyIntrinsicHeight:()=>{},callTool:async()=>({structuredContent:snapshot})};</script></head>`);
+const independentProjection=JSON.parse(readFileSync('test/fixtures/background-independent-page.json','utf8'));
+function independentHtml(many=false){return DASHBOARD_CARD_HTML.replace('</head>',`<script>
+const base=${JSON.stringify({...independentProjection,uiLocalePreference:'en'})};window.__backgroundOffsets=[];
+function response(offset=0){if(!${many})return base;const owner=base.backgroundRows[0],all=Array.from({length:13},(_,i)=>({...owner,rowKey:String(i+1).padStart(32,'0'),conversationKey:'owner-scope-'+i}));return {...base,counts:{...base.counts,backgroundProcesses:13,backgroundProcessAgents:13},backgroundRows:all.slice(offset,offset+12),backgroundPagination:{offset,limit:12,returned:Math.min(12,13-offset),total:13,returnedConversations:Math.min(12,13-offset),conversationTotal:13,hasPrevious:offset>0,hasNext:offset+12<13}}}
+window.openai={toolOutput:response(),toolResponseMetadata:{},locale:'en-US',notifyIntrinsicHeight:()=>{},callTool:async(_name,args)=>{if(args.backgroundOffset!==undefined)__backgroundOffsets.push(args.backgroundOffset);return {structuredContent:response(args.backgroundOffset||0)}}};
+</script></head>`)}
 const execute=promisify(execFile),session='tabs-review-'+process.pid;
 const wrapper=path.join(process.env.CODEX_HOME || path.join(homedir(),'.codex'),'skills/playwright/scripts/playwright_cli.sh');
 async function cli(...args:string[]){const r=await execute(existsSync(wrapper)?wrapper:'npx',[...(existsSync(wrapper)?[]:['--yes','--package','@playwright/cli@0.1.19','playwright-cli']),'--session',session,'--raw',...args],{timeout:40000,maxBuffer:3*1024*1024});if(r.stdout.includes('### Error'))throw Error(r.stdout);return r.stdout}
-const server=createServer((req,res)=>{res.setHeader('Content-Type','text/html');res.end(req.url==='/completed'?completedHtml:html)});await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
+const server=createServer((req,res)=>{res.setHeader('Content-Type','text/html');res.end(req.url==='/completed'?completedHtml:req.url==='/independent'?independentHtml():req.url==='/many-background'?independentHtml(true):html)});await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
 try{
  await cli('open','http://127.0.0.1:'+(server.address() as {port:number}).port);writeFileSync(artifacts+'/initial.txt',await cli('snapshot'));
  console.log(await cli('run-code',`async page=>{
@@ -46,5 +52,20 @@ try{
  if(await page.locator('#running-count').innerText()!=='0'||await page.locator('#response-count').innerText()!=='1')throw Error('runtime observation counted as a new Job');
  await page.screenshot({path:'output/playwright/tabs-review/completed-history.png'});
  }`));
- writeFileSync(artifacts+'/report.json',JSON.stringify({passed:true,checks:['active Job with background process outside terminal status page','problem-only Job expiry hides error and preview despite failed refresh','twelve valid success summaries remain','background execution survives expiry','completed Job and current runtime process have one display owner','completed execution history and Job totals remain']},null,2));
+ await cli('goto','http://127.0.0.1:'+(server.address() as {port:number}).port+'/independent');writeFileSync(artifacts+'/independent.txt',await cli('snapshot'));
+ console.log(await cli('run-code',`async page=>{
+ await page.waitForFunction(()=>!document.querySelector('#dashboard-content').hidden);
+ await page.locator('#background-filter').click();if(await page.locator('#active-list .activity-agent').count()!==1)throw Error('full progress page hid independent background owner');
+ if(await page.locator('#running-count').innerText()!=='26')throw Error('independent background changed Job totals');
+ }`));
+ await cli('goto','http://127.0.0.1:'+(server.address() as {port:number}).port+'/many-background');writeFileSync(artifacts+'/many-background.txt',await cli('snapshot'));
+ console.log(await cli('run-code',`async page=>{
+ await page.waitForFunction(()=>!document.querySelector('#dashboard-content').hidden);
+ await page.locator('#background-filter').click();if(await page.locator('#active-list .activity-agent').count()!==12||!(await page.locator('#active-more').isVisible()))throw Error('bounded background page has no control');
+ await page.locator('#active-more').click();await page.waitForFunction(()=>document.querySelectorAll('#active-list .activity-agent').length===13);
+ if(await page.locator('#active-more').isVisible())throw Error('finished background page still offers more');
+ if(JSON.stringify(await page.evaluate(()=>__backgroundOffsets))!==JSON.stringify([12]))throw Error('background offset is based on progress Jobs');
+ await page.screenshot({path:'output/playwright/tabs-review/background-page-complete.png'});
+ }`));
+ writeFileSync(artifacts+'/report.json',JSON.stringify({passed:true,checks:['active Job with background process outside terminal status page','problem-only Job expiry hides error and preview despite failed refresh','twelve valid success summaries remain','background execution survives expiry','completed Job and current runtime process have one display owner','completed execution history and Job totals remain','independent owner visible beyond twenty-six progress Jobs','bounded Background page has a working more control','Background paging preserves Job totals and uses owner offsets']},null,2));
 }finally{await cli('close').catch(()=>{});await new Promise<void>(resolve=>server.close(()=>resolve()))}

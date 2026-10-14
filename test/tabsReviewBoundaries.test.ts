@@ -29,4 +29,13 @@ describe('PR257 independent review boundaries',()=>{
   c.next={historyPolicy:{retentionDays:0}};expect(vm.runInContext('retainedProblemRows(rows,next)',c)).toHaveLength(2);
  });
 
+ for(const result of ['accept','scope-changed','owners-changed','policy-changed'])it(`pages bounded background owners and fences ${result}`,async()=>{
+  const first=Array.from({length:12},(_,i)=>({rowKey:'owner-'+i})),last={rowKey:'owner-12'};let request:any,reloads=0,release!:(x:any)=>void;
+  const c=vm.createContext({busy:false,mounted:true,view:{backgroundRows:first,backgroundRevision:'owners',historyPolicy:{policyRevision:'policy'},backgroundPagination:{offset:0,returned:12,total:13,hasNext:true}},hydrationEpoch:1,selectedStatus:'background',selectedScope:'all',widgetInstanceId:'widget',PAGE_LIMIT:12,setBusy:(value:boolean)=>{c.busy=value},unwrap:(x:any)=>x,dashboardRead:async(args:any)=>{request=args;return await new Promise(resolve=>{release=resolve})},mergeRows:(a:any[],b:any[])=>[...a,...b],paint:()=>{},reload:async()=>{reloads++},showError:()=>{},t:{'common.error':'error'}});
+  load('loadMoreBackground',c);const pending=vm.runInContext('loadMoreBackground()',c);if(result==='scope-changed')c.hydrationEpoch=2;
+  release({backgroundRows:[last],backgroundRevision:result==='owners-changed'?'different':'owners',historyPolicy:{policyRevision:result==='policy-changed'?'different':'policy'},backgroundPagination:{offset:12,returned:1,total:13,hasNext:false}});await pending;
+  expect(request.backgroundOffset).toBe(12);expect(request.includeHistory).toBe(false);expect(request.enrich).toBe(true);
+  expect(c.view.backgroundRows).toHaveLength(result==='accept'?13:12);expect(reloads).toBe(['owners-changed','policy-changed'].includes(result)?1:0);
+ });
+
 });

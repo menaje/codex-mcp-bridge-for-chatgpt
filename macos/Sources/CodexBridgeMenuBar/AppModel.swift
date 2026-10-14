@@ -337,6 +337,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var dashboardHistoryDetails: [String: DashboardHistoryDetail] = [:]
     @Published private(set) var dashboardHistoryLoading = Set<String>()
     @Published private(set) var loadingMoreRunning = false
+    @Published private(set) var loadingMoreBackground = false
     @Published private(set) var dashboardHistoryErrors: [String: String] = [:]
     private var dashboardHistoryRequestIDs: [String: UUID] = [:]
     private var dashboardHistoryContexts: [String: String] = [:]
@@ -380,7 +381,7 @@ final class AppModel: ObservableObject {
         dashboardHistoryExpiryTask?.cancel()
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let rows = (snapshot.statusRows ?? []) + snapshot.activeRows + snapshot.terminalRows + (snapshot.problems?.rows.map { $0.row } ?? [])
+        let rows = (snapshot.statusRows ?? []) + snapshot.activeRows + snapshot.terminalRows + (snapshot.backgroundRows ?? []) + (snapshot.problems?.rows.map { $0.row } ?? [])
         let dates = rows.compactMap { row -> Date? in
             if let raw = row.nextExpiryAt { return formatter.date(from: raw) ?? ISO8601DateFormatter().date(from: raw) }
             guard snapshot.historyModeApplied == "jobs", let raw = row.latestTurn?.endedAt,
@@ -3170,6 +3171,29 @@ final class AppModel: ObservableObject {
             operation: .patch(SettingsPatch(projectOperations: operations))
         ), onSaved: { receipt = $0 })
         return receipt
+    }
+
+    func loadMoreBackground() async {
+        guard !loadingMoreBackground, let current = dashboard, let page = current.backgroundPagination,
+              page.hasNext else { return }
+        let connection = connectionGeneration, generation = dashboardRequestGeneration, revision = current.backgroundRevision
+        loadingMoreBackground = true
+        defer { loadingMoreBackground = false }
+        do {
+            let client = try await bridgeClient()
+            let next = try await client.dashboardBackgroundPage(limit: pageLimit, offset: page.offset + page.returned)
+            guard connection == connectionGeneration, generation == dashboardRequestGeneration,
+                  dashboard?.backgroundRevision == revision else { return }
+            guard let rows = next.backgroundRows, let nextPage = next.backgroundPagination else { throw NSError(domain: "DASHBOARD_BACKGROUND_UNAVAILABLE", code: 1) }
+            guard next.backgroundRevision == revision, next.historyPolicy?.policyRevision == current.historyPolicy?.policyRevision else { await refreshDashboard(enrich: true); return }
+            var merged = dashboard ?? current, seen = Set<String>()
+            merged.backgroundRows = ((merged.backgroundRows ?? []) + rows).filter { seen.insert($0.rowKey).inserted }
+            merged.backgroundPagination = nextPage
+            dashboard = merged
+        } catch {
+            guard connection == connectionGeneration, generation == dashboardRequestGeneration else { return }
+            dashboardErrorMessage = localizedErrorDescription(error)
+        }
     }
 
     func loadMoreRunning() async {

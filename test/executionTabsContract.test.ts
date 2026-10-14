@@ -202,4 +202,40 @@ describe('Job-unit execution tabs and read-only exact detail',()=>{
   }finally{await f.close();}
  });
 
+ it.each([12,26])('makes a runtime-only background owner reachable beyond %i progress Jobs with a bounded independent page',async progress=>{
+  const f=fixture();try{
+   f.seed('completed',1,{threadId:'background-owner-thread'});
+   for(let i=0;i<progress;i++){const agent=f.writer.createAgent({scopeId:scope,agentName:'Running '+i}),activity=f.writer.createActivity({scopeId:scope,title:'Running '+i});f.seed('running',0,{agentId:agent.agentId,activityId:activity.activityId,threadId:'running-thread-'+i});}
+   const options={...query,limit:12},first=await f.service().dashboardSnapshot(options);
+   const v=await f.service().dashboardSnapshotWithEnrichment!(options,{runtimeByAgent:[[f.agent.agentId,{state:'idle',backgroundProcessState:'confirmed',backgroundProcessCount:1}]],runtimeProbeSkippedAgents:0,weeklyUsage:null,summary:{...first.enrichment,state:'enriched'}} as any);
+   expect(v.activeRows).toHaveLength(12);expect(v.counts.progressJobCount).toBe(progress);expect(v.counts.executionCount).toBe(1);
+   const c=vm.createContext({next:v,selectedStatus:'background',activeRows:[],terminalRows:[],dashboardRowMatchesStatus:(row:any)=>row.backgroundProcessCount>0});
+   vm.runInContext(DASHBOARD_CARD_HTML.split('\n').find(x=>/^\s*function applyLocalStatus\(/.test(x))!,c);vm.runInContext('applyLocalStatus(next)',c);
+   expect(c.activeRows.length+c.terminalRows.length).toBe(1);
+   if(process.env.CAPTURE_BACKGROUND_PAGE==='1')writeFileSync('test/fixtures/background-independent-page.json',JSON.stringify(v,null,2)+'\n');
+  }finally{await f.close();}
+ });
+
+ it('pages more than twelve current background owners independently and preserves exact active Job metadata',async()=>{
+  const f=fixture();try{
+   const agents=[f.agent];f.seed('running',0,{threadId:'active-bg-0'});
+   for(let i=1;i<25;i++){const agent=f.writer.createAgent({scopeId:scope,agentName:'Background '+i}),activity=f.writer.createActivity({scopeId:scope,title:'Background '+i});agents.push(agent);f.seed('running',i/100,{agentId:agent.agentId,activityId:activity.activityId,threadId:'active-bg-'+i});}
+   const options={...query,limit:12},first=await f.service().dashboardSnapshot(options),enrichment={runtimeByAgent:agents.map(agent=>[agent.agentId,{state:'busy',backgroundProcessState:'confirmed',backgroundProcessCount:1}]),runtimeProbeSkippedAgents:0,weeklyUsage:null,summary:{...first.enrichment,state:'enriched'}};
+   let revision:string|undefined;const ids:string[]=[];
+   for(const offset of [0,12,24]){const v=await f.service().dashboardSnapshotWithEnrichment!({...options,backgroundOffset:offset},enrichment as any);expect(v.backgroundRows!.length).toBeLessThanOrEqual(12);expect(v.backgroundPagination?.total).toBe(25);expect(v.backgroundPagination?.offset).toBe(offset);expect(v.counts.progressJobCount).toBe(25);expect(v.counts.executionCount).toBe(0);if(revision)expect(v.backgroundRevision).toBe(revision);revision=v.backgroundRevision;ids.push(...v.backgroundRows!.map(x=>x.jobId!));expect(v.backgroundRows!.every(x=>x.jobId&&x.scopeId===scope&&x.backgroundProcessCount===1)).toBe(true);}
+   expect(new Set(ids).size).toBe(25);expect(ids).toHaveLength(25);
+   const scoped=await f.service().dashboardSnapshotWithEnrichment!({...options,scopeId:other},enrichment as any);expect(scoped.backgroundRows).toEqual([]);expect(scoped.backgroundPagination?.total).toBe(0);
+  }finally{await f.close();}
+ });
+
+ it('keeps deferred runtime-owner history on the same bounded policy/revision contract',async()=>{
+  const f=fixture();try{
+   for(const age of [1,2,3])f.seed('completed',age,{threadId:'history-background-thread'});
+   const first=await f.service().dashboardSnapshot(query);
+   const v=await f.service().dashboardSnapshotWithEnrichment!(query,{runtimeByAgent:[[f.agent.agentId,{state:'idle',backgroundProcessState:'confirmed',backgroundProcessCount:1}]],runtimeProbeSkippedAgents:0,weeklyUsage:null,summary:{...first.enrichment,state:'enriched'}} as any);
+   const row=v.backgroundRows![0],detail=await f.service().dashboardHistoryDetail!({rowKey:row.rowKey,scopeId:scope});
+   expect(row.policyRevision).toBe(detail.policyRevision);expect(row.historyRevision).toBe(detail.historyRevision);expect(row.representativeExecutionKey).toBe(detail.representativeExecutionKey);expect(row.nextExpiryAt).toBe(detail.nextExpiryAt);
+  }finally{await f.close();}
+ });
+
 });

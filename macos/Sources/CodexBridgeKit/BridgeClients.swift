@@ -248,6 +248,12 @@ public struct BridgeCompanionClient: Sendable {
         try await rpc.call("dashboard.execution-detail", params: target, timeout: 5)
     }
 
+    public func dashboardBackgroundPage(limit: Int, offset: Int) async throws -> DashboardSnapshot {
+        var params = DashboardParameters(limit: limit, enrich: true, statusFilter: .all, includeHistory: false)
+        params.historyMode = "jobs"; params.backgroundOffset = offset
+        return try await rpc.call("dashboard.snapshot", params: params, timeout: 10)
+    }
+
     public func dashboardStatusPage(limit: Int, offset: Int) async throws -> DashboardSnapshot {
         var params = DashboardParameters(limit: limit, statusFilter: .running, includeHistory: false)
         params.statusOffset = offset

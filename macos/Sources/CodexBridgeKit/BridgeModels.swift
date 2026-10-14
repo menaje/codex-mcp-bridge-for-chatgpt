@@ -21,6 +21,9 @@ public struct DashboardSnapshot: Codable, Sendable {
     public var activeRows: [DashboardRow]
     public var terminalRows: [DashboardRow]
     public var idleRows: [DashboardRow]
+    public var backgroundRows: [DashboardRow]? = nil
+    public var backgroundPagination: DashboardPage? = nil
+    public var backgroundRevision: String? = nil
     public var statusRows: [DashboardRow]? = nil
     public var statusRowsComplete: Bool? = nil
     public var statusPagination: DashboardPage? = nil
@@ -594,6 +597,7 @@ public struct DashboardParameters: Codable, Sendable {
     public var problems: ProblemQuery? = nil
     public var limit: Int
     public var terminalOffset: Int
+    public var backgroundOffset: Int? = nil
     public var statusOffset: Int? = nil
     public var idleOffset: Int
     public var enrich: Bool

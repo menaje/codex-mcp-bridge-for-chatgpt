@@ -216,6 +216,12 @@ describe("remote native companion", () => {
     } } });
     expect(applicationService.dashboardHistoryDetail).toHaveBeenCalledWith({ rowKey: "a".repeat(32) }, expect.objectContaining({ signal: expect.any(AbortSignal), deadlineAt: expect.any(Number) }));
 
+    const backgroundPage=await jsonRequest(`${endpoint}/remote-companion/v1/rpc`,"POST",
+      {jsonrpc:"2.0",id:"background-page",method:"dashboard.snapshot",params:{historyMode:"jobs",backgroundOffset:12,enrich:true,includeHistory:false}},
+      {authorization:`Bearer ${credential}`,"x-codex-bridge-server-id":enabled.serverId});
+    expect(backgroundPage).toMatchObject({status:200,body:{result:{kind:"dashboard"}}});
+    expect(applicationService.dashboardSnapshot).toHaveBeenLastCalledWith(expect.objectContaining({historyMode:"jobs",backgroundOffset:12,inspectRuntime:true,includeHistory:false}),expect.anything());
+
     const exactParams={scopeId:"11111111-1111-4111-8111-111111111111",jobId:"legacy-execution"};
     const exactDetail=await jsonRequest(`${endpoint}/remote-companion/v1/rpc`,"POST",
       {jsonrpc:"2.0",id:"exact-detail",method:"dashboard.execution-detail",params:exactParams},

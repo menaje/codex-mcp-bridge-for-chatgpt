@@ -103,6 +103,7 @@ const dashboardParamsSchema = z.strictObject({
   problems: problemQuerySchema.optional(),
   statusFilter: z.enum(DASHBOARD_STATUS_FILTERS).optional(),
   limit: z.number().int().min(5).max(50).optional(),
+  backgroundOffset:z.number().int().min(0).max(1_000_000_000).optional(),
   statusOffset:z.number().int().min(0).max(1_000_000_000).optional(),
   terminalOffset: z.number().int().min(0).max(1_000_000_000).optional(),
   idleOffset: z.number().int().min(0).max(1_000_000_000).optional(),
@@ -617,11 +618,13 @@ async function dispatchRequest(
     case "dashboard.snapshot": {
       const params = dashboardParamsSchema.parse(request.params || {});
       return applicationService.dashboardSnapshot({
+        historyMode:params.historyMode,
         problems: params.problems,
         statusFilter: params.statusFilter,
         limit: params.limit,
         terminalOffset: params.terminalOffset,
         statusOffset:params.statusOffset,
+        backgroundOffset:params.backgroundOffset,
         idleOffset: params.idleOffset,
         // Older native clients omit enrich and retain their prior all-in-one
         // snapshot behavior. The current client sends false explicitly.
