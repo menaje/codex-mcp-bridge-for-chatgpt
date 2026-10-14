@@ -1,4 +1,5 @@
 import { dashboardHistoryActionInput } from "./workHistory.js";
+import { dashboardExecutionDetailInputSchema } from "./tools.js";
 import { problemActionSchema, problemQuerySchema } from "./problemReview.js";
 import {
   chmodSync,
@@ -58,6 +59,7 @@ const requestSchema = z.strictObject({
     "changes.wait",
     "dashboard.snapshot",
     "dashboard.history-detail",
+    "dashboard.execution-detail",
     "dashboard.history",
     "dashboard.problem",
     "thread.handoff",
@@ -97,6 +99,7 @@ const requestSchema = z.strictObject({
 
 const emptyParamsSchema = z.strictObject({});
 const dashboardParamsSchema = z.strictObject({
+  historyMode:z.enum(["agents","jobs"]).optional(),
   problems: problemQuerySchema.optional(),
   statusFilter: z.enum(DASHBOARD_STATUS_FILTERS).optional(),
   limit: z.number().int().min(5).max(50).optional(),
@@ -310,6 +313,7 @@ export const REMOTE_COMPANION_APPLICATION_METHODS = new Set([
   "companion.hello",
   "dashboard.snapshot",
   "dashboard.history-detail",
+    "dashboard.execution-detail",
   "dashboard.history",
   "dashboard.problem",
   "settings.snapshot",
@@ -585,6 +589,10 @@ async function dispatchRequest(
     case "dashboard.history": {
       if (!applicationService.historyAction) throw new Error("HISTORY_UNSUPPORTED");
       return applicationService.historyAction(dashboardHistoryActionInput.parse(request.params));
+    }
+    case "dashboard.execution-detail": {
+      if (!applicationService.dashboardExecutionDetail) throw new Error("DASHBOARD_EXECUTION_DETAIL_UNSUPPORTED");
+      return applicationService.dashboardExecutionDetail(dashboardExecutionDetailInputSchema.parse(request.params),{signal,deadlineAt:Date.now()+4500});
     }
     case "dashboard.history-detail": {
       if (!applicationService.dashboardHistoryDetail) {

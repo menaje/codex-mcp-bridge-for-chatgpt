@@ -18,6 +18,8 @@ import {
   type BridgeDashboardHistoryDetailOptions,
   type BridgeDashboardRuntimePlan,
   type BridgeDashboardSnapshotOptions,
+  type BridgeDashboardExecutionDetailOptions,
+  type DashboardExecutionDetail,
   type BridgeReadProjectionService,
   type BridgeSettingsSnapshotOptions,
   type DashboardHistoryDetail,
@@ -43,12 +45,13 @@ const RESTART_MAX_DELAY_MS = 10_000;
 const READ_METHODS = [
   "dashboardSnapshot",
   "dashboardHistoryDetail",
+  "dashboardExecutionDetail",
   "settingsSnapshot",
   "dashboardRuntimePlan",
   "dashboardSnapshotWithEnrichment"
 ] as const;
 type ReadMethod = (typeof READ_METHODS)[number];
-type PublicReadMethod = "dashboardSnapshot" | "dashboardHistoryDetail" | "settingsSnapshot";
+type PublicReadMethod = "dashboardSnapshot" | "dashboardHistoryDetail" | "dashboardExecutionDetail" | "settingsSnapshot";
 
 type ReadyMessage = {
   type: "ready";
@@ -200,6 +203,10 @@ export class ChildProcessStateReadService implements BridgeReadProjectionService
 
   dashboardSnapshot(options?: BridgeDashboardSnapshotOptions, context?: ReadObservationContext): Promise<DashboardView> {
     return this.rpc("dashboardSnapshot", [options || {}], context) as Promise<DashboardView>;
+  }
+
+  dashboardExecutionDetail(options:BridgeDashboardExecutionDetailOptions,context?:ReadObservationContext):Promise<DashboardExecutionDetail> {
+    return this.rpc("dashboardExecutionDetail",[options],context) as Promise<DashboardExecutionDetail>;
   }
 
   dashboardHistoryDetail(
@@ -669,14 +676,14 @@ async function executeProjection(
       allowedRoots: config.allowedRoots,
       maxSessions: 1_000_000,
       projectionOnly: true,
-      projectionSessions: method === "settingsSnapshot" || method === "dashboardHistoryDetail"
+      projectionSessions: method === "settingsSnapshot" || method === "dashboardHistoryDetail" || method === "dashboardExecutionDetail"
         ? false : { scopeId: (args[0] as BridgeDashboardSnapshotOptions)?.scopeId },
     });
     mark("sessionsMs");
     const detailAgent = method === "dashboardHistoryDetail"
       ? dashboardAgentForDetail(stateStore, args[0] as BridgeDashboardHistoryDetailOptions) : undefined;
     jobs = new CodexJobRegistry({
-      ...(method === "settingsSnapshot" ? { projectionJobs: false as const }
+      ...((method === "settingsSnapshot" || method === "dashboardExecutionDetail") ? { projectionJobs: false as const }
         : method === "dashboardHistoryDetail" ? { projectionJobs: detailAgent
           ? { agentId: detailAgent.agentId, scopeId: detailAgent.scopeId } : false as const }
         : { projectionJobs: { scopeId: (args[0] as BridgeDashboardSnapshotOptions)?.scopeId } }),
@@ -757,7 +764,7 @@ function canonicalReadArgs(value: unknown): unknown {
 function publicReadMethod(method: ReadMethod): PublicReadMethod {
   return method === "settingsSnapshot"
     ? "settingsSnapshot"
-    : method === "dashboardHistoryDetail"
+    : method === "dashboardExecutionDetail" ? "dashboardExecutionDetail" : method === "dashboardHistoryDetail"
       ? "dashboardHistoryDetail"
       : "dashboardSnapshot";
 }

@@ -69,6 +69,7 @@ describe("remote native companion", () => {
       kind: "dashboard-history" as const, rowKey, history: [], historyCount: 0,
       historyRevision: "b".repeat(64)
     }));
+    applicationService.dashboardExecutionDetail=vi.fn(async args=>({kind:"dashboard-execution",...args,executionRevision:"a".repeat(64),policyRevision:"b".repeat(64),nextExpiryAt:null,execution:{}} as any));
     applicationService.problemAction = vi.fn(async () => ({ok:true as const,changed:1}));
     const manager = new RemoteCompanionManager({ stateFile, applicationService });
     managers.push(manager);
@@ -214,6 +215,13 @@ describe("remote native companion", () => {
       kind: "dashboard-history", historyCount: 0, historyRevision: "b".repeat(64)
     } } });
     expect(applicationService.dashboardHistoryDetail).toHaveBeenCalledWith({ rowKey: "a".repeat(32) }, expect.objectContaining({ signal: expect.any(AbortSignal), deadlineAt: expect.any(Number) }));
+
+    const exactParams={scopeId:"11111111-1111-4111-8111-111111111111",jobId:"legacy-execution"};
+    const exactDetail=await jsonRequest(`${endpoint}/remote-companion/v1/rpc`,"POST",
+      {jsonrpc:"2.0",id:"exact-detail",method:"dashboard.execution-detail",params:exactParams},
+      {authorization:`Bearer ${credential}`,"x-codex-bridge-server-id":enabled.serverId});
+    expect(exactDetail).toMatchObject({status:200,body:{result:{kind:"dashboard-execution",jobId:"legacy-execution"}}});
+    expect(applicationService.dashboardExecutionDetail).toHaveBeenCalledWith(exactParams,expect.objectContaining({signal:expect.any(AbortSignal)}));
 
     const historyParams = {rowKey:"a".repeat(32),expectedRevision:"b".repeat(64),action:"acknowledge",requestId:"11111111-1111-4111-8111-111111111111"};
     const history = await jsonRequest(`${endpoint}/remote-companion/v1/rpc`,"POST",

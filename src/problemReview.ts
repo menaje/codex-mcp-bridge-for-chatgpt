@@ -2,7 +2,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import * as z from "zod/v4";
 import { parseJsonUtf8Strict } from "./textIntegrity.js";
 
-export const PROBLEM_KINDS = ["all", "failed", "unknown", "termination-failed", "orphaned"] as const;
+export const PROBLEM_KINDS = ["all", "failed", "interrupted", "cancelled", "unknown", "termination-failed", "orphaned"] as const;
 export const problemQuerySchema = z.strictObject({
   view: z.enum(["actionable", "history", "automatic"]).optional(),
   review: z.enum(["pending", "acknowledged"]).default("pending"),

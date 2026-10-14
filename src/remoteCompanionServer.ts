@@ -644,6 +644,7 @@ function capabilityForMethod(method: string, payload?: unknown): string {
     case "companion.hello":
     case "dashboard.snapshot":
     case "dashboard.history-detail":
+    case "dashboard.execution-detail":
       return "dashboard.read";
     case "settings.snapshot":
     case "settings.model-description-history":
