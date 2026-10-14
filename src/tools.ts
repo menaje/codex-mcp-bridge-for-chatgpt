@@ -8640,8 +8640,10 @@ export async function settleReleasedOrphan(jobs: CodexJobRegistry, upstream: Cod
   if (connection?.agentId!==agentId || connection.scopeId!==agent.scopeId || connection.phase!=="released" ||
       connection.evidence!=="worker-exited" || connection.handoffRequested || store.threadConnections.hasUnfinishedWork(thread.threadId)) return false;
   const cacheKey=dashboardRuntimeCacheKey(thread),before=dashboardRuntimeCaches.get(upstream)?.get(cacheKey);
-  if (before?.stamp===dashboardRuntimeStamp(agent,jobs.observedLatestJobForAgent(agentId)) &&
-      (before.observation.state==="busy" || before.observation.backgroundProcessCount>0)) return false;
+  if (before && before.retainUntil>Date.now() &&
+      before.stamp===dashboardRuntimeStamp(agent,jobs.observedLatestJobForAgent(agentId)) &&
+      (before.observation.state==="busy" && (before.livenessFreshUntil || 0)>Date.now() ||
+        before.observation.backgroundProcessCount>0 && before.freshUntil>Date.now())) return false;
   const admissionRevision=admission.admissionRevision;
   let settled=false;
   const read=runtimeReadPool(upstream).start(`orphan-end\0${agentId}\0${agent.version}\0${connection.revision}`,
@@ -8658,8 +8660,15 @@ export async function settleReleasedOrphan(jobs: CodexJobRegistry, upstream: Cod
             const probe=await upstream.probeThread(thread.threadId,thread.backendKind as CodexBackendKind);
             if (isCurrent() && probe.state==="resumable" && ["idle","notLoaded"].includes(probe.runtimeStatus || "")) {
               result.observation.state=probe.runtimeStatus==="notLoaded" ? "not-loaded" : "idle";
+              // An active turn can start a terminal while becoming idle.
+              // Refresh the background list after the foreground observation.
+              result.requests++;
+              const terminals=await upstream.listLoadedBackgroundTerminals!(thread.threadId,thread.backendKind as CodexBackendKind);
+              result.observation.backgroundProcessCount=terminals?.length || 0;
+              if (terminals===null) result.observation.state="not-loaded";
+              if (!isCurrent()) result.observation.state="unknown";
             }
-          } catch { /* Unconfirmed foreground state cannot authorize settlement. */ }
+          } catch { result.observation.state="unknown"; }
         }
       }
       return result;
@@ -8703,6 +8712,7 @@ export function configureAutomaticRecovery(
   acceptingNewJobs: () => boolean
 ): void {
   const store = jobs.admissionStateStore;
+  const settling=new Set<string>();
   const candidates = async (agentId?: string): Promise<AutomaticRecoveryCandidate[]> => {
     if (!acceptingNewJobs() || jobs.runtimeAdmission.pendingAdmissions > 0) return [];
     // Production reconciliation passes exactly one Agent. No changed-Agent
@@ -8710,16 +8720,24 @@ export function configureAutomaticRecovery(
     if (!agentId) return [];
     const agent = jobs.getAgent(agentId);
     if (!agent) return [];
-    if (agent.lifecycle==="orphaned" && upstream.listLoadedBackgroundTerminals) {
-      if (await settleReleasedOrphan(jobs,upstream,agentId)) return [];
-      // A concurrent admission or settlement may have changed the captured Agent.
-      if (jobs.getAgent(agentId)?.version!==agent.version) return [];
-    }
     const latest = jobs.observedLatestJobForAgent(agentId);
     const current = agent.currentJobId ? jobs.get(agent.currentJobId) : undefined;
     const thread = jobs.currentAgentThread(agentId);
     if (!thread || thread.backendKind !== "app-server") return [];
     const connection = store.threadConnections.get(thread.threadId);
+    if (agent.lifecycle==="idle" && connection?.phase==="released" && connection.evidence==="worker-exited" &&
+        store.hasEndedOrphanProof(agentId)) return [];
+    if (agent.lifecycle==="orphaned" && !agent.currentJobId && upstream.listLoadedBackgroundTerminals &&
+        connection?.agentId===agentId && connection.scopeId===agent.scopeId && connection.phase==="released" &&
+        connection.evidence==="worker-exited" && !connection.handoffRequested && !store.threadConnections.hasUnfinishedWork(thread.threadId)) {
+      // Display/transport waits own a bounded pool reservation, never the
+      // global serial recovery sweep. Completion retains the same CAS fences.
+      if (!settling.has(agentId)) {
+        settling.add(agentId);
+        void settleReleasedOrphan(jobs,upstream,agentId).catch(()=>false).finally(()=>settling.delete(agentId));
+      }
+      return [];
+    }
     const releasableConnection = connection?.persistence === "persistent" &&
       connection.lastJobId && !["released", "releasing"].includes(connection.phase)
       ? connection : undefined;
@@ -8864,6 +8882,14 @@ export function configureAutomaticRecovery(
     }
   };
   jobs.configureAutomaticRecovery({candidates,
+    preserveMissing:record=> {
+      if (record.kind!=="recheck") return false;
+      const agent=jobs.getAgent(record.agentId);
+      if (!agent || record.scopeId!==agent.scopeId) return false;
+      // Settlement changes current control state, not any of this Agent's
+      // past incident journals, including legacy records without lineage.
+      return settling.has(agent.agentId) || store.hasEndedOrphanProof(agent.agentId);
+    },
     pageAgents: (after, limit) => store.recoveryAgentIds(after, limit),
     agentForJob: jobId => jobs.get(jobId)?.agentId,
     attempt,enabled:() => acceptingNewJobs() && jobs.runtimeAdmission.pendingAdmissions === 0,
@@ -12556,12 +12582,13 @@ async function buildDashboardRuntimePlan(
     const previous = latestJobs.get(job.agentId);
     if (!previous || previous.createdAt < job.createdAt) latestJobs.set(job.agentId, job);
   }
+  const endedOrphans=jobs.admissionStateStore.endedOrphanProofAgentIds(allAgents.map(agent=>agent.agentId));
   const candidates = allAgents.flatMap((agent) => {
     const thread = currentThreads.get(agent.agentId);
     if (!thread || !backendSupports(thread.backendKind, "supportsThreadInspection")) return [];
     // Keep non-loading background reads after settlement. Only historical
     // orphan liveness probes are suppressed by the ended-generation proof.
-    const endedOrphan=jobs.admissionStateStore.hasEndedOrphanProof(agent.agentId);
+    const endedOrphan=endedOrphans.has(agent.agentId);
     const latestJob = latestJobs.get(agent.agentId);
     const resolvedOrphan = agent.lifecycle === "orphaned" && !agent.currentJobId &&
       jobs.admissionStateStore.workHistory.runtimeResolution(
@@ -13315,15 +13342,14 @@ async function buildDashboardView(
       records.push(record);recoveriesByJob.set(record.executionFailureJobId,records);
     }
     const currentControls=jobs.admissionStateStore.latestControlJobs(automaticRecords.map(record=>record.agentId));
-    const endedProofs=new Map<string,boolean>();
+    const endedProofs=jobs.admissionStateStore.endedOrphanProofAgentIds(automaticRecords.map(record=>record.agentId));
     const retainedById=new Map<string,DashboardRetainedJobSummary>();
     const projectsByActivity=new Map<string,{projectId?:string;projectName?:string}>();
     const automaticSummary=(record:typeof automaticRecords[number]|undefined)=>record ? {
       kind:record.kind,state:record.state,attempts:record.attempts,reason:redactSensitiveText(record.reason).slice(0,1000),
       ...(record.evidence ? {evidence:redactSensitiveText(record.evidence).slice(0,1000)} : {})} : undefined;
     const endedProofFor=(agentId:string):boolean=> {
-      if (!endedProofs.has(agentId)) endedProofs.set(agentId,jobs.admissionStateStore.hasEndedOrphanProof(agentId));
-      return endedProofs.get(agentId)!;
+      return endedProofs.has(agentId);
     };
     const positiveRuntimeAfterSettlement=(record:typeof automaticRecords[number]):boolean=> {
       const agent=agentById.get(record.agentId),runtime=runtimeByAgent.get(record.agentId);

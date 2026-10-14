@@ -6,7 +6,7 @@ import Database from "better-sqlite3";
 import {describe,it,expect,vi,afterEach} from "vitest";
 import {BridgeStateStore} from "../src/stateStore.js";
 import {CodexJobRegistry,settleReleasedOrphan,configureAutomaticRecovery} from "../src/tools.js";
-import {automaticRecoveryKey,type AutomaticRecoveryController} from "../src/automaticRecovery.js";
+import {automaticRecoveryKey,AutomaticRecoveryController} from "../src/automaticRecovery.js";
 import {loadConfig} from "../src/config.js";
 import {ScopeResolver} from "../src/scopeResolver.js";
 import {SessionRegistry} from "../src/sessionRegistry.js";
@@ -15,10 +15,10 @@ import {createBridgeMcpServer} from "../src/server.js";
 import type {CodexUpstream} from "../src/upstream.js";
 const scopeId="11111111-1111-4111-8111-111111111111",now=Date.UTC(2026,9,14,12),day=86400000;
 afterEach(()=>{vi.restoreAllMocks();vi.useRealTimers();});
-function fixture(age=1) {
+function fixture(age=1,attempts=3,traceSql?:(sql:string)=>void) {
   vi.spyOn(Date,"now").mockReturnValue(now);
   const root=mkdtempSync(path.join(tmpdir(),"orphan-settlement-")),file=path.join(root,"state.sqlite");
-  const state=new BridgeStateStore({file}),db=new Database(file);
+  const state=new BridgeStateStore({file,traceSql}),db=new Database(file);
   const agent=state.createAgent({scopeId,agentName:"Stopped orphan",now:now-40*day});
   const activity=state.createActivity({scopeId,title:"Preserved execution",now:now-40*day});
   const threadId="stopped-thread",jobId=randomUUID();
@@ -33,7 +33,7 @@ function fixture(age=1) {
   const identity={key:automaticRecoveryKey("recheck",[agent.agentId,jobId,threadId]),scopeId,agentId:agent.agentId,jobId,kind:"recheck" as const};
   const first=now-age*day;
   state.automaticRecovery.observeRecheck(identity,true,first);
-  for(const at of [first,first+5000,first+35000]) {
+  for(const at of [first,first+5000,first+35000].slice(0,attempts)) {
     const r=state.automaticRecovery.begin(identity,at)!;
     state.automaticRecovery.finish(r.key,r.attempts,{resolved:false,reason:"inspection-unconfirmed"},at);
   }
@@ -103,6 +103,7 @@ describe("conclusive orphan settlement",()=>{
       vi.spyOn(f.jobs,"configureAutomaticRecovery").mockImplementation(value=>{options=value;});
       configureAutomaticRecovery(f.jobs,f.upstream,{} as any,()=>true);
       const original=f.snapshot();expect(await options.candidates(f.agentId)).toEqual([]);
+      for(let n=0;n<15&&f.state.getAgent(f.agentId)?.lifecycle!=="idle";n++) await Promise.resolve();
       expect(f.state.getAgent(f.agentId)?.lifecycle).toBe("idle");expect(f.snapshot()).toBe(original);
     } finally {await f.close();}
   });
@@ -120,6 +121,72 @@ describe("conclusive orphan settlement",()=>{
       else expect(f.state.getAgent(f.agentId)?.lifecycle).toBe("idle");
       if(status!=="missing") expect(f.upstream.probeThread).toHaveBeenCalledWith(f.threadId,"app-server");
     } finally {await f.close();}
+  });
+  it("rechecks terminals started while the foreground turn becomes idle",async()=>{
+    const f=fixture();try {
+      f.read.mockImplementationOnce(async()=>[] as any).mockImplementationOnce(async()=>[{processId:"started-during-probe"}] as any);
+      f.upstream.probeThread=vi.fn(async()=>({state:"resumable",runtimeStatus:"idle"}));
+      const before=f.state.getAgent(f.agentId),original=f.snapshot();
+      expect(await settleReleasedOrphan(f.jobs,f.upstream,f.agentId)).toBe(false);expect(f.read).toHaveBeenCalledTimes(2);
+      expect(f.state.getAgent(f.agentId)).toEqual(before);expect(f.snapshot()).toBe(original);
+    } finally {await f.close();}
+  });
+  it("keeps the serial recovery sweep moving while an orphan read is pending",async()=>{
+    const f=fixture();let controller:AutomaticRecoveryController|undefined;try {
+      vi.useFakeTimers();let resolve!:(value:null)=>void;
+      f.read.mockImplementation(()=>new Promise(r=>{resolve=r;}));
+      const other=f.state.createAgent({scopeId,agentName:"Unrelated owner"});
+      f.state.linkAgentThread({agentId:other.agentId,threadId:"other-thread",backendKind:"app-server",cwd:f.root,sandbox:"read-only",contextMode:"fresh"});
+      let options!:ConstructorParameters<typeof AutomaticRecoveryController>[1];
+      vi.spyOn(f.jobs,"configureAutomaticRecovery").mockImplementation(value=>{options=value;});configureAutomaticRecovery(f.jobs,f.upstream,{} as any,()=>true);
+      const surveyed:string[]=[];
+      controller=new AutomaticRecoveryController(f.state.automaticRecovery,{...options,pageAgents:()=>[f.agentId,other.agentId],
+        candidates:async id=>{surveyed.push(id!);return options.candidates(id);}});
+      const sweep=controller.sweep();let done=false;void sweep.then(()=>{done=true;});
+      await vi.advanceTimersByTimeAsync(10);expect(done).toBe(true);expect(surveyed).toContain(other.agentId);
+      expect(f.state.getAgent(f.agentId)?.lifecycle).toBe("orphaned");
+      resolve(null);for(let n=0;n<15;n++) await Promise.resolve();
+      expect(f.state.getAgent(f.agentId)?.lifecycle).toBe("idle");
+    } finally {await controller?.close();await f.close();}
+  });
+  it("preserves retrying incidents and their budgets across the real controller's settlement survey",async()=>{
+    const f=fixture(1,1);let controller:AutomaticRecoveryController|undefined;try {
+      const legacy={...f.identity,key:automaticRecoveryKey("recheck",[f.agentId,"legacy-without-job"]),jobId:undefined};
+      f.state.automaticRecovery.observeRecheck(legacy,true,now-50000);
+      const attempted=f.state.automaticRecovery.begin(legacy,now-50000)!;
+      f.state.automaticRecovery.finish(attempted.key,attempted.attempts,{resolved:false,reason:"inspection-unconfirmed"},now-49999);
+      const original=f.snapshot();let options!:ConstructorParameters<typeof AutomaticRecoveryController>[1];
+      vi.spyOn(f.jobs,"configureAutomaticRecovery").mockImplementation(value=>{options=value;});configureAutomaticRecovery(f.jobs,f.upstream,{} as any,()=>true);
+      controller=new AutomaticRecoveryController(f.state.automaticRecovery,options);
+      await controller.sweep(undefined,f.agentId);for(let n=0;n<15;n++) await Promise.resolve();
+      expect(f.state.getAgent(f.agentId)?.lifecycle).toBe("idle");expect(f.snapshot()).toBe(original);
+      await controller.sweep(undefined,f.agentId);expect(f.snapshot()).toBe(original);await controller.close();
+      controller=new AutomaticRecoveryController(f.state.automaticRecovery,options);
+      await controller.sweep(undefined,f.agentId);expect(f.snapshot()).toBe(original);
+      expect(f.state.automaticRecovery.get(f.identity.key)).toMatchObject({state:"retrying",attempts:1});
+      expect(f.state.automaticRecovery.get(legacy.key)).toMatchObject({state:"retrying",attempts:1});
+    } finally {await controller?.close();await f.close();}
+  });
+  it("checks 600 retained Agent proof candidates in two SQL batches",async()=>{
+    let tracing=false;const statements:string[]=[];
+    const f=fixture(1,3,sql=>{if(tracing)statements.push(sql);});try {
+      expect(await settleReleasedOrphan(f.jobs,f.upstream,f.agentId)).toBe(true);
+      const ids=[f.agentId];for(let n=0;n<599;n++) ids.push(f.state.createAgent({scopeId,agentName:`Batch owner ${n}`}).agentId);
+      tracing=true;const proofs=f.state.endedOrphanProofAgentIds(ids);tracing=false;
+      expect(proofs).toEqual(new Set([f.agentId]));expect(statements).toHaveLength(2);
+      expect(statements.every(sql=>sql.includes("JOIN runtime_problem_resolutions"))).toBe(true);
+    } finally {await f.close();}
+  });
+  it("retains fresh positive cache protection but refreshes expired busy evidence without a dashboard refresh",async()=>{
+    const f=fixture();const server=dashboard(f);try {
+      f.upstream.probeThread=vi.fn(async()=>({state:"busy"} as any));f.read.mockImplementation(async()=>[] as any);
+      await server.applicationService.dashboardSnapshot({scopeId,inspectRuntime:true,includeHistory:false});
+      f.read.mockClear();f.read.mockImplementation(async()=>null);
+      expect(await settleReleasedOrphan(f.jobs,f.upstream,f.agentId)).toBe(false);expect(f.read).not.toHaveBeenCalled();
+      vi.mocked(Date.now).mockReturnValue(now+3600000);
+      expect(await settleReleasedOrphan(f.jobs,f.upstream,f.agentId)).toBe(true);expect(f.read).toHaveBeenCalledTimes(1);
+      expect(f.state.getAgent(f.agentId)?.lifecycle).toBe("idle");
+    } finally {await server.close();await f.close();}
   });
   it.each(["job","thread","connection","admission","question"])("rejects an idle foreground reply after a new %s",async kind=>{
     const f=fixture();try {

@@ -405,6 +405,7 @@ export class AutomaticRecoveryController {
     candidates: (agentId?: string) => AutomaticRecoveryCandidate[] | Promise<AutomaticRecoveryCandidate[]>;
     pageAgents?: (afterAgentId: string, limit: number) => string[];
     agentForJob?: (jobId: string) => string | undefined;
+    preserveMissing?: (record: AutomaticRecoveryRecord) => boolean;
     attempt: (candidate: AutomaticRecoveryCandidate) => Promise<AutomaticRecoveryResult>;
     changed?: () => void; enabled?: () => boolean; now?: () => number; intervalMs?: number;
   }) { this.now = options.now || (() => Date.now()); }
@@ -532,6 +533,7 @@ export class AutomaticRecoveryController {
     for (const record of records) {
       if (jobId && record.jobId !== jobId) continue;
       if (!keys.has(record.key)) {
+        if (this.options.preserveMissing?.(record)) continue;
         this.store.finish(record.key,record.attempts,{resolved:false,reason:"work-changed",retryable:false},this.now());
         this.options.changed?.();
       }

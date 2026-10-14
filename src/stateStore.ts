@@ -2606,13 +2606,36 @@ export class BridgeStateStore {
   }
 
   hasEndedOrphanProof(agentId: string): boolean {
-    const stored=this.database.prepare("SELECT revision FROM runtime_problem_resolutions WHERE agent_id=?")
-      .get(agentId) as {revision:string}|undefined;
-    if (!stored?.revision.startsWith("orphan-ended-v1:")) return false;
-    const agent=this.getAgent(agentId);
-    if (agent?.lifecycle!=="idle") return false;
-    const revision=this.endedOrphanRevision(agent);
-    return Boolean(revision && this.workHistory.runtimeResolution(agentId,revision));
+    return this.endedOrphanProofAgentIds([agentId]).has(agentId);
+  }
+
+  /** Batch the proof and its current authority before dashboard ranking. */
+  endedOrphanProofAgentIds(agentIds: readonly string[]): Set<string> {
+    const result=new Set<string>(),ids=[...new Set(agentIds)];
+    for (let offset=0;offset<ids.length;offset+=500) {
+      const part=ids.slice(offset,offset+500);
+      const rows=this.database.prepare(`SELECT a.agent_id,a.scope_id,a.current_thread_id,c.revision connection_revision,r.revision proof_revision,
+        (SELECT job_id FROM jobs WHERE agent_id=a.agent_id ORDER BY created_at DESC,job_id DESC LIMIT 1) control_job_id,
+        (SELECT thread_id FROM jobs WHERE agent_id=a.agent_id ORDER BY created_at DESC,job_id DESC LIMIT 1) control_thread_id
+        FROM agents a JOIN runtime_problem_resolutions r ON r.agent_id=a.agent_id
+        JOIN thread_connections c ON c.thread_id=a.current_thread_id AND c.agent_id=a.agent_id AND c.scope_id=a.scope_id
+        WHERE a.agent_id IN (${part.map(()=>"?").join(",")}) AND a.lifecycle='idle' AND a.current_job_id IS NULL
+          AND r.revision LIKE 'orphan-ended-v1:%' AND c.phase='released' AND c.evidence='worker-exited' AND c.handoff_requested=0
+          AND NOT EXISTS(SELECT 1 FROM jobs j WHERE (j.agent_id=a.agent_id OR j.thread_id=a.current_thread_id OR j.source_thread_id=a.current_thread_id)
+            AND (j.status IN ('running','terminating','termination-failed') OR
+              EXISTS(SELECT 1 FROM job_interactions i WHERE i.job_id=j.job_id AND i.is_blocking=1) OR
+              EXISTS(SELECT 1 FROM cancellation_intents x WHERE (x.target_job_id=j.job_id OR
+                (x.target_kind='activity' AND x.target_activity_id=j.activity_id)) AND x.status IN ('recorded','dispatched'))))`)
+        .all(...part) as Array<{agent_id:string;scope_id:string;current_thread_id:string;connection_revision:number;
+          proof_revision:string;control_job_id:string|null;control_thread_id:string|null}>;
+      for (const row of rows) {
+        const control=row.control_job_id ? {jobId:row.control_job_id,threadId:row.control_thread_id} : undefined;
+        const revision="orphan-ended-v1:"+createHash("sha256").update(JSON.stringify([
+          row.agent_id,row.scope_id,row.current_thread_id,row.connection_revision,control])).digest("hex");
+        if (revision===row.proof_revision) result.add(row.agent_id);
+      }
+    }
+    return result;
   }
 
   settleEndedOrphan(input: {agentId:string;version:number;threadId:string;connectionRevision:number;
