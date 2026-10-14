@@ -65,6 +65,19 @@ enum BridgeAppLocalization {
     static func lifecycleFailureDescription(_ diagnostic: String?, locale: Locale) -> String {
         let message = diagnostic ?? ""
         let causes: [(String, String)] = [
+            ("STARTUP_OWNERSHIP_", "macos.startup.unsafe"),
+            ("STARTUP_WORK_PROTECTED", "macos.startup.unsafe"),
+            ("STARTUP_RUNTIME_STATE_UNCONFIRMED", "macos.startup.unsafe"),
+            ("STARTUP_CLEANUP_UNCONFIRMED", "macos.startup.unsafe"),
+            ("STARTUP_REENTRY_BOOT_CHANGED", "macos.startup.unsafe"),
+            ("STATE_STORAGE_", "macos.startup.storage"),
+            ("CODEX_AUTH_ACTIVATION_", "macos.startup.auth"),
+            ("STARTUP_BUDGET_EXHAUSTED", "macos.startup.exhausted"),
+            ("STARTUP_STATE_TIMEOUT", "macos.startup.exhausted"),
+            ("STARTUP_HTTP_TIMEOUT", "macos.startup.exhausted"),
+            ("STARTUP_TUNNEL_TIMEOUT", "macos.startup.exhausted"),
+            ("STARTUP_ATTEMPT_TIMEOUT", "macos.startup.exhausted"),
+            ("STARTUP_", "macos.startup.permanent"),
             ("LIFECYCLE_TARGET_CHANGED", "macos.settingsortheselectedclichangedwhilewaiting"),
             ("DRAIN_CANCEL_FAILED", "macos.couldnotresumeacceptingworkchecktheserver"),
             ("RUNTIME_READINESS_TIMEOUT", "macos.thebridgehelperwasnotreadybeforethe"),
@@ -472,6 +485,9 @@ enum BridgeAppLocalization {
         }
 
         let recoveryMarker = " 이전 helper 복구에도 실패했습니다: "
+        if message.contains("INITIAL_START_RETRY_SUPPRESSED") {
+            return string("macos.startup.stopRequested", locale: locale)
+        }
         if message.contains("LIFECYCLE_BUSY") {
             return string("macos.anoperationisalreadyreservedcancelitbefore", locale: locale)
         }

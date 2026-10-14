@@ -15,6 +15,7 @@ import {
 } from "node:net";
 import path from "node:path";
 import * as z from "zod/v4";
+import { runtimeDrainTargetSchema } from "./runtimeDrain.js";
 import { DASHBOARD_STATUS_FILTERS } from "./dashboardPresentation.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { ChangeSignal, changeWaitParamsSchema } from "./changeSignal.js";
@@ -224,6 +225,10 @@ const completionMutationParamsSchema = z.strictObject({
 const runtimeSnapshotParamsSchema = z.strictObject({
   inspectBackgroundProcesses: z.boolean().optional()
 });
+const runtimeDrainParamsSchema = z.strictObject({
+  inspectBackgroundProcesses: z.boolean().optional(), expectedRuntime: runtimeDrainTargetSchema.optional()
+});
+const runtimeCancelDrainParamsSchema = z.strictObject({ expectedRuntime: runtimeDrainTargetSchema.optional() });
 const remoteConfigureParamsSchema = z.strictObject({
   enabled: z.boolean(),
   endpoint: z.string().min(1).max(2_048),
@@ -729,11 +734,12 @@ async function dispatchRequest(
       );
     case "runtime.beginDrain":
       return applicationService.beginDrain(
-        runtimeSnapshotParamsSchema.parse(request.params || {})
+        runtimeDrainParamsSchema.parse(request.params || {})
       );
-    case "runtime.cancelDrain":
-      emptyParamsSchema.parse(request.params || {});
-      return applicationService.cancelDrain();
+    case "runtime.cancelDrain": {
+      const params = runtimeCancelDrainParamsSchema.parse(request.params || {});
+      return params.expectedRuntime ? applicationService.cancelDrain(params) : applicationService.cancelDrain();
+    }
     case "remote.status":
       emptyParamsSchema.parse(request.params || {});
       return requireRemoteManagement(remoteManagement).status();

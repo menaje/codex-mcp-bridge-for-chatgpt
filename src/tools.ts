@@ -40,6 +40,7 @@ import {
   type OperationalStateResult
 } from "./stateService.js";
 import { classifyMemoryOnlyThreadImpact } from "./runtimeAdmission.js";
+import { RuntimeDrainGate, initialRuntimeDrainBinding, type RuntimeDrainTarget } from "./runtimeDrain.js";
 import type { BridgeTelemetryService } from "./telemetryService.js";
 import { codexInputCursor, codexInputSnapshot, isCodexInputEvent, ordinaryCodexQuestion } from "./codexInputs.js";
 import { ScopeFairQueue, type ScopeFairQueueStatus } from "./scopeFairQueue.js";
@@ -2254,6 +2255,7 @@ export class CodexJobRegistry {
     pendingAdmissions: number;
     storageError?: BridgeStorageAdmissionError;
   } = { acceptingNewJobs: true, pendingAdmissions: 0 };
+  readonly runtimeDrain = new RuntimeDrainGate(this.runtimeAdmission, initialRuntimeDrainBinding());
   private upstream?: CodexUpstream;
   private readonly recoverExecutions: boolean;
   private recoverySessions?: SessionRegistry;
@@ -5650,11 +5652,11 @@ export function registerBridgeTools(
       };
     },
     beginDrain(options) {
-      runtimeAdmission.acceptingNewJobs = false;
+      jobs.runtimeDrain.begin(options?.expectedRuntime);
       return runtimeAdmissionSnapshot(options);
     },
-    cancelDrain() {
-      runtimeAdmission.acceptingNewJobs = true;
+    cancelDrain(options) {
+      jobs.runtimeDrain.cancel(options?.expectedRuntime);
       return runtimeAdmissionSnapshot();
     },
     setStorageAdmissionError(error) {
@@ -11127,6 +11129,7 @@ export type BridgeRuntimeAdmissionSnapshot = {
 export type BridgeRuntimeSnapshotOptions = {
   inspectBackgroundProcesses?: boolean;
 };
+export type BridgeRuntimeDrainOptions = BridgeRuntimeSnapshotOptions & { expectedRuntime?: RuntimeDrainTarget };
 
 export type BridgeNativeCompletionNotificationClaim = {
   leaseOwner: string;
@@ -11161,8 +11164,8 @@ export type BridgeApplicationService = {
   updateSettings(input: BridgeSettingsMutationInput): Promise<SettingsView>;
   runtimeSnapshot(options?: BridgeRuntimeSnapshotOptions): Promise<BridgeRuntimeAdmissionSnapshot>;
   runtimeHealth?(): BridgeRuntimeAdmissionSnapshot;
-  beginDrain(options?: BridgeRuntimeSnapshotOptions): Promise<BridgeRuntimeAdmissionSnapshot>;
-  cancelDrain(): Promise<BridgeRuntimeAdmissionSnapshot>;
+  beginDrain(options?: BridgeRuntimeDrainOptions): Promise<BridgeRuntimeAdmissionSnapshot>;
+  cancelDrain(options?: { expectedRuntime?: RuntimeDrainTarget }): Promise<BridgeRuntimeAdmissionSnapshot>;
   /** Internal runtime gate; never registered as an MCP or native RPC method. */
   setStorageAdmissionError?(error?: BridgeStorageAdmissionError): void;
   /** Local native app only: opaque completion events, never task content. */

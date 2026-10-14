@@ -128,6 +128,38 @@ final class RuntimeLifecycleTests: XCTestCase {
     }
 
     @MainActor
+    func testInitialRetryBackoffShowsCheckingAndBoundedProgress() throws {
+        let f = try LifecycleNativeFixture(); defer { f.remove() }
+        f.state.setKind("start"); f.state.setPhase("waiting")
+        var status = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(f.state.status())) as? [String: Any])
+        var operation = try XCTUnwrap(status["lifecycle"] as? [String: Any])
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        operation["startup"] = ["source": "application-launch", "startedAt": now - 5000,
+            "deadlineAt": now + 295000, "attempts": 2, "stage": "backoff",
+            "failureCode": "STARTUP_HTTP_TIMEOUT", "failureStage": "http"]
+        status["lifecycle"] = operation
+        let model = AppModel(paths: f.paths, bootstrapper: f.bootstrap)
+        model.recordLocalConnectionStatus(try JSONDecoder().decode(HelperStatus.self, from: JSONSerialization.data(withJSONObject: status)))
+        XCTAssertTrue(model.isBridgeConnectionChecking)
+        XCTAssertEqual(model.operationalObservation, .unknown)
+        XCTAssertEqual(model.lifecycleOperation?.startup?.attempts, 2)
+        try requireImageRendering()
+        let rendered = try XCTUnwrap(ImageRenderer(content: RuntimeLifecycleNoticeView().environmentObject(model).frame(width: 416)).nsImage)
+        XCTAssertGreaterThan(rendered.size.height, 0)
+        XCTAssertLessThan(rendered.size.height, 120)
+    }
+
+    func testInitialStartupFailureCopySeparatesSafetyStorageAndBudget() {
+        let english = Locale(identifier: "en")
+        XCTAssertEqual(BridgeAppLocalization.lifecycleFailureDescription("STARTUP_STATE_FAILED: STATE_STORAGE_CORRUPT", locale: english),
+                       BridgeAppLocalization.string("macos.startup.storage", locale: english))
+        XCTAssertEqual(BridgeAppLocalization.lifecycleFailureDescription("STARTUP_CLEANUP_UNCONFIRMED: STARTUP_STATE_FAILED: STATE_STORAGE_CORRUPT", locale: english),
+                       BridgeAppLocalization.string("macos.startup.unsafe", locale: english))
+        XCTAssertEqual(BridgeAppLocalization.lifecycleFailureDescription("STARTUP_BUDGET_EXHAUSTED", locale: english),
+                       BridgeAppLocalization.string("macos.startup.exhausted", locale: english))
+    }
+
+    @MainActor
     func testFailedReservationNoticeRendersRecoveryReason() throws {
         let f = try LifecycleNativeFixture(); defer { f.remove() }
         f.state.setFailure("RUNTIME_READINESS_TIMEOUT: timeout CONFIG_ROLLBACK_RESTART_FAILED: startup failed")

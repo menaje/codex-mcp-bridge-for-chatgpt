@@ -305,8 +305,8 @@ public struct MacOSHelperClient: Sendable {
         self.rpc = UnixSocketRPCClient(socketPath: socketPath)
     }
 
-    public func hello() async throws -> HelperHello {
-        try await rpc.call("helper.hello", params: EmptyParameters())
+    public func hello(timeout: TimeInterval = 10) async throws -> HelperHello {
+        try await rpc.call("helper.hello", params: EmptyParameters(), timeout: timeout)
     }
 
     public func probe() async throws {

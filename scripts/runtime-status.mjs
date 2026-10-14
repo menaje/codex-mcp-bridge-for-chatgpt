@@ -8,6 +8,25 @@ import { CODEX_APPLIED_ENV_KEYS, codexChildEnvironmentFingerprint } from "./runt
 export const MANAGED_RUNTIME_STATUS_PROTOCOL = "codex-mcp-bridge-launcher-status";
 export const MANAGED_RUNTIME_STATUS_VERSION = 1;
 
+// Scoped to the helper's initial-start attempt. Legacy startup and recovery
+// deadlines stay unchanged when this private context is absent.
+export function initialStartupContext(environment = process.env) {
+  const requestId = environment.CODEX_MCP_BRIDGE_INITIAL_START_REQUEST;
+  const token = environment.CODEX_MCP_BRIDGE_INITIAL_START_TOKEN;
+  const attempt = Number(environment.CODEX_MCP_BRIDGE_INITIAL_START_ATTEMPT);
+  const deadlineAt = Number(environment.CODEX_MCP_BRIDGE_INITIAL_START_DEADLINE);
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!requestId && !token) return null;
+  if (!uuid.test(requestId || "") || !uuid.test(token || "") ||
+      !Number.isSafeInteger(attempt) || attempt < 1 || attempt > 3 ||
+      !Number.isSafeInteger(deadlineAt)) throw new Error("STARTUP_CONTEXT_INVALID");
+  return { requestId, token, attempt, deadlineAt };
+}
+export function initialStartupStageTimeout(initialLimit, legacyLimit, environment = process.env, now = Date.now()) {
+  const context = initialStartupContext(environment);
+  return context ? Math.max(0, Math.min(initialLimit, context.deadlineAt - now)) : legacyLimit;
+}
+
 /** Opt-in process timing only. Callers use fixed role and stage names. */
 export function createStartupDiagnostics(role, {
   environment = process.env,
@@ -90,7 +109,8 @@ export function readManagedRuntimeStatus(filePath, { maximumAgeMs = 20_000 } = {
       ) ||
       !(typeof parsed.tunnel.lastError === "string" || parsed.tunnel.lastError === null) ||
       !validStatusProblem(parsed.tunnel.lastProblem) ||
-      !validTunnelObservation(parsed.tunnel.observation)
+      !validTunnelObservation(parsed.tunnel.observation) ||
+      (parsed.startup !== undefined && !validInitialStartupStatus(parsed.startup))
     ) {
       return null;
     }
@@ -147,4 +167,21 @@ function validTunnelObservation(value) {
     poll && typeof poll === "object" && typeof poll.fresh === "boolean" && validFailure(poll.failure) &&
     (poll.lastSuccessfulAt === null || (typeof poll.lastSuccessfulAt === "string" &&
       Number.isFinite(Date.parse(poll.lastSuccessfulAt))));
+}
+
+function validInitialStartupStatus(value) {
+  if (!value || typeof value !== "object") return false;
+  try {
+    const context = initialStartupContext({
+      CODEX_MCP_BRIDGE_INITIAL_START_REQUEST: value.requestId,
+      CODEX_MCP_BRIDGE_INITIAL_START_TOKEN: value.token,
+      CODEX_MCP_BRIDGE_INITIAL_START_ATTEMPT: String(value.attempt),
+      CODEX_MCP_BRIDGE_INITIAL_START_DEADLINE: String(value.deadlineAt)
+    });
+    return (value.readyAt === undefined || value.readyAt === null || Number.isSafeInteger(value.readyAt)) &&
+      (value.causeCode === undefined || value.causeCode === null ||
+      /^(STATE_STORAGE_(BUSY|FULL|IO|CORRUPT|READ_ONLY)|RUNTIME_REQUEST_FAILED)$/.test(value.causeCode)) &&
+      context !== null && ["launching", "state-owner", "http", "tunnel", "ready"].includes(value.stage) &&
+      (value.failureCode === null || (typeof value.failureCode === "string" && /^STARTUP_[A-Z_]{2,70}$/.test(value.failureCode)));
+  } catch { return false; }
 }

@@ -83712,6 +83712,760 @@
           }
         }
       }
+    },
+    "macos.startup.helper": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for the helper…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "helper가 준비되기를 기다리는 중…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "helperの準備を待っています…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在等待 helper 就绪…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在等待 helper 就緒…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Esperando al helper…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "En attente du helper…"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Warten auf den Helper…"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aguardando o helper…"
+          }
+        }
+      }
+    },
+    "macos.startup.state": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preparing local state…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "로컬 상태를 준비하는 중…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ローカル状態を準備しています…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在准备本地状态…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在準備本機狀態…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preparando el estado local…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Préparation de l’état local…"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lokaler Zustand wird vorbereitet…"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preparando o estado local…"
+          }
+        }
+      }
+    },
+    "macos.startup.http": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preparing the local server…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "로컬 서버를 준비하는 중…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ローカルサーバーを準備しています…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在准备本地服务器…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在準備本機伺服器…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preparando el servidor local…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Préparation du serveur local…"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lokaler Server wird vorbereitet…"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preparando o servidor local…"
+          }
+        }
+      }
+    },
+    "macos.startup.tunnel": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connecting the Tunnel…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tunnel에 연결하는 중…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tunnelに接続しています…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在连接 Tunnel…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在連接 Tunnel…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conectando el Tunnel…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connexion au Tunnel…"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verbindung zum Tunnel wird hergestellt…"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conectando ao Tunnel…"
+          }
+        }
+      }
+    },
+    "macos.startup.retry": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retrying startup…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시작을 다시 시도하는 중…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "起動を再試行しています…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在重试启动…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在重試啟動…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reintentando el inicio…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nouvelle tentative de démarrage…"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Start wird erneut versucht…"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tentando iniciar novamente…"
+          }
+        }
+      }
+    },
+    "macos.startup.cleanup": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Checking the previous start…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이전 시작 상태를 확인하는 중…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "前回の起動状態を確認しています…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在检查上次启动的状态…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在檢查上次啟動的狀態…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Comprobando el inicio anterior…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vérification du démarrage précédent…"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vorheriger Start wird geprüft…"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verificando a inicialização anterior…"
+          }
+        }
+      }
+    },
+    "macos.startup.attempt": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Attempt %d of 3 · %ds elapsed"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "3회 중 %d회 시도 · %d초 경과"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "3回中%d回目の試行 · %d秒経過"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "第 %d 次尝试，共 3 次 · 已过 %d 秒"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "第 %d 次嘗試，共 3 次 · 已過 %d 秒"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Intento %d de 3 · %ds transcurridos"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tentative %d sur 3 · %ds écoulées"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Versuch %d von 3 · %ds vergangen"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tentativa %d de 3 · %ds decorridos"
+          }
+        }
+      }
+    },
+    "macos.startup.exhausted": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatic startup could not finish. Check the stage, then try Start again."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "자동 시작을 완료하지 못했습니다. 실패 단계를 확인한 뒤 시작을 다시 요청해 주세요."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自動起動を完了できませんでした。失敗した段階を確認し、もう一度起動してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动启动未能完成。请检查失败阶段，然后再次请求启动。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自動啟動未能完成。請檢查失敗階段，然後再次要求啟動。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El inicio automático no pudo completarse. Comprueba la etapa y vuelve a iniciar."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le démarrage automatique n’a pas abouti. Vérifiez l’étape, puis relancez le démarrage."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der automatische Start konnte nicht abgeschlossen werden. Prüfe die Phase und starte erneut."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A inicialização automática não foi concluída. Verifique a etapa e tente iniciar novamente."
+          }
+        }
+      }
+    },
+    "macos.startup.unsafe": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The previous start could not be safely reconciled. Check the running server before starting again."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이전 시작 상태를 안전하게 확인하지 못했습니다. 실행 중인 서버를 확인한 뒤 다시 시작해 주세요."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "前回の起動状態を安全に確認できませんでした。実行中のサーバーを確認してから再起動してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法安全确认上次启动的状态。再次启动前，请检查正在运行的服务器。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法安全確認上次啟動的狀態。再次啟動前，請檢查正在執行的伺服器。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo confirmar con seguridad el inicio anterior. Comprueba el servidor activo antes de iniciar otra vez."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L’état du démarrage précédent n’a pas pu être confirmé. Vérifiez le serveur actif avant de redémarrer."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der vorherige Startzustand konnte nicht sicher bestätigt werden. Prüfe den laufenden Server vor einem neuen Start."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível confirmar com segurança o início anterior. Verifique o servidor ativo antes de iniciar novamente."
+          }
+        }
+      }
+    },
+    "macos.startup.permanent": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Startup stopped. Check configuration, compatibility and local state before trying again."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시작을 중단했습니다. 설정·호환성·로컬 상태를 확인한 뒤 다시 시도해 주세요."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "起動を中止しました。設定、互換性、ローカル状態を確認してから再試行してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "启动已停止。请检查配置、兼容性和本地状态后再试。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "啟動已停止。請檢查設定、相容性和本機狀態後再試。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El inicio se detuvo. Comprueba la configuración, compatibilidad y estado local antes de reintentar."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le démarrage s’est arrêté. Vérifiez la configuration, la compatibilité et l’état local avant de réessayer."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Start wurde angehalten. Prüfe Konfiguration, Kompatibilität und lokalen Zustand vor einem neuen Versuch."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A inicialização parou. Verifique a configuração, a compatibilidade e o estado local antes de tentar novamente."
+          }
+        }
+      }
+    },
+    "macos.startup.storage": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local state could not be prepared. Check storage and recovery status before starting again."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "로컬 상태를 준비하지 못했습니다. 저장 공간과 복구 상태를 확인한 뒤 다시 시작해 주세요."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ローカル状態を準備できませんでした。ストレージと復旧状態を確認してから再起動してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法准备本地状态。再次启动前，请检查存储和恢复状态。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法準備本機狀態。再次啟動前，請檢查儲存與復原狀態。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo preparar el estado local. Comprueba el almacenamiento y la recuperación antes de iniciar otra vez."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L’état local n’a pas pu être préparé. Vérifiez le stockage et la récupération avant de redémarrer."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der lokale Zustand konnte nicht vorbereitet werden. Prüfe Speicher und Wiederherstellungsstatus vor einem neuen Start."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível preparar o estado local. Verifique o armazenamento e a recuperação antes de iniciar novamente."
+          }
+        }
+      }
+    },
+    "macos.startup.auth": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Authentication needs review before startup can continue. Check the selected account and its recovery status."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시작을 계속하려면 인증 상태를 확인해야 합니다. 선택한 계정과 인증 복구 상태를 확인해 주세요."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "起動を続けるには認証状態の確認が必要です。選択したアカウントと認証の復旧状態を確認してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "继续启动前需要检查身份验证。请检查所选账户及其恢复状态。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "繼續啟動前需要檢查驗證。請檢查所選帳戶及其復原狀態。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Revisa la autenticación para continuar. Comprueba la cuenta seleccionada y su recuperación."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L’authentification doit être vérifiée. Contrôlez le compte sélectionné et son état de récupération."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Authentifizierung muss geprüft werden. Prüfe das gewählte Konto und den Wiederherstellungsstatus."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A autenticação precisa ser revisada. Verifique a conta selecionada e seu estado de recuperação."
+          }
+        }
+      }
+    },
+    "macos.startup.stopRequested": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatic retries are off. The current attempt is still finishing; request Stop again afterward."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "자동 재시도를 중단했습니다. 현재 시작 시도는 진행 중이므로 끝난 뒤 중지를 다시 요청해 주세요."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自動再試行を停止しました。現在の起動試行は進行中です。完了後にもう一度停止を要求してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已关闭自动重试。当前启动尝试仍在进行，请在完成后再次请求停止。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已關閉自動重試。目前的啟動嘗試仍在進行，請在完成後再次要求停止。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Los reintentos automáticos están desactivados. El intento actual sigue en curso; solicita Detener cuando termine."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les tentatives automatiques sont désactivées. La tentative actuelle se poursuit ; redemandez l’arrêt une fois terminée."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatische Wiederholungen sind aus. Der aktuelle Start läuft noch; fordere danach erneut Stopp an."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "As tentativas automáticas estão desativadas. A tentativa atual continua; solicite Parar novamente quando terminar."
+          }
+        }
+      }
     }
   },
   "version": "1.0"
