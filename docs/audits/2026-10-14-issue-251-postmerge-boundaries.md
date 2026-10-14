@@ -61,3 +61,33 @@ is reused. No broad #242/#246 rework, actual GPT resumption, soak/long-duration
 substitute, operating app/DB/settings/authentication change or release is added.
 The previously disclosed repository-wide baseline limitations remain disclosed;
 these focused checks do not relabel that full run as green.
+
+## Independent corrected-candidate decision
+
+R independently reviewed exact `c507320686564316a2f4e53b00351b0b91ad7d9b`
+and reported **GO for the two repaired boundaries**, with no new blocker.
+The original four reproductions were converted to required behavior, and two
+independent counterexamples were added. Together with the candidate's 27 real
+MCP/child regressions, the exact independent run passed **33 cases in four files**.
+This is separate from A's 161-case related regression run and exact candidate
+27-case/build checks, all passed. No full-repository pass is claimed.
+
+The original comments are
+[P1 oversized retained result](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/pull/252#discussion_r4267986210)
+and [P2 stale telemetry cache](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/pull/252#discussion_r4267986195).
+R's actual MCP reproductions now returned 71 content bytes and 1,355 ToolResult
+JSON bytes for each oversized case, while durable originals of 200,067 and
+2,097,219 bytes remained complete. Both deletion/expansion reproductions now
+returned zero cache rows, agreeing with disk and restart.
+
+Independent added counterexamples verified rollback after a transport DELETE
+when a later diagnostic DELETE aborted (zero deletion callbacks and the original
+row preserved), and a lost record-write ACK followed by worker restart/retry and
+a concurrent observation (exactly two disk/cache identities, no duplicate or loss).
+Original observations/reproductions remain preserved privately.
+
+See the [product equivalence record](2026-10-14-issue-251-postmerge-equivalence.json).
+The publication adds documentation only after the reviewed product commit. PR
+review completion at the exact published HEAD, new findings and development
+integration remain separate from this local independent GO; they must be checked
+before merging. Review threads and issue completion are not automatically marked.

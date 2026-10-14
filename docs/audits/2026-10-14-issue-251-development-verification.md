@@ -5,6 +5,15 @@ in [#251](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/251).
 This report describes source, isolated fixtures and browser/native tests. It does
 not claim installed-app acceptance, operating-data cleanup or a formal release.
 
+Postmerge independent review found two actual defects in the historical product
+snapshot below: a retained original bypassed the response cap, and physically
+deleted Job-less telemetry could reappear from the parent's cache. The earlier
+GO/completion conclusion requires correction. The
+[postmerge correction and independent re-review](2026-10-14-issue-251-postmerge-boundaries.md)
+records their reproductions and the corrected `c507320` candidate. Remote PR
+automated review and development integration of that correction are separate
+steps; this historical record does not claim them completed.
+
 Independent review approved product snapshot
 `a348ea2c345de0354c90f1ec8938158400437df2` after five reproduced defects were
 corrected. Supplemental review approved `b599208492326f256ea3aae76b27a7b9eb01cd1e`:
