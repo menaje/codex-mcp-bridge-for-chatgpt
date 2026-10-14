@@ -1419,7 +1419,7 @@ export class BridgeStateStore {
     const row = this.database.prepare(`
       SELECT job_id, request_id, status
         FROM jobs
-       WHERE scope_id = ? AND ${column} = ? AND archived_at IS NOT NULL
+       WHERE scope_id = ? AND ${column} = ? AND status IN ('completed','failed','interrupted','cancelled')
     `).get(scopeId, value) as {
       job_id: string;
       request_id: string;
@@ -1457,7 +1457,7 @@ export class BridgeStateStore {
          WHERE archived_at IS NOT NULL
            AND ${retainedJobSql(this.appliedHistoryPolicy())}
            ${scopeId ? "AND scope_id = ?" : ""}
-         ORDER BY updated_at DESC, job_id DESC
+         ORDER BY created_at DESC, job_id DESC
          LIMIT ?
       `)
       .all(...(scopeId ? [scopeId, boundedLimit] : [boundedLimit])) as Array<{
@@ -1518,6 +1518,17 @@ export class BridgeStateStore {
       const parsed = parseCurrentPayload({payload:summary}, "dashboard job summary");
       return [jobId, sanitizeRetainedJobSummary(parsed)] as const;
     }));
+  }
+
+  dashboardActivityProjects(ids:readonly string[]):Map<string,{projectId?:string;projectName?:string}> {
+    const result=new Map<string,{projectId?:string;projectName?:string}>(),unique=[...new Set(ids)];
+    for(let offset=0;offset<unique.length;offset+=500) {
+      const part=unique.slice(offset,offset+500);
+      const rows=this.database.prepare(`SELECT a.activity_id,a.project_id,p.name FROM activities a LEFT JOIN projects p ON p.project_id=a.project_id
+        WHERE a.activity_id IN (${part.map(()=>"?").join(",")})`).all(...part) as Array<{activity_id:string;project_id:string|null;name:string|null}>;
+      for(const row of rows) result.set(row.activity_id,{projectId:row.project_id || undefined,projectName:row.name || undefined});
+    }
+    return result;
   }
 
   dashboardActivityTitles(activityIds: readonly string[]): Map<string, string> {
@@ -1689,10 +1700,10 @@ export class BridgeStateStore {
       FROM steering_deliveries WHERE job_id=? AND status IN ('prepared','dispatching','uncertain')`).get(jobId) as {pending:number;count:number;latestUpdateAt:number};
   }
 
-  latestControlJob(agentId:string):{jobId:string}|undefined {
-    const row=this.database.prepare("SELECT job_id FROM jobs WHERE agent_id=? ORDER BY created_at DESC,job_id DESC LIMIT 1")
-      .get(agentId) as {job_id:string}|undefined;
-    return row ? {jobId:row.job_id} : undefined;
+  latestControlJob(agentId:string):{jobId:string;threadId:string|null}|undefined {
+    const row=this.database.prepare("SELECT job_id,thread_id FROM jobs WHERE agent_id=? ORDER BY created_at DESC,job_id DESC LIMIT 1")
+      .get(agentId) as {job_id:string;thread_id:string|null}|undefined;
+    return row ? {jobId:row.job_id,threadId:row.thread_id} : undefined;
   }
 
   appliedHistoryPolicy(now = Date.now()) { return readAppliedHistoryPolicy(this.database, now); }
@@ -1766,7 +1777,9 @@ export class BridgeStateStore {
       j.updated_at,j.ended_at,j.ended_at_source,j.detail_availability,b.payload AS result_body,j.job_version,j.last_progress_at,j.last_progress,
       j.terminal_origin,j.cancellation_intent_id,
       COALESCE((SELECT json_group_array(json(payload)) FROM job_events WHERE job_id=j.job_id AND event_type LIKE 'app-%'),'[]') AS public_events,
-      '[]' AS pending_interactions
+      COALESCE((SELECT json_group_array(json(json_patch(payload,json_object('interactionId',interaction_id,
+        'isBlocking',json(CASE is_blocking WHEN 1 THEN 'true' ELSE 'false' END)))))
+        FROM job_interactions WHERE job_id=j.job_id),'[]') AS pending_interactions
       FROM jobs j JOIN activities a ON a.activity_id=j.activity_id LEFT JOIN projects p ON p.project_id=a.project_id
       LEFT JOIN job_result_bodies b ON b.job_id=j.job_id
       WHERE j.scope_id=? AND j.${query.kind === "job" ? "job_id" : "request_id"}=? AND ${retainedJobSql(this.appliedHistoryPolicy(now),"j")}`)
@@ -1850,9 +1863,8 @@ export class BridgeStateStore {
     if (policy.cutoffAt===null) return 0;
     const ageRemoved=this.database.prepare(`DELETE FROM activity_events WHERE event_id IN (
       SELECT e.event_id FROM activity_events e
-      WHERE NOT EXISTS (SELECT 1 FROM jobs live WHERE live.activity_id=e.activity_id
-        AND live.status IN ('running','terminating','termination-failed'))
-      AND COALESCE((SELECT ended_at FROM jobs WHERE job_id=json_extract(e.payload,'$.jobId')),e.created_at)<=?
+      WHERE CASE WHEN EXISTS (SELECT 1 FROM jobs WHERE job_id=json_extract(e.payload,'$.jobId'))
+        THEN (SELECT ended_at FROM jobs WHERE job_id=json_extract(e.payload,'$.jobId')) ELSE e.created_at END<=?
       ORDER BY e.event_id LIMIT ?)`).run(Math.min(olderThan,policy.cutoffAt),batchSize).changes;
     const observations=this.database.prepare(`DELETE FROM transport_observations WHERE observation_id IN (
       SELECT t.observation_id FROM transport_observations t LEFT JOIN jobs j ON j.job_id=t.job_id
@@ -1882,9 +1894,8 @@ export class BridgeStateStore {
     // Retain outcome/hash/request identity only; never interpret expiry as delivery.
     this.database.prepare("UPDATE steering_deliveries SET result=NULL WHERE job_id=?").run(candidate.jobId);
     this.database.prepare("UPDATE cancellation_operations SET reason_text=NULL WHERE target_job_id=?").run(candidate.jobId);
-    this.database.prepare(`DELETE FROM completion_outbox WHERE activity_id=? AND created_at<=?
-      AND NOT EXISTS (SELECT 1 FROM jobs WHERE activity_id=? AND status IN ('running','terminating','termination-failed'))`)
-      .run(candidate.activityId,current.cutoffAt,candidate.activityId);
+    this.database.prepare(`DELETE FROM completion_outbox WHERE activity_id=? AND created_at<=?`)
+      .run(candidate.activityId,current.cutoffAt);
     this.mcpEventAccess.forgetJob(candidate.jobId);
     this.eventRetention.deleteJobEventsForHistory(candidate.jobId);
     this.database.prepare("DELETE FROM job_completion_deliveries WHERE job_id=?")

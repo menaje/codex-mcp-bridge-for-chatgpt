@@ -41,7 +41,7 @@ describe("Dashboard query cost", () => {
           writer.threadConnections.register({ threadId, scopeId, agentId: agent.agentId, persistence: "persistent" }, now);
           const jobId = randomUUID();
           writer.upsertJob({ jobId, requestId: randomUUID(), scopeId, agentId: agent.agentId,
-            activityId: activity.activityId, status: "failed", createdAt: now, updatedAt: now });
+            activityId: activity.activityId, status: "failed", createdAt: now-index, updatedAt: now-index });
           writer.deleteJob(jobId);
           if (index === 0) {
             orphanId = agent.agentId;
@@ -75,17 +75,18 @@ describe("Dashboard query cost", () => {
       new UserSettingsStore(config, { stateStore: reader, projectionOnly: true }), new ScopeResolver({ stateStore: reader }));
     try {
       statements.length = 0;
-      const view = await server.applicationService.dashboardSnapshot({ scopeId, statusFilter: "all", includeHistory: false,
+      const view = await server.applicationService.dashboardSnapshot({ scopeId, statusFilter: "all", includeHistory: false, limit:50,
         inspectRuntime: false, problems: { review: "pending", kind: "all", offset: 0, view: "actionable" } });
       expect(view.counts.failed).toBe(count);
-      expect(view.statusRows).toHaveLength(count);
+      expect(view.statusRows).toHaveLength(Math.min(50,count));
+      expect(view.statusPagination?.total).toBe(count);
       expect(view.statusRows!.every(row => row.activityTitle?.startsWith("Work "))).toBe(true);
       expect(view.statusRows!.find(row => row.codexThreadUrl === `codex://threads/${releasedThread}`)?.handoff)
         .toMatchObject({ phase: "released", canOpen: true });
-      expect(view.problems?.rows.find(row => row.kind === "orphaned")?.automatic)
+      expect(view.problems?.rows.find(row => row.source === "runtime")?.automatic)
         .toMatchObject({ kind: "recheck", state: "blocked", attempts: 1 });
-      expect(statements.filter(sql => /FROM automatic_recovery_incidents WHERE identity_key=/u.test(sql))).toHaveLength(1);
-      expect(statements.filter(sql => /SELECT activity_id,title FROM activities/u.test(sql))).toHaveLength(1);
+      expect(statements.filter(sql => /FROM automatic_recovery_incidents WHERE identity_key=/u.test(sql))).toHaveLength(0);
+      expect(statements.filter(sql => /SELECT activity_id,title FROM activities/u.test(sql))).toHaveLength(2);
       expect(statements.filter(sql => /SELECT \* FROM thread_connections\s+WHERE thread_id IN/u.test(sql))).toHaveLength(1);
       expect(statements.length).toBeLessThan(50);
       expect(statements.filter(sql => /^\s*(INSERT|UPDATE|DELETE|REPLACE|BEGIN|COMMIT)/u.test(sql))).toEqual([]);
@@ -135,7 +136,8 @@ describe("Dashboard query cost", () => {
         [older.agentId, ...missing, newer.agentId, older.agentId]);
       expect(result.rows.map(row => row.agent_id)).toEqual([newer.agentId, older.agentId]);
       expect(result.totalsByAgent).toEqual(new Map([[older.agentId, 1], [newer.agentId, 1]]));
-      expect(statements).toHaveLength(2);
+      expect(statements.filter(sql=>/WITH candidates/u.test(sql))).toHaveLength(2);
+      expect(statements.filter(sql=>/FROM user_settings/u.test(sql))).toHaveLength(2);
       const otherScope = "22222222-2222-4222-8222-222222222222";
       expect(store.dashboardReadModel.archivedByAgent(otherScope, 13, "updated", [older.agentId]).rows).toEqual([]);
       statements.length = 0;

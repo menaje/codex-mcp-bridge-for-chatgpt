@@ -1,3 +1,4 @@
+import { sweepTelemetryHistory, visibleTransportRecords } from "./telemetryHistoryPolicy.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, renameSync } from "node:fs";
@@ -11,10 +12,9 @@ import {
 } from "./stateStore.js";
 
 const CHILD_FLAG = "--bridge-telemetry-child";
+const SOURCE_STATE_FILE_FLAG = "--source-state-file";
 const FREEZE_PAGE_COUNT_FLAG = "--test-freeze-page-count";
 const RETENTION_LIMIT = 1_000;
-const MEASUREMENT_RETENTION_LIMIT = 5_000;
-const DIAGNOSTIC_RETENTION_LIMIT = 2_000;
 const QUEUE_CAPACITY = 4_096;
 const QUEUE_BYTE_CAPACITY = 16 * 1024 * 1024;
 const MAX_MESSAGE_BYTES = 16 * 1024;
@@ -103,6 +103,7 @@ export interface BridgeTelemetryService {
   recordRuntimeMeasurement(input: RuntimeMeasurementInput): boolean;
   recordDiagnosticEvent(input: DiagnosticEventInput): boolean;
   status(): TelemetryServiceStatus;
+  maintainRetention?(): void;
   close(): Promise<void>;
 }
 
@@ -162,7 +163,8 @@ export class InMemoryTelemetryService implements BridgeTelemetryService {
 type RecordMessage = { type: "record"; entry: QueuedTelemetryRecord };
 type DropMessage = { type: "drops"; counters: DropCounterRecord[] };
 type CloseMessage = { type: "close" };
-type ParentMessage = RecordMessage | DropMessage | CloseMessage;
+type RetainMessage = {type:"retain"};
+type ParentMessage = RecordMessage | DropMessage | CloseMessage | RetainMessage;
 type ReadyMessage = {
   type: "ready";
   records: TransportObservationRecord[];
@@ -179,7 +181,7 @@ type AckMessage = {
 };
 type DropAckMessage = { type: "drop-ack"; ok: boolean; persistedAt?: number };
 type FatalMessage = { type: "fatal"; message: string };
-type ChildMessage = ReadyMessage | AckMessage | DropAckMessage | FatalMessage;
+type ChildMessage = ReadyMessage | AckMessage | DropAckMessage | FatalMessage | {type:"retained";ok:boolean};
 
 /**
  * Best-effort diagnostic persistence. The caller updates a bounded in-memory
@@ -214,7 +216,8 @@ export class ChildProcessTelemetryService implements BridgeTelemetryService {
     private readonly freezePageCountAfterStartup: boolean,
     private readonly sourceStateDatabaseId: string | undefined,
     private readonly queueCapacity: number,
-    private readonly queueByteCapacity: number
+    private readonly queueByteCapacity: number,
+    private readonly sourceStateFile?: string
   ) {}
 
   static async start(
@@ -223,6 +226,8 @@ export class ChildProcessTelemetryService implements BridgeTelemetryService {
       /** Deterministic disk-capacity fault injection for tests. */
       freezePageCountAfterStartup?: boolean;
       sourceStateDatabaseId?: string;
+      /** Read-only existing policy/terminal clocks. Never an operational writer. */
+      sourceStateFile?: string;
       /** Test-only bounded queue overrides for deterministic recovery coverage. */
       queueCapacity?: number;
       queueByteCapacity?: number;
@@ -242,7 +247,8 @@ export class ChildProcessTelemetryService implements BridgeTelemetryService {
       options.freezePageCountAfterStartup === true,
       options.sourceStateDatabaseId,
       queueCapacity,
-      queueByteCapacity
+      queueByteCapacity,
+      options.sourceStateFile
     );
     let service = create();
     try {
@@ -302,10 +308,15 @@ export class ChildProcessTelemetryService implements BridgeTelemetryService {
     return { ...record };
   }
 
+  maintainRetention():void {
+    if(this.closed || !this.child?.connected || !this.ready) return;
+    this.child.send({type:"retain"} satisfies RetainMessage,error=>{if(error) this.failed+=1;});
+  }
+
   listTransportObservations(kind?: TransportObservationKind): TransportObservationRecord[] {
-    return this.records
-      .filter(record => kind === undefined || record.kind === kind)
-      .map(record => ({ ...record }));
+    const source=this.sourceStateFile ? new Database(this.sourceStateFile,{readonly:true,fileMustExist:true}) : undefined;
+    try {return visibleTransportRecords(this.records.filter(x=>kind===undefined || x.kind===kind),source).map(x=>({...x}));}
+    finally {source?.close();}
   }
 
   recordRuntimeMeasurement(input: RuntimeMeasurementInput): boolean {
@@ -402,6 +413,7 @@ export class ChildProcessTelemetryService implements BridgeTelemetryService {
       ? ["--import", "tsx", modulePath, CHILD_FLAG, this.file, this.sourceStateDatabaseId || "-"]
       : [modulePath, CHILD_FLAG, this.file, this.sourceStateDatabaseId || "-"];
     if (this.freezePageCountAfterStartup) args.push(FREEZE_PAGE_COUNT_FLAG);
+    if (this.sourceStateFile) args.push(SOURCE_STATE_FILE_FLAG,this.sourceStateFile);
     const child = spawn(process.execPath, args, {
       cwd: process.cwd(),
       env: childEnvironment(),
@@ -438,6 +450,7 @@ export class ChildProcessTelemetryService implements BridgeTelemetryService {
       child.on("message", value => {
         if (this.child !== child) return;
         if (!isChildMessage(value)) return;
+        if (value.type === "retained") {if(!value.ok) this.failed+=1;return;}
         if (value.type === "fatal") {
           finish(new Error(`TELEMETRY_START_FAILED: ${value.message}`));
           return;
@@ -675,15 +688,17 @@ export class ChildProcessTelemetryService implements BridgeTelemetryService {
 async function runChild(
   file: string,
   freezePageCountAfterStartup: boolean,
-  sourceStateDatabaseId?: string
+  sourceStateDatabaseId?: string,
+  sourceStateFile?: string
 ): Promise<void> {
+  const policySource=sourceStateFile ? new Database(sourceStateFile,{readonly:true,fileMustExist:true}) : undefined;
   let database: Database.Database | undefined;
   const send = (message: ChildMessage) => {
     if (!process.connected || !process.send) return;
     try { process.send(message, () => {}); } catch { /* Parent owns recovery. */ }
   };
   const close = () => {
-    try { database?.close(); } finally {
+    try { database?.close();policySource?.close(); } finally {
       database = undefined;
       if (process.connected) process.disconnect();
     }
@@ -762,7 +777,7 @@ async function runChild(
     }
     try { chmodSync(file, 0o600); } catch { /* Best effort on non-POSIX filesystems. */ }
     const records = (database.prepare(
-      "SELECT * FROM transport_observations ORDER BY observation_id ASC"
+      "SELECT * FROM (SELECT * FROM transport_observations ORDER BY observation_id DESC LIMIT 1000) ORDER BY observation_id ASC"
     ).all() as Array<Record<string, unknown>>).map(readRow);
     const dropCounters = (database.prepare(
       "SELECT * FROM telemetry_drop_counters ORDER BY kind ASC"
@@ -780,6 +795,12 @@ async function runChild(
       if (value.type === "close") {
         close();
         return;
+      }
+      if(value.type==="retain") {
+        let ok=false;
+        try {if(database) {sweepTelemetryHistory(database,policySource);ok=true;}}
+        catch {if(database) database.prepare("INSERT INTO telemetry_meta(key,value) VALUES ('history_policy_error','unavailable') ON CONFLICT(key) DO UPDATE SET value='unavailable'").run();}
+        send({type:"retained",ok});return;
       }
       if (value.type === "drops") {
         let ok = false;
@@ -799,7 +820,7 @@ async function runChild(
       let persistedRecordId = value.entry.id;
       try {
         if (!database) throw new Error("Telemetry database is closed.");
-        persistedRecordId = persistTelemetryRecord(database, value.entry, nextRecordId);
+        persistedRecordId = persistTelemetryRecord(database, value.entry, nextRecordId,policySource);
         nextRecordId = Math.max(nextRecordId, persistedRecordId + 1);
         ok = true;
       } catch { ok = false; }
@@ -860,7 +881,8 @@ function initializeTelemetryMetadata(
 function persistTelemetryRecord(
   database: Database.Database,
   entry: QueuedTelemetryRecord,
-  nextRecordId: number
+  nextRecordId: number,
+  policySource?: Database.Database
 ): number {
   return database.transaction(() => {
     if (!isUuid(entry.deliveryId)) throw new Error("Invalid telemetry delivery id.");
@@ -880,6 +902,14 @@ function persistTelemetryRecord(
     if (telemetryRecordIdInUse(database, recordId)) {
       recordId = Math.max(nextRecordId, nextTelemetryRecordId(database));
       while (telemetryRecordIdInUse(database, recordId)) recordId += 1;
+    }
+    let expired=false;
+    try {expired=visibleTransportRecords([entry.record],policySource).length===0;}
+    catch { /* Preserve new diagnostics on a policy read failure; never delete by a default. */ }
+    if(expired) {
+      database.prepare("INSERT INTO telemetry_record_deliveries(delivery_id,record_type,record_id,created_at) VALUES (?,?,?,?)")
+        .run(entry.deliveryId,entry.recordType,recordId,Date.now());
+      return recordId;
     }
     if (entry.recordType === "transport") {
       const record = normalizeRecord(
@@ -904,7 +934,7 @@ function persistTelemetryRecord(
         record.reasonCode,
         record.createdAt
       );
-      trimTable(database, "transport_observations", "observation_id", RETENTION_LIMIT);
+
     } else if (entry.recordType === "measurement") {
       const record = normalizeMeasurement(entry.record, recordId);
       database.prepare(`
@@ -921,7 +951,7 @@ function persistTelemetryRecord(
         record.sumMs,
         record.createdAt
       );
-      trimTable(database, "runtime_measurements", "measurement_id", MEASUREMENT_RETENTION_LIMIT);
+
     } else {
       const record = normalizeDiagnosticEvent(entry.record, recordId);
       database.prepare(`
@@ -935,14 +965,14 @@ function persistTelemetryRecord(
         record.code,
         record.createdAt
       );
-      trimTable(database, "diagnostic_events", "event_id", DIAGNOSTIC_RETENTION_LIMIT);
+
     }
     database.prepare(`
       INSERT INTO telemetry_record_deliveries(
         delivery_id, record_type, record_id, created_at
       ) VALUES (?, ?, ?, ?)
     `).run(entry.deliveryId, entry.recordType, recordId, Date.now());
-    trimTelemetryDeliveries(database, entry.recordType);
+    // Durable records follow the persisted history policy, never a count cap.
     database.prepare(`
       INSERT INTO telemetry_retention_state(kind, cursor, last_completed_at)
       VALUES (?, ?, ?)
@@ -972,36 +1002,6 @@ function nextTelemetryRecordId(database: Database.Database): number {
       UNION ALL SELECT COALESCE(MAX(event_id), 0) FROM diagnostic_events
     )
   `).get() as { value?: number } | undefined)?.value || 0) + 1;
-}
-
-function trimTelemetryDeliveries(
-  database: Database.Database,
-  recordType: QueuedTelemetryRecord["recordType"]
-): void {
-  const target = recordType === "transport"
-    ? { table: "transport_observations", id: "observation_id" }
-    : recordType === "measurement"
-      ? { table: "runtime_measurements", id: "measurement_id" }
-      : { table: "diagnostic_events", id: "event_id" };
-  database.prepare(`
-    DELETE FROM telemetry_record_deliveries
-     WHERE record_type = ?
-       AND record_id NOT IN (SELECT ${target.id} FROM ${target.table})
-  `).run(recordType);
-}
-
-function trimTable(
-  database: Database.Database,
-  table: "transport_observations" | "runtime_measurements" | "diagnostic_events",
-  id: "observation_id" | "measurement_id" | "event_id",
-  limit: number
-): void {
-  database.prepare(`
-    DELETE FROM ${table}
-     WHERE ${id} NOT IN (
-       SELECT ${id} FROM ${table} ORDER BY ${id} DESC LIMIT ?
-     )
-  `).run(limit);
 }
 
 function persistDropCounters(
@@ -1198,6 +1198,7 @@ function trimRecords(records: TransportObservationRecord[]): void {
 function isChildMessage(value: unknown): value is ChildMessage {
   if (!value || typeof value !== "object") return false;
   const message = value as Record<string, unknown>;
+  if (message.type === "retained") return typeof message.ok === "boolean";
   if (message.type === "fatal") return typeof message.message === "string";
   if (message.type === "ready") {
     return Array.isArray(message.records) && Number.isSafeInteger(message.nextRecordId) &&
@@ -1213,7 +1214,7 @@ function isChildMessage(value: unknown): value is ChildMessage {
 function isParentMessage(value: unknown): value is ParentMessage {
   if (!value || typeof value !== "object") return false;
   const message = value as Record<string, unknown>;
-  if (message.type === "close") return true;
+  if (message.type === "close" || message.type === "retain") return true;
   if (Buffer.byteLength(JSON.stringify(value), "utf8") > MAX_MESSAGE_BYTES) return false;
   if (message.type === "drops") return Array.isArray(message.counters);
   return message.type === "record" && typeof message.entry === "object" &&
@@ -1273,6 +1274,7 @@ if (process.argv.includes(CHILD_FLAG)) {
     process.argv.includes(FREEZE_PAGE_COUNT_FLAG),
     childSourceStateDatabaseId && childSourceStateDatabaseId !== "-"
       ? childSourceStateDatabaseId
-      : undefined
+      : undefined,
+    process.argv.includes(SOURCE_STATE_FILE_FLAG) ? process.argv[process.argv.indexOf(SOURCE_STATE_FILE_FLAG)+1] : undefined
   );
 }

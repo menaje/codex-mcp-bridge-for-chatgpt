@@ -20,6 +20,30 @@ async function waitFor(
 }
 
 describe("isolated telemetry persistence", () => {
+  it("reads the operational policy without writing it and preserves durable records beyond its memory cache", async () => {
+    const root=await mkdtemp(path.join(tmpdir(),"issue251-telemetry-owner-"));
+    const sourceFile=path.join(root,"state.sqlite"),file=path.join(root,"telemetry.sqlite");
+    const state=new BridgeStateStore({file:sourceFile});
+    state.writeSettings({historyRetentionDays:0},0);
+    let service=await ChildProcessTelemetryService.start(file,{sourceStateDatabaseId:state.databaseId,sourceStateFile:sourceFile});
+    await service.close();
+    const db=new Database(file),at=Date.now()-100*86_400_000;
+    const put=db.prepare("INSERT INTO transport_observations(observation_id,kind,bridge_instance_id,reason_code,created_at) VALUES (?,'status-wait-aborted',?,'retained-original',?)");
+    db.transaction(()=>{for(let n=1;n<=1200;n++)put.run(n,randomUUID(),at);})();
+    service=await ChildProcessTelemetryService.start(file,{sourceStateDatabaseId:state.databaseId,sourceStateFile:sourceFile});
+    try {
+      expect(service.listTransportObservations()).toHaveLength(1000);
+      service.maintainRetention();
+      await waitFor(()=>Boolean(db.prepare("SELECT 1 FROM telemetry_meta WHERE key='history_policy'").get()));
+      expect(db.prepare("SELECT count(*) n FROM transport_observations").get()).toEqual({n:1200});
+      state.writeSettings({historyRetentionDays:7},1);
+      expect(service.listTransportObservations()).toEqual([]);
+      service.maintainRetention();
+      await waitFor(()=>Number((db.prepare("SELECT count(*) n FROM transport_observations").get() as {n:number}).n)<1200);
+      expect(db.prepare("SELECT count(*) n FROM transport_observations").get()).toEqual({n:1136});
+      expect(state.getSettingsRecord()?.settingsRevision).toBe(2);
+    } finally {await service.close();db.close();state.close();await rm(root,{recursive:true,force:true});}
+  });
   it("bounds and drains diagnostics without sharing an operational SQLite wait", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "bridge-telemetry-"));
     const file = path.join(root, "telemetry.sqlite");

@@ -56,50 +56,25 @@ claimed as supported. See [new profile storage](codex-auth-connections.md#indepe
 
 ## Database retention and recovery
 
-Schema 20 is created directly for new installations and takes one consistent
-private SQLite backup before upgrading a supported schema 3–19 database. It
-separates the retained thread execution context in `sessions` from live connection
-evidence in `thread_connections`; project names always come from `projects`.
-Event cleanup commits resumable batches of at most 500 source events. It does not
-read or delete Codex rollout files. Ordinary live maintenance does not run
-`VACUUM`. The full table, migration, backup, and offline compaction contract is in
-[database schema and lifecycle](database-schema.md).
+The saved 7/30/90/unlimited history policy governs durable sanitized results and
+related diagnostics. Six-hour/count limits evict registry/cache entries without
+removing retained disk originals. Response-size limits affect the response preview;
+complete sanitized originals remain queryable under the same saved policy after
+archive and restart. Job end and first incident occurrence are fixed. Invalid saved
+policy blocks destructive cleanup; numeric zero remains unlimited.
 
-The schema-17-to-18 checkpoint restores every legacy archived Agent in one
-transaction under the single pre-schema-23 recovery backup described above. IDs,
-names, timestamps, projects, Activity
-assignments, thread links, next-run settings, Jobs, results, history and review
-state remain unchanged. An archived Agent with a retained active Job becomes
-active or waiting for input from that Job's current state; an archived orphan
-remains orphaned; other archived Agents become idle. The migration clears only
-the legacy archive marker and advances the Agent/scope versions. It is safe with
-zero archived Agents and is idempotent after restart. It does not start work,
-resume threads, or load Codex conversations. Agent archive/restore and the
-30-day automatic Agent archive policy are no longer available.
+Current execution, valid input/approval and exact cancellation/replay identity are
+preserved. Terminal delivery/uncertainty/hold cannot extend the history period.
+Minimal request/hash/outcome, exact dispatch and current retry-budget authorities
+remain without expired historical bodies or diagnostics. Expiry does not imply
+success, delivery, approval, cancellation or recovery. Scope retirement stops
+obsolete recovery control without prematurely removing its retained history.
 
-Repeated diagnostic snapshots are coalesced by Job, event kind and item. Event cursor IDs continue increasing; authoritative current state is read from Job/Activity/question/delivery records rather than reconstructed from the event stream. The limits are 256 diagnostic events per Job, 8 KiB per payload, 50,000 Job events and 64 MiB of their payloads. Legacy excess is reduced in bounded batches. Related Activity metadata is also limited to 50,000 events and a seven-day window. These payload limits are not claims about the physical DB/WAL file size or long-lived identity tables.
-
-The corrected schema-14 cleanup applies the per-Job bound to every Job encountered in a batch. On upgrade from the initial schema-14 test build, it resets only the diagnostic migration cursor once and resumes the same batches, so already-scanned Jobs also receive the corrected bound. Usage summaries are retained before old diagnostic rows are pruned; control records and result delivery state are unchanged.
-
-When a Job result expires, its raw diagnostic events are removed in the same transaction. Existing archived Jobs are scrubbed in migration batches. Small outcome, error-code, execution-selection and usage summaries survive. Old thread-wide counters are labelled unknown for per-Job accounting; they are not retroactively presented as exact per-Job totals.
-
-General result pruning protects:
-
-- Active work and blocking questions/approvals, until resolved and durably saved.
-- An undelivered/unacknowledged completion outbox entry, until delivery or acknowledgement.
-- A prepared or dispatching response, until dispatch is resolved. An uncertain response protects the result until explicit operator review is acknowledged; its delivery journal remains uncertain and cannot be replayed. Store-level `acknowledgeUncertainResultReview` requires a retained terminal Job, does not clear other protection reasons, and protects again if another uncertain delivery is recorded.
-- Recorded/dispatched cancellation intents, until terminal resolution.
-- An explicit result hold, until release or expiry. Store-level `holdResult` requires a reason and a renewable expiry no more than 30 days away; it cannot restore an already expired result. No end-user hold/review control is added by this change.
-- A historical unresolved live-card completion that crossed the retired send boundary, no later
-  than the selected run-history expiry. A merely pending cardless event follows
-  ordinary result retention. The `ui/message` body is not stored. Once the completion receipt has
-  been offered an exact result, one ordinary result-retention window remains for
-  a lost-return retry; successful results are not extended to the full history
-  period. The small delivery row expires with run history.
-
-Protected results can exceed the ordinary count/time retention policy, but do not remove diagnostic size limits or the individual result limit. Operators should resolve outstanding delivery/response states rather than clear provenance or replay an uncertain response. Reserved request IDs, cancellation/steering journals, question delivery records, Agent identities, project pins and fork identities are not diagnostic garbage.
-
-After cleanup, free pages are reusable even when the DB file size stays unchanged. Inspect DB/WAL size and freelist pages separately. For disk compaction, stop the bridge safely, retain its backup, checkpoint and run SQLite `VACUUM` offline, then restart. Do not compact or restore over an active bridge, or restore only the main database file while discarding an associated live WAL. A backup contains private repository/result data and needs the same access controls as the live database.
+Schema 32 labels missing old originals as legacy-partial and absent timing evidence
+as a fixed legacy estimate. It does not restore previously removed content or read
+Codex rollout files. Migrations retain the existing single private recovery backup;
+live maintenance does not compact or restore operating databases. See [work history](work-history.md)
+and [database schema](database-schema.md) for ownership, query and cleanup details.
 
 ## Cache observations
 

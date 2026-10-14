@@ -2364,7 +2364,10 @@ export class CodexJobRegistry {
       shouldDefer: () => this.runtimeAdmission.pendingAdmissions > 0 || this.observedRunningCount() > 0,
       maxDeferMs: 30_000,
       command: slice => this.stateMaintenanceCommand(slice),
-      completed: (command, result) => this.applyStateMaintenanceResult(command, result)
+      completed: (command, result) => {
+        this.applyStateMaintenanceResult(command,result);
+        if(command.slice === "events") this.telemetry?.maintainRetention?.();
+      }
     });
     this.maintenanceScheduler.start();
     this.scheduleIdleRetainedJobMaintenance();
@@ -2641,7 +2644,9 @@ export class CodexJobRegistry {
 
   list(limit = 20, offset = 0): CodexJob[] {
     this.refreshProjectIdentities();
-    return [...this.jobs.values()]
+    const values=[...this.jobs.values()];
+    const visible=this.activityStore.retainedJobIds(values.map(job=>job.jobId));
+    return values.filter(job=>visible.has(job.jobId))
       .sort((a, b) => b.updatedAt - a.updatedAt)
       .slice(Math.max(0, offset), Math.max(0, offset) + Math.max(0, limit));
   }
@@ -2653,7 +2658,7 @@ export class CodexJobRegistry {
   }
 
   sizeForScope(scopeId: string): number {
-    return [...this.jobs.values()].filter((job) => job.scopeId === scopeId).length;
+    return this.list(Number.MAX_SAFE_INTEGER).filter(job=>job.scopeId===scopeId).length;
   }
 
   runningCount(scopeId?: string): number {
@@ -4804,6 +4809,10 @@ export class CodexJobRegistry {
     command: OperationalStateCommand,
     result: OperationalStateResult
   ): void {
+    if(command.slice==="history") {
+      const visible=this.activityStore.retainedJobIds([...this.jobs.keys()]);
+      for(const [id,job] of this.jobs) if(isTerminalActivityJobStatus(job.status) && !visible.has(id)) this.deleteIndexedJob(id);
+    }
     if (command.slice === "jobs") this.applyRetainedJobMaintenanceResult(command, result);
   }
 
@@ -8187,7 +8196,7 @@ export function registerBridgeTools(
           { kind: "request", requestId: args.requestId }
         )) {
           throw new Error(
-            "TASK_RESULT_EXPIRED: This requestId already admitted a terminal Codex Job whose result body is no longer retained. Read codex_status query kind='request' for its terminal admission fact. Use a new requestId only for a newly authorized logical turn."
+            "TASK_RESULT_EXPIRED: This requestId already admitted a terminal Codex Job outside the registry. Read codex_status query kind='request' for its admission fact and any detail retained by the configured history policy. Use a new requestId only for a newly authorized logical turn."
           );
         }
         if (existingRequest && existingRequest.requestHashVersion !== CURRENT_TASK_REQUEST_HASH_VERSION) {
@@ -8600,7 +8609,8 @@ export function registerBridgeTools(
 
 function recheckRecoveryIdentity(jobs: CodexJobRegistry, agent: BridgeAgent,
   latest = jobs.observedLatestJobForAgent(agent.agentId)): AutomaticRecoveryCandidate {
-  const control=jobs.admissionStateStore.latestControlJob(agent.agentId);
+  const latestControl=jobs.admissionStateStore.latestControlJob(agent.agentId);
+  const control=latestControl?.threadId === (agent.currentThreadId || null) ? latestControl : undefined;
   return {key:automaticRecoveryKey("recheck",[agent.agentId,control?.jobId,agent.currentThreadId]),
     scopeId:agent.scopeId,agentId:agent.agentId,jobId:agent.currentJobId || control?.jobId,kind:"recheck"};
 }
@@ -10282,6 +10292,9 @@ function resultForJob(
   jobs?: CodexJobRegistry,
   replay = true
 ): ToolResult {
+  if(jobs && isTerminalActivityJobStatus(job.status) && !jobs.admissionStateStore.retainedJobVisible(job.jobId)) {
+    return taskResultForJob(expiredJobPublication(job),staleAfterMs,preferences,jobs,replay);
+  }
   if (
     job.result &&
     (job.status === "completed" || (job.status === "failed" && job.result.isError))
@@ -10612,6 +10625,11 @@ function normalizeJobError(status: string | undefined, message: string | undefin
   });
 }
 
+function expiredJobPublication(job:CodexJob):CodexJob {
+  return {...job,result:undefined,resultOmitted:true,error:undefined,publicEvents:[],inputEvents:[],pendingInteractions:[],
+    executionDecision:undefined,executionEvidence:undefined,lastProgress:undefined,approvedFollowups:undefined};
+}
+
 function formatJobStatus(
   job: CodexJob,
   staleAfterMs: number,
@@ -10620,6 +10638,9 @@ function formatJobStatus(
   registry?: CodexJobRegistry,
   replay = false
 ): Record<string, unknown> {
+  if(registry && isTerminalActivityJobStatus(job.status) && !registry.admissionStateStore.retainedJobVisible(job.jobId)) {
+    job=expiredJobPublication(job);
+  }
   const activity = formatJobActivity(job, staleAfterMs);
   const pendingTerminalCommit = registry?.pendingTerminalCommit(job);
   const dashboard = dashboardPresentationHint(job, preferences, registry);
@@ -13183,15 +13204,19 @@ async function buildDashboardView(
   let problemCollection: z.infer<typeof dashboardProblemsOutputSchema> | undefined;
   if (problemQuery) {
     type Problem = z.infer<typeof dashboardProblemOutputSchema>;
-    type Entry={value:Problem;recoveryKey?:string};
+    type Entry={value:Omit<Problem,"row">;recoveryKeys?:string[];jobId?:string;activityId?:string;row:()=>DashboardRow};
     const entries:Entry[]=[];
     const fullJobs=new Map(allJobs.map(job=>[job.jobId,job]));
     const failedJobs=new Set(problemJobRecords.map(record=>record.jobId));
-    const selectedJobIds=[...new Set([...problemJobRecords.map(x=>x.jobId),...automaticRecords.flatMap(x=>x.jobId ? [x.jobId] : [])])];
-    const retainedById=new Map(jobs.admissionStateStore.listDashboardRetainedJobsByIds(selectedJobIds,scopeId).map(job=>[job.jobId,job]));
+    const recoveriesByJob=new Map<string,typeof automaticRecords>();
+    for(const record of automaticRecords) if(record.jobId) {
+      const records=recoveriesByJob.get(record.jobId)||[];records.push(record);recoveriesByJob.set(record.jobId,records);
+    }
+    const retainedById=new Map<string,DashboardRetainedJobSummary>();
+    const projectsByActivity=new Map<string,{projectId?:string;projectName?:string}>();
     const automaticSummary=(record:typeof automaticRecords[number]|undefined)=>record ? {
-      kind:record.kind,state:record.state,attempts:record.attempts,reason:redactSensitiveText(record.reason),
-      ...(record.evidence ? {evidence:redactSensitiveText(record.evidence)} : {})} : undefined;
+      kind:record.kind,state:record.state,attempts:record.attempts,reason:redactSensitiveText(record.reason).slice(0,1000),
+      ...(record.evidence ? {evidence:redactSensitiveText(record.evidence).slice(0,1000)} : {})} : undefined;
     const sourceRow=(jobId:string|undefined,agentId:string,scope:string,at:number,activityId?:string,projectId?:string):DashboardRow=>{
       const job=jobId ? fullJobs.get(jobId) : undefined;
       if(job) return {...jobRow(job,"recent"),controlKind:null,history:[],historyCount:0};
@@ -13199,7 +13224,7 @@ async function buildDashboardView(
       const agent=agentById.get(agentId);
       const turn=retained ? turnForArchivedJob(retained) : null;
       const sourceActivity=activityId || retained?.activityId;
-      const project=sourceActivity ? jobs.getActivity(sourceActivity) : undefined;
+      const project=sourceActivity ? projectsByActivity.get(sourceActivity) : undefined;
       return {rowKey:dashboardRowKey(agentId,jobId),activityKey:sourceActivity ? dashboardActivityKey(sourceActivity,jobId || agentId) : dashboardActivityKey(undefined,agentId),
         conversationKey:dashboardConversationKey(scope),sessionAlias:dashboardSessionAlias(scope),
         conversationUrl:scopeResolver.conversationUrl(scope),bucket:"recent",
@@ -13209,13 +13234,14 @@ async function buildDashboardView(
         elapsedMs:turn?.durationMs || 0,backgroundProcessCount:0,controlKind:null,latestTurn:turn,history:[],historyCount:0};
     };
     for(const record of problemJobRecords) {
-      const recovery=automaticRecords.find(x=>x.jobId===record.jobId);
-      entries.push({recoveryKey:recovery?.key,value:{problemKey:record.problemKey,
-        revision:problemRevision([record.jobId,record.status,record.occurredAt,record.reason,recovery]),kind:"failed",source:"execution",
+      const recoveries=recoveriesByJob.get(record.jobId)||[];
+      const recovery=recoveries[0];
+      entries.push({recoveryKeys:recoveries.slice(0,12).map(x=>x.key),jobId:record.jobId,activityId:record.activityId,
+        row:()=>sourceRow(record.jobId,record.agentId || "",record.scopeId,record.occurredAt,record.activityId),value:{problemKey:record.problemKey,
+        revision:problemRevision([record.jobId,record.status,record.occurredAt,record.reason,recoveries]),kind:"failed",source:"execution",
         review:"automatic",acknowledgedAt:null,occurredAt:new Date(record.occurredAt).toISOString(),observedAt:new Date(record.occurredAt).toISOString(),
         currentImpact:"none",reason:record.reason ? redactSensitiveText(record.reason).slice(0,1000) : null,
-        canAcknowledge:false,canUnacknowledge:false,canRecheck:false,canRetryStop:false,automatic:automaticSummary(recovery),
-        row:sourceRow(record.jobId,record.agentId || "",record.scopeId,record.occurredAt,record.activityId)}});
+        canAcknowledge:false,canUnacknowledge:false,canRecheck:false,canRetryStop:false,automatic:automaticSummary(recovery)}});
     }
     for(const record of automaticRecords) {
       // Recovery of an execution failure is its progression, not another incident.
@@ -13226,22 +13252,32 @@ async function buildDashboardView(
       const impact: "none"|"confirmed"|"unknown"=record.state==="resolved"||!sameExecution ? "none"
         : current?.status==="termination-failed" || (runtime?.backgroundProcessCount || 0)>0 ? "confirmed"
         : runtime?.state==="unknown" || agent?.lifecycle==="orphaned" ? "unknown" : "none";
-      entries.push({recoveryKey:record.key,value:{problemKey:problemKey("automatic",record.key),revision:problemRevision(record),
+      entries.push({recoveryKeys:[record.key],jobId:record.jobId,activityId:record.activityId,
+        row:()=>sourceRow(record.jobId,record.agentId,record.scopeId,record.occurredAt,record.activityId,record.projectId),value:{problemKey:problemKey("automatic",record.key),revision:problemRevision(record),
         kind:record.kind==="retry-stop" ? "termination-failed" : "unknown",source:record.kind==="recheck" ? "runtime" : "recovery",
         review:"automatic",acknowledgedAt:null,occurredAt:new Date(record.occurredAt).toISOString(),observedAt:new Date(record.occurredAt).toISOString(),
         currentImpact:impact,reason:redactSensitiveText(record.reason).slice(0,1000),automatic:automaticSummary(record),
-        canAcknowledge:false,canUnacknowledge:false,canRecheck:false,canRetryStop:false,
-        row:sourceRow(record.jobId,record.agentId,record.scopeId,record.occurredAt,record.activityId,record.projectId)}});
+        canAcknowledge:false,canUnacknowledge:false,canRecheck:false,canRetryStop:false}});
     }
     entries.sort((a,b)=>Date.parse(b.value.occurredAt!)-Date.parse(a.value.occurredAt!)||a.value.problemKey.localeCompare(b.value.problemKey));
     const filtered=entries.filter(x=>problemQuery.kind==="all"||x.value.kind===problemQuery.kind);
     const maximumOffset=filtered.length ? Math.floor((filtered.length-1)/limit)*limit : 0;
     const offset=Math.min(problemQuery.offset,maximumOffset);
-    const page=filtered.slice(offset,offset+limit).map(({value,recoveryKey})=>({...value,
-      progress:recoveryKey ? jobs.admissionStateStore.automaticRecovery.steps(recoveryKey).map(step=>({at:step.at,step:step.step,
-        reason:typeof step.details.reason==="string" ? redactSensitiveText(step.details.reason) : null,
-        evidence:typeof step.details.evidence==="string" ? redactSensitiveText(step.details.evidence) : null,
-        attempt:typeof step.details.attempt==="number" ? step.details.attempt : typeof step.details.attempts==="number" ? step.details.attempts : null})) : []}));
+    const selected=filtered.slice(offset,offset+limit);
+    const selectedJobIds=selected.flatMap(x=>x.jobId ? [x.jobId] : []);
+    const selectedRetained=jobs.admissionStateStore.listDashboardRetainedJobsByIds(selectedJobIds,scopeId);
+    for(const job of selectedRetained) retainedById.set(job.jobId,job);
+    const selectedActivityIds=[...selectedRetained.map(job=>job.activityId),...selected.flatMap(x=>x.activityId ? [x.activityId] : [])];
+    for(const [id,project] of jobs.admissionStateStore.dashboardActivityProjects(selectedActivityIds)) projectsByActivity.set(id,project);
+    for(const [id,title] of jobs.admissionStateStore.dashboardActivityTitles(selectedActivityIds.filter(id=>!activityTitles.has(id)))) activityTitles.set(id,title);
+    for(const [id,summary] of jobs.admissionStateStore.dashboardJobSummaries(selectedJobIds)) summaryCache.set(id,summary);
+    const steps=jobs.admissionStateStore.automaticRecovery.stepsMany(selected.flatMap(x=>x.recoveryKeys || []));
+    const page=selected.map(({value,recoveryKeys,row})=>({...value,row:row(),
+      progress:(recoveryKeys || []).flatMap(key=>steps.get(key) || []).sort((a,b)=>Date.parse(a.at)-Date.parse(b.at)).slice(-12)
+        .map(step=>({at:step.at,step:step.step,
+        reason:typeof step.details.reason==="string" ? redactSensitiveText(step.details.reason).slice(0,1000) : null,
+        evidence:typeof step.details.evidence==="string" ? redactSensitiveText(step.details.evidence).slice(0,1000) : null,
+        attempt:typeof step.details.attempt==="number" ? step.details.attempt : typeof step.details.attempts==="number" ? step.details.attempts : null}))}));
     problemCollection={query:{...problemQuery,offset},revision:problemRevision(filtered.map(x=>[x.value.problemKey,x.value.revision])),
       incidentCount:entries.length,currentImpactCount:entries.filter(x=>x.value.currentImpact!=="none").length,
       pendingCount:0,reviewableCount:0,acknowledgedCount:0,rows:page,
@@ -15448,6 +15484,9 @@ function forwardResult(
   registry?: CodexJobRegistry,
   replay = false
 ): ToolResult {
+  if(registry && isTerminalActivityJobStatus(job.status) && !registry.admissionStateStore.retainedJobVisible(job.jobId)) {
+    return taskResultForJob(expiredJobPublication(job),0,preferences,registry,replay);
+  }
   const projection = taskProjectionForJob(job, preferences, registry, replay);
   const semantic = projection.structured;
   if (result.isError || job.status === "failed") {

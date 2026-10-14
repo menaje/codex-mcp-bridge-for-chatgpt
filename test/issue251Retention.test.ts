@@ -103,6 +103,27 @@ describe("#251 one policy across durable records",()=>{
     store.upsertJob(input);expect(store.readRetainedJobDetail(scope,{kind:"job",id:"clock"})).toBeUndefined();
     db.close();store.close();
   });
+  for(const [from,to,age,retained] of [[30,90,40,true],[90,7,20,false],[30,0,40,true],[0,7,20,false],[7,7,7,false]] as const)
+    it(`applies ${from} to ${to} days and the exact boundary across restart`,()=>{
+      const {store,db,file}=fixture(from);insert(store,"transition",age);
+      store.writeSettings({historyRetentionDays:to},1,now);db.close();store.close();
+      const restarted=new BridgeStateStore({file});
+      expect(Boolean(restarted.readRetainedJobDetail(scope,{kind:"job",id:"transition"},now))).toBe(retained);
+      restarted.maintainHistoryRetention(now);restarted.maintainRecoveryRetention(now);restarted.maintainEventRetention(now);
+      const persisted=new Database(file);
+      expect((persisted.prepare("SELECT payload FROM jobs WHERE job_id='transition'").get() as any).payload.includes("original-transition")).toBe(retained);
+      persisted.close();restarted.close();
+    });
+  it("rechecks a new indefinite policy after preparing finite deletion candidates",()=>{
+    const {store,db}=fixture(30);insert(store,"prepared",40);
+    let changed=false;
+    expect(store.workHistory.sweep(30,()=>{
+      if(!changed){store.writeSettings({historyRetentionDays:0},1,now);changed=true;}
+      return false;
+    },now)).toBe(0);
+    expect((db.prepare("SELECT payload FROM jobs WHERE job_id='prepared'").get() as any).payload).toContain("original-prepared");
+    db.close();store.close();
+  });
   it("does not substitute thirty days for corrupt, missing or nonnumeric policy",()=>{
     const {store,db}=fixture(0);insert(store,"invalid",100);
     for(const value of [{}, {historyRetentionDays:"0"},{historyRetentionDays:null},{historyRetentionDays:17}]) {

@@ -91,7 +91,7 @@ export class DashboardReadModel {
     }
     const historyLimit = limit - 1;
     const representativeOrdering = representativeOrder === "created"
-      ? "created_at DESC,updated_at DESC,job_id DESC"
+      ? "created_at DESC,job_id DESC"
       : "updated_at DESC,job_id DESC";
     const rows = this.db.prepare(`
       WITH candidates AS (
@@ -139,7 +139,7 @@ export class DashboardReadModel {
         SELECT job_id,scope_id,activity_id,agent_id,backend_kind,status,
                created_at,updated_at,ended_at,ended_at_source,detail_availability,summary,
                FIRST_VALUE(job_id) OVER (
-                 ORDER BY created_at DESC,updated_at DESC,job_id DESC
+                 ORDER BY created_at DESC,job_id DESC
                ) AS representative_job_id,
                COUNT(*) OVER () AS agent_total
           FROM jobs

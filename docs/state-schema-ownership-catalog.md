@@ -1,6 +1,6 @@
 # State schema ownership catalog
 
-This catalog is the schema-31 operational inventory and telemetry schema
+This catalog is the schema-32 operational inventory and telemetry schema
 inventory required by issues #142 and #143. In production the operational
 state-owner process is the only `state.sqlite` writer, the read process opens it
 read-only, and the telemetry process is the only `telemetry.sqlite` writer.
@@ -32,9 +32,9 @@ queries only.
 | `job_interactions` | Job progress/input UoW | exact input/status and Dashboard | unresolved user input authority | state |
 | `activity_events` | Activity/Job UoW | activity cursors, status summary and Dashboard | scope ordering and authoritative lifecycle projection | state (mixed; review later) |
 | `job_events` | Job UoW | exact status cursor, usage/summary extraction and recovery | current Job event ordering and summary evidence | state (mixed; review later) |
-| `event_budget` | `job_events` triggers only | event retention budget checks | bounded authoritative event storage | state |
+| `event_budget` | `job_events` triggers only | event retention budget checks | event size/count diagnostics; no early persistent-history deletion | state |
 | `event_retention_state` | `EventRetention` maintenance | restartable event cleanup | retention cursor and budget progress | state |
-| `result_holds` | completion/read commands and retention | result access and event retention | prevents premature result deletion | state |
+| `result_holds` | completion/read commands and retention | result access and event retention | control lease only; cannot change history retention | state |
 | `completion_outbox` | Activity completion UoW and native delivery commands | native completion delivery | durable pending/leased/delivered evidence | state |
 | `job_completion_deliveries` | terminal Job UoW and host receipt commands | exact completion result paths | acceptance uncertainty, leases and offer evidence | state |
 | `agent_mutations` | Agent mutation UoW | duplicate-request lookup | mutation idempotency receipt | state |
@@ -49,8 +49,14 @@ queries only.
 | `runtime_problem_resolutions` | problem review commands | Dashboard problem projection | acknowledged runtime problem revision | state |
 | `automatic_recovery` | `AutomaticRecoveryStore` commands | recovery controller | retry budget, lease and terminal recovery state | state |
 | `automatic_recovery_incidents` | `AutomaticRecoveryStore` commands/maintenance | recovery diagnostics and review | bounded incident evidence used by recovery policy | state |
-| `transport_observations` | compatibility-only; production appends go to the telemetry service | older private diagnostics retained for rollback compatibility | no mutation authority; bounded loss is allowed | retained unused in state until a later schema migration |
+| `transport_observations` | compatibility-only; production appends go to the telemetry service | older private diagnostics retained for rollback compatibility | no mutation authority; age follows the same saved policy | retained unused in state until a later schema migration |
 | `operational_command_receipts` | isolated state command Unit of Work | response-loss recovery and identical-command replay | commit proof for the IPC uncertainty window; payload-hash conflicts fail closed | state |
+
+| `job_result_bodies` | terminal Job UoW | exact scoped original-result reads and policy expiry | sanitized complete body survives registry eviction; Job FK owns explicit deletion | state |
+| `agent_history_revisions` | Job history triggers | bounded Dashboard/history cache metadata | actual history changes, independent of progress | state |
+| `recovery_controls` | automatic recovery and scope-retirement UoW | retry admission and confirmed incident closure | minimal current incident identity/attempt barrier; no historical reason/evidence | state |
+| `automatic_recovery_steps` | automatic recovery UoW | read-only problem progression and common policy cleanup | append-only observed/attempt/result/evidence, same occurrence basis as its incident | state |
+| `question_history` | question UoW | scoped retained question read and common policy cleanup | question validity is separate from original-history lifetime | state |
 
 ## Index inventory
 
@@ -67,7 +73,9 @@ parent table and is covered by the same owner above.
 - `agents`: `agents_scope_state_recent`
 - `automatic_recovery`: `automatic_recovery_agent_state`, `automatic_recovery_due`,
   `automatic_recovery_interrupted`, `automatic_recovery_job`,
-  `automatic_recovery_retention`, `automatic_recovery_scope`
+  `automatic_recovery_retention`, `automatic_recovery_scope`, `recovery_policy_clock`
+- `automatic_recovery_steps`: `recovery_steps_parent`
+- `question_history`: `question_history_clock`
 - `automatic_recovery_incidents`: `automatic_recovery_incident_retention`
 - `cancellation_intents`: `cancellation_intents_cascade`,
   `cancellation_intents_operation`, `cancellation_intents_target_activity`,
@@ -80,7 +88,7 @@ parent table and is covered by the same owner above.
 - `job_events`: `job_events_job_cursor`, `job_events_scope_cursor`
 - `job_interactions`: `job_interactions_blocking`
 - `jobs`: `jobs_activity_recent`, `jobs_agent_active`, `jobs_agent_recent_history`, `jobs_scope_recent`,
-  `jobs_history_retention`, `jobs_source_thread_active`, `jobs_status_recent`, `jobs_thread_active`
+  `jobs_history_retention`, `jobs_policy_clock`, `jobs_source_thread_active`, `jobs_status_recent`, `jobs_thread_active`
 - `operational_command_receipts`: `operational_command_receipts_committed`
 - `projects`: `projects_active_cwd`, `projects_active_name`, `projects_ordered`, `projects_archive_pending`
 - `retired_requests`: `retired_requests_subject`
@@ -101,7 +109,8 @@ intentionally excluded by the `sqlite_%` rule in the inventory test.
 ## Trigger inventory
 
 `event_budget_insert`, `event_budget_delete` and `event_budget_update` are the
-only current explicit triggers. They are owned by the `job_events` write UoW and
+current event-budget triggers. `job_history_insert` and `job_history_change` maintain
+`agent_history_revisions` in the Job UoW. The event-budget triggers are owned by the `job_events` write UoW and
 update `event_budget` in the same transaction. Neither object can move to
 telemetry while Job events remain operational.
 
@@ -121,9 +130,11 @@ child. They are intentionally absent from the operational schema inventory test.
 | `telemetry_record_deliveries` | each successful detail transaction | bounded idempotency map from delivery UUID to actual record ID; startup collisions are remapped and ACK-loss retries cannot be silently ignored |
 
 Telemetry indexes are `transport_observations_recent`,
-`runtime_measurements_recent` and `diagnostic_events_recent`. The independent
-retention caps are 1,000 transport observations, 5,000 measurements and 2,000
-diagnostic events.
+`runtime_measurements_recent` and `diagnostic_events_recent`. Persistent transport observations, measurements and diagnostic events follow the
+same saved policy through the telemetry owner. The existing maintenance events
+slice requests bounded cleanup; the child rereads a read-only policy source at
+delete time. Memory/queue limits are presentation and admission limits, not
+persistent row deletion. Policy read failure retains records and reports failure.
 
 ## File, IPC and backup security contract
 
@@ -155,7 +166,7 @@ diagnostic events.
 
 ## Coverage rule
 
-`test/stateSchemaOwnership.test.ts` opens a fresh schema-31 fixture and requires
+`test/stateSchemaOwnership.test.ts` opens a fresh schema-32 fixture and requires
 every non-SQLite-internal table, explicit index and trigger in `sqlite_master` to
 appear in this catalog. Adding or renaming a schema object without updating its
 owner and destination therefore fails the test.

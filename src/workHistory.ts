@@ -65,8 +65,6 @@ export type HistoryProblemJob = HistoryJobIdentity & {
  * receipt, Agent/thread identity, project pins, or cancellation journals. Exact
  * ChatGPT completion-delivery rows expire with their run-history entry. */
 export class WorkHistoryStore {
-  private readonly protectedUntil = new Map<string, number>();
-
   constructor(
     private readonly db: Database.Database,
     private readonly expireProjection: (candidate: HistoryRetentionCandidate, now: number) => void
@@ -76,7 +74,7 @@ export class WorkHistoryStore {
     const row = this.db.prepare(`SELECT job_id,activity_id,status,updated_at FROM jobs j WHERE agent_id=?
       AND NOT EXISTS (SELECT 1 FROM work_history_state h WHERE h.job_id=j.job_id AND h.expired_at IS NOT NULL)
       AND ${retainedJobSql(readAppliedHistoryPolicy(this.db),"j")}
-      ORDER BY created_at DESC,updated_at DESC,job_id DESC LIMIT 1`)
+      ORDER BY created_at DESC,job_id DESC LIMIT 1`)
       .get(agentId) as {job_id:string;activity_id:string;status:string;updated_at:number} | undefined;
     return row ? {jobId:row.job_id,activityId:row.activity_id,status:row.status,updatedAt:row.updated_at} : undefined;
   }
@@ -184,8 +182,9 @@ export class WorkHistoryStore {
     for (const row of candidates) {
       if (removed && performance.now()>=deadline) break;
       // Read after candidate preparation, under the state owner's write transaction.
+      if (isProtected(row.job_id)) continue;
       const current = readAppliedHistoryPolicy(this.db,now);
-      if (!historyExpired(row.ended_at,current) || isProtected(row.job_id)) continue;
+      if (!historyExpired(row.ended_at,current)) continue;
       this.expireProjection({jobId:row.job_id,scopeId:row.scope_id,requestId:row.request_id,
         activityId:row.activity_id,status:row.status,updatedAt:row.updated_at,
         archivedAt:row.archived_at ?? now,terminalVersion:row.terminal_version},now);

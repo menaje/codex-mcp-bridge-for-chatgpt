@@ -291,9 +291,10 @@ export class ProjectLifecycleStore {
             "DELETE FROM automatic_recovery_incidents WHERE recovery_key=?",
           )
           .run(recovery_key);
-        this.db
-          .prepare("DELETE FROM automatic_recovery WHERE recovery_key=?")
-          .run(recovery_key);
+        this.db.prepare("UPDATE automatic_recovery SET state='blocked',updated_at=? WHERE recovery_key=?").run(now,recovery_key);
+        this.db.prepare("DELETE FROM recovery_controls WHERE recovery_key=?").run(recovery_key);
+        this.db.prepare("INSERT INTO automatic_recovery_steps(recovery_key,occurred_at,step,details) VALUES (?,?,'scope-ended',?)")
+          .run(recovery_key,now,JSON.stringify({reason:"project-archived",evidence:"confirmed-thread-retirement"}));
       }
       this.db
         .prepare("DELETE FROM agent_threads WHERE thread_id=?")
@@ -570,6 +571,8 @@ export class ProjectLifecycleStore {
         `DELETE FROM automatic_recovery_incidents WHERE recovery_key IN (SELECT recovery_key FROM automatic_recovery WHERE job_id IN (${jobQuery}))`,
       )
       .run(projectId);
+    this.db.prepare(`DELETE FROM automatic_recovery_steps WHERE recovery_key IN (SELECT recovery_key FROM automatic_recovery WHERE job_id IN (${jobQuery}))`).run(projectId);
+    this.db.prepare(`DELETE FROM recovery_controls WHERE job_id IN (${jobQuery})`).run(projectId);
     this.db
       .prepare(`DELETE FROM automatic_recovery WHERE job_id IN (${jobQuery})`)
       .run(projectId);
@@ -596,6 +599,10 @@ export class ProjectLifecycleStore {
     this.db
       .prepare(`DELETE FROM jobs WHERE activity_id IN (${activityQuery})`)
       .run(projectId);
+    this.db.prepare("DELETE FROM automatic_recovery_steps WHERE recovery_key IN (SELECT recovery_key FROM automatic_recovery WHERE project_id=?)").run(projectId);
+    this.db.prepare("DELETE FROM recovery_controls WHERE recovery_key IN (SELECT recovery_key FROM automatic_recovery WHERE project_id=?)").run(projectId);
+    this.db.prepare("DELETE FROM automatic_recovery_incidents WHERE recovery_key IN (SELECT recovery_key FROM automatic_recovery WHERE project_id=?)").run(projectId);
+    this.db.prepare("DELETE FROM automatic_recovery WHERE project_id=?").run(projectId);
     this.db.prepare("DELETE FROM activities WHERE project_id=?").run(projectId);
     this.db.prepare("DELETE FROM projects WHERE project_id=?").run(projectId);
     return true;

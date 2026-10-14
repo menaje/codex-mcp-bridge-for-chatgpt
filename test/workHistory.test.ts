@@ -41,9 +41,9 @@ describe("execution history retention",()=>{
     expect(db.pragma("foreign_key_check")).toEqual([]);db.close();store.close();
   });
 
-  it("protects active work, pending delivery, uncertain responses and user holds",()=>{
+  it("expires terminal history without changing active work or uncertain dispatch authority",()=>{
     const file=path.join(mkdtempSync(path.join(tmpdir(),"history-protect-")),"state.sqlite"),store=new BridgeStateStore({file});
-    const active={...job("active"),status:"running"};store.upsertJob(active);
+    store.upsertJob({...job("active"),status:"running",pendingInteractions:[{interactionId:"approval",isBlocking:true}]});
     const held=job("held");store.upsertJob(held);store.holdResult(held.jobId,"review",now+day);
     const result=job("delivery");store.upsertJob(result);store.deleteJob(result.jobId);
     const db=new Database(file),activity=(db.prepare("SELECT activity_id FROM jobs WHERE job_id=?").get(result.jobId) as {activity_id:string}).activity_id;
@@ -52,36 +52,30 @@ describe("execution history retention",()=>{
     const requestId="22222222-2222-4222-8222-222222222222",actionHash="a".repeat(64);
     store.beginSteeringDelivery({scopeId,requestId,actionHash,jobId:uncertain.jobId,expectedJobVersion:1,promptSha256:"b".repeat(64),now:old});
     store.completeSteeringDelivery(scopeId,requestId,actionHash,"uncertain",{delivery:{status:"uncertain"}},old);
-    expect(store.retentionProtection(uncertain.jobId,now)).toContain("uncertain-response");
-    expect(store.maintainRetention(now).historyRemoved).toBe(0);
-    expect(store.countJobs()).toBe(2);
-    expect(store.workHistory.expired(result.jobId)).toBe(false);
-    expect(store.workHistory.expired(uncertain.jobId)).toBe(false);
-    db.prepare("UPDATE completion_outbox SET acknowledged_at=? WHERE activity_id=?").run(now,activity);
-    // A protected candidate is not fanned out through every authority again on
-    // each scheduler tick; it becomes eligible after the bounded backoff.
-    expect(store.maintainRetention(now).historyRemoved).toBe(0);
-    expect(store.maintainRetention(now + 15 * 60_000).historyRemoved).toBe(1);
+    expect(store.maintainRetention(now).historyRemoved).toBe(3);
+    expect(store.countJobs()).toBe(1);
     expect(store.workHistory.expired(result.jobId)).toBe(true);
+    expect(store.workHistory.expired(uncertain.jobId)).toBe(true);
     expect(store.getSteeringDelivery(scopeId,requestId)?.status).toBe("uncertain");
+    expect(()=>store.markSteeringDeliveryDispatching(scopeId,requestId,actionHash)).toThrow(/uncertain/);
+    expect(db.prepare("SELECT status FROM jobs WHERE job_id='active'").get()).toEqual({status:"running"});
+    expect(db.prepare("SELECT interaction_id FROM job_interactions WHERE job_id='active'").all()).toEqual([{interaction_id:"approval"}]);
     db.close();store.close();
   });
 
-  it("rotates past a full protected batch and respects the selected retention period",()=>{
+  it("drains bounded terminal batches using the saved policy while leaving live work untouched",()=>{
     const store=new BridgeStateStore({file:":memory:"});
     store.transaction(()=>{for(let n=0;n<502;n++){const input=job(String(n).padStart(4,"0"));store.upsertJob(input);store.deleteJob(input.jobId);}});
-    const protectedJob=(id:string)=>Number(id)<500;
+    store.writeSettings({historyRetentionDays:0},0,now);
+    expect(store.workHistory.sweep(30,()=>false,now)).toBe(0);
+    store.writeSettings({historyRetentionDays:90},1,now);
+    expect(store.workHistory.sweep(7,()=>false,now)).toBe(0);
+    store.writeSettings({historyRetentionDays:30},2,now);
+    let removed=0;
+    for(let n=0;n<10;n++) removed+=store.maintainHistoryRetention(now).historyRemoved;
+    expect(removed).toBe(502);expect(store.listDashboardRetainedJobs()).toHaveLength(0);
     expect(store.workHistory.sweep(0,()=>false,now)).toBe(0);
-    expect(store.workHistory.sweep(90,()=>false,now)).toBe(0);
-    let removed = 0;
-    for (let slice = 0; slice < 10 && removed === 0; slice++) {
-      removed += store.workHistory.sweep(30,protectedJob,now);
-    }
-    expect(removed).toBe(2);
-    expect(store.listDashboardRetainedJobs()).toHaveLength(500);
-    expect(historyRetentionDays(undefined)).toBe(30);
-    expect(historyRetentionDays(7)).toBe(7);expect(historyRetentionDays(0)).toBe(0);
-    expect(historyRetentionDays("7")).toBe(30);store.close();
+    store.close();
   });
 
 });
