@@ -366,11 +366,21 @@ final class AppModel: ObservableObject {
         return date <= dashboardHistoryNow()
     }
 
+    func dashboardRetainedProblems(_ problems: DashboardProblems) -> [DashboardProblem] {
+        guard let days = dashboard?.historyPolicy?.retentionDays, days > 0 else { return problems.rows }
+        let formatter = ISO8601DateFormatter(); formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let cutoff = dashboardHistoryNow().addingTimeInterval(-Double(days) * 86_400)
+        return problems.rows.filter { problem in
+            guard let at = formatter.date(from: problem.occurredAt ?? problem.observedAt) ?? ISO8601DateFormatter().date(from: problem.occurredAt ?? problem.observedAt) else { return false }
+            return at > cutoff
+        }
+    }
+
     private func scheduleDashboardHistoryExpiry(_ snapshot: DashboardSnapshot) {
         dashboardHistoryExpiryTask?.cancel()
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let rows = (snapshot.statusRows ?? []) + snapshot.activeRows + snapshot.terminalRows
+        let rows = (snapshot.statusRows ?? []) + snapshot.activeRows + snapshot.terminalRows + (snapshot.problems?.rows.map { $0.row } ?? [])
         let dates = rows.compactMap { row -> Date? in
             if let raw = row.nextExpiryAt { return formatter.date(from: raw) ?? ISO8601DateFormatter().date(from: raw) }
             guard snapshot.historyModeApplied == "jobs", let raw = row.latestTurn?.endedAt,
@@ -379,11 +389,22 @@ final class AppModel: ObservableObject {
             return ended.addingTimeInterval(Double(days) * 86_400)
         }
         let now = dashboardHistoryNow()
-        guard let date = dates.min(), date > now else { return }
+        let incidentDates = (snapshot.problems?.rows ?? []).compactMap { problem -> Date? in
+            guard let days = snapshot.historyPolicy?.retentionDays, days > 0,
+                  let at = formatter.date(from: problem.occurredAt ?? problem.observedAt) ?? ISO8601DateFormatter().date(from: problem.occurredAt ?? problem.observedAt) else { return nil }
+            return at.addingTimeInterval(Double(days) * 86_400)
+        }
+        guard let date = (dates + incidentDates).filter({ $0 > now }).min() else { return }
         let delay = min(date.timeIntervalSince(now), 86_400)
         dashboardHistoryExpiryTask = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(max(0.01, delay))) } catch { return }
-            guard let self, self.bridgeConnected else { return }
+            guard let self else { return }
+            self.dashboardHistoryExpiryTask = nil
+            self.objectWillChange.send()
+            self.dashboardHistoryDetails = self.dashboardHistoryDetails.filter { !self.dashboardHistoryExpired(at: $0.value.nextExpiryAt) }
+            self.executionDetails = self.executionDetails.filter { $0.value.expiresAt.map { $0 > self.dashboardHistoryNow() } ?? true }
+            if let current = self.dashboard { self.scheduleDashboardHistoryExpiry(current) }
+            guard self.bridgeConnected else { return }
             await self.refreshDashboard(enrich: false)
         }
     }

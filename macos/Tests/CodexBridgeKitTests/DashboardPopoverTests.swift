@@ -478,6 +478,55 @@ final class DashboardPopoverTests: XCTestCase {
     }
 
     @MainActor
+    func testReviewBackgroundIncludesAnActiveJobOutsideTheTerminalStatusPage() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.jobsContract = true; f.state.rowCount = 1
+        await f.model.refreshDashboard(enrich: false)
+        var snapshot = try XCTUnwrap(f.model.dashboard)
+        let original = try XCTUnwrap(snapshot.activeRows.first)
+        var activeObject = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(original)) as? [String: Any])
+        activeObject["backgroundProcessCount"] = 1
+        let active = try JSONDecoder().decode(DashboardRow.self, from: JSONSerialization.data(withJSONObject: activeObject))
+        snapshot.activeRows = [active]; snapshot.terminalRows = []; snapshot.statusRows = []
+        XCTAssertEqual(DashboardPanel.background.rows(in: snapshot).map { $0.jobId }, [active.jobId])
+    }
+
+    @MainActor
+    func testReviewProblemOnlyExpiryRepaintsWithoutSuccessfulRefresh() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.jobsContract = true; f.state.rowCount = 1
+        let start = ISO8601DateFormatter().date(from: "2026-09-11T00:00:00Z")!
+        var clock = start
+        f.model.dashboardHistoryNow = { clock }
+        await f.model.refreshDashboard(enrich: false)
+        let snapshot = try XCTUnwrap(f.model.dashboard)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) as? [String: Any])
+        var failed = try XCTUnwrap((object["problems"] as? [String: Any])?["rows"] as? [[String: Any]]).first!
+        var row = failed["row"] as! [String: Any], turn = row["latestTurn"] as! [String: Any]
+        let ended = start.addingTimeInterval(-30 * 86400 + 1)
+        turn["endedAt"] = ISO8601DateFormatter().string(from: ended); turn["summary"] = "Expiring preview"; turn["error"] = "Expiring failure"
+        row["latestTurn"] = turn; row["nextExpiryAt"] = ISO8601DateFormatter().string(from: start.addingTimeInterval(1))
+        failed["row"] = row; failed["occurredAt"] = turn["endedAt"]; failed["reason"] = "Expiring failure"
+        var problems = object["problems"] as! [String: Any]; problems["rows"] = [failed]; object["problems"] = problems
+        object["statusRows"] = []; object["activeRows"] = []; object["terminalRows"] = Array(repeating: (object["terminalRows"] as! [[String: Any]])[0], count: 12)
+        f.state.dashboardJSON = String(data: try JSONSerialization.data(withJSONObject: object), encoding: .utf8)
+        await f.model.refreshDashboard(enrich: false)
+        let before = f.state.dashboardReadCount
+        var invalidations = 0
+        let subscription = f.model.objectWillChange.sink { invalidations += 1 }
+        f.state.failDashboard = true; clock = start.addingTimeInterval(1)
+        try await Task.sleep(for: .milliseconds(1200))
+        XCTAssertGreaterThan(f.state.dashboardReadCount, before)
+        XCTAssertGreaterThan(invalidations, 0, "A local expiry must invalidate views even without a replacement snapshot")
+        XCTAssertNotNil(f.model.dashboard, "A failed refresh retains the other valid summaries")
+        XCTAssertNotNil(f.model.dashboardErrorMessage)
+        XCTAssertTrue(f.model.dashboardRetainedProblems(try XCTUnwrap(f.model.dashboard?.problems)).isEmpty,
+            "Expired problem preview and duplicated error must disappear from the rendered collection")
+        XCTAssertEqual(DashboardPanel.history.rows(in: try XCTUnwrap(f.model.dashboard), now: clock).count, 12)
+        subscription.cancel()
+    }
+
+    @MainActor
     func testJobModeCountsEveryTerminalJobAndSeparatesSystemEvents() async throws {
         let f = try PopoverFixture(); defer { f.remove() }
         f.state.jobsContract = true; f.state.rowCount = 1
@@ -1002,6 +1051,10 @@ private final class PopoverReplyState: @unchecked Sendable {
     private var maximumEnrichments = 0
     private var completedEnrichments = 0
     private var dashboardReads = 0
+    private var dashboardJSONValue: String?
+    private var failDashboardValue = false
+    var dashboardJSON: String? { get { lock.withLock { dashboardJSONValue } } set { lock.withLock { dashboardJSONValue = newValue } } }
+    var failDashboard: Bool { get { lock.withLock { failDashboardValue } } set { lock.withLock { failDashboardValue = newValue } } }
     private var slowHistory = false
     private var pagedHistoryValue = false
     private var runningRowCount = 0
@@ -1117,6 +1170,8 @@ private final class PopoverReplyState: @unchecked Sendable {
             let filter = params["statusFilter"] as? String ?? "all"
             let includeHistory = params["includeHistory"] as? Bool ?? true
             lock.withLock { dashboardReads += 1 }
+            if failDashboard { return NativeFixtureReply(body: #"{"error":{"code":-32000,"message":"FIXTURE_DASHBOARD_UNAVAILABLE"}}"#) }
+            if let dashboardJSON { return NativeFixtureReply(body: "{\"result\":\(dashboardJSON)}") }
             if rejectJobsMode && params["historyMode"] != nil { return NativeFixtureReply(body: #"{"error":{"code":-32602,"message":"Unrecognized key: historyMode"}}"#) }
             if params["enrich"] as? Bool == true {
                 let paused = lock.withLock {

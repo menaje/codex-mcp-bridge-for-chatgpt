@@ -29,7 +29,9 @@ enum DashboardPanel: String, CaseIterable {
         if self == .history {
             return snapshot.historyModeApplied == "jobs" ? snapshot.terminalRows.filter { ExecutionRecordPresentation.retained($0, days: snapshot.historyPolicy?.retentionDays, now: now) } : snapshot.activeRows + snapshot.terminalRows
         }
-        let rows = snapshot.statusRows ?? (snapshot.activeRows + snapshot.terminalRows)
+        let rows = self == .background && snapshot.historyModeApplied == "jobs"
+            ? snapshot.activeRows + snapshot.terminalRows
+            : snapshot.statusRows ?? (snapshot.activeRows + snapshot.terminalRows)
         if self == .running && snapshot.historyModeApplied == "jobs" {
             return snapshot.activeRows.filter { $0.bucket == "active" && $0.jobId != nil }
         }

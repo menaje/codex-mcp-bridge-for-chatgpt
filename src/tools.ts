@@ -11894,7 +11894,14 @@ function applyExecutionContract(view:DashboardView,store:BridgeStateStore,option
   view.activeRows=active.rows;view.terminalRows=history.rows;view.idleRows=[];view.pagination.active=active.page;view.pagination.terminal=history.page;
   view.pagination.idle=page([],0,0).page;
   const selected=options.statusFilter==="running" || options.statusFilter==="background" ? active : history;
-  view.statusRows=options.statusFilter==="problems" ? [] : selected.rows;view.statusPagination=selected.page;view.statusRowsComplete=!selected.page.hasNext && !selected.page.hasPrevious;
+  if(!options.statusFilter || options.statusFilter==="all") {
+    // The overview spans independently paged progress and history buckets.
+    // Do not advertise a single terminal-only status page as the whole view.
+    view.statusRows=[...active.rows,...history.rows];delete view.statusPagination;
+    view.statusRowsComplete=![active.page,history.page].some(page=>page.hasNext || page.hasPrevious);
+  } else {
+    view.statusRows=options.statusFilter==="problems" ? [] : selected.rows;view.statusPagination=selected.page;view.statusRowsComplete=!selected.page.hasNext && !selected.page.hasPrevious;
+  }
 }
 
 function dashboardRowKey(agentId: string | undefined, jobId?: string): string {

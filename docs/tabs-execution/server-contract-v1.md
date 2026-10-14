@@ -34,3 +34,9 @@ Validate: fixed-time isolated fixtures, 7/30/90/unlimited, list/page/distinct-to
 ## Implemented additions
 
 Exact detail includes `nextExpiryAt: string | null`; both Job rows and linked problem rows carry the same expiry. Card requests use `codex_ui_read` view `dashboard-execution`, with widgetInstanceId, scope, exact scopeId/Job ID, and optional expected execution/policy revisions. Native requests use `dashboard.execution-detail`. Cancellation metadata comes from exact retained intent/operation provenance for all sources, without the old latest-100 model-only display limit. New settled executions persist a bounded preview of sanitized retained text; absent historical metadata remains absent.
+
+## Independent review corrections
+
+In Job mode the `all` status rows contain the returned progress and terminal buckets together. Their independent `pagination.active` and `pagination.terminal` remain authoritative; there is no single `statusPagination` for this mixed overview. Explicit status pages retain their own pagination. Background views consume both buckets, including older responses whose status rows are terminal-only.
+
+Expiry scheduling includes problem rows and incident occurrence clocks. Clients invalidate cached expired detail and repaint before trying a refresh, and continue scheduling future boundaries after earlier rows expire. Execution incidents cease rendering at their original occurrence/policy boundary; a later retained recovery occurrence may remain, while its expired linked Job preview stays hidden. Refresh failure or disconnection does not extend retention.

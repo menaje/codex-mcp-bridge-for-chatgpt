@@ -15,7 +15,7 @@ struct ExecutionRecordView: View {
     private func localized(_ key: String) -> String { BridgeAppLocalization.string(key, locale: model.interfaceLocale) }
 
     @ViewBuilder var body: some View {
-        if let target, target.expiresAt.map({ $0 <= model.dashboardHistoryNow() }) == true {
+        if !ExecutionRecordPresentation.retained(row, days: model.dashboard?.historyPolicy?.retentionDays, now: model.dashboardHistoryNow()) || target?.expiresAt.map({ $0 <= model.dashboardHistoryNow() }) == true {
             Text(localized("execution.unavailable")).font(.caption2).foregroundStyle(.secondary)
         } else {
             VStack(alignment: .leading, spacing: 5) {

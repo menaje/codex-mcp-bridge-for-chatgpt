@@ -146,4 +146,15 @@ describe('Job-unit execution tabs and read-only exact detail',()=>{
   }finally{await worker.close();await f.close();}
  },15000);
 
+ it('preserves actual background work in the shared all-status Job projection',async()=>{
+  const f=fixture();try{
+   const live=f.seed('running',0,{threadId:'fixture-background-thread'});
+   const first=await f.service().dashboardSnapshot(query);
+   const enriched=await f.service().dashboardSnapshotWithEnrichment!(query,{runtimeByAgent:[[f.agent.agentId,{state:'busy',backgroundProcessState:'confirmed',backgroundProcessCount:1}]],runtimeProbeSkippedAgents:0,weeklyUsage:null,summary:{...first.enrichment,state:'enriched'}} as any);
+   expect(enriched.counts.progressJobCount).toBe(1);expect(enriched.counts.executionCount).toBe(0);
+   expect(enriched.activeRows.find(x=>x.jobId===live.jobId)?.backgroundProcessCount).toBe(1);
+   expect(enriched.statusRows?.filter(x=>x.backgroundProcessCount>0).map(x=>x.jobId)).toContain(live.jobId);
+  }finally{await f.close();}
+ });
+
 });

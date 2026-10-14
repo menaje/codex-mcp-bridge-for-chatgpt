@@ -24,8 +24,8 @@ struct DashboardProblemsSection: View {
                 Text(BridgeAppLocalization.format("execution.legacyIncidentUnits", locale: model.interfaceLocale,
                     problems.incidentCount ?? problems.page.total)).font(.caption2).foregroundStyle(.secondary)
             }
-            if problems.rows.isEmpty { Text("problem.historyEmpty").font(.caption).foregroundStyle(.secondary) }
-            ForEach(problems.rows) { problem in
+            if model.dashboardRetainedProblems(problems).isEmpty { Text("problem.historyEmpty").font(.caption).foregroundStyle(.secondary) }
+            ForEach(model.dashboardRetainedProblems(problems)) { problem in
                 VStack(alignment: .leading, spacing: 6) {
                     if problem.jobId != nil {
                         ExecutionRecordView(row: problem.row, problem: problem)

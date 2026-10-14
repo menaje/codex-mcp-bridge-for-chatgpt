@@ -1465,6 +1465,12 @@ describe("current bridge tool contracts", () => {
     state.upsertJob({jobId,requestId:randomUUID(),scopeId,agentId:agent.agentId,status:"failed",createdAt:at,updatedAt:at+100,
       executionName:"Recorded execution",summary:"Stored content preview",error:"recorded failure"});
     state.deleteJob(jobId);
+    const overview=await client.callTool({name:"codex_ui_read",arguments:{view:"dashboard",widgetInstanceId:randomUUID(),scope:"all",historyMode:"jobs",enrich:false,includeHistory:true}});
+    expect(overview.isError,JSON.stringify(overview)).not.toBe(true);
+    const snapshot=overview.structuredContent as any;
+    expect(snapshot.statusRows.some((row:any)=>row.jobId===jobId)).toBe(true);
+    expect(snapshot).not.toHaveProperty("statusPagination");
+    expect(JSON.parse(JSON.stringify(snapshot))).toStrictEqual(snapshot);
     const args={view:"dashboard-execution",widgetInstanceId:randomUUID(),scope:"all",scopeId,jobId};
     const result=await client.callTool({name:"codex_ui_read",arguments:args});
     expect(result.isError,JSON.stringify(result)).not.toBe(true);
