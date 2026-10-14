@@ -3,6 +3,9 @@ import { withHistoryPolicyGate } from "./historyPolicyGate.js";
 import { historyExpired, readAppliedHistoryPolicy, type AppliedHistoryPolicy } from "./historyPolicy.js";
 
 type TransportClock = {job_id?:string|null;created_at:number};
+export type DeletedTransportRecord = {
+  observationId:number;bridgeInstanceId:string;createdAt:number;
+};
 function policy(source:Database.Database|undefined,now:number):AppliedHistoryPolicy {
   // Standalone/new diagnostic fixtures have no saved settings. Production
   // always supplies its existing operational DB as a read-only policy source.
@@ -36,10 +39,12 @@ export function visibleTransportRecords<T extends {jobId?:string;createdAt:numbe
 /** Policy writers and destructive telemetry slices share a crash-safe mutex.
  * Read the latest committed policy only AFTER acquiring it, and hold it until
  * the telemetry commit/rollback, closing the separate-database final-read race. */
-export function sweepTelemetryHistory(database:Database.Database,source?:Database.Database,now=Date.now(),limit=64):number {
-  return withHistoryPolicyGate(source?.name,()=>database.transaction(()=>{
+export function sweepTelemetryHistory(database:Database.Database,source?:Database.Database,now=Date.now(),limit=64,
+  committedTransportDeletion?:(records:DeletedTransportRecord[])=>void):number {
+  const committed=withHistoryPolicyGate(source?.name,()=>database.transaction(()=>{
     const initial=policy(source,now);
     let removed=0;
+    const deletedTransportRecords:DeletedTransportRecord[]=[];
     const domains=[['transport','transport_observations','observation_id'],
       ['measurement','runtime_measurements','measurement_id'],['diagnostic','diagnostic_events','event_id']] as const;
     for(const [kind,table,id] of domains) {
@@ -52,7 +57,10 @@ export function sweepTelemetryHistory(database:Database.Database,source?:Databas
         const latest=policy(source,now);
         const clock=typeof row.job_id==='string' ? clocks.get(row.job_id) : undefined;
         if(clock?.expired || historyExpired(clock ? clock.at : Number(row.created_at),latest)) {
-          removed+=database.prepare(`DELETE FROM ${table} WHERE ${id}=?`).run(row[id]).changes;
+          const changed=database.prepare(`DELETE FROM ${table} WHERE ${id}=?`).run(row[id]).changes;
+          removed+=changed;
+          if(changed && kind==='transport') deletedTransportRecords.push({observationId:Number(row[id]),
+            bridgeInstanceId:String(row.bridge_instance_id),createdAt:Number(row.created_at)});
         }
       }
       database.prepare(`INSERT INTO telemetry_retention_state(kind,cursor,last_completed_at) VALUES (?,?,?)
@@ -71,6 +79,9 @@ export function sweepTelemetryHistory(database:Database.Database,source?:Databas
     database.prepare(`INSERT INTO telemetry_meta(key,value) VALUES ('history_policy',?)
       ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(JSON.stringify({policyRevision:initial.policyRevision,
         retentionDays:initial.retentionDays,evaluatedAt:now,removed}));
-    return removed;
+    return {removed,deletedTransportRecords};
   })());
+  // Publish only committed deletions, never candidates or rolled-back writes.
+  committedTransportDeletion?.(committed.deletedTransportRecords);
+  return committed.removed;
 }

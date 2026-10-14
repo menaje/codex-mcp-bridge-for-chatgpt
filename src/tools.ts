@@ -2478,6 +2478,10 @@ export class CodexJobRegistry {
     return this.staleAfterMs;
   }
 
+  get resultResponseByteLimit(): number {
+    return this.maxResultBytes;
+  }
+
   get size(): number {
     return this.jobs.size;
   }
@@ -10646,7 +10650,12 @@ function formatJobStatus(
   const dashboard = dashboardPresentationHint(job, preferences, registry);
   const active = isActiveActivityJobStatus(job.status);
   const terminal = isTerminalActivityJobStatus(job.status);
-  const resultOmitted = job.resultOmitted || false;
+  // Stored originals can be hydrated after restart/archive, and the current
+  // response limit can be smaller than the admission-time preview limit.
+  // This is a response-only decision: never mutate or erase the retained Job.
+  const resultOmitted = Boolean(job.resultOmitted || (job.result &&
+    Buffer.byteLength(JSON.stringify(job.result), "utf8") >
+      (registry?.resultResponseByteLimit ?? 1024 * 1024)));
   const resultAvailability = active
     ? "pending"
     : job.status === "completed"
@@ -10816,7 +10825,7 @@ function formatJobStatus(
               : "Codex is running independently. Query this exact Job when needed, handle any pending input, and retrieve its terminal result before reporting completion."
         : job.status === "completed"
           ? resultOmitted
-            ? "Codex completed, but the primary result exceeded the configured retention limit and was omitted."
+            ? "Codex completed, but the primary result is omitted from this bounded response. Retained originals follow the history policy."
             : "Codex completed; retrieve the exact Job result for its bounded model-authoritative answer."
           : error?.message || "Codex reached a terminal state."
   };
@@ -15538,15 +15547,11 @@ function forwardResult(
       ? [...semantic.warnings, MODEL_PRIMARY_ANSWER_TRUNCATION_WARNING]
       : semantic.warnings
   });
-  const primaryBytes = primaryContent.reduce(
-    (total, item) => total + (item.type === "text" ? Buffer.byteLength(item.text, "utf8") : 0),
-    0
-  );
   const primaryContract = toolOutputContract(
     "codex_task",
     "model-orchestrator-semantic",
     codexTaskOutputSchema,
-    Math.max(1, primaryBytes, job.resultBytes || 0),
+    registry?.resultResponseByteLimit ?? 1024 * 1024,
     "primary-payload"
   );
   return contractedToolResult(
@@ -15691,15 +15696,11 @@ function statusToolResult(
         ? [...structured.warnings, MODEL_PRIMARY_ANSWER_TRUNCATION_WARNING]
         : structured.warnings
     });
-    const contentBytes = primaryContent.reduce(
-      (total, item) => total + (item.type === "text" ? Buffer.byteLength(item.text, "utf8") : 0),
-      0
-    );
     const contract = toolOutputContract(
       "codex_status",
       "model-orchestrator-semantic",
       codexStatusOutputSchema,
-      Math.max(1, contentBytes, maxPrimaryBytes),
+      maxPrimaryBytes,
       "primary-payload"
     );
     return contractedToolResult(contract, job, answeredStructured, { content: primaryContent });

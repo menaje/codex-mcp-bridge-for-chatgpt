@@ -1,4 +1,4 @@
-import { sweepTelemetryHistory, visibleTransportRecords } from "./telemetryHistoryPolicy.js";
+import { sweepTelemetryHistory, visibleTransportRecords, type DeletedTransportRecord } from "./telemetryHistoryPolicy.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, renameSync } from "node:fs";
@@ -163,7 +163,7 @@ export class InMemoryTelemetryService implements BridgeTelemetryService {
 type RecordMessage = { type: "record"; entry: QueuedTelemetryRecord };
 type DropMessage = { type: "drops"; counters: DropCounterRecord[] };
 type CloseMessage = { type: "close" };
-type RetainMessage = {type:"retain"};
+type RetainMessage = {type:"retain";requestId:string};
 type ParentMessage = RecordMessage | DropMessage | CloseMessage | RetainMessage;
 type ReadyMessage = {
   type: "ready";
@@ -177,11 +177,13 @@ type AckMessage = {
   deliveryId: string;
   recordId: number;
   ok: boolean;
+  retained: boolean;
   persistedAt?: number;
 };
 type DropAckMessage = { type: "drop-ack"; ok: boolean; persistedAt?: number };
 type FatalMessage = { type: "fatal"; message: string };
-type ChildMessage = ReadyMessage | AckMessage | DropAckMessage | FatalMessage | {type:"retained";ok:boolean};
+type RetainedMessage = {type:"retained";requestId:string;ok:boolean;deleted:DeletedTransportRecord[]};
+type ChildMessage = ReadyMessage | AckMessage | DropAckMessage | FatalMessage | RetainedMessage;
 
 /**
  * Best-effort diagnostic persistence. The caller updates a bounded in-memory
@@ -192,6 +194,8 @@ type ChildMessage = ReadyMessage | AckMessage | DropAckMessage | FatalMessage | 
 export class ChildProcessTelemetryService implements BridgeTelemetryService {
   private child?: ChildProcess;
   private readonly records: TransportObservationRecord[] = [];
+  private readonly persistedTransportRecords = new WeakSet<TransportObservationRecord>();
+  private readonly retentionRequests = new Set<string>();
   private readonly queue: QueuedEntry[] = [];
   private queueBytes = 0;
   private inFlight?: QueuedEntry | { drops: true };
@@ -309,8 +313,12 @@ export class ChildProcessTelemetryService implements BridgeTelemetryService {
   }
 
   maintainRetention():void {
-    if(this.closed || !this.child?.connected || !this.ready) return;
-    this.child.send({type:"retain"} satisfies RetainMessage,error=>{if(error) this.failed+=1;});
+    if(this.closed || !this.child?.connected || !this.ready || this.retentionRequests.size>0) return;
+    const requestId=randomUUID();
+    this.retentionRequests.add(requestId);
+    this.child.send({type:"retain",requestId} satisfies RetainMessage,error=>{
+      if(error && this.retentionRequests.delete(requestId)) this.failed+=1;
+    });
   }
 
   listTransportObservations(kind?: TransportObservationKind): TransportObservationRecord[] {
@@ -450,7 +458,19 @@ export class ChildProcessTelemetryService implements BridgeTelemetryService {
       child.on("message", value => {
         if (this.child !== child) return;
         if (!isChildMessage(value)) return;
-        if (value.type === "retained") {if(!value.ok) this.failed+=1;return;}
+        if (value.type === "retained") {
+          if(!this.retentionRequests.delete(value.requestId)) return;
+          if(!value.ok) {this.failed+=1;return;}
+          const deleted=new Set(value.deleted.map(transportRecordIdentity));
+          for(let index=this.records.length-1;index>=0;index--) {
+            const record=this.records[index]!;
+            // A pending new observation can temporarily have an old local ID.
+            // Only prune acknowledged disk records of the exact identity.
+            if(this.persistedTransportRecords.has(record) && deleted.has(transportRecordIdentity(record)))
+              this.records.splice(index,1);
+          }
+          return;
+        }
         if (value.type === "fatal") {
           finish(new Error(`TELEMETRY_START_FAILED: ${value.message}`));
           return;
@@ -459,8 +479,6 @@ export class ChildProcessTelemetryService implements BridgeTelemetryService {
           if (!this.initialized) {
             const hadLocalDrops = this.dropCounters.size > 0;
             this.rebasePendingRecordIds(value.nextRecordId);
-            this.records.unshift(...value.records.map(record => ({ ...record })));
-            trimRecords(this.records);
             for (const counter of value.dropCounters) {
               const local = this.dropCounters.get(counter.kind);
               this.dropCounters.set(counter.kind, local ? {
@@ -477,6 +495,17 @@ export class ChildProcessTelemetryService implements BridgeTelemetryService {
             if (hadLocalDrops) this.dropsDirty = true;
             this.initialized = true;
           }
+          // A worker can exit after COMMIT but before delivering its deletion
+          // ACK. Its ready snapshot is authoritative for persisted cache rows;
+          // preserve concurrent local observations that are not yet persisted.
+          const local=this.records.filter(record=>!this.persistedTransportRecords.has(record));
+          const localIdentities=new Set(local.map(transportRecordIdentity));
+          const restored=value.records.filter(record=>!localIdentities.has(transportRecordIdentity(record)))
+            .map(record=>({...record}));
+          for(const record of restored) this.persistedTransportRecords.add(record);
+          this.records.splice(0,this.records.length,...restored,...local);
+          trimRecords(this.records);
+          this.nextRecordId=Math.max(this.nextRecordId,value.nextRecordId);
           this.ready = true;
           finish();
           this.pump();
@@ -504,6 +533,23 @@ export class ChildProcessTelemetryService implements BridgeTelemetryService {
         this.inFlight = undefined;
         if (value.ok) {
           updateTelemetryRecordId(completed.value, value.recordId);
+          if(completed.value.recordType==='transport') {
+            if(value.retained) {
+              const record=completed.value.record;
+              this.persistedTransportRecords.add(record);
+              // A ready snapshot can contain a write whose ACK was lost before
+              // restart. Resolve that retry to one cached record, not two.
+              for(let index=this.records.length-1;index>=0;index--) {
+                const other=this.records[index]!;
+                if(other!==record && transportRecordIdentity(other)===transportRecordIdentity(record))
+                  this.records.splice(index,1);
+              }
+            }
+            else {
+              const index=this.records.indexOf(completed.value.record);
+              if(index>=0) this.records.splice(index,1);
+            }
+          }
           this.nextRecordId = Math.max(this.nextRecordId, value.recordId + 1);
           this.lastPersistedAt = value.persistedAt;
         }
@@ -547,6 +593,7 @@ export class ChildProcessTelemetryService implements BridgeTelemetryService {
     if (this.child !== child) return;
     this.child = undefined;
     this.ready = false;
+    this.retentionRequests.clear();
     if (this.inFlight) {
       if ("drops" in this.inFlight) this.dropsDirty = true;
       else {
@@ -798,9 +845,11 @@ async function runChild(
       }
       if(value.type==="retain") {
         let ok=false;
-        try {if(database) {sweepTelemetryHistory(database,policySource);ok=true;}}
+        let deleted:DeletedTransportRecord[]=[];
+        try {if(database) {sweepTelemetryHistory(database,policySource,Date.now(),64,
+          records=>{deleted=records;});ok=true;}}
         catch {if(database) database.prepare("INSERT INTO telemetry_meta(key,value) VALUES ('history_policy_error','unavailable') ON CONFLICT(key) DO UPDATE SET value='unavailable'").run();}
-        send({type:"retained",ok});return;
+        send({type:"retained",requestId:value.requestId,ok,deleted});return;
       }
       if (value.type === "drops") {
         let ok = false;
@@ -817,11 +866,14 @@ async function runChild(
         return;
       }
       let ok = false;
+      let retained = false;
       let persistedRecordId = value.entry.id;
       try {
         if (!database) throw new Error("Telemetry database is closed.");
         persistedRecordId = persistTelemetryRecord(database, value.entry, nextRecordId,policySource);
         nextRecordId = Math.max(nextRecordId, persistedRecordId + 1);
+        retained = value.entry.recordType !== 'transport' || Boolean(database.prepare(
+          'SELECT 1 FROM transport_observations WHERE observation_id=?').get(persistedRecordId));
         ok = true;
       } catch { ok = false; }
       send({
@@ -830,6 +882,7 @@ async function runChild(
         deliveryId: value.entry.deliveryId,
         recordId: persistedRecordId,
         ok,
+        retained,
         ...(ok ? { persistedAt: Date.now() } : {})
       });
     });
@@ -1195,10 +1248,22 @@ function trimRecords(records: TransportObservationRecord[]): void {
   if (records.length > RETENTION_LIMIT) records.splice(0, records.length - RETENTION_LIMIT);
 }
 
+function transportRecordIdentity(record:DeletedTransportRecord|TransportObservationRecord):string {
+  return `${record.observationId}:${record.bridgeInstanceId}:${record.createdAt}`;
+}
+
 function isChildMessage(value: unknown): value is ChildMessage {
   if (!value || typeof value !== "object") return false;
   const message = value as Record<string, unknown>;
-  if (message.type === "retained") return typeof message.ok === "boolean";
+  if (message.type === "retained") return typeof message.ok === "boolean" &&
+    typeof message.requestId === "string" && isUuid(message.requestId) &&
+    Array.isArray(message.deleted) && message.deleted.length<=64 && message.deleted.every(record=>{
+      if(!record || typeof record!=='object') return false;
+      const item=record as Record<string,unknown>;
+      return Number.isSafeInteger(item.observationId) && Number(item.observationId)>0 &&
+        typeof item.bridgeInstanceId==='string' && isUuid(item.bridgeInstanceId) &&
+        typeof item.createdAt==='number' && Number.isFinite(item.createdAt);
+    });
   if (message.type === "fatal") return typeof message.message === "string";
   if (message.type === "ready") {
     return Array.isArray(message.records) && Number.isSafeInteger(message.nextRecordId) &&
@@ -1208,13 +1273,14 @@ function isChildMessage(value: unknown): value is ChildMessage {
   return message.type === "ack" &&
     ["transport", "measurement", "diagnostic"].includes(String(message.recordType)) &&
     typeof message.deliveryId === "string" && isUuid(message.deliveryId) &&
-    Number.isSafeInteger(message.recordId) && typeof message.ok === "boolean";
+    Number.isSafeInteger(message.recordId) && typeof message.ok === "boolean" && typeof message.retained === "boolean";
 }
 
 function isParentMessage(value: unknown): value is ParentMessage {
   if (!value || typeof value !== "object") return false;
   const message = value as Record<string, unknown>;
-  if (message.type === "close" || message.type === "retain") return true;
+  if (message.type === "close") return true;
+  if (message.type === "retain") return typeof message.requestId==='string' && isUuid(message.requestId);
   if (Buffer.byteLength(JSON.stringify(value), "utf8") > MAX_MESSAGE_BYTES) return false;
   if (message.type === "drops") return Array.isArray(message.counters);
   return message.type === "record" && typeof message.entry === "object" &&
