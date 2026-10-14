@@ -38,6 +38,8 @@ describe('Job exact-detail consumer contract',()=>{
  it('retries legacy only when jobs mode is unsupported',async()=>{
   const {c}=context();let requests:any[]=[];c.callTool=async(_n:string,args:any)=>{requests.push(args);return args.historyMode?{isError:true,content:[{type:'text',text:'-32602 Unrecognized key historyMode'}]}:{kind:'dashboard'}};
   await vm.runInContext('dashboardRead({scope:"all"})',c);expect(requests).toHaveLength(2);expect(requests[0].historyMode).toBe('jobs');expect(requests[1].historyMode).toBeUndefined();
+  requests=[];c.callTool=async(_n:string,args:any)=>{requests.push(args);return {isError:true,content:[{type:'text',text:'-32601 Method not found'}]}};
+  await expect(vm.runInContext('dashboardRead({scope:"all"})',c)).rejects.toThrow();expect(requests).toHaveLength(1);
   requests=[];c.callTool=async(_n:string,args:any)=>{requests.push(args);return {isError:true,content:[{type:'text',text:'FORBIDDEN'}]}};
   await expect(vm.runInContext('dashboardRead({scope:"all"})',c)).rejects.toThrow();expect(requests).toHaveLength(1);
  });

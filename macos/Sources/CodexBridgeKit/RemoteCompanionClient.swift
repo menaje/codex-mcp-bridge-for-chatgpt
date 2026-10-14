@@ -421,7 +421,7 @@ public struct RemoteCompanionClient: RemoteBridgeApplicationClient, Sendable {
         var params = DashboardParameters(limit: limit, terminalOffset: terminalOffset, enrich: enrich, statusFilter: statusFilter, includeHistory: includeHistory, problems: problems)
         params.historyMode = "jobs"; params.statusOffset = statusOffset
         do { return try await call("dashboard.snapshot", params: params, timeout: enrich ? 10 : 3) }
-        catch RemoteCompanionError.server(let code, let message) where code == -32601 || code == -32602 && message.contains("historyMode") {
+        catch RemoteCompanionError.server(let code, let message) where code == -32602 && message.contains("historyMode") {
             params.historyMode = nil
             return try await call("dashboard.snapshot", params: params, timeout: enrich ? 10 : 3)
         }

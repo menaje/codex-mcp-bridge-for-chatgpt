@@ -1459,6 +1459,22 @@ describe("current bridge tool contracts", () => {
     expect(job.sessionDecision).not.toHaveProperty("requiredSkills");
   });
 
+  it("reads exact Job detail through the mounted Dashboard MCP route", async () => {
+    const scopeId="41414141-4141-4141-8141-414141414141",jobId=randomUUID(),at=Date.now()-1000;
+    const agent=state.createAgent({scopeId,agentName:"Exact owner"});
+    state.upsertJob({jobId,requestId:randomUUID(),scopeId,agentId:agent.agentId,status:"failed",createdAt:at,updatedAt:at+100,
+      executionName:"Recorded execution",summary:"Stored content preview",error:"recorded failure"});
+    state.deleteJob(jobId);
+    const args={view:"dashboard-execution",widgetInstanceId:randomUUID(),scope:"all",scopeId,jobId};
+    const result=await client.callTool({name:"codex_ui_read",arguments:args});
+    expect(result.isError,JSON.stringify(result)).not.toBe(true);
+    const detail=result.structuredContent as any;
+    expect(detail).toMatchObject({kind:"dashboard-execution",scopeId,jobId,execution:{jobId,scopeId,executionName:"Recorded execution",summary:"Stored content preview",error:"recorded failure"}});
+    expect(detail.executionRevision).toBe(detail.execution.executionRevision);
+    expect(await client.callTool({name:"codex_ui_read",arguments:{...args,expectedExecutionRevision:"0".repeat(64)}})).toMatchObject({isError:true});
+    expect(await client.callTool({name:"codex_ui_read",arguments:{...args,scopeId:"42424242-4242-4242-8242-424242424242"}})).toMatchObject({isError:true});
+  });
+
   it("publishes Settings hydration without undefined optional catalog fields", async () => {
     const result = await client.callTool({
       name: "codex_ui_read",

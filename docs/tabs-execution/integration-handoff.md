@@ -1,0 +1,15 @@
+# Job execution tabs integration handoff
+
+Base: dev `2dedefbf9ab63f02a0d8bf0a14a82ce8abae315e` (PR256). A server commit: `6a282a5`. B source commit: `346e51979a1e21e05d42ea07dc354531375e4043`, cherry-picked as `fe1f88b`. This candidate preserves the PR256 orphan settlement and foreground/runtime boundaries.
+
+The Job-mode projection pages every retained terminal execution and counts actual active and terminal Jobs. Exact scoped Job detail is read-only through both private/remote `dashboard.execution-detail` and the mounted card `codex_ui_read` view `dashboard-execution`. Linked incidents use exact retained identity and separate distinct affected Jobs, unavailable linked Jobs, Jobless system incidents, and occurrence totals. Historical cancellation is neutral; missing legacy failure/interruption reasons remain unrecorded. Future execution names are frozen from their Activity context at admission, and settled results retain a bounded sanitized preview. No historical original or missing reason is fabricated.
+
+Both clients consume this additive contract, unfold prepared summaries without a request, and cache exact detail with scope/connection/project/revision/policy/expiry fencing. Legacy parameter rejection retries without `historyMode`; an unavailable Dashboard method does not repeat the same unsupported request. Processing controls remain absent from problem history. Current work security/input controls are preserved.
+
+All 17 new shared keys are translated in nine supported languages. Localization and Dashboard resource inventories are regenerated. The browser fixture now explicitly chooses English for its English text assertions.
+
+Validation before independent review: 195 relevant source tests, one additional real mounted MCP detail test, eight browser scenarios, TypeScript/build/release/localization checks, and 320 native tests (three existing skips; no failures after compatibility correction). The RPC/isolated-reader tests are included in those source tests. Private operating-state projection evidence uses read-only connections and retains only counts/availability, without original payloads. No operating app replacement, settings/authentication changes, operating SQL mutation/deletion, #249 modification, full unrelated issue revalidation, or long-duration test was performed.
+
+The original native run exposed duplicate legacy retry when `dashboard.snapshot` itself was unavailable. The final run after restricting fallback to rejected `historyMode` parameters passes. Earlier whole-Node-suite failures outside this change remain historical limitations; this handoff does not claim that whole suite is repaired.
+
+The exact final candidate SHA and command results are recorded in private `evidence/tabs-execution/result.json`. R must review that fixed candidate before dev integration. Draft PR, remote review, dev integration, and operating application acceptance remain separate gates.
