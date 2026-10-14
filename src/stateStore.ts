@@ -2585,6 +2585,83 @@ export class BridgeStateStore {
     });
   }
 
+  /** A current-state proof, independent of historical incident bodies and retry budgets. */
+  private endedOrphanRevision(agent: BridgeAgent): string | undefined {
+    if (!agent.currentThreadId || agent.currentJobId) return undefined;
+    const connection=this.threadConnections.get(agent.currentThreadId);
+    if (connection?.agentId!==agent.agentId || connection.scopeId!==agent.scopeId ||
+        connection.phase!=="released" || connection.evidence!=="worker-exited" || connection.handoffRequested ||
+        this.threadConnections.hasUnfinishedWork(agent.currentThreadId)) return undefined;
+    // Archived history cannot grant permission to ignore surviving control state.
+    if (this.database.prepare(`SELECT 1 FROM jobs j WHERE j.archived_at IS NOT NULL
+      AND (j.agent_id=? OR j.thread_id=? OR j.source_thread_id=?) AND (
+        j.status IN ('running','terminating','termination-failed') OR
+        EXISTS(SELECT 1 FROM job_interactions i WHERE i.job_id=j.job_id AND i.is_blocking=1) OR
+        EXISTS(SELECT 1 FROM cancellation_intents c WHERE (c.target_job_id=j.job_id OR
+          (c.target_kind='activity' AND c.target_activity_id=j.activity_id)) AND c.status IN ('recorded','dispatched')))
+      LIMIT 1`).get(agent.agentId,agent.currentThreadId,agent.currentThreadId)) return undefined;
+    return "orphan-ended-v1:"+createHash("sha256").update(JSON.stringify([
+      agent.agentId,agent.scopeId,agent.currentThreadId,connection.revision,this.latestControlJob(agent.agentId)
+    ])).digest("hex");
+  }
+
+  hasEndedOrphanProof(agentId: string): boolean {
+    return this.endedOrphanProofAgentIds([agentId]).has(agentId);
+  }
+
+  /** Batch the proof and its current authority before dashboard ranking. */
+  endedOrphanProofAgentIds(agentIds: readonly string[]): Set<string> {
+    const result=new Set<string>(),ids=[...new Set(agentIds)];
+    for (let offset=0;offset<ids.length;offset+=500) {
+      const part=ids.slice(offset,offset+500);
+      const rows=this.database.prepare(`SELECT a.agent_id,a.scope_id,a.current_thread_id,c.revision connection_revision,r.revision proof_revision,
+        (SELECT job_id FROM jobs WHERE agent_id=a.agent_id ORDER BY created_at DESC,job_id DESC LIMIT 1) control_job_id,
+        (SELECT thread_id FROM jobs WHERE agent_id=a.agent_id ORDER BY created_at DESC,job_id DESC LIMIT 1) control_thread_id
+        FROM agents a JOIN runtime_problem_resolutions r ON r.agent_id=a.agent_id
+        JOIN thread_connections c ON c.thread_id=a.current_thread_id AND c.agent_id=a.agent_id AND c.scope_id=a.scope_id
+        WHERE a.agent_id IN (${part.map(()=>"?").join(",")}) AND a.lifecycle='idle' AND a.current_job_id IS NULL
+          AND r.revision LIKE 'orphan-ended-v1:%' AND c.phase='released' AND c.evidence='worker-exited' AND c.handoff_requested=0
+          AND NOT EXISTS(SELECT 1 FROM jobs j WHERE (j.agent_id=a.agent_id OR j.thread_id=a.current_thread_id OR j.source_thread_id=a.current_thread_id)
+            AND (j.status IN ('running','terminating','termination-failed') OR
+              EXISTS(SELECT 1 FROM job_interactions i WHERE i.job_id=j.job_id AND i.is_blocking=1) OR
+              EXISTS(SELECT 1 FROM cancellation_intents x WHERE (x.target_job_id=j.job_id OR
+                (x.target_kind='activity' AND x.target_activity_id=j.activity_id)) AND x.status IN ('recorded','dispatched'))))`)
+        .all(...part) as Array<{agent_id:string;scope_id:string;current_thread_id:string;connection_revision:number;
+          proof_revision:string;control_job_id:string|null;control_thread_id:string|null}>;
+      for (const row of rows) {
+        const control=row.control_job_id ? {jobId:row.control_job_id,threadId:row.control_thread_id} : undefined;
+        const revision="orphan-ended-v1:"+createHash("sha256").update(JSON.stringify([
+          row.agent_id,row.scope_id,row.current_thread_id,row.connection_revision,control])).digest("hex");
+        if (revision===row.proof_revision) result.add(row.agent_id);
+      }
+    }
+    return result;
+  }
+
+  settleEndedOrphan(input: {agentId:string;version:number;threadId:string;connectionRevision:number;
+    controlJobId?:string;now?:number}): BridgeAgent | undefined {
+    return this.transaction(() => {
+      const agent=this.getAgent(input.agentId),connection=this.threadConnections.get(input.threadId);
+      if (!agent || agent.version!==input.version || agent.lifecycle!=="orphaned" || agent.currentJobId ||
+          agent.currentThreadId!==input.threadId || connection?.revision!==input.connectionRevision ||
+          this.latestControlJob(agent.agentId)?.jobId!==input.controlJobId) return undefined;
+      const revision=this.endedOrphanRevision(agent);
+      if (!revision || this.database.prepare(`SELECT 1 FROM user_questions WHERE scope_id=?
+        AND json_extract(payload,'$.status')='pending' AND expires_at>? LIMIT 1`).get(agent.scopeId,input.now ?? Date.now()) ||
+        this.database.prepare(`SELECT 1 FROM steering_deliveries s JOIN jobs j ON j.job_id=s.job_id
+        WHERE (j.agent_id=? OR j.thread_id=? OR j.source_thread_id=?)
+          AND s.status IN ('prepared','dispatching','uncertain') LIMIT 1`).get(agent.agentId,input.threadId,input.threadId)) return undefined;
+      const now=input.now ?? Date.now();
+      const changed=this.database.prepare(`UPDATE agents SET lifecycle='idle',current_job_id=NULL,orphaned_reason=NULL,
+        version=version+1,updated_at=? WHERE agent_id=? AND version=? AND lifecycle='orphaned'
+        AND current_job_id IS NULL AND current_thread_id=?`).run(now,agent.agentId,input.version,input.threadId).changes;
+      if (!changed) return undefined;
+      this.workHistory.resolveRuntimeProblem(agent.agentId,revision,now);
+      this.nextScopeVersion(agent.scopeId,now);
+      return this.requireAgent(agent.agentId);
+    });
+  }
+
   renameAgent(agentId: string, name: string, now = Date.now()): BridgeAgent {
     return this.transaction(() => {
       const agent = this.requireAgent(agentId);

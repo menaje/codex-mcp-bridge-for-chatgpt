@@ -2267,8 +2267,9 @@ export class CodexJobRegistry {
   readonly runtimeAdmission: {
     acceptingNewJobs: boolean;
     pendingAdmissions: number;
+    admissionRevision: number;
     storageError?: BridgeStorageAdmissionError;
-  } = { acceptingNewJobs: true, pendingAdmissions: 0 };
+  } = { acceptingNewJobs: true, pendingAdmissions: 0, admissionRevision: 0 };
   readonly runtimeDrain = new RuntimeDrainGate(this.runtimeAdmission, initialRuntimeDrainBinding());
   private upstream?: CodexUpstream;
   private readonly recoverExecutions: boolean;
@@ -2952,6 +2953,12 @@ export class CodexJobRegistry {
   resolveHistoryRuntimeProblem(agent: BridgeAgent, revision: string): void {
     this.activityStore.transaction(() => this.activityStore.workHistory.resolveRuntimeProblem(agent.agentId, revision));
     this.notifyScope(agent.scopeId, agent.agentId);
+  }
+
+  settleEndedOrphan(input: Parameters<BridgeStateStore["settleEndedOrphan"]>[0]): BridgeAgent | undefined {
+    const agent=this.activityStore.settleEndedOrphan(input);
+    if (agent) this.notifyScope(agent.scopeId,agent.agentId);
+    return agent;
   }
 
   recordAgentMutation(scopeId: string, requestId: string, actionHash: string, result: unknown): void {
@@ -5185,6 +5192,7 @@ export function registerBridgeTools(
       );
     }
     runtimeAdmission.pendingAdmissions += 1;
+    runtimeAdmission.admissionRevision += 1;
     let released = false;
     return () => {
       if (released) return;
@@ -8620,6 +8628,74 @@ function recheckRecoveryIdentity(jobs: CodexJobRegistry, agent: BridgeAgent, han
   return jobs.admissionStateStore.automaticRecovery.handoffRecheckIdentity(identity,handoff);
 }
 
+function freshPositiveRuntime(entry: DashboardRuntimeCacheEntry | undefined, stamp:string): boolean {
+  const now=Date.now();
+  return Boolean(entry && entry.stamp===stamp && entry.retainUntil>now &&
+    (entry.observation.state==="busy" && (entry.livenessFreshUntil || 0)>now ||
+      entry.observation.backgroundProcessCount>0 && entry.freshUntil>now));
+}
+
+/** Worker exit plus a fresh non-loading process read can finish a stranded
+ * lifecycle without editing past failures or spending another recovery attempt. */
+export async function settleReleasedOrphan(jobs: CodexJobRegistry, upstream: CodexUpstream,
+  agentId: string): Promise<boolean> {
+  const store=jobs.admissionStateStore,agent=jobs.getAgent(agentId),thread=jobs.currentAgentThread(agentId);
+  const admission=jobs.runtimeAdmission;
+  if (!agent || agent.lifecycle!=="orphaned" || agent.currentJobId || !thread || thread.backendKind!=="app-server" ||
+      !admission.acceptingNewJobs || admission.pendingAdmissions>0 || !upstream.listLoadedBackgroundTerminals) return false;
+  const connection=store.threadConnections.get(thread.threadId),control=store.latestControlJob(agentId);
+  if (connection?.agentId!==agentId || connection.scopeId!==agent.scopeId || connection.phase!=="released" ||
+      connection.evidence!=="worker-exited" || connection.handoffRequested || store.threadConnections.hasUnfinishedWork(thread.threadId)) return false;
+  const cacheKey=dashboardRuntimeCacheKey(thread),before=dashboardRuntimeCaches.get(upstream)?.get(cacheKey);
+  if (freshPositiveRuntime(before,dashboardRuntimeStamp(agent,jobs.observedLatestJobForAgent(agentId)))) return false;
+  const admissionRevision=admission.admissionRevision;
+  let settled=false;
+  const read=runtimeReadPool(upstream).start(`orphan-end\0${agentId}\0${agent.version}\0${connection.revision}`,
+    async isCurrent=> {
+      const result=await inspectDashboardRuntime(upstream,{agentId,thread,stamp:dashboardRuntimeStamp(agent),inspectLiveness:false},isCurrent);
+      // null proves the Thread is unloaded. [] only proves that a loaded
+      // Thread has no background terminals; a foreground turn can still run.
+      if (result.observation.state==="confirmed" && result.observation.backgroundProcessState==="confirmed" &&
+          result.observation.backgroundProcessCount===0) {
+        result.observation.state="unknown";
+        if (isCurrent() && upstream.probeThread) {
+          result.requests++;
+          try {
+            const probe=await upstream.probeThread(thread.threadId,thread.backendKind as CodexBackendKind);
+            if (isCurrent() && probe.state==="resumable" && ["idle","notLoaded"].includes(probe.runtimeStatus || "")) {
+              result.observation.state=probe.runtimeStatus==="notLoaded" ? "not-loaded" : "idle";
+              // An active turn can start a terminal while becoming idle.
+              // Refresh the background list after the foreground observation.
+              result.requests++;
+              const terminals=await upstream.listLoadedBackgroundTerminals!(thread.threadId,thread.backendKind as CodexBackendKind);
+              result.observation.backgroundProcessCount=terminals?.length || 0;
+              if (terminals===null) result.observation.state="not-loaded";
+              if (!isCurrent()) result.observation.state="unknown";
+            }
+          } catch { result.observation.state="unknown"; }
+        }
+      }
+      return result;
+    },
+    result=> {
+      if (admission.pendingAdmissions>0 || !admission.acceptingNewJobs || admission.admissionRevision!==admissionRevision ||
+          dashboardRuntimeCaches.get(upstream)?.get(cacheKey)!==before ||
+          result.observation.backgroundProcessState!=="confirmed" || result.observation.backgroundProcessCount!==0 ||
+          !["idle","not-loaded"].includes(result.observation.state)) return;
+      settled=Boolean(jobs.settleEndedOrphan({agentId,version:agent.version,threadId:thread.threadId,
+        connectionRevision:connection.revision,controlJobId:control?.jobId}));
+      if (settled) {
+        runtimeReadPool(upstream).invalidate(key=>key!==`orphan-end\0${agentId}\0${agent.version}\0${connection.revision}` &&
+          (key.includes(cacheKey) || key.startsWith(`problem\0${agentId}\0`)));
+        dashboardRuntimeCaches.get(upstream)?.delete(cacheKey);
+        notifyCardObservation(upstream);
+      }
+    });
+  if (!read) return false;
+  await waitForDisplay(read,CARD_RUNTIME_BUDGET_MS);
+  return settled;
+}
+
 /** An unavailable historical thread is a display limitation, not a new
  * incident. Keep investigating actual work and connections whose shutdown
  * is still unconfirmed, independently of whether their Job history expired. */
@@ -8640,11 +8716,17 @@ export function configureAutomaticRecovery(
   acceptingNewJobs: () => boolean
 ): void {
   const store = jobs.admissionStateStore;
+  const settling=new Set<string>();
+  // Survey deferral is independent of whether a physical read slot was
+  // obtained. Only the same authoritative execution/connection generation
+  // may retain this preservation contract during missing-record reconciliation.
+  const settlementDeferred=new Map<string,{scopeId:string;threadId:string;connectionRevision:number;controlJobId?:string}>();
   const candidates = async (agentId?: string): Promise<AutomaticRecoveryCandidate[]> => {
     if (!acceptingNewJobs() || jobs.runtimeAdmission.pendingAdmissions > 0) return [];
     // Production reconciliation passes exactly one Agent. No changed-Agent
     // event may materialize the global Job, incident, or connection catalog.
     if (!agentId) return [];
+    settlementDeferred.delete(agentId);
     const agent = jobs.getAgent(agentId);
     if (!agent) return [];
     const latest = jobs.observedLatestJobForAgent(agentId);
@@ -8652,11 +8734,30 @@ export function configureAutomaticRecovery(
     const thread = jobs.currentAgentThread(agentId);
     if (!thread || thread.backendKind !== "app-server") return [];
     const connection = store.threadConnections.get(thread.threadId);
+    const observation = dashboardRuntimeCaches.get(upstream)?.get(dashboardRuntimeCacheKey(thread));
+    const currentObservation=observation?.stamp===dashboardRuntimeStamp(agent,latest) ? observation : undefined;
+    if (agent.lifecycle==="idle" && connection?.phase==="released" && connection.evidence==="worker-exited" &&
+        store.hasEndedOrphanProof(agentId)) return [];
+    if (agent.lifecycle==="orphaned" && !agent.currentJobId && upstream.listLoadedBackgroundTerminals &&
+        !freshPositiveRuntime(currentObservation,dashboardRuntimeStamp(agent,latest)) &&
+        connection?.agentId===agentId && connection.scopeId===agent.scopeId && connection.phase==="released" &&
+        connection.evidence==="worker-exited" && !connection.handoffRequested && !store.threadConnections.hasUnfinishedWork(thread.threadId)) {
+      settlementDeferred.set(agentId,{scopeId:agent.scopeId,threadId:thread.threadId,connectionRevision:connection.revision,
+        controlJobId:store.latestControlJob(agentId)?.jobId});
+      // The controller serializes surveys; the current survey's marker is
+      // always newest. Bound remembered deferrals independently of registry size.
+      if (settlementDeferred.size>128) settlementDeferred.delete(settlementDeferred.keys().next().value!);
+      // Display/transport waits own a bounded pool reservation, never the
+      // global serial recovery sweep. Completion retains the same CAS fences.
+      if (!settling.has(agentId)) {
+        settling.add(agentId);
+        void settleReleasedOrphan(jobs,upstream,agentId).catch(()=>false).finally(()=>settling.delete(agentId));
+      }
+      return [];
+    }
     const releasableConnection = connection?.persistence === "persistent" &&
       connection.lastJobId && !["released", "releasing"].includes(connection.phase)
       ? connection : undefined;
-    const observation = dashboardRuntimeCaches.get(upstream)?.get(dashboardRuntimeCacheKey(thread));
-    const currentObservation=observation?.stamp===dashboardRuntimeStamp(agent,latest) ? observation : undefined;
     const currentContext=hasCurrentRecheckContext(jobs,agent,thread,currentObservation?.observation,connection);
     const unknown = currentObservation &&
       (currentObservation.unavailable || currentObservation.observation.state === "unknown" || currentObservation.observation.backgroundProcessState === "unknown");
@@ -8796,6 +8897,20 @@ export function configureAutomaticRecovery(
     }
   };
   jobs.configureAutomaticRecovery({candidates,
+    preserveMissing:record=> {
+      if (record.kind!=="recheck") return false;
+      const agent=jobs.getAgent(record.agentId);
+      if (!agent || record.scopeId!==agent.scopeId) return false;
+      // Settlement changes current control state, not any of this Agent's
+      // past incident journals, including legacy records without lineage.
+      const deferred=settlementDeferred.get(agent.agentId),connection=deferred ? store.threadConnections.get(deferred.threadId) : undefined;
+      const sameDeferredGeneration=deferred && agent.lifecycle==="orphaned" && !agent.currentJobId &&
+        deferred.scopeId===agent.scopeId && deferred.threadId===agent.currentThreadId &&
+        connection?.agentId===agent.agentId && connection.scopeId===agent.scopeId &&
+        connection.revision===deferred.connectionRevision && connection.phase==="released" && connection.evidence==="worker-exited" &&
+        store.latestControlJob(agent.agentId)?.jobId===deferred.controlJobId && !store.threadConnections.hasUnfinishedWork(deferred.threadId);
+      return Boolean(sameDeferredGeneration) || store.hasEndedOrphanProof(agent.agentId);
+    },
     pageAgents: (after, limit) => store.recoveryAgentIds(after, limit),
     agentForJob: jobId => jobs.get(jobId)?.agentId,
     attempt,enabled:() => acceptingNewJobs() && jobs.runtimeAdmission.pendingAdmissions === 0,
@@ -11508,6 +11623,7 @@ export type DashboardRuntimeCandidate = {
   thread: BridgeAgentThread;
   stamp: string;
   inspectLiveness: boolean;
+  revalidateLoadedForeground?: boolean;
 };
 
 export type BridgeDashboardRuntimePlan = {
@@ -11973,7 +12089,7 @@ async function inspectDashboardRuntime(
   const backendKind = thread.backendKind as CodexBackendKind;
   let state: DashboardRuntimeObservation["state"] = "confirmed";
   let requests = 0;
-  const coverage = inspectLiveness ? "liveness" as const : "background" as const;
+  let coverage: DashboardRuntimeCacheEntry["coverage"] = inspectLiveness ? "liveness" : "background";
   if (inspectLiveness && upstream.probeThread) {
     let probe: CodexThreadResumeProbe;
     try {
@@ -12045,7 +12161,7 @@ async function inspectDashboardRuntime(
   }
   try {
     requests += 1;
-    const terminals = await upstream.listLoadedBackgroundTerminals(thread.threadId, backendKind);
+    let terminals = await upstream.listLoadedBackgroundTerminals(thread.threadId, backendKind);
     if (terminals === null) {
       return {
         observation: {
@@ -12057,12 +12173,30 @@ async function inspectDashboardRuntime(
         coverage
       };
     }
+    if (candidate.revalidateLoadedForeground && terminals.length===0) {
+      // A proof describes a past ended generation. A subsequently loaded
+      // Thread with no background terminals can still have a foreground turn.
+      state="unknown";
+      if (shouldContinue() && upstream.probeThread) {
+        requests++;
+        coverage="liveness";
+        const probe=await upstream.probeThread(thread.threadId,backendKind);
+        if (shouldContinue() && probe.state==="busy") state="busy";
+        else if (shouldContinue() && probe.state==="resumable" && ["idle","notLoaded"].includes(probe.runtimeStatus || "")) {
+          state=probe.runtimeStatus==="notLoaded" ? "not-loaded" : "idle";
+          requests++;
+          terminals=await upstream.listLoadedBackgroundTerminals(thread.threadId,backendKind);
+          if (terminals===null) state="not-loaded";
+          if (!shouldContinue()) state="unknown";
+        }
+      }
+    }
     return {
       observation: {
         state,
         backgroundProcessState: "confirmed",
-        backgroundProcessCount: terminals.length,
-        backgroundProcessIds: terminals.map((terminal) => terminal.processId)
+        backgroundProcessCount: terminals?.length || 0,
+        backgroundProcessIds: terminals?.map((terminal) => terminal.processId) || []
       },
       requests,
       coverage
@@ -12158,7 +12292,10 @@ function cacheDashboardRuntime(
 ): void {
   const cacheKey = dashboardRuntimeCacheKey(candidate.thread);
   const previous = cache.get(cacheKey);
+  const conclusiveUnloaded=result.observation.state==="not-loaded" &&
+    result.observation.backgroundProcessState==="confirmed" && result.observation.backgroundProcessCount===0;
   const canRetainLiveness =
+    !conclusiveUnloaded &&
     result.coverage === "background" &&
     previous?.stamp === candidate.stamp &&
     previous.coverage === "liveness" &&
@@ -12201,7 +12338,7 @@ function cacheDashboardRuntime(
       const confirmed = !current.unavailable && current.observation.backgroundProcessState === "confirmed" &&
         ["confirmed","idle","not-loaded","busy"].includes(current.observation.state);
       const currentContext=hasCurrentRecheckContext(jobs,agent,candidate.thread,current.observation);
-      if (confirmed || currentContext) {
+      if ((confirmed || currentContext) && !jobs.admissionStateStore.hasEndedOrphanProof(agent.agentId)) {
         const identity=recheckRecoveryIdentity(jobs,agent,confirmed || currentContext);
         if(identity) jobs.admissionStateStore.automaticRecovery.observeRecheck(identity,!confirmed,Date.now(),
           confirmed ? current.observation.state === "busy" ? "active-turn-observed" : "runtime-observed" : undefined);
@@ -12281,7 +12418,7 @@ async function inspectDashboardRuntimes(
           : 0;
       let started = false;
       const request = pool.start(
-        `${dashboardRuntimeCacheKey(candidate.thread)}\0${candidate.stamp}\0${candidate.inspectLiveness}`,
+        `${dashboardRuntimeCacheKey(candidate.thread)}\0${candidate.stamp}\0${candidate.inspectLiveness}\0${Boolean(candidate.revalidateLoadedForeground)}`,
         isCurrent => {
           started = true;
           requests += initiallyCountedRequests;
@@ -12488,9 +12625,13 @@ async function buildDashboardRuntimePlan(
     const previous = latestJobs.get(job.agentId);
     if (!previous || previous.createdAt < job.createdAt) latestJobs.set(job.agentId, job);
   }
+  const endedOrphans=jobs.admissionStateStore.endedOrphanProofAgentIds(allAgents.map(agent=>agent.agentId));
   const candidates = allAgents.flatMap((agent) => {
     const thread = currentThreads.get(agent.agentId);
     if (!thread || !backendSupports(thread.backendKind, "supportsThreadInspection")) return [];
+    // Keep non-loading background reads after settlement. Only historical
+    // orphan liveness probes are suppressed by the ended-generation proof.
+    const endedOrphan=endedOrphans.has(agent.agentId);
     const latestJob = latestJobs.get(agent.agentId);
     const resolvedOrphan = agent.lifecycle === "orphaned" && !agent.currentJobId &&
       jobs.admissionStateStore.workHistory.runtimeResolution(
@@ -12502,7 +12643,8 @@ async function buildDashboardRuntimePlan(
         agentId: agent.agentId,
         thread,
         stamp: dashboardRuntimeStamp(agent, latestJob),
-        inspectLiveness: !resolvedOrphan && (
+        revalidateLoadedForeground:endedOrphan,
+        inspectLiveness: !endedOrphan && !resolvedOrphan && (
           statusFilter === undefined && visibleAgentIds.has(agent.agentId) ||
           agent.lifecycle === "active" ||
           agent.lifecycle === "waiting-input" ||
@@ -13244,11 +13386,21 @@ async function buildDashboardView(
       records.push(record);recoveriesByJob.set(record.executionFailureJobId,records);
     }
     const currentControls=jobs.admissionStateStore.latestControlJobs(automaticRecords.map(record=>record.agentId));
+    const endedProofs=jobs.admissionStateStore.endedOrphanProofAgentIds(automaticRecords.map(record=>record.agentId));
     const retainedById=new Map<string,DashboardRetainedJobSummary>();
     const projectsByActivity=new Map<string,{projectId?:string;projectName?:string}>();
     const automaticSummary=(record:typeof automaticRecords[number]|undefined)=>record ? {
       kind:record.kind,state:record.state,attempts:record.attempts,reason:redactSensitiveText(record.reason).slice(0,1000),
       ...(record.evidence ? {evidence:redactSensitiveText(record.evidence).slice(0,1000)} : {})} : undefined;
+    const endedProofFor=(agentId:string):boolean=> {
+      return endedProofs.has(agentId);
+    };
+    const positiveRuntimeAfterSettlement=(record:typeof automaticRecords[number]):boolean=> {
+      const agent=agentById.get(record.agentId),runtime=runtimeByAgent.get(record.agentId);
+      return Boolean(agent && endedProofFor(agent.agentId) && record.threadId===agent.currentThreadId &&
+        (!record.jobId || record.jobId===(agent.currentJobId || currentControls.get(agent.agentId)?.jobId)) &&
+        (runtime?.state==="busy" || (runtime?.backgroundProcessCount || 0)>0));
+    };
     const sourceRow=(jobId:string|undefined,agentId:string,scope:string,at:number,activityId?:string,projectId?:string):DashboardRow=>{
       const job=jobId ? fullJobs.get(jobId) : undefined;
       if(job) return {...jobRow(job,"recent"),controlKind:null,history:[],historyCount:0};
@@ -13273,7 +13425,7 @@ async function buildDashboardView(
         row:()=>sourceRow(record.jobId,record.agentId || "",record.scopeId,record.occurredAt,record.activityId),value:{problemKey:record.problemKey,
         revision:problemRevision([record.jobId,record.status,record.occurredAt,record.reason,recoveries]),kind:"failed",source:"execution",
         review:"automatic",acknowledgedAt:null,occurredAt:new Date(record.occurredAt).toISOString(),observedAt:new Date(record.occurredAt).toISOString(),
-        currentImpact:"none",reason:record.reason ? redactSensitiveText(record.reason).slice(0,1000) : null,
+        currentImpact:recoveries.some(positiveRuntimeAfterSettlement) ? "confirmed" : "none",reason:record.reason ? redactSensitiveText(record.reason).slice(0,1000) : null,
         canAcknowledge:false,canUnacknowledge:false,canRecheck:false,canRetryStop:false,
         ...(recovery ? {automatic:automaticSummary(recovery)} : {})}});
     }
@@ -13287,9 +13439,10 @@ async function buildDashboardView(
       const sameExecution=Boolean(agent && sameThread && (record.jobId
         ? record.jobId===(agent.currentJobId || control?.jobId) : !agent.currentJobId));
       const current=record.jobId ? fullJobs.get(record.jobId) : undefined;
+      const ended=agent && endedProofFor(agent.agentId);
       const impact: "none"|"confirmed"|"unknown"=record.state==="resolved"||!sameExecution ? "none"
-        : current?.status==="termination-failed" || (runtime?.backgroundProcessCount || 0)>0 ? "confirmed"
-        : runtime?.state==="unknown" || agent?.lifecycle==="orphaned" || record.kind==="recheck" && !runtime ? "unknown" : "none";
+        : current?.status==="termination-failed" || runtime?.state==="busy" || (runtime?.backgroundProcessCount || 0)>0 ? "confirmed"
+        : ended ? "none" : runtime?.state==="unknown" || agent?.lifecycle==="orphaned" || record.kind==="recheck" && !runtime ? "unknown" : "none";
       entries.push({recoveryKeys:[record.key],jobId:record.jobId,activityId:record.activityId,
         row:()=>sourceRow(record.jobId,record.agentId,record.scopeId,record.occurredAt,record.activityId,record.projectId),value:{problemKey:problemKey("automatic",record.key),revision:problemRevision(record),
         kind:record.kind==="retry-stop" ? "termination-failed" : "unknown",source:record.kind==="recheck" ? "runtime" : "recovery",
