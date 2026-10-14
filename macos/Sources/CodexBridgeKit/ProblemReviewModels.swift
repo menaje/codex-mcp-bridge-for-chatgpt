@@ -9,7 +9,7 @@ public enum ProblemView: String, Codable, Sendable, CaseIterable {
 }
 
 public enum ProblemKind: String, Codable, Sendable, CaseIterable {
-    case all, failed, unknown, orphaned
+    case all, failed, interrupted, cancelled, unknown, orphaned
     case terminationFailed = "termination-failed"
 }
 
@@ -27,6 +27,9 @@ public struct ProblemQuery: Codable, Sendable, Equatable {
 }
 
 public struct DashboardProblems: Codable, Sendable {
+    public var affectedExecutionCount: Int? = nil
+    public var unavailableExecutionCount: Int? = nil
+    public var systemIncidentCount: Int? = nil
     public let query: ProblemQuery
     public let revision: String
     public var incidentCount: Int? = nil
@@ -50,6 +53,18 @@ public struct ProblemPage: Codable, Sendable {
 }
 
 public struct DashboardProblem: Codable, Identifiable, Sendable {
+    public var jobId: String? = nil
+    public var scopeId: String? = nil
+    public var activityId: String? = nil
+    public var agentId: String? = nil
+    public var executionRevision: String? = nil
+    public var executionName: String? = nil
+    public var summary: String? = nil
+    public var error: String? = nil
+    public var reasonAvailability: String? = nil
+
+    public var executionKey: String? = nil
+    public var executionAvailability: String? = nil
     public var occurredAt: String? = nil
     public var currentImpact: String? = nil
     public var progress: [ProblemProgress]? = nil

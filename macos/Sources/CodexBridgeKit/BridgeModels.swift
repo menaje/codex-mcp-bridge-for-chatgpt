@@ -5,6 +5,8 @@ public struct EmptyParameters: Codable, Sendable {
 }
 
 public struct DashboardSnapshot: Codable, Sendable {
+    public var executionContractVersion: Int? = nil
+    public var historyModeApplied: String? = nil
     public var problems: DashboardProblems? = nil
     public let kind: String
     public let generatedAt: String
@@ -29,6 +31,7 @@ public struct DashboardSnapshot: Codable, Sendable {
 }
 
 public struct WorkHistoryPolicy: Codable, Sendable, Equatable {
+    public var policyRevision: String? = nil
     public var reviewUntilRetention: Bool? = nil
     public var automaticRecovery: Bool? = nil
     public let retentionDays: Int
@@ -204,6 +207,8 @@ public enum DashboardStatusFilter: String, Codable, Sendable {
 }
 
 public struct DashboardCounts: Codable, Sendable {
+    public var progressJobCount: Int? = nil
+    public var executionCount: Int? = nil
     public let trackedProjects: Int
     public let trackedConversations: Int
     public let retainedJobs: Int
@@ -268,6 +273,16 @@ public struct CancellationDisplay: Codable, Sendable {
 }
 
 public struct DashboardTurn: Codable, Sendable {
+    public var jobId: String? = nil
+    public var scopeId: String? = nil
+    public var activityId: String? = nil
+    public var agentId: String? = nil
+    public var executionRevision: String? = nil
+    public var executionName: String? = nil
+    public var summary: String? = nil
+    public var error: String? = nil
+    public var reasonAvailability: String? = nil
+
     public var executionKey: String? = nil
     public var endedAtSource: String? = nil
     public var detailAvailability: String? = nil
@@ -299,6 +314,16 @@ public struct DashboardHistoryDetail: Codable, Sendable {
 }
 
 public struct DashboardRow: Codable, Identifiable, Sendable {
+    public var jobId: String? = nil
+    public var scopeId: String? = nil
+    public var activityId: String? = nil
+    public var agentId: String? = nil
+    public var executionRevision: String? = nil
+    public var executionName: String? = nil
+    public var summary: String? = nil
+    public var error: String? = nil
+    public var reasonAvailability: String? = nil
+
     public var historyControls: HistoryControls? = nil
     public var handoff: ThreadHandoffStatus? = nil
     public var id: String { rowKey }
@@ -565,6 +590,7 @@ public struct PolicyActivation: Codable, Sendable {
 }
 
 public struct DashboardParameters: Codable, Sendable {
+    public var historyMode: String? = nil
     public var problems: ProblemQuery? = nil
     public var limit: Int
     public var terminalOffset: Int
@@ -1447,4 +1473,23 @@ public struct BridgeSkillPackageExport: Codable, Sendable, Equatable {
     public let bytes: Int
     public let contentDigest: String
     public let data: String
+}
+
+public struct DashboardExecutionDetail: Codable, Sendable {
+    public let kind: String
+    public let jobId: String
+    public let scopeId: String
+    public let executionRevision: String
+    public let policyRevision: String
+    public let execution: DashboardTurn
+}
+public struct DashboardExecutionDetailParameters: Codable, Sendable {
+    public let scopeId: String
+    public let jobId: String
+    public let expectedExecutionRevision: String?
+    public let expectedPolicyRevision: String?
+    public init(scopeId: String, jobId: String, expectedExecutionRevision: String? = nil, expectedPolicyRevision: String? = nil) {
+        self.scopeId = scopeId; self.jobId = jobId
+        self.expectedExecutionRevision = expectedExecutionRevision; self.expectedPolicyRevision = expectedPolicyRevision
+    }
 }

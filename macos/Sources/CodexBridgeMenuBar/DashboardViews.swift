@@ -462,20 +462,21 @@ struct DashboardPopoverView: View {
             if let problems = dashboard.problems {
                 DashboardProblemsSection(problems: problems)
             } else {
-                let rows = panel.rows(in: dashboard)
+                let rows = panel.rows(in: dashboard, now: model.dashboardHistoryNow())
                 DashboardSection(title: "dashboard.problems", emptyText: "problem.empty",
                     rows: rows,
                     total: rows.count,
                     groupsByActivity: true)
             }
         } else {
-            let rows = panel.rows(in: dashboard)
+            let rows = panel.rows(in: dashboard, now: model.dashboardHistoryNow())
             let currentRows = panel == .history
                 ? dashboard.activeRows
                 : rows.filter { $0.bucket == "active" }
             let recentRows = panel == .history
-                ? dashboard.terminalRows
+                ? (dashboard.historyModeApplied == "jobs" ? rows : dashboard.terminalRows)
                 : rows.filter { $0.bucket != "active" }
+            if panel != .history || dashboard.historyModeApplied != "jobs" {
             DashboardSection(
                 title: panel == .history ? "dashboard.active" : panel.title,
                 emptyText: "dashboard.noActive",
@@ -483,7 +484,8 @@ struct DashboardPopoverView: View {
                 total: currentRows.count,
                 groupsByActivity: true
             )
-            if panel == .running, dashboard.statusPagination?.hasNext == true {
+            }
+            if panel == .running, dashboard.historyModeApplied == "jobs" ? currentRows.count < (dashboard.counts.progressJobCount ?? 0) : dashboard.statusPagination?.hasNext == true {
                 Button("macos.showmore") { Task { await model.loadMoreRunning() } }
                     .disabled(model.loadingMoreRunning)
             }
@@ -1030,9 +1032,9 @@ private struct DashboardSummary: View {
 
     var body: some View {
         LazyVGrid(columns: columns, spacing: 8) {
-            summaryButton("macos.running", value: counts.active, symbol: "play.fill", panel: .running)
-            summaryButton("macos.workrunhistory", value: model.dashboard?.pagination.terminal.total ?? 0, symbol: "clock", panel: .history)
-            summaryButton("dashboard.problems", value: counts.problemCount, symbol: "exclamationmark.triangle.fill", panel: .problems)
+            summaryButton("macos.running", value: counts.progressJobCount ?? (counts.running + counts.inputRequired + counts.approvalRequired + counts.terminating), symbol: "play.fill", panel: .running)
+            summaryButton(model.dashboard?.historyModeApplied == "jobs" ? "macos.workrunhistory" : "execution.historyGrouped", value: model.dashboard?.historyModeApplied == "jobs" ? counts.executionCount ?? model.dashboard?.pagination.terminal.total ?? 0 : model.dashboard?.pagination.terminal.total ?? 0, symbol: "clock", panel: .history)
+            summaryButton("dashboard.problems", value: model.dashboard?.problems?.affectedExecutionCount ?? counts.problemCount, symbol: "exclamationmark.triangle.fill", panel: .problems)
         }
         .disabled(model.changingProblems)
     }
@@ -1053,6 +1055,11 @@ private struct DashboardSummary: View {
                 .minimumScaleFactor(0.8)
                 Text(value, format: .number)
                     .font(.title3.bold().monospacedDigit())
+                if panel == .problems, let system = model.dashboard?.problems?.systemIncidentCount {
+                    Text(BridgeAppLocalization.format("execution.systemAndUnavailable", locale: model.interfaceLocale,
+                        system, model.dashboard?.problems?.unavailableExecutionCount ?? 0))
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 8)
@@ -1208,7 +1215,7 @@ private struct DashboardActivityGroupView: View {
                     }
                 }
                 Text(BridgeAppLocalization.format(
-                    "macos.agents",
+                    group.rows.allSatisfy { $0.jobId != nil } ? "execution.count" : "macos.agents",
                     locale: locale,
                     group.rows.count
                 ))
@@ -1312,6 +1319,8 @@ struct DashboardRowView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            if row.jobId != nil { ExecutionRecordView(row: row) }
+            if row.jobId == nil {
             HStack(alignment: .firstTextBaseline) {
                 Image(systemName: StatusPresentation.symbol(row.status))
                     .foregroundStyle(StatusPresentation.color(row.status))
@@ -1335,6 +1344,7 @@ struct DashboardRowView: View {
                         .padding(.vertical, 3)
                         .background(.quaternary, in: Capsule())
                 }
+            }
             }
             if row.latestTurn != nil {
                 DashboardExecutionLabel(text: BridgeAppLocalization.format(
@@ -1415,7 +1425,7 @@ struct DashboardRowView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             }
-            if let cancellation = row.latestTurn?.cancellation,
+            if row.jobId == nil, let cancellation = row.latestTurn?.cancellation,
                presentation == .idle || cancellation.targetKind != "activity" {
                 CancellationReason(cancellation: cancellation)
             }
@@ -1636,6 +1646,7 @@ private enum StatusPresentation {
         case "approval-required": return "checkmark.shield.fill"
         case "completed": return "checkmark.circle.fill"
         case "idle": return "pause.circle"
+        case "cancelled": return "stop.circle"
         case "terminating": return "stop.circle"
         default: return "exclamationmark.circle.fill"
         }
@@ -1645,7 +1656,7 @@ private enum StatusPresentation {
         switch status {
         case "running", "background-process-running": return .blue
         case "completed": return .green
-        case "idle": return .secondary
+        case "idle", "cancelled": return .secondary
         case "input-required", "approval-required", "terminating": return .orange
         default: return .red
         }

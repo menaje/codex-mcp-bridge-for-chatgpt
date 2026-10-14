@@ -310,7 +310,7 @@ final class DashboardPopoverTests: XCTestCase {
     }
 
     @MainActor
-    func testStatusPanelsUseTheLoadedSnapshotAndHistoryLoadsOnlyWhenOpened() async throws {
+    func testPreparedSnapshotPaneChangesDoNotRequestHistory() async throws {
         let f = try PopoverFixture(); defer { f.remove() }
         let model = f.model
         await model.refreshDashboard(enrich: false)
@@ -326,7 +326,7 @@ final class DashboardPopoverTests: XCTestCase {
         XCTAssertEqual(f.state.dashboardReadCount, initialReads)
         await model.toggleDashboardPanel(.history)
         XCTAssertEqual(model.dashboardPanel, .history)
-        XCTAssertEqual(f.state.dashboardReadCount, initialReads + 1)
+        XCTAssertEqual(f.state.dashboardReadCount, initialReads)
         XCTAssertEqual(model.dashboard?.historyIncluded, true)
         await model.toggleDashboardPanel(.history)
         XCTAssertNil(model.dashboardPanel)
@@ -478,6 +478,71 @@ final class DashboardPopoverTests: XCTestCase {
     }
 
     @MainActor
+    func testJobModeCountsEveryTerminalJobAndSeparatesSystemEvents() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.jobsContract = true; f.state.rowCount = 1
+        f.model.dashboardHistoryNow = { ISO8601DateFormatter().date(from: "2026-09-11T00:00:00Z")! }
+        await f.model.refreshDashboard(enrich: false)
+        let snapshot = try XCTUnwrap(f.model.dashboard)
+        XCTAssertEqual(snapshot.historyModeApplied, "jobs")
+        XCTAssertEqual(snapshot.counts.executionCount, 4)
+        XCTAssertEqual(snapshot.counts.progressJobCount, 1)
+        XCTAssertEqual(DashboardPanel.history.rows(in: snapshot, now: f.model.dashboardHistoryNow()).count, 4)
+        XCTAssertEqual(DashboardPanel.running.rows(in: snapshot).count, 1, "Progress consumes its own Job page, not the terminal status page")
+        XCTAssertEqual(Set(snapshot.terminalRows.map { $0.status }), ["completed", "failed", "interrupted", "cancelled"])
+        XCTAssertEqual(Set(snapshot.terminalRows.map { $0.agentId }).count, 1)
+        XCTAssertEqual(Set(snapshot.terminalRows.map { $0.jobId }).count, 4)
+        XCTAssertTrue(snapshot.terminalRows.allSatisfy { $0.historyCount == 0 })
+        XCTAssertEqual(snapshot.problems?.affectedExecutionCount, 2)
+        XCTAssertEqual(snapshot.problems?.systemIncidentCount, 1)
+        XCTAssertEqual(snapshot.problems?.unavailableExecutionCount, 1)
+        XCTAssertEqual(snapshot.problems?.incidentCount, 5)
+        XCTAssertEqual(ExecutionRecordPresentation.statusKey("cancelled"), "execution.cancelled")
+        XCTAssertEqual(snapshot.terminalRows.last?.reasonAvailability, "unrecorded")
+    }
+
+    @MainActor
+    func testExactJobDetailCacheSurvivesRefreshAndRejectsExpiryAndLateReplies() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.jobsContract = true; f.state.rowCount = 1
+        var now = ISO8601DateFormatter().date(from: "2026-09-11T00:00:00Z")!
+        f.model.dashboardHistoryNow = { now }
+        await f.model.refreshDashboard(enrich: false)
+        let row = try XCTUnwrap(f.model.dashboard?.terminalRows.first)
+        let target = try XCTUnwrap(f.model.executionTarget(row: row))
+        XCTAssertEqual(f.state.exactDetailReads, 0, "Prepared summary rendering never loads exact detail")
+        await f.model.loadExecutionDetail(target)
+        await f.model.loadExecutionDetail(target)
+        XCTAssertEqual(f.state.exactDetailReads, 1)
+        XCTAssertEqual(f.model.executionDetail(target)?.jobId, "job-completed")
+        await f.model.refreshDashboard(enrich: false)
+        XCTAssertNotNil(f.model.executionDetail(target))
+        now = ISO8601DateFormatter().date(from: "2026-10-10T00:00:00Z")!
+        XCTAssertNil(f.model.executionDetail(target))
+        now = ISO8601DateFormatter().date(from: "2026-09-11T00:00:00Z")!
+        let other = try XCTUnwrap(f.model.dashboard?.terminalRows[1])
+        let delayed = try XCTUnwrap(f.model.executionTarget(row: other))
+        f.state.exactDetailDelay = 0.1
+        let request = Task { await f.model.loadExecutionDetail(delayed) }
+        while f.state.exactDetailReads < 2 { await Task.yield() }
+        await f.model.refreshDashboard(enrich: false)
+        await request.value
+        XCTAssertNil(f.model.executionDetail(delayed), "A late exact reply cannot replace a newer snapshot")
+        XCTAssertEqual(f.state.exactDetailReads, 2)
+    }
+
+    @MainActor
+    func testUnsupportedJobModeRetriesLegacyWithoutInventingJobIdentity() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.rowCount = 1; f.state.rejectJobsMode = true
+        await f.model.refreshDashboard(enrich: false)
+        XCTAssertEqual(f.state.dashboardReadCount, 2)
+        XCTAssertNil(f.model.dashboard?.historyModeApplied)
+        XCTAssertNil(f.model.dashboard?.statusRows?.first?.jobId)
+        XCTAssertEqual(f.state.exactDetailReads, 0)
+    }
+
+    @MainActor
     func testStaleDeferredHistoryRefreshesInsteadOfAttachingToANewExecution() async throws {
         let f = try PopoverFixture(); defer { f.remove() }
         f.state.rowCount = 1
@@ -520,13 +585,11 @@ final class DashboardPopoverTests: XCTestCase {
         let model = f.model
         await model.refreshDashboard(enrich: false)
         f.state.delayHistory = true
-        let history = Task { await model.toggleDashboardPanel(.history) }
-        for _ in 0..<50 {
-            if model.dashboardDetailLoading { break }
-            try await Task.sleep(for: .milliseconds(5))
-        }
+        await model.toggleDashboardPanel(.history)
+        let history = Task { await model.refreshDashboard(enrich: false) }
+        while f.state.dashboardReadCount < 2 { await Task.yield() }
         XCTAssertEqual(model.dashboard?.counts.running, 3)
-        XCTAssertTrue(model.dashboardDetailLoading)
+        XCTAssertFalse(model.dashboardDetailLoading, "Prepared rows remain visible while an explicit refresh is pending")
         await model.toggleDashboardPanel(.problems)
         await history.value
         XCTAssertEqual(model.dashboardPanel, .problems)
@@ -974,6 +1037,26 @@ private final class PopoverReplyState: @unchecked Sendable {
     var delayHistory: Bool { get { lock.withLock { slowHistory } } set { lock.withLock { slowHistory = newValue } } }
     var pagedHistory: Bool { get { lock.withLock { pagedHistoryValue } } set { lock.withLock { pagedHistoryValue = newValue } } }
     var pagedDetail = false
+    var jobsContract = false
+    var rejectJobsMode = false
+    var exactDetailDelay: TimeInterval = 0
+    private var exactReads = 0
+    var exactDetailReads: Int { lock.withLock { exactReads } }
+    private func executionFixture(_ status: String) -> [String: Any] {
+        let id = "job-" + status
+        let turn: [String: Any] = ["jobId": id, "scopeId": "11111111-1111-4111-8111-111111111111", "activityId": "shared-activity", "agentId": "shared-agent",
+            "executionKey": String(repeating: "a", count: 32), "executionRevision": String(repeating: "e", count: 64),
+            "executionName": "Run " + id, "summary": "Stored " + status, "error": NSNull(), "reasonAvailability": "unrecorded",
+            "activityTitle": "Shared activity", "status": status, "startedAt": "2026-09-09T00:00:00Z",
+            "updatedAt": "2026-09-10T00:00:00Z", "endedAt": "2026-09-10T00:00:00Z", "durationMs": 86400000]
+        return ["rowKey": id, "jobId": id, "scopeId": "11111111-1111-4111-8111-111111111111", "activityId": "shared-activity", "agentId": "shared-agent",
+            "executionRevision": String(repeating: "e", count: 64), "policyRevision": String(repeating: "c", count: 64), "executionName": "Run " + id,
+            "summary": "Stored " + status, "error": NSNull(), "reasonAvailability": "unrecorded",
+            "activityKey": "shared-activity", "conversationKey": "shared-conversation", "sessionAlias": "Shared scope",
+            "bucket": status == "input-required" ? "active" : "recent", "projectKey": "window-project", "projectName": "Job fixture", "agentName": "Same Agent",
+            "activityTitle": "Shared activity", "status": status, "createdAt": "2026-09-09T00:00:00Z", "updatedAt": "2026-09-10T00:00:00Z",
+            "elapsedMs": 86400000, "backgroundProcessCount": 0, "latestTurn": turn, "history": [], "historyCount": 0]
+    }
     var expiryScenario = false
     private var rowExpiryValue: String?
     private var detailExpiryValue: String?
@@ -1034,6 +1117,7 @@ private final class PopoverReplyState: @unchecked Sendable {
             let filter = params["statusFilter"] as? String ?? "all"
             let includeHistory = params["includeHistory"] as? Bool ?? true
             lock.withLock { dashboardReads += 1 }
+            if rejectJobsMode && params["historyMode"] != nil { return NativeFixtureReply(body: #"{"error":{"code":-32602,"message":"Unrecognized key: historyMode"}}"#) }
             if params["enrich"] as? Bool == true {
                 let paused = lock.withLock {
                     enrichmentReads += 1
@@ -1105,10 +1189,41 @@ private final class PopoverReplyState: @unchecked Sendable {
                 snapshot["pagination"] = ["active": page,
                     "terminal": historyPage(terminalOffset), "idle": historyPage(idleOffset)]
             }
+            if jobsContract && params["historyMode"] as? String == "jobs" {
+                let terminal = ["completed", "failed", "interrupted", "cancelled"].map(executionFixture)
+                let active = executionFixture("input-required")
+                snapshot["executionContractVersion"] = 2; snapshot["historyModeApplied"] = "jobs"
+                counts["executionCount"] = 4; counts["progressJobCount"] = 1; snapshot["counts"] = counts
+                snapshot["activeRows"] = [active]; snapshot["terminalRows"] = terminal; snapshot["statusRows"] = terminal
+                snapshot["historyIncluded"] = true
+                var terminalPage = page; terminalPage["total"] = 4; terminalPage["returned"] = 4
+                snapshot["pagination"] = ["active": page, "terminal": terminalPage, "idle": page]
+                snapshot["historyPolicy"] = ["retentionDays": 30, "issueAttentionDays": 7, "lastCleanupCount": 0, "totalRemoved": 0, "policyRevision": String(repeating: "c", count: 64)]
+                func problem(_ index: Int, _ row: [String: Any], _ availability: String) -> [String: Any] {
+                    ["problemKey": "event-\(index)", "revision": "revision", "kind": row["status"] as? String == "cancelled" ? "cancelled" : "failed",
+                     "source": "execution", "review": "automatic", "observedAt": "2026-09-10T00:00:00Z", "occurredAt": "2026-09-10T00:00:00Z",
+                     "canAcknowledge": false, "canUnacknowledge": false, "canRecheck": false, "canRetryStop": false,
+                     "jobId": availability == "not-linked" ? NSNull() : row["jobId"]!, "scopeId": row["scopeId"]!,
+                     "executionRevision": String(repeating: "e", count: 64), "executionAvailability": availability, "reasonAvailability": "unrecorded", "row": row]
+                }
+                snapshot["problems"] = ["query": ["review": "pending", "kind": "all", "offset": 0], "revision": "events",
+                    "incidentCount": 5, "affectedExecutionCount": 2, "systemIncidentCount": 1, "unavailableExecutionCount": 1,
+                    "pendingCount": 0, "acknowledgedCount": 0, "reviewableCount": 0,
+                    "rows": [problem(0, terminal[1], "retained"), problem(1, terminal[1], "retained"), problem(2, terminal[3], "retained"), problem(3, active, "not-linked"), problem(4, terminal[2], "unavailable")],
+                    "page": ["offset": 0, "limit": 12, "total": 5, "returned": 5, "hasPrevious": false, "hasNext": false]]
+            }
             if let usageContext { snapshot["usageContext"] = usageContext }
             if let usageAccount { snapshot["codexAccount"] = usageAccount }
             if let usageWeekly { snapshot["weeklyUsage"] = usageWeekly }
             result = snapshot
+        case "dashboard.execution-detail":
+            lock.withLock { exactReads += 1 }
+            let job = params["jobId"] as? String ?? ""
+            let status = job.replacingOccurrences(of: "job-", with: "")
+            let row = executionFixture(status)
+            result = ["kind": "dashboard-execution", "jobId": job, "scopeId": params["scopeId"]!,
+                "executionRevision": String(repeating: "e", count: 64), "policyRevision": String(repeating: "c", count: 64), "execution": row["latestTurn"]!]
+            delay = exactDetailDelay
         case "dashboard.history-detail":
             lock.withLock { historyReads += 1 }
             let rowKey = params["rowKey"] as? String ?? ""
