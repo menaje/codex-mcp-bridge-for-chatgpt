@@ -61,7 +61,11 @@ describe("issue 242 shared read contract", () => {
       const row = page.terminalRows[0]!;
       const detail = await service.dashboardHistoryDetail({ rowKey: row.rowKey });
       expect(detail.historyRevision).toBe(row.historyRevision);
-      expect(detail.history).toEqual(row.history);
+      expect(row.history).toHaveLength(3);
+      for(const [index,preview] of row.history.entries())expect(detail.history[index]).toMatchObject(preview);
+      expect(detail.history.length).toBeLessThanOrEqual(12);
+      expect(detail.historyCount).toBe(row.historyCount);
+      expect(detail.policyRevision).toBe(row.policyRevision);
       expect(observations.at(-1)?.selectStatements).toBeLessThan(50);
       expect(observations.slice(0, 3).every(x => x.selectStatements < 70)).toBe(true);
       await service.settingsSnapshot();

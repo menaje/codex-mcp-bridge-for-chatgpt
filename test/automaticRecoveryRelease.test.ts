@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { automaticRecoveryKey } from "../src/automaticRecovery.js";
 import { BridgeStateStore } from "../src/stateStore.js";
 import { CodexJobRegistry, configureAutomaticRecovery } from "../src/tools.js";
@@ -7,6 +7,9 @@ import type { CodexUpstream } from "../src/upstream.js";
 const scopeId = "11111111-1111-4111-8111-111111111111";
 
 describe("automatic recovery of a bounded shared-worker connection page", () => {
+  beforeEach(()=>vi.spyOn(Date,"now").mockReturnValue(2_000_000));
+  afterEach(()=>vi.restoreAllMocks());
+
   it.each([[32,false],[33,false],[33,true]] as const)(
     "releases the current incident at worker position %i with terminal peers %s", async (count,terminalPeers) => {
     const statements: string[] = [];

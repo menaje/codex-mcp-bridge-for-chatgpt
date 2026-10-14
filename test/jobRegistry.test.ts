@@ -1070,7 +1070,7 @@ describe("CodexJobRegistry persistence", () => {
     }
   });
 
-  it("does not charge durably protected terminal Jobs to admission capacity", async () => {
+  it("reclaims terminal residency without losing held originals or bypassing capacity", async () => {
     const root = temporaryRoot();
     const file = path.join(root, "state.sqlite");
     const firstStore = new BridgeStateStore({ file });
@@ -1093,14 +1093,23 @@ describe("CodexJobRegistry persistence", () => {
       maxJobs: 1
     });
     try {
-      const next = restored.start({
+      const nextInput = {
         ...jobInput(root),
         requestId: randomUUID(),
         requestHash: "e".repeat(64)
-      }, async () => result("next-thread"));
+      };
+      expect(() => restored.start(nextInput, async () => result("must-not-run")))
+        .toThrow(/JOB_RETENTION_CAPACITY/);
+      await waitForCondition(() => restored.size === 0, 2_000);
+      expect(restoredStore.readRetainedJobDetail(protectedJob.scopeId,
+        { kind: "job", id: protectedJob.jobId })?.result).toEqual(result("protected-thread"));
+      const next = restored.start(nextInput, async () => result("next-thread"));
       await next.promise;
-      expect(restored.size).toBe(2);
-      expect(restoredStore.retentionProtection(protectedJob.jobId)).toContain("user-hold");
+      expect(restored.size).toBe(1);
+      expect(restoredStore.readRetainedJobDetail(protectedJob.scopeId,
+        { kind: "job", id: protectedJob.jobId })?.result).toEqual(result("protected-thread"));
+      expect(restoredStore.readRetainedJobDetail(next.scopeId,
+        { kind: "job", id: next.jobId })?.result).toEqual(result("next-thread"));
     } finally {
       await restored.closeThreadConnections();
       restoredStore.close();

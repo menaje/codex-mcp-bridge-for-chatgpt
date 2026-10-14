@@ -666,8 +666,10 @@ final class AppPresentationTests: XCTestCase {
         let root = URL(fileURLWithPath: "/tmp/cb-242-content-\(UUID().uuidString.prefix(8))")
         let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
         try FileManager.default.createDirectory(at: paths.bridgeSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let row = try issue242Row("a", project: "A")
-        let detail = "{\"kind\":\"dashboard-history\",\"rowKey\":\"\(row.rowKey)\",\"history\":[],\"historyCount\":1,\"historyRevision\":\"\(String(repeating: "a", count: 64))\"}"
+        var row = try issue242Row("a", project: "A")
+        row.policyRevision = String(repeating: "c", count: 64)
+        row.representativeExecutionKey = String(repeating: "d", count: 32)
+        let detail = "{\"kind\":\"dashboard-history\",\"rowKey\":\"\(row.rowKey)\",\"history\":[],\"historyCount\":1,\"historyRevision\":\"\(row.historyRevision!)\",\"policyRevision\":\"\(row.policyRevision!)\",\"representativeExecutionKey\":\"\(row.representativeExecutionKey!)\"}"
         let settings = try settingsSnapshot(policy: ["mode": "automatic", "allowedSelections": ["kind": "catalog-visible"],
             "constraints": ["allowDelegation": true]], catalogModels: [])
         let settingsBody = String(decoding: try JSONEncoder().encode(settings), as: UTF8.self)
@@ -3564,7 +3566,7 @@ extension ConnectionObservationRecoveryTests {
 
 extension AppPresentationTests {
     @MainActor
-    func testProblemBulkReviewCollectsEveryPageBeforeWritingAndRejectsChangedLists() async throws {
+    func testLegacyProblemCapabilitiesCannotWriteOrCreateBulkProcessing() async throws {
         for (changesDuringPaging, automaticViews) in [(false, false), (true, false), (false, true), (true, true)] {
             let root = URL(fileURLWithPath: "/tmp/cb-problems-\(UUID().uuidString.prefix(8))")
             let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
@@ -3581,27 +3583,25 @@ extension AppPresentationTests {
                 await model.selectProblemQuery(view: .history)
                 XCTAssertEqual(model.dashboard?.problems?.historyCount, 112)
             }
+            // Old capabilities are deliberately present: read-only history must
+            // ignore them, without paging an obsolete processing queue or writing.
+            await model.selectProblemQuery(view: .history)
+            let problem = try XCTUnwrap(model.dashboard?.problems?.rows.first)
+            XCTAssertTrue(problem.canAcknowledge)
+            XCTAssertEqual(problem.row.status, "failed")
+            let readsBeforeActions = bridge.count("dashboard.snapshot")
             await model.acknowledgeAllFinishedProblems()
-            XCTAssertEqual(state.bulkHistoryReadCount, 0)
-            if changesDuringPaging {
-                XCTAssertEqual(state.batches, [])
-                XCTAssertNotNil(model.dashboardErrorMessage)
-            } else {
-                XCTAssertEqual(state.batches, [100, 12])
-                XCTAssertEqual(state.reviewedCount, 112)
-                XCTAssertNotNil(model.problemActionNotice)
-                if automaticViews {
-                    await model.selectProblemQuery(view: .history)
-                    XCTAssertEqual(model.dashboard?.problems?.pendingCount, 0)
-                    XCTAssertEqual(model.dashboard?.problems?.historyCount, 112)
-                } else { await model.selectProblemQuery(review: .acknowledged) }
-                XCTAssertEqual(model.dashboard?.problems?.acknowledgedCount, 112)
-                let problem = try XCTUnwrap(model.dashboard?.problems?.rows.first)
-                XCTAssertEqual(problem.row.status, "failed")
-                await model.changeProblem(problem, action: .unacknowledge)
-                XCTAssertEqual(state.reviewedCount, 111)
-                XCTAssertFalse(model.changingProblems)
+            for action in [ProblemActionKind.acknowledge, .unacknowledge, .recheck, .retryStop] {
+                await model.changeProblem(problem, action: action)
             }
+            XCTAssertEqual(state.bulkHistoryReadCount, 0)
+            XCTAssertEqual(state.batches, [])
+            XCTAssertEqual(state.reviewedCount, 0)
+            XCTAssertEqual(bridge.count("dashboard.problem"), 0)
+            XCTAssertEqual(bridge.count("dashboard.snapshot"), readsBeforeActions)
+            XCTAssertNil(model.problemActionNotice)
+            XCTAssertFalse(model.changingProblems)
+            XCTAssertEqual(model.dashboard?.problems?.historyCount, 112)
         }
     }
 }

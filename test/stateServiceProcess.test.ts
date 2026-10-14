@@ -125,7 +125,7 @@ describe("operational state child process", () => {
       jobId: protectedJobId,
       scopeId: "11111111-1111-4111-8111-111111111111",
       requestId: randomUUID(),
-      status: "completed",
+      status: "running",
       updatedAt: now,
       version: 1
     });
@@ -134,6 +134,7 @@ describe("operational state child process", () => {
       scopeId: "11111111-1111-4111-8111-111111111111",
       requestId: randomUUID(),
       status: "completed",
+      result: {content:[{type:"text",text:"retained original through archive"}]},
       updatedAt: now,
       version: 1
     });
@@ -168,10 +169,10 @@ describe("operational state child process", () => {
         changed: 1,
         jobRetention: {
           classifications: [
-            { jobId: protectedJobId, disposition: "protected" },
+            { jobId: protectedJobId, disposition: "skipped" },
             { jobId: removableJobId, disposition: "removed" }
           ],
-          remainingAdmissionReservations: 0
+          remainingAdmissionReservations: 1
         },
         certainty: "committed",
         commandId,
@@ -186,7 +187,7 @@ describe("operational state child process", () => {
         changed: 1,
         jobRetention: {
           classifications: [
-            { jobId: protectedJobId, disposition: "protected" },
+            { jobId: protectedJobId, disposition: "skipped" },
             { jobId: removableJobId, disposition: "removed" }
           ]
         },
@@ -199,7 +200,10 @@ describe("operational state child process", () => {
       const verify = new BridgeStateStore({ file });
       try {
         expect(verify.listJobs().map(job => job.jobId)).toEqual([protectedJobId]);
+        expect(verify.listJobs()[0].status).toBe("running");
         expect(verify.listDashboardRetainedJobsByIds([removableJobId])).toHaveLength(1);
+        expect(verify.readRetainedJobDetail("11111111-1111-4111-8111-111111111111",{kind:"job",id:removableJobId})?.result)
+          .toEqual({content:[{type:"text",text:"retained original through archive"}]});
       } finally {
         verify.close();
       }

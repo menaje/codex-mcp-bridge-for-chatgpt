@@ -301,8 +301,7 @@ describe("central runtime lifecycle reservations", () => {
         ? { host_accepted_at: Date.now() } : { acceptance_unknown_at: Date.now() });
     }
     const delivery = store.getJobCompletionDelivery(jobId, scopeId);
-    const reason = protection === "user-hold" ? "user-hold" : "undelivered-chatgpt-result";
-    expect(store.retentionProtection(jobId)).toContain(reason);
+    expect(store.readRetainedJobDetail(scopeId, { kind: "job", id: jobId })?.result).toEqual(result);
     store.close();
     f.update({ activeJobs: 0 });
     try {
@@ -322,7 +321,7 @@ describe("central runtime lifecycle reservations", () => {
           jobId, scopeId, authBoundary: owner, status: "completed", result
         }));
         expect(retained.getJobCompletionDelivery(jobId, scopeId)).toEqual(delivery);
-        expect(retained.retentionProtection(jobId)).toContain(reason);
+        expect(retained.readRetainedJobDetail(scopeId, { kind: "job", id: jobId })?.result).toEqual(result);
       } finally { retained.close(); }
     } finally { await f.supervisor.close({ runtime: "force-stop" }); }
   });
@@ -390,7 +389,7 @@ describe("central runtime lifecycle reservations", () => {
       scopeId,
       requestId,
       status: "completed",
-      updatedAt: 2,
+      updatedAt: Date.now(),
       result: { content: [{ type: "text", text: "retained after helper restart" }] }
     } as any);
     const completion = original.getJobCompletionDelivery(jobId, scopeId)!;
@@ -553,23 +552,23 @@ describe("macOS runtime helper RPC", () => {
       await schema3.close({ runtime: "force-stop" });
     }
 
-    const futureFile = path.join(root, "schema-32.sqlite");
+    const futureFile = path.join(root, "schema-33.sqlite");
     createSeededSchema3Fixture(futureFile);
     const futureDatabase = new Database(futureFile);
-    futureDatabase.prepare("UPDATE bridge_meta SET value = '32' WHERE key = 'schema_version'").run();
+    futureDatabase.prepare("UPDATE bridge_meta SET value = '33' WHERE key = 'schema_version'").run();
     futureDatabase.close();
-    const futureEnvFile = path.join(root, "schema-32", ".env");
+    const futureEnvFile = path.join(root, "schema-33", ".env");
     writeStateBackedRuntimeEnv(futureEnvFile, futureFile);
     const future = new MacOSBridgeSupervisor({
       bridgeRoot: path.join(root, "runtime"),
       envFile: futureEnvFile,
-      bridgeSocketPath: path.join(root, "schema-32.sock"),
-      runtimeLockDirectory: path.join(root, "schema-32-run", "launcher.lock")
+      bridgeSocketPath: path.join(root, "schema-33.sock"),
+      runtimeLockDirectory: path.join(root, "schema-33-run", "launcher.lock")
     });
     try {
       expect((await future.health()).configuration).toMatchObject({
         valid: false,
-        issue: expect.stringContaining("state schema 32")
+        issue: expect.stringContaining("state schema 33")
       });
     } finally {
       await future.close({ runtime: "force-stop" });

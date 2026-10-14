@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BridgeStateStore } from "../src/stateStore.js";
 import { CodexJobRegistry } from "../src/tools.js";
 import type { ToolResult } from "../src/upstream.js";
@@ -13,6 +13,9 @@ const ACTIVITY_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const ACTIVITY_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 describe("Activity SQLite state", () => {
+  beforeEach(()=>vi.spyOn(Date,"now").mockReturnValue(2_000_000));
+  afterEach(()=>vi.restoreAllMocks());
+
   it("keeps a default Activity open when its Codex turn reaches terminal state", () => {
     const store = new BridgeStateStore({ file: stateFile() });
     store.upsertJob(job("job-a", "request-a", ACTIVITY_A, "running", 10));

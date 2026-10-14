@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BridgeStateStore } from "../src/stateStore.js";
 import { StateMaintenanceScheduler } from "../src/maintenanceScheduler.js";
 import { InProcessOperationalStateService } from "../src/stateService.js";
@@ -12,6 +12,7 @@ const writes = (statements: string[]) => statements.filter((sql) =>
 );
 
 describe("state access ownership", () => {
+  beforeEach(()=>vi.spyOn(Date,"now").mockReturnValue(2_000_000));
   afterEach(() => vi.restoreAllMocks());
 
   it("keeps question queries free of cleanup writes", () => {
@@ -221,7 +222,9 @@ describe("state access ownership", () => {
       expect(history.history).toHaveLength(12);
       expect(summaries.size).toBe(13);
       expect(writes(sql)).toEqual([]);
-      expect(sql.filter((statement) => /^\s*(?:WITH|SELECT)\b/iu.test(statement))).toHaveLength(3);
+      const reads=sql.filter((statement) => /^\s*(?:WITH|SELECT)\b/iu.test(statement));
+      expect(reads.filter(statement=>!statement.includes("FROM user_settings"))).toHaveLength(3);
+      expect(reads.filter(statement=>statement.includes("FROM user_settings"))).toHaveLength(2);
     } finally {
       store.close();
     }
@@ -332,7 +335,8 @@ describe("state access ownership", () => {
         2
       );
       sql.length = 0;
-      expect(store.maintainEventRetention(3).processed).toBeGreaterThan(0);
+      expect(store.maintainEventRetention(3).processed).toBe(0);
+      expect(store.listJobEvents("current-policy").some(event=>event.eventType==="app-progress")).toBe(true);
       expect(sql.some((statement) => /^\s*UPDATE job_events SET payload=/iu.test(statement)))
         .toBe(false);
     } finally {

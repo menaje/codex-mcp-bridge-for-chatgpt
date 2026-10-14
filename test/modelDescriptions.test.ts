@@ -177,8 +177,8 @@ describe("user model descriptions", () => {
     database.close();
     const upgradedState = new BridgeStateStore({ file });
     const upgraded = new UserSettingsStore(config(), { stateStore: upgradedState });
-    expect(upgradedState.schemaVersion).toBe(31);
-    expect(existsSync(`${file}.pre-v25-to-v31.sqlite`)).toBe(true);
+    expect(upgradedState.schemaVersion).toBe(32);
+    expect(existsSync(`${file}.pre-v25-to-v32.sqlite`)).toBe(true);
     expect(upgraded.current.modelDescriptionOverrides).toEqual({ "model-a": "Saved before versions" });
     expect(upgraded.modelDescriptionHistory("model-a").versions).toEqual([
       { version: 1, description: "Saved before versions", createdAt: null }
