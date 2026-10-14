@@ -1461,7 +1461,7 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
     try {
       telemetry = await ChildProcessTelemetryService.start(
         config.telemetryDatabaseFile,
-        { sourceStateDatabaseId: store.databaseId }
+        { sourceStateDatabaseId: store.databaseId, sourceStateFile:config.stateDatabaseFile }
       );
     } catch (error) {
       telemetry = new InMemoryTelemetryService();

@@ -3,7 +3,7 @@
  * migration. Fresh databases apply the v20 through v31 projections below in the
  * same transaction; older databases follow the append-only migration catalog.
  */
-export const CURRENT_STATE_SCHEMA_VERSION = "31";
+export const CURRENT_STATE_SCHEMA_VERSION = "32";
 
 export const CURRENT_STATE_SCHEMA = `
   CREATE TABLE scopes (
@@ -675,4 +675,67 @@ export const V31_PROJECT_LIFECYCLE_MIGRATION_SCHEMA = `
     thread_id TEXT PRIMARY KEY,
     retired_at INTEGER NOT NULL
   ) STRICT;
+`;
+
+/** Policy clock is immutable; missing historical details remain explicitly partial. */
+export const V32_HISTORY_POLICY_MIGRATION_SCHEMA = `
+  ALTER TABLE jobs ADD COLUMN problem_summary TEXT;
+  UPDATE jobs SET problem_summary=json_extract(payload,'$.error');
+  ALTER TABLE jobs ADD COLUMN ended_at INTEGER;
+  ALTER TABLE jobs ADD COLUMN ended_at_source TEXT CHECK(ended_at_source IN ('recorded','legacy-estimate'));
+  ALTER TABLE jobs ADD COLUMN detail_availability TEXT NOT NULL DEFAULT 'complete'
+    CHECK(detail_availability IN ('complete','legacy-partial','expired'));
+  UPDATE jobs SET ended_at=updated_at,ended_at_source='legacy-estimate'
+    WHERE status IN ('completed','failed','interrupted','cancelled');
+  UPDATE jobs SET detail_availability='legacy-partial'
+    WHERE archived_at IS NOT NULL OR json_extract(payload,'$.resultOmitted')=1;
+  CREATE INDEX jobs_policy_clock ON jobs(ended_at,job_id);
+  CREATE TABLE job_result_bodies (
+    job_id TEXT PRIMARY KEY REFERENCES jobs(job_id) ON DELETE CASCADE,
+    payload TEXT NOT NULL CHECK(json_valid(payload))
+  ) STRICT;
+  INSERT INTO job_result_bodies SELECT job_id,json_extract(payload,'$.result') FROM jobs
+    WHERE json_type(payload,'$.result')='object' AND COALESCE(json_extract(payload,'$.resultOmitted'),0)=0;
+  CREATE TABLE agent_history_revisions (agent_id TEXT PRIMARY KEY, revision INTEGER NOT NULL DEFAULT 0) STRICT;
+  INSERT INTO agent_history_revisions SELECT agent_id,COUNT(*) FROM jobs WHERE agent_id IS NOT NULL GROUP BY agent_id;
+  CREATE TRIGGER job_history_insert AFTER INSERT ON jobs WHEN NEW.agent_id IS NOT NULL BEGIN
+    INSERT INTO agent_history_revisions VALUES (NEW.agent_id,1)
+      ON CONFLICT(agent_id) DO UPDATE SET revision=revision+1;
+  END;
+  CREATE TRIGGER job_history_change AFTER UPDATE OF status,ended_at,payload,summary,detail_availability ON jobs
+    WHEN NEW.agent_id IS NOT NULL AND (NEW.status<>OLD.status OR NEW.ended_at IS NOT OLD.ended_at
+      OR NEW.detail_availability<>OLD.detail_availability
+      OR NEW.ended_at IS NOT NULL AND (NEW.payload<>OLD.payload OR NEW.summary<>OLD.summary)) BEGIN
+    INSERT INTO agent_history_revisions VALUES (NEW.agent_id,1)
+      ON CONFLICT(agent_id) DO UPDATE SET revision=revision+1;
+  END;
+  CREATE TABLE recovery_controls (
+    recovery_key TEXT PRIMARY KEY, agent_id TEXT NOT NULL, job_id TEXT, attempts INTEGER NOT NULL, state TEXT NOT NULL,
+    history_expired INTEGER NOT NULL DEFAULT 0 CHECK(history_expired IN (0,1))
+  ) STRICT;
+  INSERT INTO recovery_controls SELECT recovery_key,agent_id,job_id,attempts,state,0 FROM automatic_recovery;
+  ALTER TABLE automatic_recovery ADD COLUMN occurred_at INTEGER;
+  ALTER TABLE automatic_recovery ADD COLUMN project_id TEXT;
+  ALTER TABLE automatic_recovery ADD COLUMN activity_id TEXT;
+  ALTER TABLE automatic_recovery ADD COLUMN thread_id TEXT;
+  UPDATE automatic_recovery SET occurred_at=created_at,
+    activity_id=(SELECT activity_id FROM jobs WHERE job_id=automatic_recovery.job_id),
+    project_id=(SELECT a.project_id FROM jobs j JOIN activities a ON a.activity_id=j.activity_id WHERE j.job_id=automatic_recovery.job_id);
+  CREATE TABLE automatic_recovery_steps (
+    step_id INTEGER PRIMARY KEY AUTOINCREMENT, recovery_key TEXT NOT NULL,
+    occurred_at INTEGER NOT NULL, step TEXT NOT NULL, details TEXT NOT NULL CHECK(json_valid(details))
+  ) STRICT;
+  CREATE INDEX recovery_steps_parent ON automatic_recovery_steps(recovery_key,step_id);
+  CREATE INDEX recovery_policy_clock ON automatic_recovery(occurred_at,recovery_key);
+  ALTER TABLE codex_question_deliveries ADD COLUMN occurred_at INTEGER;
+  UPDATE codex_question_deliveries SET occurred_at=created_at;
+  CREATE TABLE question_history (
+    question_id TEXT PRIMARY KEY, scope_id TEXT NOT NULL, occurred_at INTEGER NOT NULL,
+    payload TEXT NOT NULL CHECK(json_valid(payload))
+  ) STRICT;
+  INSERT INTO question_history SELECT question_id,scope_id,
+    COALESCE(json_extract(payload,'$.createdAt'),expires_at),payload FROM user_questions;
+  CREATE INDEX question_history_clock ON question_history(occurred_at,question_id);
+  UPDATE user_settings SET payload=json_set(payload,'$.historyRetentionDays',30)
+    WHERE json_type(payload,'$.historyRetentionDays') IS NULL AND json_extract(payload,'$.schemaVersion')=2;
 `;

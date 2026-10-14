@@ -29,9 +29,7 @@ enum DashboardPanel: String, CaseIterable {
         if self == .history {
             return snapshot.activeRows + snapshot.terminalRows
         }
-        let rows = snapshot.statusRowsComplete == true
-            ? snapshot.statusRows ?? []
-            : snapshot.activeRows + snapshot.terminalRows
+        let rows = snapshot.statusRows ?? (snapshot.activeRows + snapshot.terminalRows)
         return rows.filter(matches)
     }
 
@@ -40,7 +38,7 @@ enum DashboardPanel: String, CaseIterable {
         case .history:
             return true
         case .running:
-            return row.status == "running"
+            return row.bucket == "active"
         case .responseRequired:
             return ["input-required", "approval-required"].contains(row.status)
         case .problems:

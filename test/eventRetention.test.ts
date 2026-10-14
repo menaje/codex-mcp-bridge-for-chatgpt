@@ -122,16 +122,16 @@ describe("bounded diagnostic retention",()=>{
     store.close();
   });
 
-  it("coalesces one item's snapshots, keeps cursor order and preserves usage after result expiry",()=>{
+  it("retains item snapshots, cursor order and usage through information-preserving archive",()=>{
     const store=new BridgeStateStore({file:":memory:"});const input=job();store.upsertJob(input);
     store.recordJobTelemetryEvent(input.jobId,"app-command-started",{...progress("same"),phase:"started"});
     const first=store.listJobEvents(input.jobId).at(-1)!.eventId;
     for(let n=0;n<600;n++) store.recordJobTelemetryEvent(input.jobId,"app-command-completed",progress(`item-${n}`,"x".repeat(20_000)));
     store.recordJobTelemetryEvent(input.jobId,"app-command-completed",progress("same"));
     const events=store.listJobEvents(input.jobId);
-    expect(events.length).toBeLessThanOrEqual(EVENT_RETENTION_LIMITS.perJob);
+    expect(events.length).toBeGreaterThan(EVENT_RETENTION_LIMITS.perJob);
     expect(events.at(-1)!.eventId).toBeGreaterThan(first);
-    expect(events.every(event=>Buffer.byteLength(JSON.stringify(event.payload))<=EVENT_RETENTION_LIMITS.payloadBytes)).toBe(true);
+    expect(events.some(event=>Buffer.byteLength(JSON.stringify(event.payload))>EVENT_RETENTION_LIMITS.payloadBytes)).toBe(true);
     const tokens={inputTokens:3000,cachedInputTokens:2500,outputTokens:100,totalTokens:3100};
     store.recordJobTelemetryEvent(input.jobId,"app-usage-updated",{type:"usage",phase:"updated",details:{total:{inputTokens:999999},jobUsage:{basis:"cumulative-difference",tokens}}});
     store.upsertJob({...input,status:"completed",updatedAt:Date.now()});
@@ -139,66 +139,48 @@ describe("bounded diagnostic retention",()=>{
     expect(store.eventRetention.summary(input.jobId)).toEqual({
       usage:{basis:"cumulative-difference",tokens}
     });
-    expect(store.listJobEvents(input.jobId)).toHaveLength(1);
-    expect(JSON.stringify(store.listJobEvents(input.jobId))).not.toContain("outputTail");
+    const retainedIds=new Set(store.listJobEvents(input.jobId).map(event=>event.eventId));
+    expect(events.every(event=>retainedIds.has(event.eventId))).toBe(true);
+    expect(JSON.stringify(store.listJobEvents(input.jobId))).toContain("outputTail");
     expect(store.listDashboardRetainedJobs()[0]?.jobId).toBe(input.jobId);
     expect(()=>store.upsertJob({...input,jobId:"duplicate",status:"running"})).toThrow(/request/i);
     store.close();
   });
 
-  it("protects pending results and renewable holds while bounding their progress output",()=>{
+  it("evicts terminal registry entries without deleting held originals",()=>{
     const store=new BridgeStateStore({file:":memory:"});const input=job();store.upsertJob(input);
     expect(store.retentionProtection(input.jobId)).toContain("active-work");
-    store.upsertJob({...input,status:"completed"});
+    store.upsertJob({...input,status:"completed",result:{content:[{type:"text",text:"retained answer"}]}});
     store.holdResult(input.jobId,"waiting for review",Date.now()+60_000);
-    store.deleteJob(input.jobId);expect(store.countJobs()).toBe(1);
-    expect(store.retentionProtection(input.jobId)).toContain("user-hold");
-    store.releaseResultHold(input.jobId);store.deleteJob(input.jobId);expect(store.countJobs()).toBe(0);
-    expect(()=>store.holdResult(input.jobId,"cannot restore",Date.now()+1000)).toThrow(/NOT_RETAINED/);
-    store.close();
+    store.deleteJob(input.jobId);expect(store.countJobs()).toBe(0);
+    expect(store.readRetainedJobDetail(scopeId,{kind:"job",id:input.jobId})?.result).toEqual({content:[{type:"text",text:"retained answer"}]});
+    store.releaseResultHold(input.jobId);store.close();
   });
 
-  it("keeps undelivered output, blocking input and uncertain dispatch independently of diagnostic cleanup",()=>{
-    const file=path.join(mkdtempSync(path.join(tmpdir(),"event-protection-")),"state.sqlite");
-    const store=new BridgeStateStore({file}),input=job();store.upsertJob({...input,status:"completed",result:{content:[{type:"text",text:"retained answer"}]}});
-    const db=new Database(file),activity=(db.prepare("SELECT activity_id FROM jobs WHERE job_id=?").get(input.jobId) as {activity_id:string}).activity_id;
-    db.prepare("INSERT INTO completion_outbox(activity_id,scope_id,completion_version,channel,payload,created_at) VALUES (?,?,1,'notify','{}',?)").run(activity,scopeId,Date.now());
-    expect(store.retentionProtection(input.jobId)).toContain("undelivered-result");
-    store.deleteJob(input.jobId);expect(store.countJobs()).toBe(1);
-    db.prepare("UPDATE completion_outbox SET delivered_at=? WHERE activity_id=?").run(Date.now(),activity);
+  it("keeps active approval and uncertain dispatch authorities independent of registry eviction",()=>{
+    const store=new BridgeStateStore({file:":memory:"}),input=job();
+    store.upsertJob({...input,status:"completed",result:{content:[{type:"text",text:"retained answer"}]}});
     const requestId="22222222-2222-4222-8222-222222222222",actionHash="a".repeat(64);
     store.beginSteeringDelivery({scopeId,requestId,actionHash,jobId:input.jobId,expectedJobVersion:1,promptSha256:"b".repeat(64),now:Date.now()});
-    expect(()=>store.acknowledgeUncertainResultReview(input.jobId)).toThrow(/RESULT_REVIEW_PENDING/);
     store.markSteeringDeliveryDispatching(scopeId,requestId,actionHash,Date.now());
     store.completeSteeringDelivery(scopeId,requestId,actionHash,"uncertain",{delivery:{status:"uncertain"}},Date.now());
-    store.maintainRetention();store.deleteJob(input.jobId);
-    expect(store.retentionProtection(input.jobId)).toContain("uncertain-response");expect(store.countJobs()).toBe(1);
-    expect(store.getSteeringDelivery(scopeId,requestId)?.status).toBe("uncertain");
-    const blocked=job("blocked-input");store.upsertJob({...blocked,status:"completed",pendingInteractions:[{interactionId:"question",isBlocking:true}]});
-    store.deleteJob(blocked.jobId);expect(store.retentionProtection(blocked.jobId)).toContain("pending-interaction");
-    store.upsertJob({...blocked,status:"completed",pendingInteractions:[]});store.deleteJob(blocked.jobId);
-    expect(store.countJobs()).toBe(1);
-    store.acknowledgeUncertainResultReview(input.jobId);
-    expect(store.retentionProtection(input.jobId)).not.toContain("uncertain-response");
-    // Review does not rewrite dispatch history or authorize another delivery.
+    store.deleteJob(input.jobId);expect(store.countJobs()).toBe(0);
     expect(store.getSteeringDelivery(scopeId,requestId)?.status).toBe("uncertain");
     expect(()=>store.markSteeringDeliveryDispatching(scopeId,requestId,actionHash)).toThrow(/uncertain/);
-    const laterRequest="33333333-3333-4333-8333-333333333333";
-    store.beginSteeringDelivery({scopeId,requestId:laterRequest,actionHash,jobId:input.jobId,expectedJobVersion:1,promptSha256:"b".repeat(64),now:Date.now()});
-    store.completeSteeringDelivery(scopeId,laterRequest,actionHash,"uncertain",{delivery:{status:"uncertain"}},Date.now());
-    expect(store.retentionProtection(input.jobId)).toContain("uncertain-response");
-    store.acknowledgeUncertainResultReview(input.jobId);
-    store.deleteJob(input.jobId);expect(store.countJobs()).toBe(0);db.close();store.close();
+    expect(store.readRetainedJobDetail(scopeId,{kind:"job",id:input.jobId})?.result).toEqual({content:[{type:"text",text:"retained answer"}]});
+    const blocked=job("blocked-input");store.upsertJob({...blocked,status:"running",pendingInteractions:[{interactionId:"question",isBlocking:true}]});
+    store.deleteJob(blocked.jobId);expect(store.retentionProtection(blocked.jobId)).toContain("active-work");
+    expect(store.countJobs()).toBe(1);store.close();
   });
 
-  it("enforces the global byte budget independently of per-job limits and makes freed pages reusable",()=>{
+  it("preserves persistent diagnostics beyond the former global byte budget",()=>{
     const directory=mkdtempSync(path.join(tmpdir(),"event-budget-")),file=path.join(directory,"state.sqlite");
     const store=new BridgeStateStore({file});const input=job();store.upsertJob(input);
     const db=new Database(file);const activity=(db.prepare("SELECT activity_id FROM jobs WHERE job_id=?").get(input.jobId) as {activity_id:string}).activity_id;
     const insert=db.prepare("INSERT INTO job_events(job_id,activity_id,scope_id,scope_version,event_type,status,created_at,payload) VALUES (?,?,?,1,'diagnostic','completed',?,?)");
     db.transaction(()=>{for(let value=0;value<9000;value++)insert.run(input.jobId,activity,scopeId,Date.now(),JSON.stringify({message:"x".repeat(8100),value}));})();
     store.recordJobTelemetryEvent(input.jobId,"app-command-completed",progress("new"));
-    const report=store.maintainRetention();expect(report.bytes).toBeLessThanOrEqual(EVENT_RETENTION_LIMITS.bytes);expect(report.rows).toBeLessThanOrEqual(EVENT_RETENTION_LIMITS.rows);expect(report.freePages).toBeGreaterThan(0);
+    const report=store.maintainRetention();expect(report.bytes).toBeGreaterThan(EVENT_RETENTION_LIMITS.bytes);expect(report.rows).toBeGreaterThan(9000);expect(report.budgetEventsRemoved).toBe(0);
     expect(report).toMatchObject({
       expiredJobEventsRemoved: expect.any(Number),
       expiredActivityEventsRemoved: expect.any(Number),

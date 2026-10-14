@@ -42,6 +42,7 @@ describe("user settings and project registry", () => {
     expect(second.settings.current.historyRetentionDays).toBe(0);
     const legacy = second.stateStore.getSettingsRecord()!.payload as Record<string, unknown>;
     delete legacy.historyRetentionDays;
+    legacy.schemaVersion = 2;
     second.stateStore.close();
     replaceStoredSettingsPayloadForTest(databaseFile, legacy);
 

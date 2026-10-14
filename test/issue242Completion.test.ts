@@ -73,7 +73,8 @@ describe("issue 242 W3 durable native completions", () => {
     const f = await issue242Fixture(0);
     try {
       const empty = await f.measure(() => Array.from({ length: 20 }, () => f.jobs.claimNativeCompletionNotifications(10, "A")));
-      expect(empty.sql).toEqual({ SELECT: 20 });
+      // Policy is a separate read, not an empty write transaction.
+      expect(empty.sql).toEqual({ SELECT: 40 });
       expect(empty.changedRows).toBe(0);
       activity(f.store);
       const preflight = f.store.nativeCompletionAvailability.bind(f.store);

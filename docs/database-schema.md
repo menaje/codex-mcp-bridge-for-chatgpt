@@ -2,10 +2,10 @@
 
 Schema 31 is the current SQLite schema. `src/stateSchema.ts` contains the complete
 DDL and projections used for a new installation. `src/stateStore.ts` contains
-upgrade code for schemas 3 through 30; schemas 1 and 2 are rejected. The published v0.2 and
+upgrade code for schemas 3 through 31; schemas 1 and 2 are rejected. The published v0.2 and
 v0.3 line used schema 3, and the pre-change development installation used schema
 18. Every supported upgrade ends with the same tables, columns, constraints,
-indexes, and triggers as direct schema-31 creation.
+indexes, and triggers as direct schema-32 creation.
 
 The database is the durable authority for Bridge business state: admission,
 scope and permission decisions, project and Activity relationships, request
@@ -51,13 +51,13 @@ execution folder:
   execution fields are read by joining `sessions`.
 
 `jobs` owns the current Job state, result/error receipt payload, last progress,
-terminal provenance, and one compact display summary. `job_events` owns bounded
-diagnostic event history. `job_interactions` owns current blocking/nonblocking
+terminal provenance, and one compact display summary. `job_events` owns retained
+diagnostic event history, subject to the common policy. `job_interactions` owns current blocking/nonblocking
 input state. There is no `job_summaries` table, and progress events do not write a
 full Job document. `scopes.version` is the one scope CAS/event sequence; there is
 no `scope_versions` mirror.
 
-## Complete schema-31 table matrix
+## Complete schema-32 table matrix
 
 The retention column describes bridge cleanup. SQLite free pages are reusable but
 remain allocated until an offline compaction; physical erasure is therefore a
@@ -105,28 +105,28 @@ sessions keep a null boundary because an upgrade cannot infer their owner.
 | `agents` | Agent identity and live lifecycle; current thread/job pointers, version, orphan evidence | Keep current Agent authority. `archived_at` and the `archived` lifecycle are removed; schema 18 restored archived Agents once before schema 19. |
 | `agent_threads` | Agent membership/history and current-thread selection; context mode and link/replacement times | Keep relationship data only. Thread execution details come from `sessions`; invalid legacy-project contexts are dropped and are never resumed or mapped to a new project. |
 | `activity_agents` | Activity-to-Agent assignment history; role, context mode, assignment/release times | Keep because Activity membership has a different lifecycle from Agent thread membership. Active pairs are unique. |
-| `jobs` | Admission replay receipt, execution/recovery state, Dashboard/current/history projection; formal identity, source/current thread, status, execution context, versions/progress, terminal provenance, immutable completion-delivery policy, bounded `summary`, variable result/error `payload` | Keep one row per admitted request. Legacy payloads read as `live-card`; each new ordinary Job snapshots `direct-wait`, and later Settings changes cannot rewrite it. Full result bodies normally follow result retention. After a ChatGPT card crosses the send boundary, an unresolved completion is protected only through the selected run-history period; a completion-receipt offer grants one ordinary result-retention recovery window. Later history expiry reduces payload to the compact replay receipt but preserves `(scope_id, request_id)` and terminal outcome. An exact scoped Job/request status read can return that compact admission fact without restoring expired content. Structured fields cannot also appear in payload. Summary may contain only `execution`, `usage`, and `uncertainResponseReview`; status, timestamps, duration, and error provenance stay in formal columns or the retained Job payload lifecycle. |
+| `jobs` | Scoped admission identity, execution/control facts, immutable `ended_at` and provenance, current status, history summary and payload | Retain history and full originals for the saved 7/30/90/0 policy measured from execution end. Registry eviction archives without deleting history. At expiry clear prose/results/diagnostics while retaining compact request hash, outcome, versions and control identity so retries cannot duplicate execution. Uncertain delivery and result holds do not extend history. |
 | `job_interactions` | Input/approval wait projection, retention protection, unfinished-work checks; authoritative `interaction_id`/`is_blocking` plus the remaining variable interaction payload | Keep only the current interaction set and replace it atomically with Job state. The two structured fields are reconstructed for public DTOs and do not remain in payload JSON. Delete with the Job. Replaces `pendingInteractions` JSON scans. |
 | `activity_events` | Activity cursor/watch and compatibility diagnostics | Bounded diagnostic/control history: at most 50,000 recent rows and seven-day cleanup in batches. Delete with Activity/scope. |
-| `job_events` | Progress projection, usage/reroute summary extraction, status cursors | Bounded diagnostics: 256 per Job, global 50,000 rows/64 MiB payload budget, 8 KiB per payload, seven-day metadata cleanup. Delete with Job. Does not contain a full Job copy. |
+| `job_events` | Original progress, usage, diagnostic and completion-delivery audit events | Retain full stored event payloads under the related execution end policy; no durable count, byte or fixed seven-day cap. Active execution events remain available. Hydration and responses are bounded independently. |
 | `completion_outbox` | Durable local completion-notification selection, dispatch, acknowledgement, and retry state | Keep delivery authority independently of Dashboard presentation. The local macOS companion claims only retryable `notify` records through its private socket and acknowledges an exact record only after macOS accepts its generic notification. `verify` records are never sent as success notifications. A failed presentation releases its lease; a crash after presentation can be retried, so the outbox does not claim exactly-once visible delivery. |
-| `job_completion_deliveries` | One exact ChatGPT completion audit event per terminal Job; stable opaque receipt, bounded live-card lease, host acceptance/rejection/uncertainty, legacy result-read evidence, and separate completion/direct result-offer times | Separate from the native Activity outbox. Historical lease and host-send fields are preserved without claim/ACK/retry execution. New ordinary Jobs keep the row only for exact result-offer/retention audit. A direct Job/request offer never consumes or settles this event. Historical message text and Job results were never copied into this row. Current cards send no messages. A completion-receipt offer starts one ordinary result-recovery window. Before that offer, a delivery that crossed the send boundary protects the exact result no later than selected run-history expiry; a merely pending cardless event follows ordinary result retention. Acceptance uncertainty is never replayed automatically. Delete the delivery row when its run-history entry expires; keep the Job's compact request reservation and terminal outcome. |
+| `job_completion_deliveries` | Exact terminal completion audit, offer time and delivery uncertainty | Retain through the related execution policy, then delete the historical delivery row. Queries/offers never restart retention, settle uncertainty or resend a response. Compact Job admission/control facts remain. |
 | `agent_mutations` | Agent mutation request replay/idempotency; scoped request hash/result | Keep as the durable replay receipt for retained mutation requests. It is not a second Agent state store. |
 | `cancellation_operations` | Root cancellation request idempotency, exact target/proof/result | Keep while request replay and audit provenance are needed. It is protected from generic event cleanup. |
 | `cancellation_intents` | Per-target cancellation dispatch and result provenance | Keep recorded/dispatched intents through restart; terminal evidence remains with the retained request journal. Target indexes serve protection and recovery checks. |
 | `steering_deliveries` | Steering idempotency and delivery certainty; prompt digest, expected Job version, status/result | Keep prepared/dispatching/uncertain records through restart and retain completed evidence with the request receipt. Prompt text is never stored here. |
-| `transport_observations` | Rollback/direct-runtime compatibility for bounded aborted/detached/presentation diagnostics | Non-authoritative and disposable. Isolated production writes the separate telemetry database instead, so this table grants no replay or execution authority. |
-| `user_questions` | Question request/answer state and response reference | Keep until its explicit expiry; startup removes expired rows. Payload is question state, not a Job mirror. |
-| `codex_question_deliveries` | Codex-originated question delivery idempotency | Keep one scoped request/question-reference receipt so restart cannot redeliver the same question as new. |
+| `transport_observations` | Compatibility transport diagnostics; production writes the telemetry database | Follow the related Job end policy or own occurrence for unlinked records. No execution/replay authority. |
+| `user_questions` | Current question validity and answer control | Validity expiry is independent of history. `question_history` retains scoped originals/answers under their first occurrence policy; cleanup cannot approve or resend a valid question. |
+| `codex_question_deliveries` | Exact question delivery identity and first occurrence | Retain delivery history by the same saved policy; current question/interaction authority remains separate. |
 | `thread_connections` | App Server connection ownership, handoff/release and recovery inspection | Keep current connection evidence independently of `sessions`: a saved execution context does not prove a live connection. Unfinished-work checks join indexed Job/interactions/cancellation fields. |
 | `event_budget` | Trigger-maintained Job-event row and payload-byte counters | Derived singleton. Rebuilt during migration and updated by three triggers; it is not a DB/WAL or backup size limit. |
 | `event_retention_state` | Event cleanup policy generation and restartable event cursor | Keep typed singleton because the cursor has transactional cleanup semantics. Replaces dynamic `bridge_meta` keys. |
 | `result_holds` | Temporary operator/result-review protection; reason and expiry | Keep only until `expires_at`; maintenance deletes expired holds in batches. Delete with Job. |
-| `work_history_state` | Per-Job optional acknowledgement, display expiry, and review sequence | Keep while the Job receipt exists. It changes review/display state without changing the Job outcome. Delete with Job. |
+| `work_history_state` | Permanent expiration marker plus legacy acknowledgement fields | Mark physical history expiry without removing admission identity. Legacy acknowledgement is not a current UI action or current-warning source. |
 | `work_history_control` | Global review revision, restartable history cursor, cleanup totals | Keep typed singleton because global CAS/pagination invalidation and cleanup progress have distinct semantics. Replaces dynamic `bridge_meta` keys. |
 | `runtime_problem_resolutions` | Current runtime-problem resolution evidence by Agent revision | Keep the latest matching resolution only; delete with Agent. Replaces one dynamic meta key per Agent. |
-| `automatic_recovery` | Durable bounded recovery action/budget; kind/state/attempts/schedule/evidence | Keep unresolved work through restart and retained resolved evidence through history retention. It never authorizes arbitrary new execution. |
-| `automatic_recovery_incidents` | Stable incident identity to active recovery relationship | Keep current and historical incident identity so a restart does not reset attempt limits; one recovery key per incident. |
+| `automatic_recovery` | Historical incident journal, first occurrence, captured source identities, reason and evidence | All states, including unresolved and Job-less incidents, follow the same saved policy. Updating state does not restart the clock. `recovery_controls` preserves current retry authority after prose expiry. |
+| `automatic_recovery_incidents` | Latest observation identity and active/current recovery pointer | Keep the latest pointer to distinguish repeated observations from a fresh recurrence; no historical prose or separate history TTL. |
 | `operational_command_receipts` | Isolated-state command ID, operation, payload digest, optional aggregate/version, compact result, committing generation and time | Keep through the unresolved IPC uncertainty window. Idempotent `maintain` receipts are eligible after 24 hours and are removed in bounded 500-row slices; future business-command receipts require a separate reference-aware policy. An identical retained command retry returns the original result; a changed operation, payload hash, or aggregate fails closed. Receipt storage does not prove an external recipient accepted an effect. |
 
 Project deletion requires confirmed `archive_state='complete'` and no active Job.
@@ -203,7 +203,7 @@ copy, not end-to-end service latency or evidence of a live replacement.
 
 ## Upgrade and legacy-data rules
 
-A fresh database creates schema 31 directly. A persistent supported older database
+A fresh database creates schema 32 directly. A persistent supported older database
 is inspected before a writable SQLite connection opens. The canonical-file lock,
 live-owner check, integrity and foreign-key checks, permissions, free-space
 calculation, verified backup, sequential conversion, and final verification all
@@ -262,7 +262,7 @@ relationship. Migration never creates a project from a slug, name, cwd, or old
 snapshot.
 
 The supported schema-3 fixture is taken from the published v0.3.0 implementation
-and passes every fixed checkpoint through schema 31. Exact deployed-development
+and passes every fixed checkpoint through schema 32. Exact deployed-development
 fixtures cover schemas 16 and 18; schemas 4 through 15, 17, and 19 through 29 are generated
 only as named, committed checkpoints from those sources. `state-migrations.json` binds
 their provenance and hashes to the shipped implementation. Schemas 1 and 2 are
@@ -272,7 +272,7 @@ restarts.
 
 ## Capacity, backups, and offline compaction
 
-The schema-31 table/write/read/maintenance ownership matrix and the command,
+The schema-32 table/write/read/maintenance ownership matrix and the command,
 query, and bounded scheduler contracts are documented in
 [State data access and maintenance ownership](state-data-access.md).
 The selected two-database process, IPC, readiness, migration and fault contract
@@ -324,7 +324,75 @@ the live database untouched. A report with `liveDatabaseReplacementPerformed:
 false` is implementation evidence, not evidence that an operator has compacted or
 released a production installation.
 
-The complete schema-31 table, explicit index and trigger ownership inventory,
+The complete schema-32 table, explicit index and trigger ownership inventory,
 including command/query consumers, recovery dependencies, future destination and
 two-database file security rules, is in
 [State schema ownership catalog](state-schema-ownership-catalog.md).
+
+
+## Issue 251 policy clock and durable detail
+
+Schema 32 records immutable Job end time and its recorded/legacy-estimated source.
+Registry eviction preserves the original sanitized result in `job_result_bodies`
+and related events. A bounded response preview does not delete the disk original.
+History, related summaries/diagnostics/question bodies/recovery steps and telemetry
+use the stored 7/30/90/0 policy. Zero is unlimited. A missing or invalid current
+setting stops destructive cleanup; only installation and explicit schema-2 legacy
+initialization supplies 30 days. Every delete rechecks the current policy.
+
+`recovery_controls` holds only the current incident key, owner, attempts and state.
+It blocks replay after historical prose expires; a confirmed observation closes
+its validity, or removal of the owner retires it. It does not store past reason,
+evidence, result or prompt. Original request/hash/intent authority likewise stays
+minimal, without implying that an expired result was delivered or approved.
+
+The telemetry owner reads policy and exact Job end/expiry clocks from the existing
+state database read-only. Persistent telemetry count caps are removed. The existing
+bounded maintenance events slice requests telemetry cleanup; no new daemon or
+operational writer is added. Generic measurements/events use their own fixed
+occurrence time. Transport attached to live work waits for that exact run's end.
+Queue/memory bounds and a bounded local ACK receipt window remain control limits,
+with no persistent diagnostic body retained in those receipts.
+
+## Policy/deletion serialization and independent Activity materials (#251 review)
+
+The normal state owner is still the only operational DB writer. Settings writes
+and destructive telemetry slices acquire the same private sibling
+`<canonical-state-file>.history-policy-gate.sqlite`. This empty SQLite file has
+no tables, settings, record bodies or leases; it is solely an OS-backed mutex.
+Telemetry continues to open the operational source read-only. The state owner
+holds this mutex until its outer settings transaction commits or rolls back,
+including updates nested inside project/settings commands. Nested same-owner
+settings calls reuse that held gate; they do not acquire it a second time.
+Settings acquire the existing operational write transaction first, then try the
+gate without waiting. Telemetry acquires the gate first, then its own transaction;
+it only reads the operational WAL and never requests its write lock. Contention
+therefore rolls back/fails fast instead of forming a waiting lock cycle.
+Telemetry obtains it before reading the policy and holds it through its own delete commit/rollback.
+Both owners use timeout zero. Contention fails with SQLITE_BUSY without waiting
+or applying a fallback; the normal retry path must obtain fresh policy. A
+read/storage failure rolls back and releases the mutex, and process death releases
+SQLite locks. The file contains nothing to include in a history/backup archive.
+
+Activity completion material uses its immutable outbox `created_at`, independent
+of the last Job end. Reads, pending alerts and claims apply the saved policy even
+before cleanup. Existing history maintenance also scrubs a bounded 64 outbox
+payloads without waiting for another Job expiry; its compact outbox identity and
+attempt/lease/delivery outcome remain as an idempotency fence. Expired payloads
+carry only `historyExpired:true`, so a later unlimited setting cannot revive
+physically removed material. Delivered and undelivered completion records follow
+the same history period; an offer/lease does not restart it.
+
+Cancellation reason text uses immutable operation `created_at` for both Job and
+Activity targets. Reads omit expired prose and history maintenance clears it in
+bounded slices. Identity, action hash, root/child intent, status, machine reason
+code and outcome are unaffected, including active cancellation. An unavailable
+policy cannot authorize deletion; the direct control getter omits prose while
+remaining usable to settle/replay an existing action.
+
+History cache revision v3 includes the stored mutation revision plus the visible
+retained count and earliest retained end clock. Logical expiry therefore changes
+page/cursor validity before a physical sweep. Runtime incident recurrence uses
+its distinct incident identity. Only the initial canonical incident or a direct
+execution-recovery action is correlated with the failed execution's progression;
+association to the same Job alone does not collapse a new occurrence.

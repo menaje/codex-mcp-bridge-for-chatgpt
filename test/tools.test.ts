@@ -844,7 +844,7 @@ describe("current bridge tool contracts", () => {
       const leased = historicalCompletion(state, jobId, deliveryState, deliveryState === "host-accepted"
         ? { host_accepted_at: Date.now() } : { acceptance_unknown_at: Date.now() });
       const originalDelivery = state.getJobCompletionDelivery(jobId, scopeId)!;
-      expect(state.retentionProtection(jobId)).toContain("undelivered-chatgpt-result");
+      expect(state.retentionProtection(jobId)).not.toContain("undelivered-chatgpt-result");
 
       const recoverExecution = vi.fn();
       const acknowledgeExecution = vi.fn();
@@ -1621,6 +1621,14 @@ describe("current bridge tool contracts", () => {
       row.agentName === "dashboard-selection-fixture"
     )).toBe(false);
 
+    // A second failure has neither a conversation URL nor recovery metadata.
+    // The real MCP boundary must omit these optional keys, not send undefined.
+    const withoutRecovery=state.createAgent({scopeId,agentName:"failure-without-recovery",now:base});
+    const withoutRecoveryJob=randomUUID();
+    state.upsertJob({jobId:withoutRecoveryJob,requestId:randomUUID(),scopeId,agentId:withoutRecovery.agentId,
+      status:"failed",createdAt:base+5,updatedAt:base+50});
+    state.deleteJob(withoutRecoveryJob);
+
     const result = await client.callTool({
       name: "codex_ui_read",
       arguments: {
@@ -1650,9 +1658,13 @@ describe("current bridge tool contracts", () => {
       updatedAt: new Date(base + 90).toISOString()
     });
     expect(dashboard.problems.automaticCount).toBe(1);
-    expect(dashboard.problems.rows).toHaveLength(1);
+    expect(dashboard.problems.rows).toHaveLength(2);
+    const missingMetadata=dashboard.problems.rows.find((problem:any)=>problem.row.agentName==="failure-without-recovery");
+    expect(missingMetadata).toBeDefined();
+    expect(missingMetadata.row).not.toHaveProperty("conversationUrl");
+    expect(missingMetadata).not.toHaveProperty("automatic");
     expect(dashboard.problems.rows[0]).toMatchObject({
-      source: "recovery",
+      source: "execution",
       automatic: {
         kind: "retry-stop",
         state: "blocked",

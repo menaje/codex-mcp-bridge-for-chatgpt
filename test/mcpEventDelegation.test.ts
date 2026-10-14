@@ -263,7 +263,8 @@ describe("card-free OAuth Events delegation", () => {
         expect(exposed).not.toContain(privateValue);
       }
       expect(new Set(received.map(body => body.eventId)).size).toBe(1); expect(received).toHaveLength(attempts);
-      expect(f.state.retentionProtection(a.jobId)).toContain("mcp-event-result-recovery");
+      const retained=f.state.listJobs().find(job=>job.jobId===a.jobId)!;
+      expect(JSON.stringify(f.state.readRetainedJobDetail(retained.scopeId,{kind:"job",id:a.jobId})?.result)).toContain("Original OAuth fixture result");
       expect(f.upstream.calls).toBe(1); expect(f.state.listJobs()).toHaveLength(1);
       expect(f.requests.filter(request => request.name === "codex_dashboard" || request.method === "ui/message")).toHaveLength(0);
     } finally { await close(callback); }
@@ -352,9 +353,18 @@ describe("card-free OAuth Events delegation", () => {
     expect((await rpc(restarted, "events/subscribe", delegated(grant), token, {})).body.error.code).toBe(-32001);
     expect(restarted.upstream.calls).toBe(0);
     expect(restarted.state.deleteJob(a.jobId, future)).toBe(true);
+    // Residency archive must not erase the user's monitoring stop or original.
+    expect(restarted.state.getMeta(key)).toBeDefined();
+    const archivedResult=(await call(restarted,"codex_status",{query:{kind:"job",id:a.jobId}},token)).result;
+    expect(archivedResult.isError).not.toBe(true);
+    expect(archivedResult.structuredContent.items[0].answer).toContain("Original OAuth fixture result");
+    const expiry=Date.now()+31*86_400_000;
+    restarted.state.maintainHistoryRetention(expiry);
     expect(restarted.state.getMeta(key)).toBeUndefined();
     const archived = (await call(restarted, "codex_status", { query: { kind: "job", id: a.jobId } }, token)).result.structuredContent;
-    expect(archived.items[0].eventSubscription).toEqual({ state: "unavailable", reason: "job_unavailable" });
+    expect(archived.items[0].result).toMatchObject({availability:"omitted",omitted:true});
+    expect(JSON.stringify(archived)).not.toContain("Original OAuth fixture result");
+    expect(JSON.stringify(archived)).not.toContain(grant.arguments.subscriptionRef);
     expect(archived.items[0].nextActions || []).toHaveLength(0);
     expect((await call(restarted, "codex_event_access", { action: "issue", jobId: a.jobId }, token)).result.isError).toBe(true);
   });
@@ -778,8 +788,10 @@ describe("card-free OAuth Events delegation", () => {
     expect(f.state.mcpEvents.list()).toHaveLength(0);
     const job = f.state.listJobs()[0] as any;
     const terminal = f.state.getJobCompletionDelivery(a.jobId, job.scopeId)!;
-    expect(f.state.retentionProtection(a.jobId, terminal.createdAt + EVENT_ACCESS_LIFETIME_MS - 1)).toContain("mcp-event-result-recovery");
-    expect(f.state.retentionProtection(a.jobId, terminal.createdAt + EVENT_ACCESS_LIFETIME_MS + 1)).not.toContain("mcp-event-result-recovery");
+    f.settings.update({historyRetentionDays:7},f.settings.current.revision);
+    const day=86_400_000,query={kind:"job" as const,id:a.jobId};
+    expect(JSON.stringify(f.state.readRetainedJobDetail(job.scopeId,query,terminal.createdAt+7*day-1)?.result)).toContain("Original OAuth fixture result");
+    expect(f.state.readRetainedJobDetail(job.scopeId,query,terminal.createdAt+7*day+1)).toBeUndefined();
     expect((await completed(f, a.jobId, token)).items[0].answer).toContain("Original OAuth fixture result");
     expect(f.requests.some(request => request.name === "codex_dashboard" || request.method === "ui/message")).toBe(false);
     expect(f.upstream.calls).toBe(1);

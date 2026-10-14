@@ -1,0 +1,88 @@
+{
+  "validationCommit": "39e6c9a0e9a7088681920245459dd0ca3679b5da",
+  "baseCommit": "704020b9aa7c9e728e225a14e9921357364dbd2e",
+  "productReviewCommit": "b599208492326f256ea3aae76b27a7b9eb01cd1e",
+  "fastChecks": "PASS release/localization/manifest and official CLI0.153.3 schema416JSON827TS",
+  "build": "PASS",
+  "nodeFullRun": {
+    "files": 149,
+    "passed": 1656,
+    "failed": 27,
+    "skipped": 2,
+    "overallPass": false,
+    "skippedCaseNames": [
+      "compares direct resets and bridge responses with the pinned local Go tunnel classification",
+      "central runtime lifecycle reservations keeps a running job and its restart reservation for over 60 seconds, then restarts on its event"
+    ],
+    "remainingFailureFamilies": [
+      {
+        "file": "issue162Context.test.ts",
+        "failures": 1,
+        "comparison": "Exact representative reproduced on baseline: temp env permission validation. Fixture/runtime unchanged."
+      },
+      {
+        "file": "issue246StartupSupervisor.test.ts",
+        "failures": 24,
+        "comparison": "Representative waiting/completed and missing descendant failure reproduced on baseline. Fixture/runtime unchanged. Entire24-case baseline not reexecuted; broad242/246 rework excluded."
+      },
+      {
+        "file": "macosHelperServer.test.ts",
+        "failures": 1,
+        "comparison": "Process inspection timeout in concurrent run; exactcase passed isolated retry."
+      },
+      {
+        "file": "releasePayload.test.ts",
+        "failures": 1,
+        "comparison": "Synthetic DMG mount failed concurrently; exactcase passed isolated retry."
+      }
+    ]
+  },
+  "native": {
+    "initialRepositoryCommand": "316 reported,3 skipped,10 assertion failures in2 functions; not overallPASS",
+    "corrections": "Both failed functions then passed strict concurrency complete/warnings-as-errors after test-only current identity and legacy processing zero-RPC corrections. Product unchanged; no subsequent full-native run claimed."
+  },
+  "unchangedBaselineBlobs": [
+    {
+      "path": "test/issue162Context.test.ts",
+      "blob": "f7bbee53c91f9b0ce12704d7d685a54189dd113c",
+      "equalToBase": true
+    },
+    {
+      "path": "test/issue246StartupSupervisor.test.ts",
+      "blob": "76b3ceb1e1c8648dbd1d9dbbb62c65fea4735c07",
+      "equalToBase": true
+    },
+    {
+      "path": "src/macosHelperServer.ts",
+      "blob": "96ccd181b99c223b9069a8c0c13e3ac9f81f7141",
+      "equalToBase": true
+    },
+    {
+      "path": "src/runtimeLifecycle.ts",
+      "blob": "f95937dd7a395ff22d4c6c3c1f2c2ee22d00216f",
+      "equalToBase": true
+    },
+    {
+      "path": "scripts/runtime-env.mjs",
+      "blob": "c9ec2d8c64337754b6b77819e2839ae10b78ef47",
+      "equalToBase": true
+    },
+    {
+      "path": "test/fixtures/macosHelperLauncher.ts",
+      "blob": "ad9f05798f19fa3b767482a0c22923ab4312e791",
+      "equalToBase": true
+    },
+    {
+      "path": "scripts/release-payload.mjs",
+      "blob": "e93d5cb809acb67da4406e0e0d327bfc119bbf3e",
+      "equalToBase": true
+    },
+    {
+      "path": "test/releasePayload.test.ts",
+      "blob": "3c0c39c5c2b49f40e3578f893fb43b3d8a3ef141",
+      "equalToBase": true
+    }
+  ],
+  "operatingActions": false,
+  "releaseActions": false
+}

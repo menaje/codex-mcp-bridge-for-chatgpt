@@ -483,6 +483,10 @@ struct DashboardPopoverView: View {
                 total: currentRows.count,
                 groupsByActivity: true
             )
+            if panel == .running, dashboard.statusPagination?.hasNext == true {
+                Button("macos.showmore") { Task { await model.loadMoreRunning() } }
+                    .disabled(model.loadingMoreRunning)
+            }
             if panel == .history, dashboard.pagination.active.hasNext {
                 Label(BridgeAppLocalization.format(
                     "macos.onlyactiveitemsareshown",
@@ -580,21 +584,6 @@ struct DashboardPopoverView: View {
             .buttonStyle(.borderless)
             .help("macos.skilllibrary")
             .accessibilityLabel("macos.skilllibrary")
-
-            Button {
-                Task { await model.toggleDashboardPanel(.history) }
-            } label: {
-                Label("macos.workrunhistory", systemImage: "clock.arrow.circlepath")
-                    .labelStyle(.iconOnly)
-                    .frame(width: 28, height: 28)
-            }
-            .buttonStyle(.borderless)
-            .foregroundStyle(model.dashboardPanel == .history ? Color.accentColor : Color.primary)
-            .help("macos.workrunhistory")
-            .accessibilityLabel("macos.workrunhistory")
-            .accessibilityAddTraits(model.dashboardPanel == .history ? [.isSelected] : [])
-            .accessibilityIdentifier("dashboard-history")
-            .disabled(model.dashboard == nil || !model.bridgeConnected || model.changingProblems)
 
             Spacer()
 
@@ -1041,8 +1030,8 @@ private struct DashboardSummary: View {
 
     var body: some View {
         LazyVGrid(columns: columns, spacing: 8) {
-            summaryButton("macos.running", value: counts.running, symbol: "play.fill", panel: .running)
-            summaryButton("dashboard.responseRequired", value: counts.responseRequiredCount, symbol: "text.bubble.fill", panel: .responseRequired)
+            summaryButton("macos.running", value: counts.active, symbol: "play.fill", panel: .running)
+            summaryButton("macos.workrunhistory", value: model.dashboard?.pagination.terminal.total ?? 0, symbol: "clock", panel: .history)
             summaryButton("dashboard.problems", value: counts.problemCount, symbol: "exclamationmark.triangle.fill", panel: .problems)
         }
         .disabled(model.changingProblems)
@@ -1320,7 +1309,6 @@ struct DashboardRowView: View {
     let presentation: DashboardRowPresentation
     let enclosingActivityTitle: String?
     @State private var historyExpanded = false
-    @State private var changingHistory = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1411,14 +1399,6 @@ struct DashboardRowView: View {
             }
             .font(.caption2)
             .foregroundStyle(.secondary)
-            if let controls = row.historyControls {
-                HStack {
-                    if controls.canAcknowledge { acknowledgeHistoryButton("history.acknowledge") }
-                    if changingHistory { ProgressView().controlSize(.mini) }
-                }
-                .font(.caption2)
-                .disabled(changingHistory)
-            }
             if !model.isRemoteClient,
                let handoff = model.threadHandoffs[row.rowKey] ?? row.handoff,
                handoff.requested && !handoff.canOpen {
@@ -1473,6 +1453,10 @@ struct DashboardRowView: View {
 
                 if historyExpanded {
                     VStack(alignment: .leading, spacing: 6) {
+                        if displayedHistory.count < historyTotal {
+                            Button("macos.next") { Task { await model.loadDashboardHistory(row, more: true) } }
+                                .disabled(model.dashboardHistoryLoading.contains(row.rowKey))
+                        }
                         if displayedHistory.isEmpty {
                             if let error = model.dashboardHistoryError(for: row) {
                                 Text(error)
@@ -1580,10 +1564,8 @@ struct DashboardRowView: View {
     }
 
     private var displayedHistory: [DashboardTurn] {
-        if let history = row.history, !history.isEmpty {
-            return history
-        }
-        return model.dashboardHistory(for: row)?.history ?? []
+        if let detail = model.dashboardHistory(for: row) { return detail.history }
+        return model.dashboardEmbeddedHistory(for: row)
     }
 
     private var historyTotal: Int {
@@ -1621,16 +1603,8 @@ struct DashboardRowView: View {
             DashboardTimePresentation.text(turn: turn, fallbackUpdatedAt: turn.updatedAt, locale: model.interfaceLocale)
     }
 
-    private func acknowledgeHistoryButton(_ title: LocalizedStringKey) -> some View {
-        Button(title) {
-            changingHistory = true
-            Task {
-                await model.acknowledgeHistory(row)
-                changingHistory = false
-            }
-        }
-        .buttonStyle(.link)
-    }
+
+
 }
 
 private enum StatusPresentation {

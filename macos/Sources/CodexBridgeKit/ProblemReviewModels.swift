@@ -29,6 +29,8 @@ public struct ProblemQuery: Codable, Sendable, Equatable {
 public struct DashboardProblems: Codable, Sendable {
     public let query: ProblemQuery
     public let revision: String
+    public var incidentCount: Int? = nil
+    public var currentImpactCount: Int? = nil
     public let pendingCount: Int
     public let acknowledgedCount: Int
     public let reviewableCount: Int
@@ -48,6 +50,9 @@ public struct ProblemPage: Codable, Sendable {
 }
 
 public struct DashboardProblem: Codable, Identifiable, Sendable {
+    public var occurredAt: String? = nil
+    public var currentImpact: String? = nil
+    public var progress: [ProblemProgress]? = nil
     public var id: String { problemKey }
     public let problemKey: String
     public let revision: String
@@ -114,4 +119,12 @@ public struct ProblemAction: Codable, Sendable {
 public struct ProblemActionResult: Codable, Sendable {
     public let ok: Bool
     public let changed: Int
+}
+
+public struct ProblemProgress: Codable, Sendable {
+    public let at: String
+    public let step: String
+    public let reason: String?
+    public let evidence: String?
+    public let attempt: Int?
 }

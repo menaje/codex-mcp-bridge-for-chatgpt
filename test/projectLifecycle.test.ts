@@ -708,6 +708,12 @@ describe("project retirement contract (#240)", () => {
     const job = jobs.start(input(project), async () => result("compact"));
     await job.promise;
     state.deleteJob(job.jobId);
+    // An authentic legacy compact receipt lacked these hashes. Archiving in
+    // schema 32 preserves known hashes and originals, so construct that legacy
+    // state explicitly rather than relying on archive to erase valid evidence.
+    const legacy=new Database(file);
+    legacy.prepare("UPDATE jobs SET payload=json_remove(payload,'$.requestHash','$.requestHashVersion','$.requestEnvelopeHash') WHERE job_id=?").run(job.jobId);
+    legacy.close();
     await archive(project);
     apply({ kind: "delete", projectId: project.id });
     expect(

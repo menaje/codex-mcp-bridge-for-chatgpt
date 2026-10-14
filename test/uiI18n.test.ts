@@ -411,7 +411,7 @@ describe("human-facing UI localization", () => {
     expect(DASHBOARD_CARD_HTML).not.toContain("codex_ui_stop");
     expect(DASHBOARD_CARD_HTML).toContain('if(row.controlKind!=="request")return');
     expect(DASHBOARD_CARD_HTML).toContain('controlAction("codex_interaction_respond"');
-    expect(DASHBOARD_CARD_HTML).toContain('callTool("codex_ui_problem"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('callTool("codex_ui_problem"');
     expect(DASHBOARD_CARD_HTML).not.toContain('callTool("codex_activity"');
     expect(`${SETTINGS_CARD_HTML}${DASHBOARD_CARD_HTML}${serialized}`)
       .not.toContain("MacBook Air");

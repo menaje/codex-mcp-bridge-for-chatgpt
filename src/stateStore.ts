@@ -1,3 +1,5 @@
+import { acquireHistoryPolicyGate } from "./historyPolicyGate.js";
+import { readAppliedHistoryPolicy, retainedJobSql, historyExpired, strictRetentionDays } from "./historyPolicy.js";
 import { ProjectLifecycleStore } from "./projectLifecycle.js";
 import { nativeCompletionRetryMs, type NativeCompletionAvailability } from "./completionDelivery.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -21,7 +23,8 @@ import {
   V28_JOB_HISTORY_INDEX_MIGRATION_SCHEMA,
   V29_BACKGROUND_WORK_INDEX_MIGRATION_SCHEMA,
   V30_SESSION_AUTH_BOUNDARY_MIGRATION_SCHEMA,
-  V31_PROJECT_LIFECYCLE_MIGRATION_SCHEMA
+  V31_PROJECT_LIFECYCLE_MIGRATION_SCHEMA,
+  V32_HISTORY_POLICY_MIGRATION_SCHEMA
 } from "./stateSchema.js";
 import type { ModelDescriptionHistoryPage, ModelDescriptionOverrides } from "./modelDescriptions.js";
 import {
@@ -280,6 +283,7 @@ type JobProgressUpdateResult = {
 };
 
 export type DashboardRetainedJobSummary = {
+  endedAt?: number; endedAtSource?: string; detailAvailability?: string;
   jobId: string;
   scopeId: string;
   activityId: string;
@@ -339,6 +343,7 @@ export type SettingsStorageRecord = {
   payload: unknown;
 };
 type JobStorageRow = JsonRow & {
+  ended_at?: number|null; ended_at_source?: string|null; detail_availability?: string; result_body?: string|null;
   job_id: string;
   scope_id: string;
   request_id: string;
@@ -724,13 +729,13 @@ export class BridgeStateStore {
             `found ${existingVersion ?? "unknown"}.`
           );
         }
-        this.questions = new QuestionStore(this.database, { readOnly: true });
+        this.questions = new QuestionStore(this.database, { readOnly: true, policy: () => this.appliedHistoryPolicy() });
         this.eventRetention = new EventRetention(this.database, {
           readSummary: (jobId) => this.readJobSummary(jobId),
           saveSummary: (jobId, summary) => this.saveJobSummary(jobId, summary)
         }, {
-          deleteActivityEvents: (olderThan, batchSize, retainedLimit) =>
-            this.deleteActivityEventsForRetention(olderThan, batchSize, retainedLimit),
+          deleteActivityEvents: (olderThan, batchSize, retainedLimit, now) =>
+            this.deleteActivityEventsForRetention(olderThan, batchSize, retainedLimit, now),
           deleteExpiredResultHolds: (now, limit) =>
             this.deleteExpiredResultHoldsForRetention(now, limit)
         }, { readOnly: true });
@@ -738,9 +743,9 @@ export class BridgeStateStore {
           this.database,
           (candidate, now) => this.expireHistoryProjection(candidate, now)
         );
-        this.automaticRecovery = new AutomaticRecoveryStore(this.database);
+        this.automaticRecovery = new AutomaticRecoveryStore(this.database, () => this.appliedHistoryPolicy());
         this.threadConnections = new ThreadConnectionStore(this.database);
-        this.dashboardReadModel = new DashboardReadModel(this.database);
+        this.dashboardReadModel = new DashboardReadModel(this.database, () => this.appliedHistoryPolicy());
         this.statusReadModel = new StatusReadModel(this.database);
         return;
       }
@@ -777,6 +782,7 @@ export class BridgeStateStore {
           this.database.exec(V29_BACKGROUND_WORK_INDEX_MIGRATION_SCHEMA);
           this.database.exec(V30_SESSION_AUTH_BOUNDARY_MIGRATION_SCHEMA);
           this.database.exec(V31_PROJECT_LIFECYCLE_MIGRATION_SCHEMA);
+          this.database.exec(V32_HISTORY_POLICY_MIGRATION_SCHEMA);
           this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
           this.setMeta("schema_v21_created_at", new Date().toISOString());
           this.setMeta("schema_v22_created_at", new Date().toISOString());
@@ -826,7 +832,7 @@ export class BridgeStateStore {
         this.configureDatabaseConnection();
       }
       this.questions = this.transaction(() => {
-        const questions = new QuestionStore(this.database);
+        const questions = new QuestionStore(this.database, { policy: () => this.appliedHistoryPolicy() });
         if (Object.values(questions.startupMaintenance).some((count) => count > 0)) {
           this.setMeta("state_startup_maintenance_last", JSON.stringify({
             reason: "question-expiry-and-dispatch-recovery",
@@ -840,8 +846,8 @@ export class BridgeStateStore {
         readSummary: (jobId) => this.readJobSummary(jobId),
         saveSummary: (jobId, summary) => this.saveJobSummary(jobId, summary)
       }, {
-        deleteActivityEvents: (olderThan, batchSize, retainedLimit) =>
-          this.deleteActivityEventsForRetention(olderThan, batchSize, retainedLimit),
+        deleteActivityEvents: (olderThan, batchSize, retainedLimit, now) =>
+          this.deleteActivityEventsForRetention(olderThan, batchSize, retainedLimit, now),
         deleteExpiredResultHolds: (now, limit) =>
           this.deleteExpiredResultHoldsForRetention(now, limit)
       });
@@ -849,9 +855,9 @@ export class BridgeStateStore {
         this.database,
         (candidate, now) => this.expireHistoryProjection(candidate, now)
       );
-      this.automaticRecovery = new AutomaticRecoveryStore(this.database);
+      this.automaticRecovery = new AutomaticRecoveryStore(this.database, () => this.appliedHistoryPolicy());
       this.threadConnections = new ThreadConnectionStore(this.database);
-      this.dashboardReadModel = new DashboardReadModel(this.database);
+      this.dashboardReadModel = new DashboardReadModel(this.database, () => this.appliedHistoryPolicy());
       this.statusReadModel = new StatusReadModel(this.database);
       if (this.getMeta("state_database_id") === undefined) {
         this.transaction(() => this.setMeta("state_database_id", randomUUID()));
@@ -1110,6 +1116,8 @@ export class BridgeStateStore {
     }
   }
 
+  private releaseSettingsPolicyGate?: () => void;
+
   transaction<T>(
     operation: () => T,
     observePhase?: (phase: OperationalStateOperationPhase) => void
@@ -1155,6 +1163,9 @@ export class BridgeStateStore {
       throw error;
     } finally {
       this.transactionDepth -= 1;
+      const releasePolicyGate=this.releaseSettingsPolicyGate;
+      this.releaseSettingsPolicyGate=undefined;
+      releasePolicyGate?.();
       const eventReady = [...this.mcpEventReadyPending.values()];
       this.mcpEventReadyPending.clear();
       const inserted = [...this.insertedNotifyCompletions];
@@ -1372,10 +1383,10 @@ export class BridgeStateStore {
                bridge_instance_id, worker_id, worker_generation, upstream_request_id,
                terminal_version,agent_id,context_mode,a.project_id,p.name AS project_name,
                j.cwd,j.sandbox,j.created_at,j.updated_at,j.job_version,j.last_progress_at,
-               j.last_progress,j.terminal_origin,j.cancellation_intent_id,
+               j.last_progress,j.terminal_origin,j.cancellation_intent_id,j.ended_at,j.ended_at_source,j.detail_availability,
                COALESCE((SELECT json_group_array(json(event.payload)) FROM (
-                 SELECT payload FROM job_events
-                  WHERE job_id=j.job_id AND event_type LIKE 'app-%'
+                 SELECT payload FROM (SELECT event_id,payload FROM job_events
+                  WHERE job_id=j.job_id AND event_type LIKE 'app-%' ORDER BY event_id DESC LIMIT 200)
                   ORDER BY event_id
                ) event),'[]') AS public_events,
                COALESCE((SELECT json_group_array(json(interaction.payload)) FROM (
@@ -1388,7 +1399,7 @@ export class BridgeStateStore {
           FROM jobs j
           JOIN activities a ON a.activity_id=j.activity_id
           LEFT JOIN projects p ON p.project_id=a.project_id
-         WHERE j.archived_at IS NULL
+         WHERE j.archived_at IS NULL AND ${retainedJobSql(this.appliedHistoryPolicy(),"j")}
            ${agentId ? "AND j.agent_id=?" : ""}
            ${scopeId ? "AND j.scope_id=?" : ""}
          ORDER BY j.updated_at ASC
@@ -1414,7 +1425,7 @@ export class BridgeStateStore {
     const row = this.database.prepare(`
       SELECT job_id, request_id, status
         FROM jobs
-       WHERE scope_id = ? AND ${column} = ? AND archived_at IS NOT NULL
+       WHERE scope_id = ? AND ${column} = ? AND status IN ('completed','failed','interrupted','cancelled')
     `).get(scopeId, value) as {
       job_id: string;
       request_id: string;
@@ -1447,12 +1458,12 @@ export class BridgeStateStore {
     const rows = this.database
       .prepare(`
         SELECT job_id, scope_id, activity_id, agent_id, backend_kind,
-               status, created_at, updated_at, summary
+               status, created_at, updated_at, ended_at, ended_at_source, detail_availability, summary
           FROM jobs
          WHERE archived_at IS NOT NULL
-           AND NOT EXISTS (SELECT 1 FROM work_history_state h WHERE h.job_id=jobs.job_id AND h.expired_at IS NOT NULL)
+           AND ${retainedJobSql(this.appliedHistoryPolicy())}
            ${scopeId ? "AND scope_id = ?" : ""}
-         ORDER BY updated_at DESC, job_id DESC
+         ORDER BY created_at DESC, job_id DESC
          LIMIT ?
       `)
       .all(...(scopeId ? [scopeId, boundedLimit] : [boundedLimit])) as Array<{
@@ -1474,7 +1485,8 @@ export class BridgeStateStore {
   listDashboardArchivedJobsByAgent(
     scopeId?: string,
     perAgentLimit = 13,
-    representativeOrder: DashboardRepresentativeOrder = "updated"
+    representativeOrder: DashboardRepresentativeOrder = "created",
+    agentIds?: readonly string[]
   ): {
     jobs: DashboardRetainedJobSummary[];
     totalsByAgent: Map<string, number>;
@@ -1482,7 +1494,8 @@ export class BridgeStateStore {
     const result = this.dashboardReadModel.archivedByAgent(
       scopeId,
       perAgentLimit,
-      representativeOrder
+      representativeOrder,
+      agentIds
     );
     return { jobs: result.rows.map(decodeDashboardArchivedJob), totalsByAgent: result.totalsByAgent };
   }
@@ -1511,6 +1524,17 @@ export class BridgeStateStore {
       const parsed = parseCurrentPayload({payload:summary}, "dashboard job summary");
       return [jobId, sanitizeRetainedJobSummary(parsed)] as const;
     }));
+  }
+
+  dashboardActivityProjects(ids:readonly string[]):Map<string,{projectId?:string;projectName?:string}> {
+    const result=new Map<string,{projectId?:string;projectName?:string}>(),unique=[...new Set(ids)];
+    for(let offset=0;offset<unique.length;offset+=500) {
+      const part=unique.slice(offset,offset+500);
+      const rows=this.database.prepare(`SELECT a.activity_id,a.project_id,p.name FROM activities a LEFT JOIN projects p ON p.project_id=a.project_id
+        WHERE a.activity_id IN (${part.map(()=>"?").join(",")})`).all(...part) as Array<{activity_id:string;project_id:string|null;name:string|null}>;
+      for(const row of rows) result.set(row.activity_id,{projectId:row.project_id || undefined,projectName:row.name || undefined});
+    }
+    return result;
   }
 
   dashboardActivityTitles(activityIds: readonly string[]): Map<string, string> {
@@ -1618,10 +1642,9 @@ export class BridgeStateStore {
         if (usage) this.eventRetention.prepare({jobId,eventType:"app-usage",payload:parseStoredJson(usage.payload, "job event")}, true, false);
       }
       this.database
-        .prepare("UPDATE jobs SET archived_at = ?, payload = ? WHERE job_id = ?")
-        .run(now, JSON.stringify({ resultOmitted: true }), row.job_id);
-      this.mcpEventAccess.forgetJob(row.job_id);
-      this.database.prepare("DELETE FROM job_events WHERE job_id=?").run(jobId);
+        .prepare("UPDATE jobs SET archived_at = ? WHERE job_id = ?")
+        .run(now, row.job_id);
+      // Archiving releases registry capacity without deleting retained history.
       this.insertJobEvent({
         jobId: row.job_id,
         activityId: row.activity_id,
@@ -1630,7 +1653,7 @@ export class BridgeStateStore {
         eventType: "retention-pruned",
         status: row.status,
         createdAt: now,
-        payload: { resultBodyRetained: false }
+        payload: { resultBodyRetained: true }
       });
       this.touchActivity(row.activity_id, scopeVersion, now, "job-retention-pruned", {
         jobId: row.job_id
@@ -1650,53 +1673,9 @@ export class BridgeStateStore {
       status:string;activity_id:string;updated_at:number;completion_policy:string|null;
     } | undefined;
     if (!row) return [];
-    const reasons: string[] = [];
-    if (this.mcpEvents.protectsResult(jobId, now)) reasons.push("mcp-event-result-recovery");
-    if (isActiveActivityJobStatus(row.status)) reasons.push("active-work");
-    if (this.database.prepare("SELECT 1 FROM job_interactions WHERE job_id=? AND is_blocking=1 LIMIT 1").get(jobId)) reasons.push("pending-interaction");
-    if (this.database.prepare("SELECT 1 FROM completion_outbox WHERE activity_id=? AND delivered_at IS NULL AND acknowledged_at IS NULL LIMIT 1").get(row.activity_id)) reasons.push("undelivered-result");
-    const completionDelivery = this.database.prepare(`SELECT state,created_at,completion_result_offered_at
-      FROM job_completion_deliveries WHERE job_id=?`).get(jobId) as {
-        state:string;created_at:number;completion_result_offered_at:number|null;
-      } | undefined;
-    // Card-free intent exists before callback admission. A failed/absent
-    // subscription must still leave a finite original-result recovery window.
-    if (row.completion_policy === "events" && !isActiveActivityJobStatus(row.status) &&
-        now < (completionDelivery?.created_at ?? row.updated_at) + EVENT_RESULT_RECOVERY_MS &&
-        !reasons.includes("mcp-event-result-recovery")) reasons.push("mcp-event-result-recovery");
-    if (completionDelivery) {
-      const settings = this.getSettingsRecord()?.payload;
-      const retentionDays = historyRetentionDays(
-        isRecord(settings) ? settings.historyRetentionDays : undefined
-      );
-      const withinHistoryRetention = retentionDays === 0 ||
-        now < row.updated_at + retentionDays * 86_400_000;
-      if (
-        !["pending", "result-read"].includes(completionDelivery.state) &&
-        completionDelivery.completion_result_offered_at === null &&
-        withinHistoryRetention
-      ) {
-        // No message body is stored. Keep the exact Job result available only
-        // after a card crossed the send boundary, while delivery remains
-        // unresolved and the selected run-history period has not expired.
-        reasons.push("undelivered-chatgpt-result");
-      } else if (
-        completionDelivery.completion_result_offered_at !== null &&
-        completionResultRecoveryMs > 0 &&
-        now < completionDelivery.completion_result_offered_at + completionResultRecoveryMs
-      ) {
-        // Constructing a receipt response is not proof that ChatGPT received
-        // it. Reuse the ordinary result-retention window as one bounded retry
-        // grace rather than extending successful results to run-history expiry.
-        reasons.push("chatgpt-result-recovery");
-      }
-    }
-    const steering = this.uncertainResultState(jobId);
-    const review = this.eventRetention.summary(jobId).uncertainResponseReview as {count?:number;latestUpdateAt?:number} | undefined;
-    if (steering.pending || steering.count > 0 && (review?.count !== steering.count || review.latestUpdateAt !== steering.latestUpdateAt)) reasons.push("uncertain-response");
-    if (this.database.prepare("SELECT 1 FROM cancellation_intents WHERE (target_job_id=? OR (target_kind='activity' AND target_activity_id=?)) AND status IN ('recorded','dispatched') LIMIT 1").get(jobId, row.activity_id)) reasons.push("pending-cancellation");
-    if (this.database.prepare("SELECT 1 FROM result_holds WHERE job_id=? AND expires_at>?").get(jobId, now)) reasons.push("user-hold");
-    return reasons;
+    // Eviction preserves the durable body and every control journal. Terminal
+    // delivery/hold/uncertainty therefore need no registry-capacity reservation.
+    return isActiveActivityJobStatus(row.status) ? ["active-work"] : [];
   }
 
   holdResult(jobId: string, reason: string, expiresAt: number, now = Date.now()): void {
@@ -1727,19 +1706,120 @@ export class BridgeStateStore {
       FROM steering_deliveries WHERE job_id=? AND status IN ('prepared','dispatching','uncertain')`).get(jobId) as {pending:number;count:number;latestUpdateAt:number};
   }
 
+  latestControlJob(agentId:string):{jobId:string;threadId:string|null}|undefined {
+    const row=this.database.prepare("SELECT job_id,thread_id FROM jobs WHERE agent_id=? ORDER BY created_at DESC,job_id DESC LIMIT 1")
+      .get(agentId) as {job_id:string;thread_id:string|null}|undefined;
+    return row ? {jobId:row.job_id,threadId:row.thread_id} : undefined;
+  }
+
+  latestControlJobs(agentIds:readonly string[]):Map<string,{jobId:string;threadId:string|null}> {
+    const result=new Map<string,{jobId:string;threadId:string|null}>(),ids=[...new Set(agentIds)];
+    for(let offset=0;offset<ids.length;offset+=500) {
+      const part=ids.slice(offset,offset+500);
+      const rows=this.database.prepare(`SELECT agent_id,job_id,thread_id FROM (
+        SELECT agent_id,job_id,thread_id,ROW_NUMBER() OVER (PARTITION BY agent_id ORDER BY created_at DESC,job_id DESC) rank
+        FROM jobs WHERE agent_id IN (${part.map(()=>"?").join(",")})) WHERE rank=1`)
+        .all(...part) as Array<{agent_id:string;job_id:string;thread_id:string|null}>;
+      for(const row of rows) result.set(row.agent_id,{jobId:row.job_id,threadId:row.thread_id});
+    }
+    return result;
+  }
+
+  appliedHistoryPolicy(now = Date.now()) { return readAppliedHistoryPolicy(this.database, now); }
+
+  /** Protection of actual execution is separate from the age of its history. */
+  private historyExecutionProtected(jobId: string): boolean {
+    const row = this.database.prepare("SELECT status FROM jobs WHERE job_id=?").get(jobId) as {status:string}|undefined;
+    return Boolean(row && isActiveActivityJobStatus(row.status));
+  }
+
+  retainedJobIds(ids: readonly string[], now=Date.now()): Set<string> {
+    const retained=new Set<string>(),policy=this.appliedHistoryPolicy(now);
+    for (let start=0;start<ids.length;start+=500) {
+      const part=ids.slice(start,start+500);
+      if (!part.length) continue;
+      const rows=this.database.prepare(`SELECT job_id FROM jobs WHERE job_id IN (${part.map(()=>"?").join(",")})
+        AND ${retainedJobSql(policy)}`).all(...part) as Array<{job_id:string}>;
+      for(const row of rows) retained.add(row.job_id);
+    }
+    return retained;
+  }
+
+  historyCacheMetadata(agentIds: readonly string[], now=Date.now()): Map<string,{historyRevision:string;nextExpiryAt:string|null}> {
+    const result=new Map<string,{historyRevision:string;nextExpiryAt:string|null}>(),policy=this.appliedHistoryPolicy(now);
+    for(let start=0;start<agentIds.length;start+=500) {
+      const part=agentIds.slice(start,start+500);if(!part.length) continue;
+      const rows=this.database.prepare(`SELECT a.agent_id,COALESCE(r.revision,0) revision,
+        (SELECT MIN(ended_at) FROM jobs WHERE agent_id=a.agent_id AND ${retainedJobSql(policy)}) next_basis,
+        (SELECT COUNT(*) FROM jobs WHERE agent_id=a.agent_id AND ${retainedJobSql(policy)}) retained_count
+        FROM agents a LEFT JOIN agent_history_revisions r ON r.agent_id=a.agent_id
+        WHERE a.agent_id IN (${part.map(()=>"?").join(",")})`).all(...part) as Array<{agent_id:string;revision:number;next_basis:number|null;retained_count:number}>;
+      for(const row of rows) result.set(row.agent_id,{historyRevision:createHash("sha256")
+        .update(JSON.stringify(["history-v3",row.agent_id,row.revision,row.retained_count,row.next_basis])).digest("hex"),
+        nextExpiryAt:policy.retentionDays===0||row.next_basis===null ? null : new Date(row.next_basis+policy.retentionDays*86_400_000).toISOString()});
+    }
+    return result;
+  }
+
+  retainedJobVisible(jobId: string, now = Date.now()): boolean {
+    return Boolean(this.database.prepare(`SELECT 1 FROM jobs WHERE job_id=? AND ${retainedJobSql(this.appliedHistoryPolicy(now))}`).get(jobId));
+  }
+
+  /** Exact scoped durable detail survives registry eviction. No hydration of other Jobs. */
+  readAgentHistoryPage(scopeId:string,agentId:string,cursor:{at:number;id:string}|undefined,limit=12,now=Date.now()):{
+    history:DashboardRetainedJobSummary[];representative?:string;total:number;hasMore:boolean
+  } {
+    const predicate=retainedJobSql(this.appliedHistoryPolicy(now));
+    const representative=this.database.prepare(`SELECT job_id FROM jobs WHERE scope_id=? AND agent_id=? AND ${predicate}
+      ORDER BY CASE WHEN status IN ('running','terminating','termination-failed') THEN 0 ELSE 1 END,created_at DESC,job_id DESC LIMIT 1`)
+      .get(scopeId,agentId) as {job_id:string}|undefined;
+    const exclusion=representative?.job_id || "";
+    const total=(this.database.prepare(`SELECT COUNT(*) n FROM jobs WHERE scope_id=? AND agent_id=? AND job_id<>?
+      AND status IN ('completed','failed','interrupted','cancelled') AND ${predicate}`).get(scopeId,agentId,exclusion) as {n:number}).n;
+    const rows=this.database.prepare(`SELECT job_id,scope_id,activity_id,agent_id,backend_kind,status,created_at,updated_at,
+      ended_at,ended_at_source,detail_availability,summary FROM jobs WHERE scope_id=? AND agent_id=? AND job_id<>?
+      AND status IN ('completed','failed','interrupted','cancelled') AND ${predicate}
+      ${cursor ? "AND (created_at<? OR created_at=? AND job_id<?)" : ""}
+      ORDER BY created_at DESC,job_id DESC LIMIT ?`).all(scopeId,agentId,exclusion,...(cursor ? [cursor.at,cursor.at,cursor.id] : []),Math.min(100,limit)+1) as DashboardArchivedJobRow[];
+    return {history:rows.slice(0,limit).map(decodeDashboardArchivedJob),representative:representative?.job_id,total,hasMore:rows.length>limit};
+  }
+
+  saveJobResultBody(jobId:string,result:unknown):void {
+    if(this.workHistory.expired(jobId)) return;
+    this.database.prepare("INSERT INTO job_result_bodies(job_id,payload) VALUES (?,?) ON CONFLICT(job_id) DO UPDATE SET payload=excluded.payload")
+      .run(jobId,JSON.stringify(result));
+  }
+
+  readRetainedJobDetail(scopeId: string, query: {kind:"job";id:string}|{kind:"request";requestId:string}, now = Date.now()): StoredJobRecord | undefined {
+    const row = this.database.prepare(`SELECT j.payload,j.job_id,j.scope_id,j.request_id,j.activity_id,j.thread_id,
+      j.source_thread_id,j.status,j.backend_kind,j.bridge_instance_id,j.worker_id,j.worker_generation,j.upstream_request_id,
+      j.terminal_version,j.agent_id,j.context_mode,a.project_id,p.name AS project_name,j.cwd,j.sandbox,j.created_at,
+      j.updated_at,j.ended_at,j.ended_at_source,j.detail_availability,b.payload AS result_body,j.job_version,j.last_progress_at,j.last_progress,
+      j.terminal_origin,j.cancellation_intent_id,
+      COALESCE((SELECT json_group_array(json(payload)) FROM job_events WHERE job_id=j.job_id AND event_type LIKE 'app-%'),'[]') AS public_events,
+      COALESCE((SELECT json_group_array(json(json_patch(payload,json_object('interactionId',interaction_id,
+        'isBlocking',json(CASE is_blocking WHEN 1 THEN 'true' ELSE 'false' END)))))
+        FROM job_interactions WHERE job_id=j.job_id),'[]') AS pending_interactions
+      FROM jobs j JOIN activities a ON a.activity_id=j.activity_id LEFT JOIN projects p ON p.project_id=a.project_id
+      LEFT JOIN job_result_bodies b ON b.job_id=j.job_id
+      WHERE j.scope_id=? AND j.${query.kind === "job" ? "job_id" : "request_id"}=? AND ${retainedJobSql(this.appliedHistoryPolicy(now),"j")}`)
+      .get(scopeId,query.kind === "job" ? query.id : query.requestId) as JobStorageRow|undefined;
+    return row ? hydrateJobPayload(row) : undefined;
+  }
+
   maintainEventRetention(now = Date.now()): ReturnType<EventRetention["sweep"]> {
     return this.transaction(() => this.eventRetention.sweep(now));
   }
 
   maintainHistoryRetention(now = Date.now()): { historyRemoved: number } {
     return this.transaction(() => {
-      const settings = this.getSettingsRecord()?.payload;
-      const days = historyRetentionDays(isRecord(settings) ? settings.historyRetentionDays : undefined);
+      const days = this.appliedHistoryPolicy(now).retentionDays;
       const historyRemoved = this.workHistory.sweep(
         days,
-        jobId => this.retentionProtection(jobId, now).length > 0,
+        jobId => this.historyExecutionProtected(jobId),
         now
       );
+      this.sweepActivityHistoryMaterials(now);
       if (historyRemoved > 0) {
         this.setMeta("state_history_retention_last_run", JSON.stringify({
           reason: "configured-retention-policy",
@@ -1752,10 +1832,33 @@ export class BridgeStateStore {
     });
   }
 
+  private completionHistoryPredicate(now=Date.now()):string {
+    const policy=this.appliedHistoryPolicy(now);
+    return "COALESCE(json_extract(payload,'$.historyExpired'),0)=0"+
+      (policy.cutoffAt===null ? "" : ` AND created_at>${Math.floor(policy.cutoffAt)}`);
+  }
+
+  /** Completion text and cancellation prose have immutable capture clocks;
+   * their control identities survive independently from their visible history. */
+  private sweepActivityHistoryMaterials(now:number):void {
+    const policy=this.appliedHistoryPolicy(now);
+    if(policy.cutoffAt===null) return;
+    this.database.prepare(`UPDATE completion_outbox SET payload='{"historyExpired":true}'
+      WHERE outbox_id IN (SELECT outbox_id FROM completion_outbox WHERE created_at<=?
+        AND COALESCE(json_extract(payload,'$.historyExpired'),0)=0 ORDER BY created_at,outbox_id LIMIT 64)`)
+      .run(policy.cutoffAt);
+    this.database.prepare(`UPDATE cancellation_operations SET reason_text=NULL
+      WHERE rowid IN (SELECT rowid FROM cancellation_operations WHERE created_at<=? AND reason_text IS NOT NULL
+        ORDER BY created_at,rowid LIMIT 64)`).run(policy.cutoffAt);
+  }
+
+  private cancellationHistoryProjection(row:Record<string,unknown>):Record<string,unknown> {
+    return historyExpired(Number(row.created_at),this.appliedHistoryPolicy()) ? {...row,reason_text:null} : row;
+  }
+
   maintainRecoveryRetention(now = Date.now()): ReturnType<AutomaticRecoveryStore["prune"]> {
     return this.transaction(() => {
-      const settings = this.getSettingsRecord()?.payload;
-      const days = historyRetentionDays(isRecord(settings) ? settings.historyRetentionDays : undefined);
+      const days = this.appliedHistoryPolicy(now).retentionDays;
       return this.automaticRecovery.prune(days, now);
     });
   }
@@ -1772,8 +1875,7 @@ export class BridgeStateStore {
     const history = this.maintainHistoryRetention(now);
     const recovery = this.maintainRecoveryRetention(now);
     const report = { ...event, ...history, ...recovery };
-    const settings = this.getSettingsRecord()?.payload;
-    const days = historyRetentionDays(isRecord(settings) ? settings.historyRetentionDays : undefined);
+    const days = this.appliedHistoryPolicy(now).retentionDays;
     this.transaction(() => this.setMeta("state_retention_last_run", JSON.stringify({
       reason: "configured-retention-policy",
       at: new Date(now).toISOString(),
@@ -1799,21 +1901,21 @@ export class BridgeStateStore {
   private deleteActivityEventsForRetention(
     olderThan: number,
     batchSize: number,
-    retainedLimit: number
+    retainedLimit: number,
+    now=Date.now()
   ): number {
-    const limitRemoved = this.database.prepare(`
-      DELETE FROM activity_events WHERE event_id IN (
-        SELECT event_id FROM activity_events
-         ORDER BY event_id DESC LIMIT ? OFFSET ?
-      )
-    `).run(batchSize, retainedLimit).changes;
-    const ageRemoved = this.database.prepare(`
-      DELETE FROM activity_events WHERE event_id IN (
-        SELECT event_id FROM activity_events
-         WHERE created_at<? ORDER BY event_id LIMIT ?
-      )
-    `).run(olderThan, batchSize).changes;
-    return limitRemoved + ageRemoved;
+    const policy=this.appliedHistoryPolicy(now);
+    if (policy.cutoffAt===null) return 0;
+    const ageRemoved=this.database.prepare(`DELETE FROM activity_events WHERE event_id IN (
+      SELECT e.event_id FROM activity_events e
+      WHERE CASE WHEN EXISTS (SELECT 1 FROM jobs WHERE job_id=json_extract(e.payload,'$.jobId'))
+        THEN (SELECT ended_at FROM jobs WHERE job_id=json_extract(e.payload,'$.jobId')) ELSE e.created_at END<=?
+      ORDER BY e.event_id LIMIT ?)`).run(Math.min(olderThan,policy.cutoffAt),batchSize).changes;
+    const observations=this.database.prepare(`DELETE FROM transport_observations WHERE observation_id IN (
+      SELECT t.observation_id FROM transport_observations t LEFT JOIN jobs j ON j.job_id=t.job_id
+      WHERE (j.job_id IS NULL AND t.created_at<=?) OR j.ended_at<=?
+      ORDER BY t.observation_id LIMIT ?)`).run(Math.min(olderThan,policy.cutoffAt),Math.min(olderThan,policy.cutoffAt),batchSize).changes;
+    return ageRemoved+observations;
   }
 
   private deleteExpiredResultHoldsForRetention(now: number, limit: number): number {
@@ -1827,8 +1929,15 @@ export class BridgeStateStore {
   /** Central Unit-of-Work command for the cross-domain history projection. */
   private expireHistoryProjection(candidate: HistoryRetentionCandidate, _now: number): void {
     const receipt = {resultOmitted:true,historyExpired:true};
-    this.database.prepare("UPDATE jobs SET payload=?,summary='{}' WHERE job_id=?")
-      .run(JSON.stringify(receipt), candidate.jobId);
+    const current=this.appliedHistoryPolicy(_now);
+    const clock=this.database.prepare("SELECT ended_at,status FROM jobs WHERE job_id=?").get(candidate.jobId) as {ended_at:number|null;status:string};
+    if (!historyExpired(clock.ended_at,current) || isActiveActivityJobStatus(clock.status)) throw new Error("HISTORY_POLICY_CHANGED: Candidate is no longer expired.");
+    this.database.prepare("UPDATE jobs SET payload=?,summary='{}',last_progress=NULL,problem_summary=NULL,detail_availability='expired',archived_at=COALESCE(archived_at,?) WHERE job_id=?")
+      .run(JSON.stringify(receipt),_now,candidate.jobId);
+    this.database.prepare("DELETE FROM job_interactions WHERE job_id=?").run(candidate.jobId);
+    this.database.prepare("DELETE FROM job_result_bodies WHERE job_id=?").run(candidate.jobId);
+    // Retain outcome/hash/request identity only; never interpret expiry as delivery.
+    this.database.prepare("UPDATE steering_deliveries SET result=NULL WHERE job_id=?").run(candidate.jobId);
     this.mcpEventAccess.forgetJob(candidate.jobId);
     this.eventRetention.deleteJobEventsForHistory(candidate.jobId);
     this.database.prepare("DELETE FROM job_completion_deliveries WHERE job_id=?")
@@ -1855,7 +1964,7 @@ export class BridgeStateStore {
   }
 
   countJobs(scopeId?: string, status?: string): number {
-    let sql = "SELECT COUNT(*) AS count FROM jobs WHERE archived_at IS NULL";
+    let sql = `SELECT COUNT(*) AS count FROM jobs WHERE archived_at IS NULL AND ${retainedJobSql(this.appliedHistoryPolicy())}`;
     const parameters: string[] = [];
     if (scopeId) {
       sql += " AND scope_id = ?";
@@ -2674,7 +2783,14 @@ export class BridgeStateStore {
         "SELECT * FROM cancellation_operations WHERE scope_id = ? AND request_id = ?"
       )
       .get(scopeId, requestId) as Record<string, unknown> | undefined;
-    return row ? readCancellationOperationRow(row) : undefined;
+    if(!row) return;
+    // Control replay/settlement remains usable when history policy is unavailable.
+    // Omit prose from this projection; never discard the durable control or use
+    // an invented retention period to delete its original.
+    let projected:Record<string,unknown>;
+    try {projected=this.cancellationHistoryProjection(row);}
+    catch {projected={...row,reason_text:null};}
+    return readCancellationOperationRow(projected);
   }
 
   listCancellationOperations(scopeId?: string): CancellationOperationRecord[] {
@@ -2687,7 +2803,7 @@ export class BridgeStateStore {
       : this.database
           .prepare("SELECT * FROM cancellation_operations ORDER BY created_at ASC")
           .all();
-    return (rows as Array<Record<string, unknown>>).map(readCancellationOperationRow);
+    return (rows as Array<Record<string, unknown>>).map(row=>readCancellationOperationRow(this.cancellationHistoryProjection(row)));
   }
 
   beginCancellationOperation(input: BeginCancellationOperationInput): {
@@ -2943,15 +3059,6 @@ export class BridgeStateStore {
           reasonCode,
           now
         );
-      this.database
-        .prepare(`
-          DELETE FROM transport_observations
-           WHERE observation_id NOT IN (
-             SELECT observation_id FROM transport_observations
-              ORDER BY observation_id DESC LIMIT ?
-           )
-        `)
-        .run(TRANSPORT_OBSERVATION_LIMIT);
       const row = this.database
         .prepare("SELECT * FROM transport_observations WHERE observation_id = ?")
         .get(Number(result.lastInsertRowid)) as Record<string, unknown> | undefined;
@@ -3290,8 +3397,8 @@ export class BridgeStateStore {
 
   listJobEvents(jobId?: string): JobEventRecord[] {
     const rows = jobId
-      ? this.database.prepare("SELECT * FROM job_events WHERE job_id = ? ORDER BY event_id ASC").all(jobId)
-      : this.database.prepare("SELECT * FROM job_events ORDER BY event_id ASC").all();
+      ? this.database.prepare(`SELECT e.* FROM job_events e JOIN jobs j ON j.job_id=e.job_id WHERE e.job_id=? AND ${retainedJobSql(this.appliedHistoryPolicy(),"j")} ORDER BY e.event_id ASC`).all(jobId)
+      : this.database.prepare(`SELECT e.* FROM job_events e JOIN jobs j ON j.job_id=e.job_id WHERE ${retainedJobSql(this.appliedHistoryPolicy(),"j")} ORDER BY e.event_id ASC`).all();
     return (rows as Array<Record<string, unknown>>).map((row) => ({
       eventId: Number(row.event_id),
       jobId: String(row.job_id),
@@ -3303,6 +3410,14 @@ export class BridgeStateStore {
       createdAt: Number(row.created_at),
       payload: parseCurrentPayload({ payload: String(row.payload) }, "job event")
     }));
+  }
+
+  /** Whitelisted delivery diagnostics outlive ephemeral grants, without credentials. */
+  recordHistoryDiagnostic(jobId:string,eventType:string,details:Record<string,unknown>,now=Date.now()):void {
+    const row=this.database.prepare("SELECT activity_id,scope_id,status FROM jobs WHERE job_id=?").get(jobId) as {activity_id:string;scope_id:string;status:string}|undefined;
+    if(!row || this.workHistory.expired(jobId)) return;
+    this.insertJobEvent({jobId,activityId:row.activity_id,scopeId:row.scope_id,scopeVersion:this.getScopeVersion(row.scope_id),
+      eventType,status:row.status,createdAt:now,payload:details});
   }
 
   recordJobTelemetryEvent(
@@ -3464,9 +3579,9 @@ export class BridgeStateStore {
   listCompletionOutbox(activityId?: string): CompletionOutboxRecord[] {
     const rows = activityId
       ? this.database
-          .prepare("SELECT * FROM completion_outbox WHERE activity_id = ? ORDER BY outbox_id ASC")
+          .prepare(`SELECT * FROM completion_outbox WHERE activity_id = ? AND ${this.completionHistoryPredicate()} ORDER BY outbox_id ASC`)
           .all(activityId)
-      : this.database.prepare("SELECT * FROM completion_outbox ORDER BY outbox_id ASC").all();
+      : this.database.prepare(`SELECT * FROM completion_outbox WHERE ${this.completionHistoryPredicate()} ORDER BY outbox_id ASC`).all();
     return (rows as Array<Record<string, unknown>>).map(readCompletionOutboxRow);
   }
 
@@ -3475,7 +3590,7 @@ export class BridgeStateStore {
     const rows = this.database
       .prepare(`
           SELECT * FROM completion_outbox
-         WHERE scope_id = ? AND delivered_at IS NULL AND acknowledged_at IS NULL
+         WHERE scope_id = ? AND ${this.completionHistoryPredicate()} AND delivered_at IS NULL AND acknowledged_at IS NULL
            AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
          ORDER BY created_at ASC LIMIT ?
       `)
@@ -3493,7 +3608,7 @@ export class BridgeStateStore {
     const rows = this.database
       .prepare(`
           SELECT * FROM completion_outbox
-           WHERE channel = 'notify' AND delivered_at IS NULL AND acknowledged_at IS NULL
+           WHERE ${this.completionHistoryPredicate(now)} AND channel = 'notify' AND delivered_at IS NULL AND acknowledged_at IS NULL
              AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
              AND (lease_owner IS NULL OR lease_expires_at <= ?)
            ORDER BY created_at ASC LIMIT ?
@@ -3509,7 +3624,7 @@ export class BridgeStateStore {
       SELECT MIN(MAX(COALESCE(next_attempt_at, 0),
                      CASE WHEN lease_owner IS NULL THEN 0 ELSE COALESCE(lease_expires_at, 0) END)) AS due
         FROM completion_outbox
-       WHERE channel = 'notify' AND delivered_at IS NULL AND acknowledged_at IS NULL
+       WHERE ${this.completionHistoryPredicate(now)} AND channel = 'notify' AND delivered_at IS NULL AND acknowledged_at IS NULL
     `).get() as { due: number | null };
     return row.due === null ? { available: false } : {
       available: row.due <= now, nextAvailableAt: Math.max(now, row.due)
@@ -3519,7 +3634,7 @@ export class BridgeStateStore {
   getCompletionOutbox(outboxId: number): CompletionOutboxRecord | undefined {
     if (!Number.isSafeInteger(outboxId) || outboxId < 1) return undefined;
     const row = this.database
-      .prepare("SELECT * FROM completion_outbox WHERE outbox_id = ?")
+      .prepare(`SELECT * FROM completion_outbox WHERE outbox_id = ? AND ${this.completionHistoryPredicate()}`)
       .get(outboxId) as Record<string, unknown> | undefined;
     return row ? readCompletionOutboxRow(row) : undefined;
   }
@@ -3529,7 +3644,7 @@ export class BridgeStateStore {
       .prepare(`
         SELECT DISTINCT activity_id
           FROM completion_outbox
-         WHERE scope_id = ? AND delivered_at IS NULL AND acknowledged_at IS NULL
+         WHERE scope_id = ? AND ${this.completionHistoryPredicate()} AND delivered_at IS NULL AND acknowledged_at IS NULL
          ORDER BY activity_id ASC
       `)
       .all(normalizeUuid(scopeId, "completion outbox scopeId")) as Array<{ activity_id: string }>;
@@ -3549,7 +3664,7 @@ export class BridgeStateStore {
           UPDATE completion_outbox
              SET lease_owner = ?, lease_expires_at = ?, next_attempt_at = NULL,
                  attempt_count = attempt_count + 1
-           WHERE outbox_id = ? AND scope_id = ?
+           WHERE outbox_id = ? AND scope_id = ? AND ${this.completionHistoryPredicate(now)}
              AND delivered_at IS NULL AND acknowledged_at IS NULL
              AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
              AND (lease_owner IS NULL OR lease_expires_at <= ? OR lease_owner = ?)
@@ -3557,7 +3672,7 @@ export class BridgeStateStore {
         .run(leaseOwner, now + leaseMs, outboxId, scopeId, now, now, leaseOwner);
       if (result.changes !== 1) return undefined;
       const row = this.database
-        .prepare("SELECT * FROM completion_outbox WHERE outbox_id = ?")
+        .prepare(`SELECT * FROM completion_outbox WHERE outbox_id = ? AND ${this.completionHistoryPredicate()}`)
         .get(outboxId) as Record<string, unknown> | undefined;
       return row ? readCompletionOutboxRow(row) : undefined;
     });
@@ -3690,6 +3805,8 @@ export class BridgeStateStore {
   ): SettingsStorageRecord {
     return this.transaction(() => {
       this.assertSettingsRevision(expectedRevision);
+      if(this.options.readOnly) throw new Error("STATE_READ_ONLY: Cannot change settings in a projection.");
+      this.releaseSettingsPolicyGate ||= acquireHistoryPolicyGate(this.database.name);
       const nextRevision = expectedRevision + 1;
       this.database
         .prepare(`
@@ -4427,6 +4544,7 @@ export class BridgeStateStore {
     this.runMigration("28", "29", originalSourceSchema, () => this.migrateV28ToV29());
     this.runMigration("29", "30", originalSourceSchema, () => this.migrateV29ToV30());
     this.runMigration("30", "31", originalSourceSchema, () => this.migrateV30ToV31());
+    this.runMigration("31", "32", originalSourceSchema, () => this.migrateV31ToV32());
     if (this.getMeta("schema_version") !== CURRENT_SCHEMA_VERSION) {
       throw new Error(`Bridge state migration stopped at unsupported schema version ${this.getMeta("schema_version")}.`);
     }
@@ -5878,6 +5996,14 @@ export class BridgeStateStore {
     });
   }
 
+  private migrateV31ToV32(): void {
+    this.transaction(() => {
+      this.database.exec(V32_HISTORY_POLICY_MIGRATION_SCHEMA);
+      this.setMeta("schema_version", "32");
+      this.setMeta("schema_v32_migrated_at", new Date().toISOString());
+    });
+  }
+
   private migrateV30ToV31(): void {
     this.transaction(() => {
       this.database.exec(V31_PROJECT_LIFECYCLE_MIGRATION_SCHEMA);
@@ -6317,6 +6443,8 @@ export class BridgeStateStore {
         cancellationIntentId || null,
         JSON.stringify(jobPayloadForStorage(job as Record<string, unknown>))
       );
+    if (nowTerminal) this.database.prepare(`UPDATE jobs SET ended_at=COALESCE(ended_at,?),
+      ended_at_source=COALESCE(ended_at_source,'recorded'),problem_summary=? WHERE job_id=?`).run(job.updatedAt,(job as Record<string,unknown>).error ?? null,job.jobId);
     if (nowTerminal && !wasTerminal && terminalVersion) {
       this.insertJobCompletionDelivery({
         jobId: job.jobId,
@@ -7414,6 +7542,7 @@ function hydrateJobPayload(row: JobStorageRow): StoredJobRecord {
   if (!isRecord(payload)) throw new Error("Invalid job payload in the bridge state database: expected an object.");
   return {
     ...payload,
+    ...(row.result_body ? {result:parseCurrentPayload({payload:row.result_body},"retained result body"),resultOmitted:false} : {}),
     jobId: row.job_id,
     scopeId: row.scope_id,
     requestId: row.request_id,
@@ -7428,6 +7557,7 @@ function hydrateJobPayload(row: JobStorageRow): StoredJobRecord {
     sandbox: row.sandbox,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    endedAt: row.ended_at ?? undefined, endedAtSource: row.ended_at_source, detailAvailability: row.detail_availability,
     version: row.job_version,
     lastProgressAt: row.last_progress_at,
     ...(row.last_progress
@@ -7912,6 +8042,8 @@ function decodeDashboardArchivedJob(row: DashboardArchivedJobRow): DashboardReta
     status: row.status,
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
+    endedAt: row.ended_at == null ? undefined : Number(row.ended_at),
+    endedAtSource: row.ended_at_source ?? undefined, detailAvailability: row.detail_availability,
     ...(execution ? { execution } : {})
   };
 }

@@ -1,0 +1,26 @@
+{
+  "owner": "A final integration; B did not modify localization sources or generated resources",
+  "updateExisting": {
+    "dashboard.running": {"ko":"진행 중","en":"In progress"},
+    "macos.running": {"ko":"진행 중","en":"In progress"},
+    "dashboard.problems": {"ko":"문제 기록","en":"Problem history"},
+    "macos.workrunhistory": {"ko":"실행 기록","en":"Execution history"}
+  },
+  "add": {
+    "problem.currentImpactCount": {
+      "ko":"현재 영향 {count}건", "en":"Current impact: {count}", "ja":"現在の影響: {count}件",
+      "zh-Hans":"当前影响：{count}", "zh-Hant":"目前影響：{count}", "es":"Impacto actual: {count}",
+      "fr":"Impact actuel : {count}", "de":"Aktuelle Auswirkungen: {count}", "pt":"Impacto atual: {count}"
+    },
+    "problem.currentImpact.confirmed": {
+      "ko":"현재 영향 확인됨", "en":"Current impact confirmed", "ja":"現在の影響を確認済み",
+      "zh-Hans":"已确认当前影响", "zh-Hant":"已確認目前影響", "es":"Impacto actual confirmado",
+      "fr":"Impact actuel confirmé", "de":"Aktuelle Auswirkung bestätigt", "pt":"Impacto atual confirmado"
+    },
+    "problem.currentImpact.unknown": {
+      "ko":"현재 영향 미확인", "en":"Current impact unconfirmed", "ja":"現在の影響は未確認",
+      "zh-Hans":"当前影响尚未确认", "zh-Hant":"目前影響尚未確認", "es":"Impacto actual sin confirmar",
+      "fr":"Impact actuel non confirmé", "de":"Aktuelle Auswirkung unbestätigt", "pt":"Impacto atual não confirmado"
+    }
+  }
+}

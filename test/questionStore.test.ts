@@ -93,18 +93,19 @@ describe("durable question lifecycle", () => {
       expect(store.questions.startupMaintenance).toEqual({
         dispatchesMarkedUncertain: 1,
         expiredQuestionsRemoved: 1,
-        deliveredJournalsRemoved: 1
+        deliveredJournalsRemoved: 0
       });
       expect(JSON.parse(store.getMeta("state_startup_maintenance_last")!)).toMatchObject({
         reason: "question-expiry-and-dispatch-recovery",
         dispatchesMarkedUncertain: 1,
         expiredQuestionsRemoved: 1,
-        deliveredJournalsRemoved: 1
+        deliveredJournalsRemoved: 0
       });
       const readOnly = new Database(file, { readonly: true, fileMustExist: true });
       expect(readOnly.prepare(
         "SELECT request_id,status FROM codex_question_deliveries ORDER BY request_id"
       ).all()).toEqual([
+        { request_id: "delivered-request", status: "delivered" },
         { request_id: "dispatching-request", status: "uncertain" },
         { request_id: "uncertain-request", status: "uncertain" }
       ]);

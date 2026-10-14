@@ -1,3 +1,4 @@
+import { readAppliedHistoryPolicy, type AppliedHistoryPolicy } from "./historyPolicy.js";
 import { createHash, randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import { parseJsonTextStrict } from "./textIntegrity.js";
@@ -43,7 +44,7 @@ export class QuestionStore {
 
   constructor(
     private readonly db: Database.Database,
-    options: { readOnly?: boolean } = {}
+    options: { readOnly?: boolean; policy?: () => AppliedHistoryPolicy } = {}
   ) {
     if (options.readOnly) {
       this.startupMaintenance = {
@@ -100,10 +101,21 @@ export class QuestionStore {
     const deliveredJournalsRemoved = this.db
       .prepare(`DELETE FROM codex_question_deliveries WHERE rowid IN (
         SELECT rowid FROM codex_question_deliveries
-         WHERE status='delivered' AND created_at<?
+         WHERE status='delivered' AND occurred_at<?
          ORDER BY created_at,rowid LIMIT ?
-      )`).run(now - 7 * 24 * 60 * 60 * 1000, limit).changes;
+      )`).run(readAppliedHistoryPolicy(this.db,now).cutoffAt ?? -1, limit).changes;
+    const policy=readAppliedHistoryPolicy(this.db,now);
+    if (policy.cutoffAt!==null) this.db.prepare(`DELETE FROM question_history WHERE question_id IN (
+      SELECT question_id FROM question_history WHERE occurred_at<=? ORDER BY occurred_at,question_id LIMIT ?)`)
+      .run(policy.cutoffAt,limit);
     return { expiredQuestionsRemoved, deliveredJournalsRemoved };
+  }
+
+  history(scopeId: string, questionId: string, now=Date.now()): UserQuestionRecord | undefined {
+    const policy=readAppliedHistoryPolicy(this.db,now);
+    const row=this.db.prepare(`SELECT payload FROM question_history WHERE scope_id=? AND question_id=?
+      ${policy.cutoffAt===null ? "" : "AND occurred_at>?"}`).get(scopeId,questionId,...(policy.cutoffAt===null ? [] : [policy.cutoffAt]));
+    return this.fromRow(row);
   }
 
   create(scopeId: string, input: { requestId: string; title: string; questions: UserQuestionField[]; expiresInMinutes?: number }): UserQuestionRecord {
@@ -122,6 +134,8 @@ export class QuestionStore {
       createdAt: now, expiresAt: now + (input.expiresInMinutes || 1440) * 60_000,
       status: "pending", notification: "stored"
     };
+    this.db.prepare("INSERT INTO question_history(question_id,scope_id,occurred_at,payload) VALUES (?,?,?,?)")
+      .run(record.questionId,scopeId,now,JSON.stringify(record));
     this.db.prepare("INSERT INTO user_questions(question_id,scope_id,request_id,response_ref,expires_at,payload) VALUES(?,?,?,NULL,?,?)")
       .run(record.questionId, scopeId, input.requestId, record.expiresAt, JSON.stringify(record));
     return record;
@@ -231,8 +245,8 @@ export class QuestionStore {
       if (resumed.changes !== 1) throw new Error("QUESTION_ALREADY_DISPATCHED: Another answer attempt is in progress.");
       return;
     }
-    this.db.prepare("INSERT INTO codex_question_deliveries(scope_id,request_id,question_ref,action_hash,status,created_at,job_id) VALUES(?,?,?,?,?,?,?)")
-      .run(scopeId, requestId, questionRef, hash, "dispatching", Date.now(), jobId || null);
+    this.db.prepare("INSERT INTO codex_question_deliveries(scope_id,request_id,question_ref,action_hash,status,created_at,job_id,occurred_at) VALUES(?,?,?,?,?,?,?,?)")
+      .run(scopeId, requestId, questionRef, hash, "dispatching", Date.now(), jobId || null, Date.now());
   }
 
   finishDelivery(scopeId: string, requestId: string, status: "not-delivered" | "delivered" | "uncertain"): void {
@@ -242,6 +256,7 @@ export class QuestionStore {
   }
 
   private save(record: UserQuestionRecord): void {
+    this.db.prepare("UPDATE question_history SET payload=? WHERE question_id=?").run(JSON.stringify(record),record.questionId);
     this.db.prepare("UPDATE user_questions SET payload=?,response_ref=? WHERE scope_id=? AND question_id=?")
       .run(JSON.stringify(record), record.responseRef || null, record.scopeId, record.questionId);
   }

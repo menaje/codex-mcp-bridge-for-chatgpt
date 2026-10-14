@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionRegistry } from "../src/sessionRegistry.js";
 import { BridgeStateStore } from "../src/stateStore.js";
 
@@ -9,6 +9,9 @@ const SCOPE_A = "11111111-1111-4111-8111-111111111111";
 const SCOPE_B = "22222222-2222-4222-8222-222222222222";
 
 describe("SessionRegistry", () => {
+  beforeEach(()=>vi.spyOn(Date,"now").mockReturnValue(2_000_000));
+  afterEach(()=>vi.restoreAllMocks());
+
   it("keeps legacy and A/B sessions visible across account changes without relabeling creation provenance", () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-auth-boundary-"));
     const store = new BridgeStateStore({ file: path.join(root, "state.sqlite") });

@@ -222,7 +222,7 @@ describe("bounded automatic recovery", () => {
     store.observeRecheck(candidate,true,100000);
     const recurring=store.recheckCandidate(candidate)!;
     expect(recurring.key).not.toBe(candidate.key);
-    expect(store.get(recurring.key)).toBeUndefined();
+    expect(store.get(recurring.key)).toMatchObject({attempts:0,occurredAt:100000});
     store.begin(recurring,100000);store.finish(recurring.key,1,{resolved:false,reason:"unconfirmed"},100000);
     state.close();state=new BridgeStateStore({file});store=state.automaticRecovery;
     expect(store.recheckCandidate(candidate)).toEqual(recurring);

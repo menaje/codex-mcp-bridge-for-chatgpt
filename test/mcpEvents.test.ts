@@ -183,7 +183,8 @@ describe("MCP Events exact-Job lifecycle", () => {
     expect(event.data.result).toEqual({ tool: "codex_status", query: { kind: "job", id: a.jobId } });
     expect(JSON.stringify(event)).not.toContain("Reviewed fixture result");
     expect(f.state.mcpEvents.get(a.jobId, response.result.id)?.delivery).toBe("acknowledged");
-    expect(f.state.retentionProtection(a.jobId)).toContain("mcp-event-result-recovery");
+    const retained=f.state.listJobs().find(job=>job.jobId===a.jobId)!;
+      expect(JSON.stringify(f.state.readRetainedJobDetail(retained.scopeId,{kind:"job",id:a.jobId})?.result)).toContain("Reviewed fixture result");
     const encoded = JSON.stringify(f.state.listMeta("mcp_events_v1/", 256));
     expect(encoded).not.toContain(secret);
     expect(encoded).not.toContain("receiver.example.com");
@@ -421,7 +422,8 @@ describe("MCP Events exact-Job lifecycle", () => {
     await rpc(f, "events/subscribe", subscription(a.jobId));
     await vi.waitFor(() => expect(f.state.mcpEvents.get(a.jobId, sub.result.id)?.delivery).toBe("failed"));
     expect(f.upstream.calls).toBe(1);
-    expect(f.state.retentionProtection(a.jobId)).toContain("mcp-event-result-recovery");
+    const retained=f.state.listJobs().find(job=>job.jobId===a.jobId)!;
+      expect(JSON.stringify(f.state.readRetainedJobDetail(retained.scopeId,{kind:"job",id:a.jobId})?.result)).toContain("Reviewed fixture result");
     vi.spyOn(f.state, "isEventProjectAvailable").mockReturnValue(false);
     expect((await rpc(f, "events/subscribe", subscription(a.jobId))).error.code).toBe(-32001);
     vi.restoreAllMocks();
@@ -440,7 +442,8 @@ describe("MCP Events exact-Job lifecycle", () => {
     vi.spyOn(f.state, "isEventProjectAvailable").mockReturnValue(false);
     await vi.waitFor(() => expect(f.state.mcpEvents.get(a.jobId, sub.result.id)?.disabled).toBe("revoked"), { timeout: 5_000 });
     expect(ids).toHaveLength(1); expect(f.upstream.calls).toBe(1);
-    expect(f.state.retentionProtection(a.jobId)).toContain("mcp-event-result-recovery");
+    const retained=f.state.listJobs().find(job=>job.jobId===a.jobId)!;
+      expect(JSON.stringify(f.state.readRetainedJobDetail(retained.scopeId,{kind:"job",id:a.jobId})?.result)).toContain("Reviewed fixture result");
   });
 
   it("keeps pending delivery recoverable when an authorization state read temporarily fails", async () => {

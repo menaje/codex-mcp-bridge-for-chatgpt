@@ -1,3 +1,4 @@
+import { readAppliedHistoryPolicy, retainedJobSql, type AppliedHistoryPolicy } from "./historyPolicy.js";
 import type Database from "better-sqlite3";
 
 export type DashboardArchivedJobRow = {
@@ -10,6 +11,7 @@ export type DashboardArchivedJobRow = {
   created_at: number;
   updated_at: number;
   summary: string;
+  ended_at?: number|null; ended_at_source?: string|null; detail_availability?: string;
   agent_total?: number;
 };
 
@@ -37,7 +39,7 @@ const retainedHistoryPredicate = `
 
 /** Read-only SQL projections for cards. No method performs cleanup or writes. */
 export class DashboardReadModel {
-  constructor(private readonly db: Database.Database) {}
+  constructor(private readonly db: Database.Database, private readonly policy: () => AppliedHistoryPolicy = () => readAppliedHistoryPolicy(db)) {}
 
   activityTitles(ids: readonly string[]): Map<string, string> {
     const titles = new Map<string, string>();
@@ -66,7 +68,7 @@ export class DashboardReadModel {
   archivedByAgent(
     scopeId: string | undefined,
     perAgentLimit: number,
-    representativeOrder: DashboardRepresentativeOrder = "updated",
+    representativeOrder: DashboardRepresentativeOrder = "created",
     agentIds?: readonly string[]
   ): {
     rows: DashboardArchivedJobRow[];
@@ -83,41 +85,41 @@ export class DashboardReadModel {
         rows.push(...page.rows);
         for (const [id, total] of page.totalsByAgent) totalsByAgent.set(id, total);
       }
-      rows.sort((a, b) => b.updated_at - a.updated_at ||
+      rows.sort((a, b) => b.created_at - a.created_at ||
         (a.job_id < b.job_id ? 1 : a.job_id > b.job_id ? -1 : 0));
       return { rows, totalsByAgent };
     }
     const historyLimit = limit - 1;
     const representativeOrdering = representativeOrder === "created"
-      ? "created_at DESC,updated_at DESC,job_id DESC"
+      ? "created_at DESC,job_id DESC"
       : "updated_at DESC,job_id DESC";
     const rows = this.db.prepare(`
       WITH candidates AS (
         SELECT job_id,scope_id,activity_id,agent_id,backend_kind,status,
-               created_at,updated_at,summary,
+               created_at,updated_at,ended_at,ended_at_source,detail_availability,summary,
                FIRST_VALUE(job_id) OVER (
                  PARTITION BY COALESCE(agent_id,'')
                  ORDER BY ${representativeOrdering}
                ) AS representative_job_id,
                COUNT(*) OVER (PARTITION BY COALESCE(agent_id,'')) AS agent_total
           FROM jobs
-         WHERE ${retainedHistoryPredicate}
+         WHERE ${retainedHistoryPredicate} AND ${retainedJobSql(this.policy())}
            ${scopeId ? "AND scope_id=?" : ""}
            ${agentIds ? `AND agent_id IN (${agentIds.map(() => "?").join(",")})` : ""}
       ), ranked AS (
         SELECT *,
                SUM(CASE WHEN job_id<>representative_job_id THEN 1 ELSE 0 END) OVER (
                  PARTITION BY COALESCE(agent_id,'')
-                 ORDER BY updated_at DESC,job_id DESC
+                 ORDER BY created_at DESC,job_id DESC
                  ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
                ) AS history_rank
           FROM candidates
       )
       SELECT job_id,scope_id,activity_id,agent_id,backend_kind,status,
-             created_at,updated_at,summary,agent_total
+             created_at,updated_at,ended_at,ended_at_source,detail_availability,summary,agent_total
         FROM ranked
        WHERE job_id=representative_job_id OR history_rank<=?
-       ORDER BY updated_at DESC,job_id DESC
+       ORDER BY created_at DESC,job_id DESC
     `).all(...(scopeId ? [scopeId] : []), ...(agentIds || []), historyLimit) as DashboardArchivedJobRow[];
     const totalsByAgent = new Map<string, number>();
     for (const row of rows) {
@@ -135,24 +137,24 @@ export class DashboardReadModel {
     const rows = this.db.prepare(`
       WITH candidates AS (
         SELECT job_id,scope_id,activity_id,agent_id,backend_kind,status,
-               created_at,updated_at,summary,
+               created_at,updated_at,ended_at,ended_at_source,detail_availability,summary,
                FIRST_VALUE(job_id) OVER (
-                 ORDER BY created_at DESC,updated_at DESC,job_id DESC
+                 ORDER BY created_at DESC,job_id DESC
                ) AS representative_job_id,
                COUNT(*) OVER () AS agent_total
           FROM jobs
-         WHERE ${retainedHistoryPredicate}
+         WHERE ${retainedHistoryPredicate} AND ${retainedJobSql(this.policy())}
            AND scope_id=? AND agent_id=?
       ), ranked AS (
         SELECT *,
                SUM(CASE WHEN job_id<>representative_job_id THEN 1 ELSE 0 END) OVER (
-                 ORDER BY updated_at DESC,job_id DESC
+                 ORDER BY created_at DESC,job_id DESC
                  ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
                ) AS history_rank
           FROM candidates
       )
       SELECT job_id,scope_id,activity_id,agent_id,backend_kind,status,
-             created_at,updated_at,summary,agent_total,
+             created_at,updated_at,ended_at,ended_at_source,detail_availability,summary,agent_total,
              representative_job_id,history_rank
         FROM ranked
        WHERE job_id=representative_job_id OR history_rank<=?
@@ -178,10 +180,10 @@ export class DashboardReadModel {
       const placeholders = chunk.map(() => "?").join(",");
       rows.push(...this.db.prepare(`
         SELECT job_id,scope_id,activity_id,agent_id,backend_kind,status,
-               created_at,updated_at,summary
+               created_at,updated_at,ended_at,ended_at_source,detail_availability,summary
           FROM jobs
          WHERE job_id IN (${placeholders})
-           AND ${retainedHistoryPredicate}
+           AND ${retainedHistoryPredicate} AND ${retainedJobSql(this.policy())}
            ${scopeId ? "AND scope_id=?" : ""}
       `).all(...(scopeId ? [...chunk, scopeId] : chunk)) as DashboardArchivedJobRow[]);
     }
@@ -210,7 +212,7 @@ export class DashboardReadModel {
              COALESCE(SUM(status='interrupted'),0) AS interrupted,
              COALESCE(SUM(status='cancelled'),0) AS cancelled
         FROM jobs
-       WHERE ${retainedHistoryPredicate}
+       WHERE ${retainedHistoryPredicate} AND ${retainedJobSql(this.policy())}
          ${scopeId ? "AND scope_id=?" : ""}
     `).get(...(scopeId ? [scopeId] : [])) as DashboardArchivedCounts;
     return {

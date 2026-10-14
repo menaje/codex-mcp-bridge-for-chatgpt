@@ -579,6 +579,18 @@ function insertCancellationState(db: Database.Database): void {
 /** Test fixture downgrade only: remove every schema-31 addition before replaying
  * historical upgrades. Never run against an operational database. */
 export function removeSchema31ForFixture(db: Database.Database): void {
+  if ((db.prepare("PRAGMA table_info(jobs)").all() as Array<{name:string}>).some(x=>x.name==="ended_at")) {
+    db.exec(`DROP TRIGGER job_history_insert;DROP TRIGGER job_history_change;
+      DROP TABLE agent_history_revisions;DROP TABLE job_result_bodies;DROP TABLE recovery_controls;
+      DROP TABLE automatic_recovery_steps;DROP TABLE question_history;
+      DROP INDEX jobs_policy_clock;DROP INDEX recovery_policy_clock;
+      ALTER TABLE jobs DROP COLUMN ended_at;ALTER TABLE jobs DROP COLUMN ended_at_source;
+      ALTER TABLE jobs DROP COLUMN detail_availability;ALTER TABLE jobs DROP COLUMN problem_summary;
+      ALTER TABLE automatic_recovery DROP COLUMN occurred_at;ALTER TABLE automatic_recovery DROP COLUMN project_id;
+      ALTER TABLE automatic_recovery DROP COLUMN activity_id;ALTER TABLE automatic_recovery DROP COLUMN thread_id;
+      ALTER TABLE codex_question_deliveries DROP COLUMN occurred_at;
+      DELETE FROM bridge_meta WHERE key LIKE 'schema_v32_%';`);
+  }
   db.exec(`DROP INDEX projects_archive_pending;
     DROP INDEX projects_active_name; DROP INDEX projects_active_cwd;
     ALTER TABLE projects DROP COLUMN archive_state;

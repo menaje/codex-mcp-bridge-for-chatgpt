@@ -1050,55 +1050,55 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Finished failures are retained as history without requiring review. The bridge performs safe recovery automatically and records verified results. Active work, undelivered results, Codex conversations and project files are preserved."
+            "value": "Execution and problem history follow the selected retention period. Problem history is read-only. Current impact is separate from historical incident counts."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "종료된 실패는 확인 의무 없이 기록으로 보관됩니다. 브리지가 안전한 복구를 자동 수행하고 확인된 결과를 기록합니다. 진행 중인 작업, 미전달 결과, Codex 대화와 프로젝트 파일은 보존합니다."
+            "value": "실행 기록과 문제 기록은 설정한 보존 기간을 따릅니다. 문제 기록은 읽기 전용이며, 현재 영향은 과거 사건 수와 구분됩니다."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "終了した失敗は確認不要の履歴として保持します。ブリッジが安全な復旧を自動実行し、検証済みの結果を記録します。進行中の作業、未配信の結果、Codexの会話とプロジェクトファイルは保持します。"
+            "value": "実行履歴と問題履歴は設定した保持期間に従います。問題履歴は読み取り専用です。現在の影響は過去の件数とは別に表示します。"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "已结束的失败保留为历史记录，无需标记查看。桥接器会自动进行安全恢复并记录已验证的结果。进行中的工作、未送达的结果、Codex对话和项目文件将保留。"
+            "value": "执行记录和问题记录遵循所选保留期限。问题记录仅供查看。当前影响与历史事件数量分开显示。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "已結束的失敗保留為歷史記錄，無須標記查看。橋接器會自動進行安全復原並記錄已驗證的結果。進行中的工作、未送達的結果、Codex對話和專案檔案將保留。"
+            "value": "執行記錄和問題記錄遵循所選保留期限。問題記錄僅供檢視。目前影響與歷史事件數量分開顯示。"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Los fallos finalizados se conservan sin revisión obligatoria. El puente realiza recuperaciones seguras y registra resultados verificados. Se conservan el trabajo activo, los resultados sin entregar, las conversaciones de Codex y los archivos del proyecto."
+            "value": "El historial de ejecuciones y problemas sigue el periodo de conservación elegido. Los problemas son de solo lectura. El impacto actual se distingue del número de incidentes históricos."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Les échecs terminés sont conservés sans vérification obligatoire. Le pont effectue une récupération sûre et consigne les résultats vérifiés. Le travail actif, les résultats non remis, les conversations Codex et les fichiers du projet sont conservés."
+            "value": "Les historiques des exécutions et des problèmes suivent la durée de conservation choisie. Les problèmes sont en lecture seule. L’impact actuel est distinct du nombre d’incidents passés."
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Beendete Fehler bleiben ohne Bestätigungspflicht im Verlauf. Die Bridge führt sichere Wiederherstellungen aus und protokolliert geprüfte Ergebnisse. Aktive Arbeit, nicht zugestellte Ergebnisse, Codex-Gespräche und Projektdateien bleiben erhalten."
+            "value": "Ausführungs- und Problemverlauf folgen der gewählten Aufbewahrungsdauer. Der Problemverlauf ist schreibgeschützt. Aktuelle Auswirkungen werden getrennt von vergangenen Vorfällen angezeigt."
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "As falhas terminadas são conservadas sem revisão obrigatória. A ponte efetua recuperações seguras e regista resultados verificados. São preservados o trabalho ativo, os resultados não entregues, as conversas do Codex e os ficheiros do projeto."
+            "value": "O histórico de execuções e problemas segue o período de conservação escolhido. Os problemas são apenas para leitura. O impacto atual é separado da contagem de incidentes passados."
           }
         }
       }
@@ -3196,55 +3196,55 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Failed and interrupted runs need review for 7 days. Acknowledge removes them from the issue count. Active work and undelivered results are protected; Codex conversations and project files are kept."
+            "value": "Execution and problem history follow the selected retention period. Problem history is read-only. Current impact is separate from historical incident counts."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "실패·중단은 최근 7일 동안 확인이 필요합니다. 확인함을 누르면 문제 집계에서 제외됩니다. 진행 중인 작업과 미전달 결과는 보존하며, Codex 대화와 프로젝트 파일은 유지됩니다."
+            "value": "실행 기록과 문제 기록은 설정한 보존 기간을 따릅니다. 문제 기록은 읽기 전용이며, 현재 영향은 과거 사건 수와 구분됩니다."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "失敗・中断は直近7日間、確認が必要です。「確認済み」で問題の集計から除外します。進行中の作業と未配信の結果、Codexの会話とプロジェクトファイルは保持します。"
+            "value": "実行履歴と問題履歴は設定した保持期間に従います。問題履歴は読み取り専用です。現在の影響は過去の件数とは別に表示します。"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "失败和中断记录在最近7天内需要查看。点击“已查看”可将其从问题统计中排除。正在进行的工作、未送达的结果、Codex对话和项目文件将保留。"
+            "value": "执行记录和问题记录遵循所选保留期限。问题记录仅供查看。当前影响与历史事件数量分开显示。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "失敗和中斷記錄在最近7天內需要查看。按下「已查看」可將其從問題統計中排除。進行中的工作、未送達的結果、Codex對話和專案檔案將保留。"
+            "value": "執行記錄和問題記錄遵循所選保留期限。問題記錄僅供檢視。目前影響與歷史事件數量分開顯示。"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Los fallos y las interrupciones requieren revisión durante 7 días. Marcar como revisado los excluye del contador de problemas. Se conservan el trabajo activo, los resultados sin entregar, las conversaciones de Codex y los archivos del proyecto."
+            "value": "El historial de ejecuciones y problemas sigue el periodo de conservación elegido. Los problemas son de solo lectura. El impacto actual se distingue del número de incidentes históricos."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Les échecs et interruptions nécessitent une vérification pendant 7 jours. Les marquer comme vérifiés les retire du compteur de problèmes. Le travail actif, les résultats non remis, les conversations Codex et les fichiers du projet sont conservés."
+            "value": "Les historiques des exécutions et des problèmes suivent la durée de conservation choisie. Les problèmes sont en lecture seule. L’impact actuel est distinct du nombre d’incidents passés."
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Fehler und Unterbrechungen müssen 7 Tage lang geprüft werden. Bestätigte Einträge werden nicht mehr als Probleme gezählt. Aktive Arbeit, nicht zugestellte Ergebnisse, Codex-Gespräche und Projektdateien bleiben erhalten."
+            "value": "Ausführungs- und Problemverlauf folgen der gewählten Aufbewahrungsdauer. Der Problemverlauf ist schreibgeschützt. Aktuelle Auswirkungen werden getrennt von vergangenen Vorfällen angezeigt."
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Falhas e interrupções precisam de revisão durante 7 dias. Marcar como revisto exclui-as da contagem de problemas. O trabalho ativo, os resultados não entregues, as conversas do Codex e os ficheiros do projeto são mantidos."
+            "value": "O histórico de execuções e problemas segue o período de conservação escolhido. Os problemas são apenas para leitura. O impacto atual é separado da contagem de incidentes passados."
           }
         }
       }
@@ -22742,37 +22742,37 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Running"
+            "value": "In progress"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "실행 중"
+            "value": "진행 중"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "実行中"
+            "value": "進行中"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "运行中"
+            "value": "进行中"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "執行中"
+            "value": "進行中"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "En ejecución"
+            "value": "En curso"
           }
         },
         "fr": {
@@ -22784,13 +22784,13 @@
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Wird ausgeführt"
+            "value": "In Bearbeitung"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Em execução"
+            "value": "Em curso"
           }
         }
       }
@@ -27730,55 +27730,55 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Issues"
+            "value": "Problem history"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "문제"
+            "value": "문제 기록"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "問題"
+            "value": "問題履歴"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "问题"
+            "value": "问题记录"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "問題"
+            "value": "問題記錄"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Problemas"
+            "value": "Historial de problemas"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Problèmes"
+            "value": "Historique des problèmes"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Probleme"
+            "value": "Problemverlauf"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Problemas"
+            "value": "Histórico de problemas"
           }
         }
       }
@@ -30389,6 +30389,180 @@
           "stringUnit": {
             "state": "translated",
             "value": "{model} não suporta {efforts}; esses níveis de raciocínio não serão aplicados."
+          }
+        }
+      }
+    },
+    "problem.currentImpactCount": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Current impact: {count}"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "현재 영향 {count}건"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "現在の影響: {count}件"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前影响：{count}"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目前影響：{count}"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impacto actual: {count}"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impact actuel : {count}"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aktuelle Auswirkungen: {count}"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impacto atual: {count}"
+          }
+        }
+      }
+    },
+    "problem.currentImpact.confirmed": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Current impact confirmed"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "현재 영향 확인됨"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "現在の影響を確認済み"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已确认当前影响"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已確認目前影響"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impacto actual confirmado"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impact actuel confirmé"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aktuelle Auswirkung bestätigt"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impacto atual confirmado"
+          }
+        }
+      }
+    },
+    "problem.currentImpact.unknown": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Current impact unconfirmed"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "현재 영향 미확인"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "現在の影響は未確認"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前影响尚未确认"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目前影響尚未確認"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impacto actual sin confirmar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impact actuel non confirmé"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aktuelle Auswirkung unbestätigt"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impacto atual não confirmado"
           }
         }
       }
@@ -62251,13 +62425,13 @@
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Läuft"
+            "value": "In Bearbeitung"
           }
         },
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Running"
+            "value": "In progress"
           }
         },
         "es": {
@@ -62275,31 +62449,31 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "実行中"
+            "value": "進行中"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Em execução"
+            "value": "Em curso"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "运行中"
+            "value": "进行中"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "執行中"
+            "value": "進行中"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "실행 중"
+            "value": "진행 중"
           }
         }
       }
@@ -70838,55 +71012,55 @@
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Aufgaben und Verlauf"
+            "value": "Ausführungsverlauf"
           }
         },
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Work & Run History"
+            "value": "Execution history"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Trabajo e historial"
+            "value": "Historial de ejecuciones"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Tâches et historique"
+            "value": "Historique des exécutions"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "作業・実行履歴"
+            "value": "実行履歴"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "작업·실행 기록"
+            "value": "실행 기록"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Tarefas e histórico"
+            "value": "Histórico de execuções"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "任务与运行记录"
+            "value": "执行记录"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "工作與執行記錄"
+            "value": "執行記錄"
           }
         }
       }
