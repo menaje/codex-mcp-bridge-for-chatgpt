@@ -336,8 +336,44 @@ final class AppModel: ObservableObject {
     @Published var dashboard: DashboardSnapshot?
     @Published private(set) var dashboardHistoryDetails: [String: DashboardHistoryDetail] = [:]
     @Published private(set) var dashboardHistoryLoading = Set<String>()
+    @Published private(set) var loadingMoreRunning = false
     @Published private(set) var dashboardHistoryErrors: [String: String] = [:]
     private var dashboardHistoryRequestIDs: [String: UUID] = [:]
+    private var dashboardHistoryContexts: [String: String] = [:]
+    private var dashboardHistoryExpiryTask: Task<Void, Never>?
+
+    private func dashboardHistoryContext(_ row: DashboardRow) -> String {
+        [String(connectionGeneration), dashboard?.scope ?? "", row.conversationKey, row.projectKey, row.rowKey].joined(separator: "\u{0}")
+    }
+
+    func dashboardEmbeddedHistory(for row: DashboardRow) -> [DashboardTurn] {
+        guard row.historyRevision != nil, row.policyRevision != nil,
+              !dashboardHistoryExpired(row) else { return [] }
+        return row.history ?? []
+    }
+
+    private func dashboardHistoryExpired(_ row: DashboardRow) -> Bool {
+        guard let raw = row.nextExpiryAt else { return false }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        guard let date = formatter.date(from: raw) ?? ISO8601DateFormatter().date(from: raw) else { return true }
+        return date <= Date()
+    }
+
+    private func scheduleDashboardHistoryExpiry(_ snapshot: DashboardSnapshot) {
+        dashboardHistoryExpiryTask?.cancel()
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let rows = (snapshot.statusRows ?? []) + snapshot.activeRows + snapshot.terminalRows
+        let dates = rows.compactMap { $0.nextExpiryAt }.compactMap { formatter.date(from: $0) ?? ISO8601DateFormatter().date(from: $0) }
+        guard let date = dates.min(), date > Date() else { return }
+        let delay = min(date.timeIntervalSinceNow, 86_400)
+        dashboardHistoryExpiryTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(max(0.01, delay))) } catch { return }
+            guard let self, self.bridgeConnected else { return }
+            await self.refreshDashboard(enrich: false)
+        }
+    }
     @Published var threadHandoffs: [String: ThreadHandoffStatus] = [:]
     private var threadHandoffTasks: [String: Task<Void, Never>] = [:]
     @Published private(set) var dashboardPanel: DashboardPanel?
@@ -1679,73 +1715,11 @@ final class AppModel: ObservableObject {
     }
 
     func changeProblem(_ problem: DashboardProblem, action: ProblemActionKind) async {
-        guard !changingProblems, action != .retryStop || !isRemoteClient else { return }
-        changingProblems = true
-        problemActionNotice = nil
-        defer { changingProblems = false }
-        let connection = connectionGeneration
-        do {
-            let client = try await bridgeClient()
-            _ = try await client.problemAction(ProblemAction(action: action, targets: [problem.target],
-                acknowledgeAffectedJobIds: action == .retryStop ? problem.stopImpact?.affectedJobIds : nil))
-            guard connection == connectionGeneration else { return }
-            dashboardProblemQuery.offset = 0
-            if action == .recheck {
-                problemActionNotice = BridgeAppLocalization.string("problem.rechecked", locale: interfaceLocale)
-            }
-            await refreshDashboard()
-        } catch {
-            guard connection == connectionGeneration else { return }
-            await refreshDashboard(enrich: false)
-            dashboardErrorMessage = problemErrorDescription(error)
-        }
+        return
     }
 
     func acknowledgeAllFinishedProblems() async {
-        guard !changingProblems else { return }
-        changingProblems = true
-        problemActionNotice = nil
-        defer { changingProblems = false }
-        let connection = connectionGeneration
-        var changed = 0
-        do {
-            let client = try await bridgeClient()
-            var targets: [ProblemTarget] = []
-            var offset = 0
-            var revision: String?
-            repeat {
-                let snapshot = try await client.dashboardWithProblems(limit: 50, terminalOffset: 0, idleOffset: 0,
-                    enrich: false, statusFilter: .problems, problems: ProblemQuery(review: .pending, kind: .failed, offset: offset,
-                        view: dashboard?.historyPolicy?.automaticRecovery == true ? .history : nil), includeHistory: false)
-                guard connection == connectionGeneration else { return }
-                guard let problems = snapshot.problems, problems.page.offset == offset,
-                      revision == nil || revision == problems.revision else {
-                    throw NSError(domain: "PROBLEM_TARGET_CHANGED", code: 1)
-                }
-                revision = problems.revision
-                targets += problems.rows.filter(\.canAcknowledge).map(\.target)
-                guard problems.page.hasNext else { break }
-                guard problems.page.returned > 0 else { throw NSError(domain: "PROBLEM_TARGET_CHANGED", code: 1) }
-                offset += problems.page.returned
-            } while true
-            for start in stride(from: 0, to: targets.count, by: 100) {
-                guard connection == connectionGeneration else { return }
-                let result = try await client.problemAction(ProblemAction(action: .acknowledge,
-                    targets: Array(targets[start..<min(start + 100, targets.count)])))
-                changed += result.changed
-            }
-            guard connection == connectionGeneration else { return }
-            dashboardProblemQuery.offset = 0
-            await refreshDashboard()
-            problemActionNotice = BridgeAppLocalization.format("macos.reviewedfinishedfailures", locale: interfaceLocale, changed)
-        } catch {
-            guard connection == connectionGeneration else { return }
-            await refreshDashboard(enrich: false)
-            dashboardErrorMessage = problemErrorDescription(error)
-            if changed > 0 {
-                problemActionNotice = BridgeAppLocalization.format("macos.reviewedfinishedfailures", locale: interfaceLocale, changed)
-            }
-        }
+        return
     }
 
     private func problemErrorDescription(_ error: Error) -> String {
@@ -1824,25 +1798,12 @@ final class AppModel: ObservableObject {
     }
 
     func acknowledgeHistory(_ row: DashboardRow) async {
-        guard let controls = row.historyControls else { return }
-        let connection = connectionGeneration
-        do {
-            let client = try await bridgeClient()
-            _ = try await client.historyAction(HistoryAction(
-                rowKey: row.rowKey, expectedRevision: controls.revision
-            ))
-            guard connection == connectionGeneration else { return }
-            await refreshDashboard()
-        } catch {
-            guard connection == connectionGeneration else { return }
-            await refreshDashboard(enrich: false)
-            dashboardErrorMessage = error.localizedDescription
-        }
+        return
     }
 
     func dashboardHistory(for row: DashboardRow) -> DashboardHistoryDetail? {
-        guard row.history?.isEmpty != false else { return nil }
-        guard let detail = dashboardHistoryDetails[row.rowKey],
+        guard dashboardHistoryContexts[row.rowKey] == dashboardHistoryContext(row),
+              let detail = dashboardHistoryDetails[row.rowKey],
               dashboardHistoryMatches(detail, row: row) else { return nil }
         return detail
     }
@@ -1851,19 +1812,24 @@ final class AppModel: ObservableObject {
         dashboardHistoryErrors[row.rowKey]
     }
 
-    func loadDashboardHistory(_ row: DashboardRow) async {
+    func loadDashboardHistory(_ row: DashboardRow, more: Bool = false) async {
         guard bridgeConnected else { return }
         let historyCount = max(row.historyCount ?? 0, row.history?.count ?? 0)
-        if let cached = dashboardHistoryDetails[row.rowKey],
-           !dashboardHistoryMatches(cached, row: row) {
+        if dashboardHistoryDetails[row.rowKey] != nil,
+           dashboardHistory(for: row) == nil {
             dashboardHistoryDetails.removeValue(forKey: row.rowKey)
             dashboardHistoryErrors.removeValue(forKey: row.rowKey)
         }
-        guard historyCount > 0, row.history?.isEmpty != false,
-              dashboardHistoryDetails[row.rowKey] == nil,
+        let previous = dashboardHistory(for: row)
+        let cursor = more ? previous?.nextCursor : nil
+        guard historyCount > 0,
+              more || dashboardEmbeddedHistory(for: row).isEmpty,
+              more || previous == nil,
+              !more || previous == nil || cursor != nil,
               !dashboardHistoryLoading.contains(row.rowKey) else { return }
         let rowKey = row.rowKey
         let connection = connectionGeneration
+        let context = dashboardHistoryContext(row)
         let dashboardRequest = dashboardRequestGeneration
         let requestID = UUID()
         dashboardHistoryRequestIDs[rowKey] = requestID
@@ -1877,19 +1843,29 @@ final class AppModel: ObservableObject {
         }
         do {
             let client = try await bridgeClient()
-            let detail = try await client.dashboardHistoryDetail(rowKey: rowKey)
+            var detail = try await client.dashboardHistoryDetail(rowKey: rowKey, historyCursor: cursor)
             guard !Task.isCancelled, connection == connectionGeneration,
                   dashboardRequest == dashboardRequestGeneration,
+                  dashboardHistoryRequestIDs[rowKey] == requestID,
+                  dashboardHistoryContext(row) == context,
                   detail.kind == "dashboard-history", detail.rowKey == rowKey else { return }
-            if let expectedRevision = row.historyRevision,
-               let receivedRevision = detail.historyRevision,
-               expectedRevision != receivedRevision {
+            if !dashboardHistoryMatches(detail, row: row) {
                 // The row identifies an Agent, so it can retain its row key
                 // while a new execution replaces the visible one. Refresh the
                 // summary instead of briefly attaching old history to it.
                 await refreshDashboard(enrich: false)
                 return
             }
+            if more {
+                let base = previous?.history ?? row.history ?? []
+                var seen = Set<String>()
+                detail.history = (base + detail.history).filter { turn in
+                    let key = turn.executionKey ?? "\(turn.startedAt ?? ""):\(turn.updatedAt)"
+                    return seen.insert(key).inserted
+                }
+            }
+            if dashboardHistoryDetails.count >= 128 { dashboardHistoryDetails.removeAll() }
+            dashboardHistoryContexts[rowKey] = context
             dashboardHistoryDetails[rowKey] = detail
         } catch {
             guard !Task.isCancelled, connection == connectionGeneration,
@@ -1899,6 +1875,8 @@ final class AppModel: ObservableObject {
     }
 
     private func clearDashboardHistoryDetails() {
+        dashboardHistoryExpiryTask?.cancel()
+        dashboardHistoryContexts.removeAll()
         dashboardHistoryRequestIDs.removeAll()
         dashboardHistoryDetails.removeAll()
         dashboardHistoryLoading.removeAll()
@@ -1909,9 +1887,12 @@ final class AppModel: ObservableObject {
         _ detail: DashboardHistoryDetail,
         row: DashboardRow
     ) -> Bool {
-        guard let expectedRevision = row.historyRevision,
-              let receivedRevision = detail.historyRevision else { return true }
-        return expectedRevision == receivedRevision
+        guard let revision = row.historyRevision, let policy = row.policyRevision,
+              let execution = row.representativeExecutionKey,
+              revision == detail.historyRevision, policy == detail.policyRevision,
+              execution == detail.representativeExecutionKey else { return false }
+        if dashboardHistoryExpired(row) { return false }
+        return true
     }
 
     func refreshDashboard(enrich: Bool = true, applyCachedEnrichment: Bool = false) async {
@@ -1956,7 +1937,11 @@ final class AppModel: ObservableObject {
             guard !Task.isCancelled, connection == connectionGeneration,
                   generation == dashboardRequestGeneration else { return }
             dashboard = dashboardWithCurrentUsage(next, previous: dashboard)
-            clearDashboardHistoryDetails()
+            scheduleDashboardHistoryExpiry(next)
+            let rows = (next.statusRows ?? []) + next.activeRows + next.terminalRows
+            dashboardHistoryDetails = dashboardHistoryDetails.filter { key, detail in
+                rows.contains { $0.rowKey == key && dashboardHistoryMatches(detail, row: $0) }
+            }
             dashboardLoadedFilter = filter
             if let problems = next.problems { dashboardProblemQuery.offset = problems.query.offset }
             if settings == nil && !interfaceLocalePreviewActive {
@@ -3063,6 +3048,25 @@ final class AppModel: ObservableObject {
         return receipt
     }
 
+    func loadMoreRunning() async {
+        guard !loadingMoreRunning, let current = dashboard,
+              let page = current.statusPagination, page.hasNext else { return }
+        let connection = connectionGeneration, generation = dashboardRequestGeneration
+        loadingMoreRunning = true
+        defer { loadingMoreRunning = false }
+        do {
+            let client = try await bridgeClient()
+            let next = try await client.dashboardStatusPage(limit: pageLimit, offset: DashboardPanel.running.rows(in: current).count)
+            guard connection == connectionGeneration, generation == dashboardRequestGeneration else { return }
+            var merged = current
+            var seen = Set<String>()
+            merged.statusRows = ((current.statusRows ?? []) + (next.statusRows ?? [])).filter { seen.insert($0.rowKey).inserted }
+            merged.statusPagination = next.statusPagination
+            merged.statusRowsComplete = next.statusPagination?.hasNext == false
+            dashboard = merged
+        } catch { dashboardErrorMessage = localizedErrorDescription(error) }
+    }
+
     func loadMoreRecent() async {
         guard let current = dashboard, current.pagination.terminal.hasNext else { return }
         let nextOffset = current.pagination.terminal.offset + current.pagination.terminal.returned
@@ -3560,6 +3564,7 @@ final class AppModel: ObservableObject {
     }
 
     func cancelAllPolling() {
+        dashboardHistoryExpiryTask?.cancel()
         applicationLaunchReceiptTask?.cancel()
         applicationLaunchReceiptTask = nil
         applicationLaunchReceiptTaskID = nil

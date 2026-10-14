@@ -21,6 +21,7 @@ public struct DashboardSnapshot: Codable, Sendable {
     public var idleRows: [DashboardRow]
     public var statusRows: [DashboardRow]? = nil
     public var statusRowsComplete: Bool? = nil
+    public var statusPagination: DashboardPage? = nil
     public var historyIncluded: Bool? = nil
     public var pagination: DashboardPagination
     public let uiLocalePreference: String
@@ -267,6 +268,9 @@ public struct CancellationDisplay: Codable, Sendable {
 }
 
 public struct DashboardTurn: Codable, Sendable {
+    public var executionKey: String? = nil
+    public var endedAtSource: String? = nil
+    public var detailAvailability: String? = nil
     public let activityKey: String?
     public let activityTitle: String?
     public let execution: DashboardExecution?
@@ -281,11 +285,17 @@ public struct DashboardTurn: Codable, Sendable {
 public struct DashboardHistoryDetail: Codable, Sendable {
     public let kind: String
     public let rowKey: String
-    public let history: [DashboardTurn]
+    public var history: [DashboardTurn]
     public let historyCount: Int
     /// Matches the Dashboard row that selected the representative execution.
     /// Older bridge versions omit it, so clients retain a compatibility path.
     public var historyRevision: String? = nil
+    public var representativeExecutionKey: String? = nil
+    public var policyRevision: String? = nil
+    public var nextExpiryAt: String? = nil
+    public var historyHasMore: Bool? = nil
+    public var nextCursor: String? = nil
+
 }
 
 public struct DashboardRow: Codable, Identifiable, Sendable {
@@ -316,6 +326,12 @@ public struct DashboardRow: Codable, Identifiable, Sendable {
     /// Stable only for the snapshot that supplied this row; used to discard a
     /// deferred history response after the Agent begins a new execution.
     public var historyRevision: String? = nil
+    public var representativeExecutionKey: String? = nil
+    public var policyRevision: String? = nil
+    public var nextExpiryAt: String? = nil
+    public var historyHasMore: Bool? = nil
+    public var nextCursor: String? = nil
+
 }
 
 public struct ThreadHandoffStatus: Codable, Sendable {
@@ -552,6 +568,7 @@ public struct DashboardParameters: Codable, Sendable {
     public var problems: ProblemQuery? = nil
     public var limit: Int
     public var terminalOffset: Int
+    public var statusOffset: Int? = nil
     public var idleOffset: Int
     public var enrich: Bool
     public var statusFilter: DashboardStatusFilter
@@ -579,8 +596,10 @@ public struct DashboardParameters: Codable, Sendable {
 public struct DashboardHistoryDetailParameters: Codable, Sendable {
     public let rowKey: String
 
-    public init(rowKey: String) {
+    public var historyCursor: String? = nil
+    public init(rowKey: String, historyCursor: String? = nil) {
         self.rowKey = rowKey
+        self.historyCursor = historyCursor
     }
 }
 

@@ -5,6 +5,7 @@ public let bridgeSkillTransportEnvelopeMaxBytes = 72 * 1_024 * 1_024
 public let bridgeSkillPackageCompressedMaxBytes = 16 * 1_024 * 1_024
 
 public protocol BridgeApplicationClient: Sendable {
+    func dashboardStatusPage(limit: Int, offset: Int) async throws -> DashboardSnapshot
     func dashboard(
         limit: Int,
         terminalOffset: Int,
@@ -39,6 +40,7 @@ public protocol BridgeApplicationClient: Sendable {
     func historyAction(_ action: HistoryAction) async throws -> HistoryActionResult
 
     func dashboardHistoryDetail(rowKey: String) async throws -> DashboardHistoryDetail
+    func dashboardHistoryDetail(rowKey: String, historyCursor: String?) async throws -> DashboardHistoryDetail
 
     func dashboardWithProblems(limit: Int, terminalOffset: Int, idleOffset: Int, enrich: Bool,
                                statusFilter: DashboardStatusFilter, problems: ProblemQuery) async throws -> DashboardSnapshot
@@ -53,6 +55,10 @@ public protocol BridgeApplicationClient: Sendable {
 }
 
 public extension BridgeApplicationClient {
+    func dashboardStatusPage(limit: Int, offset: Int) async throws -> DashboardSnapshot {
+        throw NSError(domain: "DASHBOARD_STATUS_PAGING_UNSUPPORTED", code: 1)
+    }
+
     func modelDescriptionHistory(modelID: String, beforeVersion: Int? = nil) async throws -> ModelDescriptionHistoryPage {
         throw NSError(domain: "MODEL_DESCRIPTION_HISTORY_UNAVAILABLE", code: 1)
     }
@@ -77,6 +83,11 @@ public extension BridgeApplicationClient {
 
     func historyAction(_ action: HistoryAction) async throws -> HistoryActionResult {
         throw NSError(domain: "HISTORY_UNSUPPORTED", code: 1)
+    }
+
+    func dashboardHistoryDetail(rowKey: String, historyCursor: String?) async throws -> DashboardHistoryDetail {
+        guard historyCursor == nil else { throw NSError(domain: "DASHBOARD_HISTORY_PAGING_UNSUPPORTED", code: 1) }
+        return try await dashboardHistoryDetail(rowKey: rowKey)
     }
 
     func dashboardHistoryDetail(rowKey: String) async throws -> DashboardHistoryDetail {

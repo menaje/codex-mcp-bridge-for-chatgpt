@@ -354,6 +354,69 @@ final class DashboardPopoverTests: XCTestCase {
     }
 
     @MainActor
+    func testIssue251EmbeddedHistoryAndCacheSurviveRefreshAndTabs() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.rowCount = 1
+        await f.model.refreshDashboard(enrich: false)
+        let row = try XCTUnwrap(f.model.dashboard?.statusRows?.first)
+        await f.model.loadDashboardHistory(row)
+        let cached = try XCTUnwrap(f.model.dashboardHistory(for: row))
+        await f.model.toggleDashboardPanel(.running)
+        await f.model.toggleDashboardPanel(.problems)
+        await f.model.refreshDashboard(enrich: false)
+        let refreshed = try XCTUnwrap(f.model.dashboard?.statusRows?.first)
+        XCTAssertEqual(f.model.dashboardHistory(for: refreshed)?.history.count, cached.history.count)
+        await f.model.loadDashboardHistory(refreshed)
+        XCTAssertEqual(f.state.historyReadCount, 1)
+
+        var policyChanged = refreshed
+        policyChanged.policyRevision = String(repeating: "e", count: 64)
+        XCTAssertNil(f.model.dashboardHistory(for: policyChanged))
+        var executionChanged = refreshed
+        executionChanged.representativeExecutionKey = String(repeating: "e", count: 32)
+        XCTAssertNil(f.model.dashboardHistory(for: executionChanged))
+        var expired = refreshed
+        expired.nextExpiryAt = "2000-01-01T00:00:00.000Z"
+        XCTAssertNil(f.model.dashboardHistory(for: expired))
+        XCTAssertTrue(f.model.dashboardEmbeddedHistory(for: expired).isEmpty)
+        var otherProject = refreshed
+        // Context isolation is checked independently from the server revisions.
+        otherProject.policyRevision = nil
+        XCTAssertNil(f.model.dashboardHistory(for: otherProject))
+    }
+
+    @MainActor
+    func testIssue251EmbeddedSummariesOnlyFetchExplicitAdditionalPages() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.rowCount = 1
+        f.state.pagedDetail = true
+        await f.model.refreshDashboard(enrich: false)
+        let base = try XCTUnwrap(f.model.dashboard?.statusRows?.first)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(base)) as? [String: Any])
+        func turn(_ i: Int) -> [String: Any] {
+            ["executionKey": String(format: "%032d", i), "activityTitle": "History \(i)", "status": "completed",
+             "startedAt": "2026-09-09T23:59:55Z", "updatedAt": "2026-09-10T00:00:00Z", "durationMs": 5000]
+        }
+        object["history"] = (1...3).map(turn)
+        object["historyCount"] = 16
+        object["historyHasMore"] = true
+        let row = try JSONDecoder().decode(DashboardRow.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertEqual(f.model.dashboardEmbeddedHistory(for: row).count, 3)
+        await f.model.loadDashboardHistory(row)
+        XCTAssertEqual(f.state.historyReadCount, 0)
+        await f.model.loadDashboardHistory(row, more: true)
+        XCTAssertEqual(f.model.dashboardHistory(for: row)?.history.count, 12)
+        await f.model.loadDashboardHistory(row, more: true)
+        XCTAssertEqual(f.model.dashboardHistory(for: row)?.history.count, 16)
+        XCTAssertEqual(f.state.historyReadCount, 2)
+        await f.model.loadDashboardHistory(row, more: true)
+        XCTAssertEqual(f.state.historyReadCount, 2)
+        object["projectKey"] = "different-project"
+        let other = try JSONDecoder().decode(DashboardRow.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertNil(f.model.dashboardHistory(for: other))
+    }
+
+    @MainActor
     func testStaleDeferredHistoryRefreshesInsteadOfAttachingToANewExecution() async throws {
         let f = try PopoverFixture(); defer { f.remove() }
         f.state.rowCount = 1
@@ -849,6 +912,9 @@ private final class PopoverReplyState: @unchecked Sendable {
     }
     var delayHistory: Bool { get { lock.withLock { slowHistory } } set { lock.withLock { slowHistory = newValue } } }
     var pagedHistory: Bool { get { lock.withLock { pagedHistoryValue } } set { lock.withLock { pagedHistoryValue = newValue } } }
+    var pagedDetail = false
+    private var historyReads = 0
+    var historyReadCount: Int { lock.withLock { historyReads } }
     var detailHistoryRevision: String { get { lock.withLock { deferredHistoryRevision } } set { lock.withLock { deferredHistoryRevision = newValue } } }
     var failStart: Bool { get { lock.withLock { fail } } set { lock.withLock { fail = newValue } } }
     var coalesceStart: Bool { get { lock.withLock { coalesce } } set { lock.withLock { coalesce = newValue } } }
@@ -925,7 +991,8 @@ private final class PopoverReplyState: @unchecked Sendable {
                 "activityTitle": "Running task \(index)", "status": "running",
                 "createdAt": "2026-09-10T00:00:00Z", "updatedAt": "2026-09-10T00:00:00Z",
                 "elapsedMs": 5000, "backgroundProcessCount": 0,
-                "history": [], "historyCount": 1, "historyRevision": rowHistoryRevision
+                "history": [], "historyCount": 1, "historyRevision": rowHistoryRevision,
+                "policyRevision": String(repeating: "c", count: 64), "representativeExecutionKey": String(repeating: "d", count: 32)
             ] }
             var counts = Dictionary(uniqueKeysWithValues: names.map { ($0, 0) })
             counts["running"] = rowCount == 0 ? 3 : rowCount
@@ -951,7 +1018,8 @@ private final class PopoverReplyState: @unchecked Sendable {
                     "status": bucket == "idle" ? "idle" : "completed",
                     "createdAt": "2026-09-10T00:00:00Z", "updatedAt": "2026-09-10T00:00:00Z",
                     "elapsedMs": 5000, "backgroundProcessCount": 0,
-                    "history": [], "historyCount": 1, "historyRevision": rowHistoryRevision
+                    "history": [], "historyCount": 1, "historyRevision": rowHistoryRevision,
+                "policyRevision": String(repeating: "c", count: 64), "representativeExecutionKey": String(repeating: "d", count: 32)
                 ] }
                 let terminalOffset = params["terminalOffset"] as? Int ?? 0
                 let idleOffset = params["idleOffset"] as? Int ?? 0
@@ -970,17 +1038,30 @@ private final class PopoverReplyState: @unchecked Sendable {
             if let usageWeekly { snapshot["weeklyUsage"] = usageWeekly }
             result = snapshot
         case "dashboard.history-detail":
+            lock.withLock { historyReads += 1 }
             let rowKey = params["rowKey"] as? String ?? ""
             let historyRevision = lock.withLock { deferredHistoryRevision }
             result = [
                 "kind": "dashboard-history", "rowKey": rowKey, "historyCount": 1,
                 "historyRevision": historyRevision,
+                "policyRevision": String(repeating: "c", count: 64), "representativeExecutionKey": String(repeating: "d", count: 32),
                 "history": [[
                     "activityKey": "earlier-activity", "activityTitle": "Earlier task", "status": "completed",
                     "startedAt": "2026-09-09T23:59:55Z", "updatedAt": "2026-09-10T00:00:00Z",
                     "endedAt": "2026-09-10T00:00:00Z", "durationMs": 5000
                 ]]
             ]
+            if pagedDetail {
+                let lastPage = params["historyCursor"] as? String == "page2"
+                let range = lastPage ? Array(13...16) : Array(1...12)
+                result["historyCount"] = 16
+                result["historyHasMore"] = !lastPage
+                result["nextCursor"] = lastPage ? NSNull() : "page2"
+                result["history"] = range.map { i in [
+                    "executionKey": String(format: "%032d", i), "activityTitle": "History \(i)", "status": "completed",
+                    "startedAt": "2026-09-09T23:59:55Z", "updatedAt": "2026-09-10T00:00:00Z", "durationMs": 5000
+                ] as [String: Any] }
+            }
         default: return NativeFixtureReply(body: #"{"error":{"code":-32601,"message":"Fixture method unavailable"}}"#)
         }
         let data = try! JSONSerialization.data(withJSONObject: ["result": result])

@@ -235,10 +235,20 @@ public struct BridgeCompanionClient: Sendable {
         try await rpc.call("dashboard.history", params: action, timeout: 15)
     }
 
+    public func dashboardStatusPage(limit: Int, offset: Int) async throws -> DashboardSnapshot {
+        var params = DashboardParameters(limit: limit, statusFilter: .running, includeHistory: false)
+        params.statusOffset = offset
+        return try await rpc.call("dashboard.snapshot", params: params, timeout: 5)
+    }
+
     public func dashboardHistoryDetail(rowKey: String) async throws -> DashboardHistoryDetail {
+        try await dashboardHistoryDetail(rowKey: rowKey, historyCursor: nil)
+    }
+
+    public func dashboardHistoryDetail(rowKey: String, historyCursor: String?) async throws -> DashboardHistoryDetail {
         try await rpc.call(
             "dashboard.history-detail",
-            params: DashboardHistoryDetailParameters(rowKey: rowKey),
+            params: DashboardHistoryDetailParameters(rowKey: rowKey, historyCursor: historyCursor),
             timeout: 5
         )
     }
