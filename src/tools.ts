@@ -8628,6 +8628,13 @@ function recheckRecoveryIdentity(jobs: CodexJobRegistry, agent: BridgeAgent, han
   return jobs.admissionStateStore.automaticRecovery.handoffRecheckIdentity(identity,handoff);
 }
 
+function freshPositiveRuntime(entry: DashboardRuntimeCacheEntry | undefined, stamp:string): boolean {
+  const now=Date.now();
+  return Boolean(entry && entry.stamp===stamp && entry.retainUntil>now &&
+    (entry.observation.state==="busy" && (entry.livenessFreshUntil || 0)>now ||
+      entry.observation.backgroundProcessCount>0 && entry.freshUntil>now));
+}
+
 /** Worker exit plus a fresh non-loading process read can finish a stranded
  * lifecycle without editing past failures or spending another recovery attempt. */
 export async function settleReleasedOrphan(jobs: CodexJobRegistry, upstream: CodexUpstream,
@@ -8640,10 +8647,7 @@ export async function settleReleasedOrphan(jobs: CodexJobRegistry, upstream: Cod
   if (connection?.agentId!==agentId || connection.scopeId!==agent.scopeId || connection.phase!=="released" ||
       connection.evidence!=="worker-exited" || connection.handoffRequested || store.threadConnections.hasUnfinishedWork(thread.threadId)) return false;
   const cacheKey=dashboardRuntimeCacheKey(thread),before=dashboardRuntimeCaches.get(upstream)?.get(cacheKey);
-  if (before && before.retainUntil>Date.now() &&
-      before.stamp===dashboardRuntimeStamp(agent,jobs.observedLatestJobForAgent(agentId)) &&
-      (before.observation.state==="busy" && (before.livenessFreshUntil || 0)>Date.now() ||
-        before.observation.backgroundProcessCount>0 && before.freshUntil>Date.now())) return false;
+  if (freshPositiveRuntime(before,dashboardRuntimeStamp(agent,jobs.observedLatestJobForAgent(agentId)))) return false;
   const admissionRevision=admission.admissionRevision;
   let settled=false;
   const read=runtimeReadPool(upstream).start(`orphan-end\0${agentId}\0${agent.version}\0${connection.revision}`,
@@ -8713,11 +8717,16 @@ export function configureAutomaticRecovery(
 ): void {
   const store = jobs.admissionStateStore;
   const settling=new Set<string>();
+  // Survey deferral is independent of whether a physical read slot was
+  // obtained. Only the same authoritative execution/connection generation
+  // may retain this preservation contract during missing-record reconciliation.
+  const settlementDeferred=new Map<string,{scopeId:string;threadId:string;connectionRevision:number;controlJobId?:string}>();
   const candidates = async (agentId?: string): Promise<AutomaticRecoveryCandidate[]> => {
     if (!acceptingNewJobs() || jobs.runtimeAdmission.pendingAdmissions > 0) return [];
     // Production reconciliation passes exactly one Agent. No changed-Agent
     // event may materialize the global Job, incident, or connection catalog.
     if (!agentId) return [];
+    settlementDeferred.delete(agentId);
     const agent = jobs.getAgent(agentId);
     if (!agent) return [];
     const latest = jobs.observedLatestJobForAgent(agentId);
@@ -8725,11 +8734,19 @@ export function configureAutomaticRecovery(
     const thread = jobs.currentAgentThread(agentId);
     if (!thread || thread.backendKind !== "app-server") return [];
     const connection = store.threadConnections.get(thread.threadId);
+    const observation = dashboardRuntimeCaches.get(upstream)?.get(dashboardRuntimeCacheKey(thread));
+    const currentObservation=observation?.stamp===dashboardRuntimeStamp(agent,latest) ? observation : undefined;
     if (agent.lifecycle==="idle" && connection?.phase==="released" && connection.evidence==="worker-exited" &&
         store.hasEndedOrphanProof(agentId)) return [];
     if (agent.lifecycle==="orphaned" && !agent.currentJobId && upstream.listLoadedBackgroundTerminals &&
+        !freshPositiveRuntime(currentObservation,dashboardRuntimeStamp(agent,latest)) &&
         connection?.agentId===agentId && connection.scopeId===agent.scopeId && connection.phase==="released" &&
         connection.evidence==="worker-exited" && !connection.handoffRequested && !store.threadConnections.hasUnfinishedWork(thread.threadId)) {
+      settlementDeferred.set(agentId,{scopeId:agent.scopeId,threadId:thread.threadId,connectionRevision:connection.revision,
+        controlJobId:store.latestControlJob(agentId)?.jobId});
+      // The controller serializes surveys; the current survey's marker is
+      // always newest. Bound remembered deferrals independently of registry size.
+      if (settlementDeferred.size>128) settlementDeferred.delete(settlementDeferred.keys().next().value!);
       // Display/transport waits own a bounded pool reservation, never the
       // global serial recovery sweep. Completion retains the same CAS fences.
       if (!settling.has(agentId)) {
@@ -8741,8 +8758,6 @@ export function configureAutomaticRecovery(
     const releasableConnection = connection?.persistence === "persistent" &&
       connection.lastJobId && !["released", "releasing"].includes(connection.phase)
       ? connection : undefined;
-    const observation = dashboardRuntimeCaches.get(upstream)?.get(dashboardRuntimeCacheKey(thread));
-    const currentObservation=observation?.stamp===dashboardRuntimeStamp(agent,latest) ? observation : undefined;
     const currentContext=hasCurrentRecheckContext(jobs,agent,thread,currentObservation?.observation,connection);
     const unknown = currentObservation &&
       (currentObservation.unavailable || currentObservation.observation.state === "unknown" || currentObservation.observation.backgroundProcessState === "unknown");
@@ -8888,7 +8903,13 @@ export function configureAutomaticRecovery(
       if (!agent || record.scopeId!==agent.scopeId) return false;
       // Settlement changes current control state, not any of this Agent's
       // past incident journals, including legacy records without lineage.
-      return settling.has(agent.agentId) || store.hasEndedOrphanProof(agent.agentId);
+      const deferred=settlementDeferred.get(agent.agentId),connection=deferred ? store.threadConnections.get(deferred.threadId) : undefined;
+      const sameDeferredGeneration=deferred && agent.lifecycle==="orphaned" && !agent.currentJobId &&
+        deferred.scopeId===agent.scopeId && deferred.threadId===agent.currentThreadId &&
+        connection?.agentId===agent.agentId && connection.scopeId===agent.scopeId &&
+        connection.revision===deferred.connectionRevision && connection.phase==="released" && connection.evidence==="worker-exited" &&
+        store.latestControlJob(agent.agentId)?.jobId===deferred.controlJobId && !store.threadConnections.hasUnfinishedWork(deferred.threadId);
+      return Boolean(sameDeferredGeneration) || store.hasEndedOrphanProof(agent.agentId);
     },
     pageAgents: (after, limit) => store.recoveryAgentIds(after, limit),
     agentForJob: jobId => jobs.get(jobId)?.agentId,

@@ -167,6 +167,53 @@ describe("conclusive orphan settlement",()=>{
       expect(f.state.automaticRecovery.get(legacy.key)).toMatchObject({state:"retrying",attempts:1});
     } finally {await controller?.close();await f.close();}
   });
+  it("preserves the same retry journal when a settlement read immediately fails",async()=>{
+    const f=fixture(1,1);let controller:AutomaticRecoveryController|undefined;try {
+      f.read.mockImplementation(async()=>{throw Error("immediate transport refusal");});
+      let options!:ConstructorParameters<typeof AutomaticRecoveryController>[1];
+      vi.spyOn(f.jobs,"configureAutomaticRecovery").mockImplementation(value=>{options=value;});configureAutomaticRecovery(f.jobs,f.upstream,{} as any,()=>true);
+      controller=new AutomaticRecoveryController(f.state.automaticRecovery,options);const original=f.snapshot();
+      await controller.sweep(undefined,f.agentId);for(let n=0;n<15;n++) await Promise.resolve();
+      await controller.sweep(undefined,f.agentId);expect(f.snapshot()).toBe(original);
+      expect(f.state.getAgent(f.agentId)?.lifecycle).toBe("orphaned");
+      const record=f.state.automaticRecovery.get(f.identity.key)!;
+      expect(options.preserveMissing!({...record,scopeId:"different-scope"})).toBe(false);
+    } finally {await controller?.close();await f.close();}
+  });
+  it("keeps a timeout/deferred duplicate survey from consuming the original retry budget",async()=>{
+    const f=fixture(1,1);let controller:AutomaticRecoveryController|undefined;try {
+      vi.useFakeTimers();let resolve!:(value:null)=>void;f.read.mockImplementation(()=>new Promise(r=>{resolve=r;}));
+      let options!:ConstructorParameters<typeof AutomaticRecoveryController>[1];
+      vi.spyOn(f.jobs,"configureAutomaticRecovery").mockImplementation(value=>{options=value;});configureAutomaticRecovery(f.jobs,f.upstream,{} as any,()=>true);
+      controller=new AutomaticRecoveryController(f.state.automaticRecovery,options);const original=f.snapshot();
+      const first=controller.sweep(undefined,f.agentId);await vi.advanceTimersByTimeAsync(1);await first;
+      await vi.advanceTimersByTimeAsync(6001);
+      const second=controller.sweep(undefined,f.agentId);await vi.advanceTimersByTimeAsync(1);await second;
+      expect(f.read).toHaveBeenCalledTimes(1);expect(f.snapshot()).toBe(original);
+      f.jobs.runtimeAdmission.pendingAdmissions=1;f.jobs.runtimeAdmission.admissionRevision++;
+      resolve(null);for(let n=0;n<20;n++) await Promise.resolve();
+      expect(f.state.getAgent(f.agentId)?.lifecycle).toBe("orphaned");expect(f.snapshot()).toBe(original);
+    } finally {await controller?.close();await f.close();}
+  });
+  it.each(["job","thread","connection"])("does not borrow a deferred survey marker after a real %s change",async kind=>{
+    const f=fixture(1,1);let controller:AutomaticRecoveryController|undefined;try {
+      f.read.mockImplementation(async()=>{throw Error("no current settlement observation");});
+      let options!:ConstructorParameters<typeof AutomaticRecoveryController>[1];
+      vi.spyOn(f.jobs,"configureAutomaticRecovery").mockImplementation(value=>{options=value;});configureAutomaticRecovery(f.jobs,f.upstream,{} as any,()=>true);
+      controller=new AutomaticRecoveryController(f.state.automaticRecovery,{...options,candidates:async id=>{
+        const result=await options.candidates(id);
+        if(kind==="job") f.state.upsertJob({...f.source,jobId:randomUUID(),requestId:randomUUID(),status:"running",createdAt:now,updatedAt:now});
+        if(kind==="thread") f.state.linkAgentThread({agentId:f.agentId,threadId:"changed-thread",backendKind:"app-server",cwd:f.root,sandbox:"read-only",contextMode:"fresh"});
+        if(kind==="connection") f.state.threadConnections.update(f.threadId,{phase:"blocked",reason:"new generation uncertainty"});
+        return result;
+      }});
+      await controller.sweep(undefined,f.agentId);
+      expect(f.state.automaticRecovery.get(f.identity.key)).toMatchObject({state:"blocked",attempts:1,reason:"work-changed"});
+      expect(f.state.hasEndedOrphanProof(f.agentId)).toBe(false);
+      if(kind==="job") expect(f.state.getAgent(f.agentId)?.lifecycle).toBe("active");
+      if(kind==="thread") expect(f.state.getAgent(f.agentId)?.currentThreadId).toBe("changed-thread");
+    } finally {await controller?.close();await f.close();}
+  });
   it("checks 600 retained Agent proof candidates in two SQL batches",async()=>{
     let tracing=false;const statements:string[]=[];
     const f=fixture(1,3,sql=>{if(tracing)statements.push(sql);});try {
@@ -186,6 +233,19 @@ describe("conclusive orphan settlement",()=>{
       vi.mocked(Date.now).mockReturnValue(now+3600000);
       expect(await settleReleasedOrphan(f.jobs,f.upstream,f.agentId)).toBe(true);expect(f.read).toHaveBeenCalledTimes(1);
       expect(f.state.getAgent(f.agentId)?.lifecycle).toBe("idle");
+    } finally {await server.close();await f.close();}
+  });
+  it("keeps normal recheck discovery available for fresh busy work instead of deferring it as stopped",async()=>{
+    const f=fixture(1,1);const server=dashboard(f);try {
+      f.upstream.probeThread=vi.fn(async()=>({state:"busy"} as any));
+      f.read.mockImplementation(async()=>{throw Error("active foreground, background unknown");});
+      await server.applicationService.dashboardSnapshot({scopeId,inspectRuntime:true,includeHistory:false});
+      const current=f.state.automaticRecovery.get(f.identity.key)!;
+      let options!:ConstructorParameters<typeof AutomaticRecoveryController>[1];
+      vi.spyOn(f.jobs,"configureAutomaticRecovery").mockImplementation(value=>{options=value;});configureAutomaticRecovery(f.jobs,f.upstream,{} as any,()=>true);
+      f.read.mockClear();expect(await options.candidates(f.agentId)).toContainEqual(f.identity);
+      expect(f.read).not.toHaveBeenCalled();expect(options.preserveMissing!(current)).toBe(false);
+      expect(f.state.getAgent(f.agentId)?.lifecycle).toBe("orphaned");
     } finally {await server.close();await f.close();}
   });
   it.each(["job","thread","connection","admission","question"])("rejects an idle foreground reply after a new %s",async kind=>{
