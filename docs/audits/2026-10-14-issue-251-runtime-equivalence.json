@@ -1,0 +1,14 @@
+{
+  "reviewedProductCommit": "8229136d79a366668e58de34926844d2158f1dba",
+  "baseCommit": "fb573efae1b2896f781129ca508c0a7b7622130e",
+  "excludedDirectories": [
+    "docs/",
+    "test/",
+    "macos/Tests/"
+  ],
+  "algorithm": "SHA-256 over sorted path\\0mode\\0git-blob-id\\n",
+  "trackedProductPaths": 436,
+  "reviewedProductDigest": "f00a163ee0a9c984c14b12264dc149a28883b1a8f8f9aac4902e9af51d7fb3d7",
+  "publicationProductDigest": "f00a163ee0a9c984c14b12264dc149a28883b1a8f8f9aac4902e9af51d7fb3d7",
+  "publicationPolicy": "Only documentation additions after the reviewed candidate. Exact remote publication HEAD and repeated comparison are reported in the follow-up PR."
+}
