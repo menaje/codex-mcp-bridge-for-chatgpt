@@ -13227,9 +13227,10 @@ async function buildDashboardView(
       const turn=retained ? turnForArchivedJob(retained) : null;
       const sourceActivity=activityId || retained?.activityId;
       const project=sourceActivity ? projectsByActivity.get(sourceActivity) : undefined;
+      const conversationUrl=scopeResolver.conversationUrl(scope);
       return {rowKey:dashboardRowKey(agentId,jobId),activityKey:sourceActivity ? dashboardActivityKey(sourceActivity,jobId || agentId) : dashboardActivityKey(undefined,agentId),
         conversationKey:dashboardConversationKey(scope),sessionAlias:dashboardSessionAlias(scope),
-        conversationUrl:scopeResolver.conversationUrl(scope),bucket:"recent",
+        ...(conversationUrl ? {conversationUrl} : {}),bucket:"recent",
         ...dashboardProjectIdentity(project || (projectId ? {projectId} : undefined)),
         agentName:dashboardAgentName(agent?.agentName),activityTitle:sourceActivity ? activityTitles.get(sourceActivity) || null : null,
         status:turn?.status || "liveness-unknown",createdAt:turn?.startedAt || new Date(at).toISOString(),updatedAt:new Date(at).toISOString(),
@@ -13243,7 +13244,8 @@ async function buildDashboardView(
         revision:problemRevision([record.jobId,record.status,record.occurredAt,record.reason,recoveries]),kind:"failed",source:"execution",
         review:"automatic",acknowledgedAt:null,occurredAt:new Date(record.occurredAt).toISOString(),observedAt:new Date(record.occurredAt).toISOString(),
         currentImpact:"none",reason:record.reason ? redactSensitiveText(record.reason).slice(0,1000) : null,
-        canAcknowledge:false,canUnacknowledge:false,canRecheck:false,canRetryStop:false,automatic:automaticSummary(recovery)}});
+        canAcknowledge:false,canUnacknowledge:false,canRecheck:false,canRetryStop:false,
+        ...(recovery ? {automatic:automaticSummary(recovery)} : {})}});
     }
     for(const record of automaticRecords) {
       // Only the exact initial incident/direct recovery belongs to a failure.
