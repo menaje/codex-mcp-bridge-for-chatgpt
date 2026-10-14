@@ -201,7 +201,7 @@
         "recoveryContract"
       ],
       "properties": {
-        "currentSchema": { "const": 27 },
+        "currentSchema": { "const": 32 },
         "supportedSourceSchemas": {
           "type": "array",
           "minItems": 24,

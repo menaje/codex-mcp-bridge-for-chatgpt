@@ -143,6 +143,10 @@ export class McpEventStore {
           this.list(record.jobId).length >= MAX_JOB_EVENT_SUBSCRIPTIONS)) {
         throw new Error("EVENT_SUBSCRIPTION_CAPACITY: Subscription capacity is full.");
       }
+      const diagnostic=(value:EventSubscription|undefined)=>value ? {delivery:value.delivery,attempts:value.attempts,
+        disabled:value.disabled || null,lastStatus:value.lastStatus || null} : null;
+      if(JSON.stringify(diagnostic(existing))!==JSON.stringify(diagnostic(record))) this.state.recordHistoryDiagnostic(
+        record.jobId,"completion-delivery",diagnostic(record)!);
       this.state.setMeta(this.key(record.jobId, record.id), JSON.stringify(record));
       if (!existing && record.name === JOB_LIFECYCLE_EVENT && record.lifecycleRoot) {
         const root = record.lifecycleRoot;

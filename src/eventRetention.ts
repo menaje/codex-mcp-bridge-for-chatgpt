@@ -1,3 +1,4 @@
+import { readAppliedHistoryPolicy } from "./historyPolicy.js";
 import type Database from "better-sqlite3";
 import { performance } from "node:perf_hooks";
 import { tokenCounts } from "./tokenUsage.js";
@@ -28,7 +29,7 @@ export type EventRetentionJobRepository = {
 };
 
 export type EventRetentionMaintenanceRepository = {
-  deleteActivityEvents(olderThan: number, batchSize: number, retainedLimit: number): number;
+  deleteActivityEvents(olderThan: number, batchSize: number, retainedLimit: number, now?: number): number;
   deleteExpiredResultHolds(now: number, limit: number): number;
 };
 
@@ -85,123 +86,28 @@ export class EventRetention {
         this.save(input.jobId, summary);
       }
     }
-    if (archived) return JSON.stringify({ metadataOnly: true, type: input.eventType });
-    if (coalesce && input.eventType.startsWith("app-")) {
-      const itemId = typeof details.itemId === "string" ? details.itemId : "";
-      const pattern = typeof payload.type === "string" ? `app-${payload.type}-%` : input.eventType;
-      const previous = this.db.prepare(`SELECT 1 FROM job_events WHERE job_id=? AND event_type LIKE ?
-        AND COALESCE(json_extract(payload,'$.details.itemId'),'')=? LIMIT 1`).get(input.jobId, pattern, itemId);
-      if (previous) this.db.prepare(`DELETE FROM job_events WHERE job_id=? AND event_type LIKE ?
-        AND COALESCE(json_extract(payload,'$.details.itemId'),'')=?`).run(input.jobId, pattern, itemId);
-    }
-    const encoded = JSON.stringify(input.payload ?? null);
-    return Buffer.byteLength(encoded) <= EVENT_RETENTION_LIMITS.payloadBytes ? encoded
-      : JSON.stringify({ type: payload.type, phase: payload.phase, summary: typeof payload.summary === "string" ? payload.summary.slice(0, 512) : undefined,
-        details: { itemId: typeof details.itemId === "string" ? details.itemId.slice(0, 200) : undefined }, truncated: true });
+    // Archiving does not change the lifetime or content of durable diagnostics.
+    return JSON.stringify(input.payload ?? null);
   }
 
-  enforce(jobId: string): void {
-    this.enforcePerJob(jobId);
-    this.enforceBudget();
-  }
+  /** Per-Job/global limits apply to presentation, never durable history. */
+  enforce(_jobId: string): void {}
 
-  private enforcePerJob(jobId: string): number {
-    if (!this.summary(jobId).usage) {
-      const usage = this.db.prepare("SELECT payload FROM job_events WHERE job_id=? AND event_type LIKE 'app-usage%' ORDER BY event_id DESC LIMIT 1").get(jobId) as {payload:string} | undefined;
-      if (usage) this.prepare({jobId,eventType:"app-usage",payload:parseStoredJson(usage.payload, "job event")}, true, false);
+  sweep(now = Date.now()) {
+    const policy=readAppliedHistoryPolicy(this.db,now);
+    let expiredJobEventsRemoved=0,expiredActivityEventsRemoved=0;
+    if (policy.cutoffAt !== null) {
+      expiredJobEventsRemoved=this.db.prepare(`DELETE FROM job_events WHERE event_id IN (
+        SELECT e.event_id FROM job_events e JOIN jobs j ON j.job_id=e.job_id
+        WHERE j.ended_at<=? AND j.status IN ('completed','failed','interrupted','cancelled')
+        ORDER BY e.event_id LIMIT ?)`).run(policy.cutoffAt,EVENT_RETENTION_LIMITS.batch).changes;
+      expiredActivityEventsRemoved=this.maintenance.deleteActivityEvents(policy.cutoffAt,EVENT_RETENTION_LIMITS.batch,0,now);
     }
-    const count = Number((this.db.prepare("SELECT COUNT(*) AS count FROM job_events WHERE job_id=?")
-      .get(jobId) as {count:number}).count);
-    if (count <= EVENT_RETENTION_LIMITS.perJob) return 0;
-    return this.db.prepare(`DELETE FROM job_events WHERE job_id=? AND event_id NOT IN
-      (SELECT event_id FROM job_events WHERE job_id=? ORDER BY event_id DESC LIMIT ?)`).run(
-        jobId,
-        jobId,
-        EVENT_RETENTION_LIMITS.perJob
-      ).changes;
-  }
-
-  private enforceBudget(): number {
-    let removed = 0;
-    // Fixed chunks amortize budget checks and avoid retaining a single oversized legacy row.
-    for (let batch = 0; batch < 1; batch++) {
-      const budget = this.db.prepare("SELECT rows,bytes FROM event_budget WHERE id=1").get() as { rows: number; bytes: number };
-      if (budget.rows <= EVENT_RETENTION_LIMITS.rows && budget.bytes <= EVENT_RETENTION_LIMITS.bytes) break;
-      const oldest = this.db.prepare("SELECT event_id,job_id,event_type,payload FROM job_events ORDER BY event_id LIMIT ?").all(EVENT_RETENTION_LIMITS.batch) as Array<{event_id:number;job_id:string;event_type:string;payload:string}>;
-      for (const row of oldest) if (row.event_type.startsWith("app-usage")) this.prepare({ jobId: row.job_id, eventType: row.event_type, payload: parseStoredJson(row.payload, "job event") }, true, false);
-      removed += this.db.prepare("DELETE FROM job_events WHERE event_id IN (SELECT event_id FROM job_events ORDER BY event_id LIMIT ?)").run(EVENT_RETENTION_LIMITS.batch).changes;
-    }
-    return removed;
-  }
-
-  /** One restartable migration slice; no VACUUM or long write lock during live work. */
-  sweep(now = Date.now()): {
-    processed: number;
-    rows: number;
-    bytes: number;
-    freePages: number;
-    expiredJobEventsRemoved: number;
-    expiredActivityEventsRemoved: number;
-    expiredResultHoldsRemoved: number;
-    perJobEventsRemoved: number;
-    budgetEventsRemoved: number;
-  } {
-    const deadline = performance.now() + 25;
-    const saved = this.db.prepare("SELECT cursor_event_id FROM event_retention_state WHERE singleton=1")
-      .get() as {cursor_event_id:number};
-    const cursor = saved.cursor_event_id;
-    const rows = this.db.prepare(`SELECT e.event_id,e.job_id,e.event_type,e.payload,j.archived_at FROM job_events e
-      JOIN jobs j ON j.job_id=e.job_id WHERE e.event_id>? ORDER BY e.event_id LIMIT ?`).all(cursor, EVENT_RETENTION_LIMITS.batch) as Array<{event_id:number;job_id:string;event_type:string;payload:string;archived_at:number|null}>;
-    const processedRows: typeof rows = [];
-    const checkedJobs = new Set<string>();
-    let perJobEventsRemoved = 0;
-    for (const row of rows) {
-      if (processedRows.length && performance.now() >= deadline) break;
-      const payload = this.prepare({ jobId: row.job_id, eventType: row.event_type, payload: parseStoredJson(row.payload, "job event") }, row.archived_at !== null, false);
-      if (payload !== row.payload) {
-        this.db.prepare("UPDATE job_events SET payload=? WHERE event_id=?").run(payload, row.event_id);
-      }
-      if (!checkedJobs.has(row.job_id)) {
-        perJobEventsRemoved += this.enforcePerJob(row.job_id);
-        checkedJobs.add(row.job_id);
-      }
-      processedRows.push(row);
-    }
-    this.db.prepare("UPDATE event_retention_state SET cursor_event_id=? WHERE singleton=1")
-      .run(processedRows.at(-1)?.event_id || cursor);
-    const expired = performance.now() < deadline
-      ? this.db.prepare("SELECT event_id,job_id,event_type,payload FROM job_events WHERE created_at<? ORDER BY event_id LIMIT ?").all(now - EVENT_RETENTION_LIMITS.metadataMs,EVENT_RETENTION_LIMITS.batch) as Array<{event_id:number;job_id:string;event_type:string;payload:string}>
-      : [];
-    let expiredJobEventsRemoved = 0;
-    let expiredVisited = 0;
-    for (const row of expired) {
-      if (expiredVisited++ && performance.now() >= deadline) break;
-      if (row.event_type.startsWith("app-usage")) this.prepare({jobId:row.job_id,eventType:row.event_type,payload:parseStoredJson(row.payload, "job event")}, true, false);
-      expiredJobEventsRemoved += this.db.prepare("DELETE FROM job_events WHERE event_id=?")
-        .run(row.event_id).changes;
-    }
-    // Activity events contain control metadata, never model output. They are also bounded.
-    const expiredActivityEventsRemoved = performance.now() < deadline ? this.maintenance.deleteActivityEvents(
-      now - EVENT_RETENTION_LIMITS.metadataMs,
-      EVENT_RETENTION_LIMITS.batch,
-      EVENT_RETENTION_LIMITS.rows
-    ) : 0;
-    const expiredResultHoldsRemoved = performance.now() < deadline ? this.maintenance.deleteExpiredResultHolds(
-      now,
-      EVENT_RETENTION_LIMITS.batch
-    ) : 0;
-    const budgetEventsRemoved = performance.now() < deadline ? this.enforceBudget() : 0;
-    const budget = this.db.prepare("SELECT rows,bytes FROM event_budget WHERE id=1").get() as {rows:number;bytes:number};
-    return {
-      processed: processedRows.length,
-      ...budget,
-      freePages: Number(this.db.pragma("freelist_count", { simple: true })),
-      expiredJobEventsRemoved,
-      expiredActivityEventsRemoved,
-      expiredResultHoldsRemoved,
-      perJobEventsRemoved,
-      budgetEventsRemoved
-    };
+    const expiredResultHoldsRemoved=this.maintenance.deleteExpiredResultHolds(now,EVENT_RETENTION_LIMITS.batch);
+    const budget=this.db.prepare("SELECT rows,bytes FROM event_budget WHERE id=1").get() as {rows:number;bytes:number};
+    return {processed:0,...budget,freePages:Number(this.db.pragma("freelist_count",{simple:true})),
+      expiredJobEventsRemoved,expiredActivityEventsRemoved,expiredResultHoldsRemoved,
+      perJobEventsRemoved:0,budgetEventsRemoved:0};
   }
 
   private save(jobId: string, summary: Record<string, unknown>): void {

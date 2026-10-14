@@ -1,3 +1,4 @@
+import { readAppliedHistoryPolicy, type AppliedHistoryPolicy } from "./historyPolicy.js";
 import { createHash, randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import { BackgroundWorkSlice, RECOVERY_WORK_LIMITS } from "./backgroundWorkBudget.js";
@@ -6,8 +7,9 @@ export type AutomaticRecoveryKind = "recheck" | "retry-stop" | "release";
 export type AutomaticRecoveryState = "retrying" | "resolved" | "blocked";
 export type AutomaticRecoveryRecord = {
   key: string; scopeId: string; agentId: string; jobId?: string;
+  projectId?: string; activityId?: string; threadId?: string;
   kind: AutomaticRecoveryKind; state: AutomaticRecoveryState;
-  attempts: number; createdAt: number; updatedAt: number; nextAttemptAt: number;
+  attempts: number; occurredAt: number; createdAt: number; updatedAt: number; nextAttemptAt: number;
   reason: string; evidence?: string;
 };
 export type AutomaticRecoveryCandidate = Pick<AutomaticRecoveryRecord, "key" | "scopeId" | "agentId" | "jobId" | "kind">;
@@ -39,7 +41,7 @@ export function automaticRecoveryKey(kind: AutomaticRecoveryKind, identity: unkn
 /** Attempts are committed before dispatch, so restarting cannot reset a limit
  * or interpret an interrupted dispatch as evidence of successful cleanup. */
 export class AutomaticRecoveryStore {
-  constructor(private readonly db: Database.Database) {}
+  constructor(private readonly db: Database.Database, private readonly policy: () => AppliedHistoryPolicy = () => readAppliedHistoryPolicy(db)) {}
 
   blockedKeys(): Set<string> {
     return new Set((this.db.prepare(
@@ -93,18 +95,13 @@ export class AutomaticRecoveryStore {
   /** Dashboard projection excludes references whose retained Job history has
    * expired, so the selected page can hydrate exact Job IDs after pagination. */
   listForDashboard(scopeId?: string): AutomaticRecoveryRecord[] {
+    const policy=this.policy();
     return this.db.prepare(`SELECT recovery.* FROM automatic_recovery recovery
       WHERE ${scopeId ? "recovery.scope_id=? AND" : ""}
-        (recovery.job_id IS NULL OR EXISTS (
-          SELECT 1 FROM jobs job WHERE job.job_id=recovery.job_id
-            AND NOT EXISTS (
-              SELECT 1 FROM work_history_state history
-               WHERE history.job_id=job.job_id AND history.expired_at IS NOT NULL
-            )
-        ))
-      ORDER BY recovery.updated_at DESC,recovery.recovery_key`)
-      .all(...(scopeId ? [scopeId] : []))
-      .map(row => this.decode(row as Record<string, unknown>));
+      ${policy.cutoffAt===null ? "1" : "recovery.occurred_at>?"}
+      ORDER BY recovery.occurred_at DESC,recovery.recovery_key`)
+      .all(...(scopeId ? [scopeId] : []),...(policy.cutoffAt===null ? [] : [policy.cutoffAt]))
+      .map(row=>this.decode(row as Record<string,unknown>));
   }
 
   /** Fresh inspection transitions define incidents; retries and cached reads
@@ -120,6 +117,16 @@ export class AutomaticRecoveryStore {
       const key = problem && !active
         ? automaticRecoveryKey("recheck",[candidate.key,previous?.key || incident!.recovery_key,randomUUID()])
         : incident?.recovery_key || candidate.key;
+      if (problem && !this.control(key)) {
+        this.db.prepare(`INSERT OR IGNORE INTO automatic_recovery
+          (recovery_key,scope_id,agent_id,job_id,kind,state,attempts,created_at,updated_at,next_attempt_at,reason,occurred_at,project_id,activity_id,thread_id)
+          VALUES (?,?,?,?,?,'retrying',0,?,?,?,'inspection-pending',?,
+          (SELECT project_id FROM sessions WHERE thread_id=(SELECT current_thread_id FROM agents WHERE agent_id=?)),
+          (SELECT activity_id FROM jobs WHERE job_id=?),(SELECT current_thread_id FROM agents WHERE agent_id=?))`)
+          .run(key,candidate.scopeId,candidate.agentId,candidate.jobId || null,candidate.kind,now,now,now,now,candidate.agentId,candidate.jobId || null,candidate.agentId);
+        this.db.prepare(`INSERT OR IGNORE INTO recovery_controls(recovery_key,agent_id,job_id,attempts,state,history_expired)
+          VALUES (?,?,?,0,'retrying',0)`).run(key,candidate.agentId,candidate.jobId || null);
+      }
       this.db.prepare(`INSERT INTO automatic_recovery_incidents(identity_key,recovery_key,agent_id,active,updated_at)
         VALUES (?,?,?,?,?) ON CONFLICT(identity_key) DO UPDATE SET recovery_key=excluded.recovery_key,
           active=excluded.active,updated_at=excluded.updated_at`)
@@ -156,22 +163,31 @@ export class AutomaticRecoveryStore {
   }
 
   begin(candidate: AutomaticRecoveryCandidate, now: number): AutomaticRecoveryRecord | undefined {
+    return this.db.transaction(() => {
     if (!this.projectAvailable(candidate)) return;
     const previous = this.get(candidate.key);
+    if (this.control(candidate.key)?.history_expired) return;
     if (previous && (previous.state !== "retrying" || previous.attempts >= AUTOMATIC_RECOVERY_ATTEMPTS || previous.nextAttemptAt > now)) return;
     const attempts = (previous?.attempts || 0) + 1;
     this.db.prepare(`INSERT INTO automatic_recovery
-      (recovery_key,scope_id,agent_id,job_id,kind,state,attempts,created_at,updated_at,next_attempt_at,reason)
-      VALUES (?,?,?,?,?,'retrying',?,?,?,?, 'inspection-pending')
+      (recovery_key,scope_id,agent_id,job_id,kind,state,attempts,created_at,updated_at,next_attempt_at,reason,occurred_at,project_id,activity_id,thread_id)
+      VALUES (?,?,?,?,?,'retrying',?,?,?,?, 'inspection-pending',?,
+        (SELECT project_id FROM sessions WHERE thread_id=(SELECT current_thread_id FROM agents WHERE agent_id=?)),
+        (SELECT activity_id FROM jobs WHERE job_id=?),(SELECT current_thread_id FROM agents WHERE agent_id=?))
       ON CONFLICT(recovery_key) DO UPDATE SET state='retrying',attempts=excluded.attempts,
         updated_at=excluded.updated_at,next_attempt_at=excluded.next_attempt_at,reason=excluded.reason,evidence=NULL`)
       .run(candidate.key,candidate.scopeId,candidate.agentId,candidate.jobId || null,candidate.kind,
-        attempts,previous?.createdAt || now,now,now + RETRY_DELAYS[attempts - 1]!);
+        attempts,previous?.createdAt ?? now,now,now + RETRY_DELAYS[attempts - 1]!,previous?.occurredAt ?? now,candidate.agentId,candidate.jobId || null,candidate.agentId);
+    this.db.prepare(`INSERT INTO recovery_controls(recovery_key,agent_id,job_id,attempts,state,history_expired)
+      VALUES (?,?,?,?,'retrying',0) ON CONFLICT(recovery_key) DO UPDATE SET attempts=excluded.attempts,state=excluded.state`)
+      .run(candidate.key,candidate.agentId,candidate.jobId || null,attempts);
+    this.step(candidate.key,"attempt",{attempts},now);
     return this.get(candidate.key);
+    })();
   }
 
   canBegin(candidate: AutomaticRecoveryCandidate, now: number): boolean {
-    if (!this.projectAvailable(candidate)) return false;
+    if (!this.projectAvailable(candidate) || this.control(candidate.key)?.history_expired) return false;
     const previous = this.get(candidate.key);
     return !previous || previous.state === "retrying" &&
       previous.attempts < AUTOMATIC_RECOVERY_ATTEMPTS && previous.nextAttemptAt <= now;
@@ -184,7 +200,10 @@ export class AutomaticRecoveryStore {
         WHERE recovery_key=? AND attempts=? AND state='retrying'`).run(
         confirmed ? "resolved" : result.retryable === false || attempt >= AUTOMATIC_RECOVERY_ATTEMPTS ? "blocked" : "retrying",
         now,result.resolved && !confirmed ? "recovery-unconfirmed" : result.reason,confirmed ? result.evidence! : null,key,attempt);
-      if (confirmed && updated.changes) this.closeIncident(key,now);
+      if(updated.changes) this.step(key,"result",{attempt,...result},now);
+      const controlled=this.db.prepare("UPDATE recovery_controls SET state=? WHERE recovery_key=? AND attempts=? AND state='retrying'")
+        .run(confirmed ? "resolved" : result.retryable===false||attempt>=AUTOMATIC_RECOVERY_ATTEMPTS ? "blocked" : "retrying",key,attempt);
+      if (confirmed && (updated.changes||controlled.changes)) this.closeIncident(key,now);
     })();
   }
 
@@ -201,6 +220,8 @@ export class AutomaticRecoveryStore {
     this.db.transaction(() => {
       this.db.prepare("UPDATE automatic_recovery SET state='resolved',reason=?,evidence=?,updated_at=? WHERE recovery_key=?")
         .run(reason,evidence,now,key);
+      this.step(key,"confirmed",{reason,evidence},now);
+      this.db.prepare("UPDATE recovery_controls SET state='resolved' WHERE recovery_key=?").run(key);
       this.closeIncident(key,now);
     })();
   }
@@ -210,28 +231,52 @@ export class AutomaticRecoveryStore {
   }
 
   prune(retentionDays: number, now = Date.now(), limit = 64): { recordsRemoved: number; incidentsRemoved: number } {
-    if (retentionDays === 0) return { recordsRemoved: 0, incidentsRemoved: 0 };
-    const boundedLimit = Math.max(1, Math.min(64, Math.floor(limit)));
-    // Keep every unresolved attempt budget while its original work still exists.
-    const recordsRemoved = this.db.prepare(`DELETE FROM automatic_recovery WHERE recovery_key IN (
-      SELECT recovery_key FROM automatic_recovery WHERE updated_at<? AND
-        (state='resolved' OR NOT EXISTS (SELECT 1 FROM agents WHERE agent_id=automatic_recovery.agent_id)
-         OR job_id IS NOT NULL AND EXISTS (SELECT 1 FROM work_history_state WHERE job_id=automatic_recovery.job_id AND expired_at IS NOT NULL))
-      ORDER BY updated_at,recovery_key LIMIT ?
-    )`).run(now - retentionDays * 86_400_000, boundedLimit).changes;
-    const incidentsRemoved = this.db.prepare(`DELETE FROM automatic_recovery_incidents WHERE identity_key IN (
-      SELECT identity_key FROM automatic_recovery_incidents WHERE updated_at<? AND (
-        NOT EXISTS (SELECT 1 FROM agents WHERE agent_id=automatic_recovery_incidents.agent_id)
-        OR NOT EXISTS (SELECT 1 FROM automatic_recovery WHERE recovery_key=automatic_recovery_incidents.recovery_key))
-      ORDER BY updated_at,identity_key LIMIT ?
-    )`).run(now - retentionDays * 86_400_000, boundedLimit).changes;
-    return { recordsRemoved, incidentsRemoved };
+    const policy=readAppliedHistoryPolicy(this.db,now);
+    if (policy.cutoffAt===null) return {recordsRemoved:0,incidentsRemoved:0};
+    const keys=this.db.prepare(`SELECT recovery_key FROM automatic_recovery WHERE occurred_at<=?
+      ORDER BY occurred_at,recovery_key LIMIT ?`).all(policy.cutoffAt,Math.max(1,Math.min(64,limit))) as Array<{recovery_key:string}>;
+    let recordsRemoved=0;
+    for (const {recovery_key:key} of keys) {
+      const current=readAppliedHistoryPolicy(this.db,now);
+      if (current.cutoffAt===null) break;
+      const row=this.get(key);
+      if (!row || row.occurredAt>current.cutoffAt) continue;
+      this.db.prepare("UPDATE recovery_controls SET history_expired=1 WHERE recovery_key=?").run(key);
+      this.db.prepare("DELETE FROM automatic_recovery_steps WHERE recovery_key=?").run(key);
+      recordsRemoved+=this.db.prepare("DELETE FROM automatic_recovery WHERE recovery_key=?").run(key).changes;
+    }
+    // Current unresolved incident IDs/budgets prevent replay. They contain no historical prose.
+    // A confirmed observation closes the incident and permits a distinct recurrence.
+    const controlsRemoved=this.db.prepare(`DELETE FROM recovery_controls WHERE agent_id NOT IN (SELECT agent_id FROM agents)
+      AND history_expired=1`).run().changes;
+    const incidentsRemoved=this.db.prepare(`DELETE FROM automatic_recovery_incidents WHERE agent_id NOT IN (SELECT agent_id FROM agents)
+      AND recovery_key NOT IN (SELECT recovery_key FROM automatic_recovery)`).run().changes;
+    return {recordsRemoved,incidentsRemoved:incidentsRemoved+controlsRemoved};
+  }
+
+  steps(key:string): Array<{at:string;step:string;details:Record<string,unknown>}> {
+    const row=this.get(key),policy=this.policy();
+    if(!row || policy.cutoffAt!==null && row.occurredAt<=policy.cutoffAt) return [];
+    return (this.db.prepare("SELECT occurred_at,step,details FROM automatic_recovery_steps WHERE recovery_key=? ORDER BY step_id").all(key) as Array<{occurred_at:number;step:string;details:string}>)
+      .map(x=>({at:new Date(x.occurred_at).toISOString(),step:x.step,details:JSON.parse(x.details)}));
+  }
+
+  private step(key:string,step:string,details:unknown,now:number):void {
+    this.db.prepare("INSERT INTO automatic_recovery_steps(recovery_key,occurred_at,step,details) VALUES (?,?,?,?)")
+      .run(key,now,step,JSON.stringify(details));
+  }
+
+  private control(key:string): {history_expired:number;attempts:number;state:string}|undefined {
+    return this.db.prepare("SELECT history_expired,attempts,state FROM recovery_controls WHERE recovery_key=?").get(key) as {history_expired:number;attempts:number;state:string}|undefined;
   }
 
   private decode(row: Record<string, unknown>): AutomaticRecoveryRecord {
     return {key:String(row.recovery_key),scopeId:String(row.scope_id),agentId:String(row.agent_id),
-      ...(row.job_id ? {jobId:String(row.job_id)} : {}),kind:row.kind as AutomaticRecoveryKind,state:row.state as AutomaticRecoveryState,
-      attempts:Number(row.attempts),createdAt:Number(row.created_at),updatedAt:Number(row.updated_at),nextAttemptAt:Number(row.next_attempt_at),
+      ...(row.job_id ? {jobId:String(row.job_id)} : {}),
+      ...(row.project_id ? {projectId:String(row.project_id)} : {}),
+      ...(row.activity_id ? {activityId:String(row.activity_id)} : {}),
+      ...(row.thread_id ? {threadId:String(row.thread_id)} : {}),kind:row.kind as AutomaticRecoveryKind,state:row.state as AutomaticRecoveryState,
+      attempts:Number(row.attempts),occurredAt:Number(row.occurred_at ?? row.created_at),createdAt:Number(row.created_at),updatedAt:Number(row.updated_at),nextAttemptAt:Number(row.next_attempt_at),
       reason:String(row.reason),...(row.evidence ? {evidence:String(row.evidence)} : {})};
   }
 }

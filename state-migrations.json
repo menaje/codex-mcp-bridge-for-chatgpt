@@ -1,7 +1,7 @@
 {
   "catalogVersion": 1,
   "immutabilityPolicy": "append-only-after-release-v1",
-  "currentSchema": 31,
+  "currentSchema": 32,
   "supportedSourceSchemas": [
     3,
     4,
@@ -30,7 +30,8 @@
     27,
     28,
     29,
-    30
+    30,
+    31
   ],
   "unsupportedSourceSchemas": [
     1,
@@ -265,6 +266,14 @@
       "implementation": "migrateV30ToV31",
       "introducedCommit": "cce99c5fdfeaafe2e50861d826dffd15cdd0f6b1",
       "sha256": "19374d8451fa6e8c43cc8cdf3b4ea419a4650230af1ee3ae326081507162c3c6"
+    },
+    {
+      "id": "bridge-state-31-to-32",
+      "fromSchema": 31,
+      "toSchema": 32,
+      "implementation": "migrateV31ToV32",
+      "introducedCommit": "development-issue-251",
+      "sha256": "41c79184b87ec9c39572634c93cb81332db0a250d1839fbf2dc646856400ba5d"
     }
   ],
   "fixtures": [

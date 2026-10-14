@@ -100,12 +100,14 @@ const dashboardParamsSchema = z.strictObject({
   problems: problemQuerySchema.optional(),
   statusFilter: z.enum(DASHBOARD_STATUS_FILTERS).optional(),
   limit: z.number().int().min(5).max(50).optional(),
+  statusOffset:z.number().int().min(0).max(1_000_000_000).optional(),
   terminalOffset: z.number().int().min(0).max(1_000_000_000).optional(),
   idleOffset: z.number().int().min(0).max(1_000_000_000).optional(),
   enrich: z.boolean().optional(),
   includeHistory: z.boolean().optional()
 });
 const dashboardHistoryDetailParamsSchema = z.strictObject({
+  historyCursor:z.string().max(2048).optional(),
   rowKey: z.string().regex(/^[0-9a-f]{32}$/)
 });
 const settingsSnapshotParamsSchema = z.strictObject({
@@ -611,6 +613,7 @@ async function dispatchRequest(
         statusFilter: params.statusFilter,
         limit: params.limit,
         terminalOffset: params.terminalOffset,
+        statusOffset:params.statusOffset,
         idleOffset: params.idleOffset,
         // Older native clients omit enrich and retain their prior all-in-one
         // snapshot behavior. The current client sends false explicitly.

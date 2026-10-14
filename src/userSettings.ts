@@ -1,3 +1,4 @@
+import { strictRetentionDays } from "./historyPolicy.js";
 import { DEFAULT_HISTORY_RETENTION_DAYS, HISTORY_RETENTION_DAYS, historyRetentionDays, type HistoryRetentionDays } from "./workHistory.js";
 import { createHmac, randomBytes } from "node:crypto";
 import type { AccessStrategy, BridgeConfig, SandboxMode } from "./config.js";
@@ -766,7 +767,7 @@ function readGeneralSettings(
       ? value.showBridgeThreadsInCodexApp
       : false,
     experimentalDirectResultDelivery: true,
-    historyRetentionDays: historyRetentionDays(value.historyRetentionDays),
+    historyRetentionDays: strictRetentionDays(!Object.hasOwn(value,"historyRetentionDays") && value.schemaVersion===2 ? DEFAULT_HISTORY_RETENTION_DAYS : value.historyRetentionDays),
   };
 }
 
