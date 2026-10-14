@@ -362,8 +362,13 @@ and destructive telemetry slices acquire the same private sibling
 no tables, settings, record bodies or leases; it is solely an OS-backed mutex.
 Telemetry continues to open the operational source read-only. The state owner
 holds this mutex until its outer settings transaction commits or rolls back,
-including updates nested inside project/settings commands. Telemetry obtains it
-before reading the policy and holds it through its own delete commit/rollback.
+including updates nested inside project/settings commands. Nested same-owner
+settings calls reuse that held gate; they do not acquire it a second time.
+Settings acquire the existing operational write transaction first, then try the
+gate without waiting. Telemetry acquires the gate first, then its own transaction;
+it only reads the operational WAL and never requests its write lock. Contention
+therefore rolls back/fails fast instead of forming a waiting lock cycle.
+Telemetry obtains it before reading the policy and holds it through its own delete commit/rollback.
 Both owners use timeout zero. Contention fails with SQLITE_BUSY without waiting
 or applying a fallback; the normal retry path must obtain fresh policy. A
 read/storage failure rolls back and releases the mutex, and process death releases

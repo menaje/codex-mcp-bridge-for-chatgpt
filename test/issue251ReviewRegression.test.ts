@@ -5,6 +5,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { execFileSync } from 'node:child_process';
 import { acquireHistoryPolicyGate } from '../src/historyPolicyGate.js';
+import { readAppliedHistoryPolicy } from '../src/historyPolicy.js';
 import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BridgeStateStore } from '../src/stateStore.js';
@@ -79,6 +80,43 @@ describe('#251 independent review regressions (assert required behavior)',()=>{
       const gate=new Database(f.file+'.history-policy-gate.sqlite',{readonly:true});
       expect(gate.prepare("SELECT name FROM sqlite_master").all()).toEqual([]);gate.close();
       expect(f.store.appliedHistoryPolicy(now).retentionDays).toBe(0);
+    } finally {f.close();}
+  });
+  it('R1: same-process nested settings reuse one gate until the outer transaction finishes',()=>{
+    const f=fixture();
+    try {
+      f.store.transaction(()=>{
+        f.store.writeSettings({...f.store.getSettingsRecord()!.payload as any,historyRetentionDays:30},1,now);
+        f.store.transaction(()=>f.store.writeSettings({...f.store.getSettingsRecord()!.payload as any,historyRetentionDays:0},2,now));
+        expect(()=>acquireHistoryPolicyGate(f.file)).toThrow(/locked/);
+      });
+      expect(f.store.appliedHistoryPolicy(now).retentionDays).toBe(0);
+      expect(f.store.getSettingsRevision()).toBe(3);
+      const release=acquireHistoryPolicyGate(f.file);release();
+    } finally {f.close();}
+  });
+  it('R1: another process fails fast while telemetry holds the gate, then commits a fresh retry',()=>{
+    const f=fixture();
+    const child=`import {BridgeStateStore} from './src/stateStore.ts';
+      const store=new BridgeStateStore({file:${JSON.stringify(f.file)}});
+      try {store.writeSettings({...store.getSettingsRecord().payload,historyRetentionDays:0},1,${now});console.log(JSON.stringify({committed:true}));}
+      catch(error){console.log(JSON.stringify({committed:false,code:error.code}));}
+      finally{store.close();}`;
+    const execute=()=>JSON.parse(execFileSync(process.execPath,['--import','tsx','--input-type=module','-e',child],
+      {cwd:process.cwd(),encoding:'utf8',timeout:3000}).trim());
+    // Keep the existing single operational-writer lifecycle: retire this
+    // owner before starting the child. This process now models telemetry's
+    // policy observer/mutex holder, not another operational writer.
+    f.store.close();
+    try {
+      const release=acquireHistoryPolicyGate(f.file);
+      try {
+        expect(execute()).toEqual({committed:false,code:'SQLITE_BUSY'});
+        expect(readAppliedHistoryPolicy(f.db,now).retentionDays).toBe(7);
+      } finally {release();}
+      expect(execute()).toEqual({committed:true});
+      expect(readAppliedHistoryPolicy(f.db,now).retentionDays).toBe(0);
+      expect(f.db.prepare('SELECT settings_revision FROM user_settings').get()).toEqual({settings_revision:2});
     } finally {f.close();}
   });
   it('R1: serializes interleaved policy commit and telemetry DELETE, preserving rows on failure',()=>{
