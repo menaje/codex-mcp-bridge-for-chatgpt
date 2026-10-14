@@ -514,9 +514,13 @@ final class AppModel: ObservableObject {
         OperationalNotificationPolicy.scope(isRemoteClient ? (activeRemoteProfile?.serverId ?? "unselected") : "local")
     }
 
+    private var initialStartupPending: Bool {
+        lifecycleOperation?.kind == "start" && lifecycleOperation?.startup != nil && lifecycleOperation?.isPending == true
+    }
+
     var operationalObservation: OperationalObservation {
         guard !isBusy, !applicationShutdownInProgress, !systemObservationPending else { return .unknown }
-        if !isRemoteClient, lifecycleOperation?.isExecuting == true { return .unknown }
+        if !isRemoteClient, (lifecycleOperation?.isExecuting == true || initialStartupPending) { return .unknown }
         if !isRemoteClient, localConnectionRecovery.isChecking { return .unknown }
         if isRemoteClient {
             guard activeRemoteProfile != nil else { return .unknown }
@@ -839,7 +843,7 @@ final class AppModel: ObservableObject {
 
     var isBridgeConnectionChecking: Bool {
         if systemObservationPending { return true }
-        if !isRemoteClient, lifecycleOperation?.isExecuting == true { return true }
+        if !isRemoteClient, (lifecycleOperation?.isExecuting == true || initialStartupPending) { return true }
         guard !needsSetup, !connectionCheckRequiresAttention else { return false }
         if networkAvailable == false, hasConnectionTarget,
            isRemoteClient || helperStatus?.phase != "stopped" { return true }
@@ -1330,6 +1334,12 @@ final class AppModel: ObservableObject {
         applicationLaunchAt: Date().ISO8601Format(.init(includingFractionalSeconds: true))
     )
     private var applicationLaunchHandled = false
+    private var applicationLaunchGeneration = 0
+    private var applicationLaunchReceiptRetryAllowed = false
+    private var applicationLaunchReceiptRetries = 2
+    private var applicationLaunchReceiptTask: Task<Void, Never>?
+    private var applicationLaunchReceiptTaskID: UUID?
+    @Published private(set) var helperStartupPreparing = false
 
     private func startOnce() async {
         beginOperationalNotifications()
@@ -1346,25 +1356,41 @@ final class AppModel: ObservableObject {
             return
         }
         logger.info("starting helper bootstrap")
+        let launchGeneration = applicationLaunchGeneration
+        let generation = connectionGeneration
+        helperStartupPreparing = true
+        defer { helperStartupPreparing = false }
         isBusy = true
-        defer { isBusy = false }
+        defer { if launchGeneration == applicationLaunchGeneration { isBusy = false } }
         do {
             let paths = await resolvedPaths()
             try await bootstrapper.ensureRunning(paths: paths)
+            guard !Task.isCancelled, launchGeneration == applicationLaunchGeneration,
+                  generation == connectionGeneration, !isRemoteClient else { return }
             logger.info("helper bootstrap completed")
+            helperStartupPreparing = false
+            isBusy = false
             startupErrorMessage = nil
             beginPolling()
             if !applicationLaunchHandled {
                 do {
                     let client = await helperClient()
                     let operation = try await client.requestLifecycle(applicationLaunchRequest)
+                    guard !Task.isCancelled, launchGeneration == applicationLaunchGeneration,
+                          generation == connectionGeneration, !isRemoteClient else { return }
+                    applicationLaunchReceiptRetryAllowed = false
                     applicationLaunchHandled = true
                     observeLifecycle(operation)
                 } catch {
+                    guard !Task.isCancelled, launchGeneration == applicationLaunchGeneration,
+                          generation == connectionGeneration, !isRemoteClient else { return }
+                    applicationLaunchReceiptRetryAllowed = [.timeout, .refused, .peerClosed].contains(RPCObservationFailure(error).kind)
                     startupErrorMessage = localizedErrorDescription(error)
                 }
             }
             await refreshAll()
+        } catch is CancellationError {
+            return
         } catch HelperBootstrapError.replacementPending {
             startupErrorMessage = nil
             beginPolling()
@@ -1373,6 +1399,55 @@ final class AppModel: ObservableObject {
             logger.error("helper bootstrap failed: \(error.localizedDescription, privacy: .public)")
             startupErrorMessage = localizedErrorDescription(error)
         }
+    }
+
+    private func retryApplicationLaunchReceiptIfNeeded() {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        guard applicationLaunchReceiptRetryAllowed, !applicationLaunchHandled,
+              applicationLaunchReceiptRetries > 0, applicationLaunchReceiptTask == nil,
+              !helperStartupPreparing, !isRemoteClient,
+              let launched = applicationLaunchRequest.applicationLaunchAt,
+              let launchDate = formatter.date(from: launched),
+              Date() < launchDate.addingTimeInterval(300) else { return }
+        applicationLaunchReceiptRetries -= 1
+        let launchGeneration = applicationLaunchGeneration
+        let generation = connectionGeneration
+        let taskID = UUID()
+        applicationLaunchReceiptTaskID = taskID
+        applicationLaunchReceiptTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if self.applicationLaunchReceiptTaskID == taskID {
+                    self.applicationLaunchReceiptTask = nil
+                    self.applicationLaunchReceiptTaskID = nil
+                }
+            }
+            do {
+                let client = await self.helperClient()
+                let receipt = try await client.requestLifecycle(self.applicationLaunchRequest)
+                guard !Task.isCancelled, launchGeneration == self.applicationLaunchGeneration,
+                      generation == self.connectionGeneration, !self.isRemoteClient else { return }
+                self.applicationLaunchHandled = true
+                self.applicationLaunchReceiptRetryAllowed = false
+                self.startupErrorMessage = nil
+                self.observeLifecycle(receipt)
+            } catch {
+                guard !Task.isCancelled, launchGeneration == self.applicationLaunchGeneration,
+                      generation == self.connectionGeneration else { return }
+                self.applicationLaunchReceiptRetryAllowed = [.timeout, .refused, .peerClosed].contains(RPCObservationFailure(error).kind)
+                self.startupErrorMessage = self.localizedErrorDescription(error)
+            }
+        }
+    }
+
+    private func suppressApplicationLaunchReceipt() {
+        applicationLaunchGeneration += 1
+        applicationLaunchHandled = true
+        applicationLaunchReceiptRetryAllowed = false
+        applicationLaunchReceiptTask?.cancel()
+        applicationLaunchReceiptTask = nil
+        applicationLaunchReceiptTaskID = nil
     }
 
     func refreshAll(refreshModels: Bool = false) async {
@@ -1469,6 +1544,7 @@ final class AppModel: ObservableObject {
             let next = try await client.health()
             guard !Task.isCancelled, generation == connectionGeneration, requestGeneration == statusRequestGeneration, !isRemoteClient else { return }
             recordLocalConnectionStatus(next)
+            retryApplicationLaunchReceiptIfNeeded()
             statusErrorMessage = nil
             beginChangeWatchingIfNeeded()
         } catch {
@@ -3125,12 +3201,21 @@ final class AppModel: ObservableObject {
            current.kind == kind, current.force == force, configuration == nil, candidateId == nil {
             return true
         }
+        let stopping = ["stop", "shutdown", "mode-switch"].contains(kind)
+        let initialStartMayBePending = lifecycleOperation?.startup != nil || applicationLaunchReceiptRetryAllowed || helperStartupPreparing
+        suppressApplicationLaunchReceipt()
         return await performRuntime {
             let client = await self.helperClient()
-            let current = self.lifecycleOperation
+            var current = self.lifecycleOperation
+            if stopping, initialStartMayBePending, !self.isRemoteClient {
+                // A lost start receipt may leave native state empty. Read the
+                // authoritative operation before replacing a retry backoff.
+                current = try await client.status().lifecycle
+            }
+            let replacesStartup = stopping && current?.kind == "start" && current?.startup != nil && current?.cancellable == true
             let receipt = try await client.requestLifecycle(.init(kind: kind, force: force,
                 configuration: configuration, candidateId: candidateId,
-                replacesRequestId: force && current?.cancellable == true ? current?.requestId : nil))
+                replacesRequestId: (replacesStartup || (force && current?.cancellable == true)) ? current?.requestId : nil))
             self.observeLifecycle(receipt)
             self.beginPolling()
             self.enqueueRefresh(["status"])
@@ -3139,6 +3224,7 @@ final class AppModel: ObservableObject {
 
     func cancelLifecycle() async {
         guard let operation = lifecycleOperation, operation.cancellable else { return }
+        if operation.kind == "start", operation.startup != nil { suppressApplicationLaunchReceipt() }
         _ = await performRuntime {
             let client = await self.helperClient()
             self.observeLifecycle(try await client.cancelLifecycle(requestId: operation.requestId))
@@ -3149,6 +3235,7 @@ final class AppModel: ObservableObject {
     private func observeLifecycle(_ operation: RuntimeLifecycleOperation?) {
         guard let operation else { lifecycleOperation = nil; return }
         if lifecycleOperation != operation { lifecycleOperation = operation }
+        if operation.startup != nil, operation.isPending { startupErrorMessage = nil }
         let update = "\(operation.requestId):\(operation.updatedAt):\(operation.phase)"
         if operation.phase == "failed", handledLifecycleUpdate != update {
             runtimeErrorMessage = BridgeAppLocalization.lifecycleFailureDescription(operation.error, locale: interfaceLocale)
@@ -3473,6 +3560,9 @@ final class AppModel: ObservableObject {
     }
 
     func cancelAllPolling() {
+        applicationLaunchReceiptTask?.cancel()
+        applicationLaunchReceiptTask = nil
+        applicationLaunchReceiptTaskID = nil
         cancelChangeWatching()
         deferredDashboardRead = nil
         statusRefreshTask?.cancel()

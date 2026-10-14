@@ -17,6 +17,18 @@ public struct RuntimeLifecycleOperation: Codable, Equatable, Sendable, Identifia
     public let targetBuildId: String?
     public let targetDescription: String?
     public let cancellable: Bool
+    public var startup: InitialStartup? = nil
+    public struct InitialStartup: Codable, Equatable, Sendable {
+        public let source: String
+        public let startedAt: Int64
+        public let deadlineAt: Int64
+        public let attempts: Int
+        public let nextAttemptAt: Int64?
+        public let stage: String
+        public let failureCode: String?
+        public let failureStage: String?
+        public let retrySuppressed: Bool?
+    }
     public var id: String { requestId }
     public var isPending: Bool { !["completed", "cancelled", "failed"].contains(phase) }
     public var isExecuting: Bool { ["executing", "reconnecting", "handoff-ready", "handing-off"].contains(phase) }

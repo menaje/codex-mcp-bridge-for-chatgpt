@@ -15,6 +15,7 @@ import {
   type RemoteCompanionControl
 } from "../src/companionServer.js";
 import { BRIDGE_SKILL_LIMITS } from "../src/skillLibrary.js";
+import { RuntimeDrainGate, type RuntimeDrainTarget } from "../src/runtimeDrain.js";
 import type {
   BridgeApplicationService,
   DashboardView,
@@ -717,6 +718,76 @@ describe("native companion server", () => {
       params: {}
     });
     expect(applicationService.cancelDrain).toHaveBeenCalledOnce();
+  });
+
+  it.each(["runtime.beginDrain", "runtime.cancelDrain"] as const)("forwards the expected receiver identity for %s and leaves replacement B unchanged", async method => {
+    const socketPath = temporarySocketPath(), applicationService = fakeApplicationService();
+    const targetA: RuntimeDrainTarget = { launcherPid: 100, token: randomUUID(), requestId: randomUUID(),
+      attempt: 1, deadlineAt: Date.now() + 300_000 };
+    const targetB = { ...targetA, launcherPid: 200, token: randomUUID() };
+    const admissionB = { acceptingNewJobs: method !== "runtime.cancelDrain" };
+    const receiverB = new RuntimeDrainGate(admissionB, targetB);
+    applicationService.beginDrain = vi.fn(async options => {
+      receiverB.begin(options?.expectedRuntime);
+      return applicationService.runtimeSnapshot();
+    });
+    applicationService.cancelDrain = vi.fn(async options => {
+      receiverB.cancel(options?.expectedRuntime);
+      return applicationService.runtimeSnapshot();
+    });
+    servers.push(await startBridgeCompanionServer({ socketPath, applicationService }));
+    const original = admissionB.acceptingNewJobs;
+    const reply = await request(socketPath, { jsonrpc: "2.0", id: "targeted-drain",
+      method, params: { expectedRuntime: targetA } });
+    expect(reply).toMatchObject({ error: { message: expect.stringContaining("RUNTIME_DRAIN_TARGET_CHANGED") } });
+    expect(admissionB.acceptingNewJobs).toBe(original);
+    expect(method === "runtime.beginDrain" ? applicationService.beginDrain : applicationService.cancelDrain)
+      .toHaveBeenCalledWith({ expectedRuntime: targetA });
+  });
+
+  it("socket replacement between preparing cancelDrain and connecting cannot reopen the replacement service", async () => {
+    const socketPath = temporarySocketPath();
+    const identityA: RuntimeDrainTarget = { launcherPid: 100, token: randomUUID(), requestId: randomUUID(),
+      attempt: 1, deadlineAt: Date.now() + 300_000 };
+    const admissionA = { acceptingNewJobs: true }, gateA = new RuntimeDrainGate(admissionA, identityA);
+    const serviceA = fakeApplicationService();
+    serviceA.beginDrain = async options => { gateA.begin(options?.expectedRuntime); return serviceA.runtimeSnapshot(); };
+    const serverA = await startBridgeCompanionServer({ socketPath, applicationService: serviceA }); servers.push(serverA);
+    await request(socketPath, { jsonrpc: "2.0", id: "owned-A-drain", method: "runtime.beginDrain", params: { expectedRuntime: identityA } });
+    // Caller has already observed A/constructed its cancel. The name now
+    // resolves to B before the new cancellation connection is established.
+    const cancel = { jsonrpc: "2.0", id: "old-A-cancel", method: "runtime.cancelDrain", params: { expectedRuntime: identityA } };
+    await serverA.close(); servers.splice(servers.indexOf(serverA), 1);
+    const admissionB = { acceptingNewJobs: false };
+    const gateB = new RuntimeDrainGate(admissionB, { ...identityA, launcherPid: 200, token: randomUUID() });
+    const serviceB = fakeApplicationService();
+    serviceB.cancelDrain = async options => { gateB.cancel(options?.expectedRuntime); return serviceB.runtimeSnapshot(); };
+    servers.push(await startBridgeCompanionServer({ socketPath, applicationService: serviceB }));
+    expect(await request(socketPath, cancel)).toMatchObject({ error: { message: expect.stringContaining("RUNTIME_DRAIN_TARGET_CHANGED") } });
+    expect(admissionB.acceptingNewJobs).toBe(false);
+  });
+
+  it("targeted cancel cannot reopen a later ordinary drain through the companion boundary", async () => {
+    const socketPath = temporarySocketPath(), applicationService = fakeApplicationService();
+    const identity: RuntimeDrainTarget = { launcherPid: 100, token: randomUUID(), requestId: randomUUID(),
+      attempt: 1, deadlineAt: Date.now() + 300_000 };
+    const admission = { acceptingNewJobs: true }, gate = new RuntimeDrainGate(admission, identity);
+    applicationService.beginDrain = async options => {
+      gate.begin(options?.expectedRuntime);
+      return { ...await applicationService.runtimeSnapshot(), acceptingNewJobs: admission.acceptingNewJobs };
+    };
+    applicationService.cancelDrain = async options => {
+      gate.cancel(options?.expectedRuntime);
+      return { ...await applicationService.runtimeSnapshot(), acceptingNewJobs: admission.acceptingNewJobs };
+    };
+    servers.push(await startBridgeCompanionServer({ socketPath, applicationService }));
+    await request(socketPath, { jsonrpc: "2.0", id: "begin-A", method: "runtime.beginDrain", params: { expectedRuntime: identity } });
+    await request(socketPath, { jsonrpc: "2.0", id: "ordinary-begin", method: "runtime.beginDrain", params: {} });
+    expect(await request(socketPath, { jsonrpc: "2.0", id: "late-cancel-A", method: "runtime.cancelDrain", params: { expectedRuntime: identity } }))
+      .toMatchObject({ error: { message: expect.stringContaining("RUNTIME_DRAIN_NOT_OWNED") } });
+    expect(admission.acceptingNewJobs).toBe(false);
+    expect(await request(socketPath, { jsonrpc: "2.0", id: "ordinary-cancel", method: "runtime.cancelDrain", params: {} }))
+      .toMatchObject({ result: { acceptingNewJobs: true } });
   });
 
   it("keeps remote publication and device controls on the private local socket", async () => {

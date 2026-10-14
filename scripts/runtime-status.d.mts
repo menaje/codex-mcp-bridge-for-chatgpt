@@ -35,13 +35,14 @@ export type ManagedRuntimeStatus = {
   codexEnvironment?: NodeJS.ProcessEnv;
   tunnel: ManagedTunnelStatus;
   stale: boolean;
+  startup?: InitialStartupStatus;
 };
 
 export const MANAGED_RUNTIME_STATUS_PROTOCOL: string;
 export const MANAGED_RUNTIME_STATUS_VERSION: number;
 export const MAX_TUNNEL_CONTROL_PLANE_AGE_MS: number;
 export function createStartupDiagnostics(
-  role: "launcher" | "server" | "runtime-parent" | "state-owner",
+  role: "helper" | "launcher" | "server" | "runtime-parent" | "state-owner",
   options?: {
     environment?: NodeJS.ProcessEnv;
     emit?: (line: string) => void;
@@ -58,3 +59,8 @@ export function writeManagedRuntimeStatus(
   filePath: string,
   status: Record<string, unknown>
 ): void;
+
+export type InitialStartupContext = { requestId: string; token: string; attempt: number; deadlineAt: number };
+export type InitialStartupStatus = InitialStartupContext & { stage: "launching" | "state-owner" | "http" | "tunnel" | "ready"; failureCode: string | null; causeCode?: string | null; readyAt?: number | null };
+export function initialStartupContext(environment?: NodeJS.ProcessEnv): InitialStartupContext | null;
+export function initialStartupStageTimeout(initialLimit: number, legacyLimit: number, environment?: NodeJS.ProcessEnv, now?: number): number;

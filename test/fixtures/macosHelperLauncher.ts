@@ -21,6 +21,12 @@ export function writeFakeLauncher(
     healthDelayFile?: string;
     admissionFile?: string;
     failAuthenticationActivation?: boolean;
+    initialStartupFailures?: number;
+    initialStartupTunnelNeverReady?: boolean;
+    initialStartupFailureCode?: string;
+    initialStartupCauseCode?: string;
+    initialStartupDescendantPidFile?: string;
+    initialStartupLaunchesFile?: string;
   } = {}
 ): void {
   const runtimeEnvModule = new URL("../../scripts/runtime-env.mjs", import.meta.url).href;
@@ -31,6 +37,20 @@ import { createServer } from "node:net";
 import path from "node:path";
 import { codexAppliedEnvironment, codexChildEnvironment, codexChildEnvironmentFingerprint } from ${JSON.stringify(runtimeEnvModule)};
 const socketPath = process.env.CODEX_MCP_BRIDGE_COMPANION_SOCKET;
+const initialAttempt = process.env.CODEX_MCP_BRIDGE_INITIAL_START_REQUEST ? {
+  requestId: process.env.CODEX_MCP_BRIDGE_INITIAL_START_REQUEST,
+  token: process.env.CODEX_MCP_BRIDGE_INITIAL_START_TOKEN,
+  attempt: Number(process.env.CODEX_MCP_BRIDGE_INITIAL_START_ATTEMPT),
+  deadlineAt: Number(process.env.CODEX_MCP_BRIDGE_INITIAL_START_DEADLINE),
+  stage: "ready", failureCode: null
+} : null;
+if (initialAttempt && !process.env.CODEX_MCP_BRIDGE_INITIAL_START_LAUNCHER_PID) process.env.CODEX_MCP_BRIDGE_INITIAL_START_LAUNCHER_PID = String(process.pid);
+const drainIdentity = initialAttempt ? { ...initialAttempt, launcherPid: Number(process.env.CODEX_MCP_BRIDGE_INITIAL_START_LAUNCHER_PID) } : null;
+let drainOwner = null;
+let drainCancelled = false;
+const initialFails = initialAttempt && initialAttempt.attempt <= ${JSON.stringify(options.initialStartupFailures || 0)};
+if (initialAttempt && ${JSON.stringify(options.initialStartupLaunchesFile || "")}) appendFileSync(
+  ${JSON.stringify(options.initialStartupLaunchesFile || "")}, JSON.stringify({ pid: process.pid, ...initialAttempt }) + "\\n");
 const statusIndex = process.argv.indexOf("--runtime-status-file");
 const runtimeStatusFile = statusIndex >= 0 ? process.argv[statusIndex + 1] : null;
 const envIndex = process.argv.indexOf("--env-file");
@@ -71,7 +91,7 @@ if (${JSON.stringify(Boolean(options.writeRuntimeLock))} && runtimeLockDirectory
   mkdirSync(runtimeLockDirectory, { recursive: true, mode: 0o700 });
   writeFileSync(path.join(runtimeLockDirectory, "owner.json"), JSON.stringify({
     pid: process.pid,
-    token: "00000000-0000-4000-8000-000000000001",
+    token: initialAttempt?.token || "00000000-0000-4000-8000-000000000001",
     startedAt: new Date().toISOString()
   }) + "\\n", { mode: 0o600 });
 }
@@ -82,7 +102,11 @@ if (runtimeStatusFile) {
     version: 1,
     generatedAt: new Date().toISOString(),
     launcherPid: process.pid,
-    phase: "running",
+    phase: initialFails ? "failed" : ${JSON.stringify(Boolean(options.initialStartupTunnelNeverReady))} ? "starting" : "running",
+    ...(initialAttempt ? { startup: { ...initialAttempt,
+      stage: initialFails ? "http" : ${JSON.stringify(Boolean(options.initialStartupTunnelNeverReady))} ? "tunnel" : "ready",
+      failureCode: initialFails ? ${JSON.stringify(options.initialStartupFailureCode || "STARTUP_HTTP_TIMEOUT")} : null,
+      causeCode: initialFails ? ${JSON.stringify(options.initialStartupCauseCode || null)} : null } } : {}),
     runtimeBuildId: "development",
     codexEnvironmentFingerprint: codexChildEnvironmentFingerprint(process.env),
     codexEnvironment: codexAppliedEnvironment(process.env),
@@ -92,13 +116,21 @@ if (runtimeStatusFile) {
       transport: ${JSON.stringify(options.runtimeTransport || null)} || transport,
       doctorPassed: true,
       processRunning: true,
-      connected: true,
+      connected: !${JSON.stringify(Boolean(options.initialStartupTunnelNeverReady))},
       lastCheckedAt: new Date().toISOString(),
       lastError: null,
       lastProblem: null
     }
   }), { mode: 0o600 });
 }
+if (initialFails) {
+  if (${JSON.stringify(options.initialStartupDescendantPidFile || "")}) {
+    const descendant = spawn(process.execPath, ["-e", "process.on('SIGTERM',()=>{});process.send('ready');setInterval(()=>{},1000)"], { stdio: ["ignore", "ignore", "ignore", "ipc"] });
+    writeFileSync(${JSON.stringify(options.initialStartupDescendantPidFile || "")}, String(descendant.pid));
+    descendant.once("message", () => setTimeout(() => process.exit(1), 100));
+    descendant.unref();
+  } else setTimeout(() => process.exit(1), 100);
+} else {
 const server = createServer((socket) => {
   socket.on("error", () => undefined);
   let buffer = "";
@@ -127,6 +159,20 @@ const server = createServer((socket) => {
       return;
     }
     const draining = request.method === "runtime.beginDrain";
+    const cancelling = request.method === "runtime.cancelDrain";
+    const expected = request.params?.expectedRuntime;
+    if ((draining || cancelling) && expected) {
+      const matches = drainIdentity && ["launcherPid", "token", "requestId", "attempt"].every(key => expected[key] === drainIdentity[key]);
+      if (!matches || Date.now() >= expected.deadlineAt || expected.deadlineAt > drainIdentity.deadlineAt + 7000 ||
+          (draining && drainCancelled) || (!drainOwner && !acceptingNewJobs)) {
+        socket.end(JSON.stringify({ jsonrpc: "2.0", id: request.id, error: { code: -32602, message: "RUNTIME_DRAIN_TARGET_CHANGED" } }) + "\\n"); return;
+      }
+      if (draining) drainOwner = expected;
+      else { drainOwner = null; drainCancelled = true; }
+    } else if (cancelling && drainOwner) {
+      socket.end(JSON.stringify({ jsonrpc: "2.0", id: request.id, error: { code: -32602, message: "RUNTIME_DRAIN_NOT_OWNED" } }) + "\\n"); return;
+    }
+    if (draining && !expected) { drainOwner = null; if (drainIdentity) drainCancelled = true; }
     if (draining) acceptingNewJobs = false;
     if (request.method === "runtime.cancelDrain") acceptingNewJobs = true;
     if (draining && envFile && !mutatedEnv && ${JSON.stringify(Boolean(options.mutateEnvOnDrain))}) {
@@ -182,5 +228,6 @@ const stop = () => server.close(() => {
 });
 process.on("SIGINT", stop);
 process.on("SIGTERM", stop);
+}
 `, { mode: 0o700 });
 }

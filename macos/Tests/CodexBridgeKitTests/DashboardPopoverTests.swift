@@ -663,6 +663,75 @@ final class DashboardPopoverTests: XCTestCase {
     }
 
     @MainActor
+    func testLostInitialLaunchReceiptReconnectReusesIntentAndAttemptBudget() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.pendingInitialStart = true
+        f.state.lostStartReceipts = 2
+        await f.model.start()
+        let deadline = f.model.lifecycleOperation?.startup?.deadlineAt
+        await f.model.refreshStatus()
+        for _ in 0..<50 {
+            if f.state.launchRequests.count == 3 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let requests = f.state.launchRequests
+        XCTAssertEqual(requests.count, 3)
+        XCTAssertEqual(Set(requests.compactMap { $0["requestId"] as? String }).count, 1)
+        XCTAssertEqual(Set(requests.compactMap { $0["applicationLaunchAt"] as? String }).count, 1)
+        XCTAssertEqual(f.model.lifecycleOperation?.startup?.attempts, 1)
+        XCTAssertEqual(f.model.lifecycleOperation?.startup?.deadlineAt, deadline)
+        XCTAssertNil(f.model.startupErrorMessage)
+    }
+
+    @MainActor
+    func testStopAfterLostLaunchReceiptReplacesBackoffAndPreventsLateAutomaticReceipt() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.pendingInitialStart = true
+        f.state.lostStartReceipts = 2
+        await f.model.start()
+        let initialID = try XCTUnwrap(f.state.launchRequests.first?["requestId"] as? String)
+        let sentBeforeStop = f.state.launchRequests.count
+        let stopped = await f.model.stopRuntime(force: false)
+        XCTAssertTrue(stopped)
+        await f.model.refreshStatus()
+        XCTAssertEqual(f.state.launchRequests.count, sentBeforeStop)
+        XCTAssertEqual(f.state.stopRequests.last?["replacesRequestId"] as? String, initialID)
+        XCTAssertEqual(f.model.lifecycleOperation?.kind, "stop")
+    }
+
+    @MainActor
+    func testCancelInitialBackoffDoesNotRetransmitLostLaunchReceipt() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.pendingInitialStart = true
+        f.state.lostStartReceipts = 2
+        await f.model.start()
+        let sentBeforeCancel = f.state.launchRequests.count
+        await f.model.cancelLifecycle()
+        await f.model.refreshStatus()
+        XCTAssertEqual(f.state.launchRequests.count, sentBeforeCancel)
+        XCTAssertEqual(f.model.lifecycleOperation?.phase, "cancelled")
+    }
+
+    @MainActor
+    func testLateInitialLaunchReceiptCannotReplaceNewerUserStop() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.pendingInitialStart = true
+        f.state.initialStartReceiptDelay = 0.2
+        let starting = Task { @MainActor in await f.model.start() }
+        for _ in 0..<50 {
+            if !f.state.launchRequests.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let stopped = await f.model.stopRuntime(force: false)
+        XCTAssertTrue(stopped)
+        let stopID = f.model.lifecycleOperation?.requestId
+        await starting.value
+        XCTAssertEqual(f.model.lifecycleOperation?.kind, "stop")
+        XCTAssertEqual(f.model.lifecycleOperation?.requestId, stopID)
+        XCTAssertEqual(f.state.launchRequests.count, 1)
+    }
+
+    @MainActor
     func testOpeningDuringStartupCoalescesIntoOneStagedDashboardRefresh() async throws {
         let f = try PopoverFixture(); defer { f.remove() }
         f.model.setDashboardVisible(true)
@@ -754,6 +823,14 @@ private final class PopoverReplyState: @unchecked Sendable {
     private var usageWeeklyValue: [String: Any]?
     private var authenticatedValue = true
     private var failEnrichmentValue = false
+    private var initialStartReceipts: [String: [String: Any]] = [:]
+    private var initialStartReceiptDelayValue: TimeInterval = 0
+    var initialStartReceiptDelay: TimeInterval { get { lock.withLock { initialStartReceiptDelayValue } } set { lock.withLock { initialStartReceiptDelayValue = newValue } } }
+    private var pendingInitialStartValue = false
+    private var lostStartReceiptCount = 0
+    var pendingInitialStart: Bool { get { lock.withLock { pendingInitialStartValue } } set { lock.withLock { pendingInitialStartValue = newValue } } }
+    var lostStartReceipts: Int { get { lock.withLock { lostStartReceiptCount } } set { lock.withLock { lostStartReceiptCount = newValue } } }
+    var stopRequests: [[String: Any]] { lock.withLock { requests.filter { $0["kind"] as? String == "stop" } } }
     private var deferredHistoryRevision = String(repeating: "a", count: 64)
     var rowCount: Int { get { lock.withLock { runningRowCount } } set { lock.withLock { runningRowCount = newValue } } }
     var usageContext: String? { get { lock.withLock { usageContextValue } } set { lock.withLock { usageContextValue = newValue } } }
@@ -786,7 +863,7 @@ private final class PopoverReplyState: @unchecked Sendable {
     func reply(_ method: String, _ parameters: String) -> NativeFixtureReply {
         let params = (try? JSONSerialization.jsonObject(with: Data(parameters.utf8))) as? [String: Any] ?? [:]
         var delay: TimeInterval = 0
-        let result: [String: Any]
+        var result: [String: Any]
         switch method {
         case "helper.status", "helper.health":
             var status = Self.helperStatus
@@ -797,8 +874,25 @@ private final class PopoverReplyState: @unchecked Sendable {
             lock.withLock { requests.append(params) }
             if failStart { return NativeFixtureReply(body: #"{"error":{"code":-32000,"message":"FIXTURE_START_FAILED"}}"#) }
             result = ["requestId": coalesceStart ? Self.existingRequestID : params["requestId"]!, "kind": params["kind"]!,
-                "force": false, "phase": "completed", "createdAt": "2026-09-10T00:00:00Z", "updatedAt": "2026-09-10T00:00:00Z",
+                "force": false, "phase": pendingInitialStart && params["kind"] as? String == "start" ? "waiting" : "completed", "createdAt": "2026-09-10T00:00:00Z", "updatedAt": "2026-09-10T00:00:00Z",
                 "reasons": [], "cancellable": false]
+            if pendingInitialStart, params["kind"] as? String == "start" {
+                let began = Int64(Date().timeIntervalSince1970 * 1000)
+                result["startup"] = ["source": "application-launch", "startedAt": began, "deadlineAt": began + 300000,
+                    "attempts": 1, "stage": "backoff", "failureCode": "STARTUP_HTTP_TIMEOUT"]
+                result["cancellable"] = true
+                let id = params["requestId"] as? String ?? ""
+                if let retained = lock.withLock({ initialStartReceipts[id] }) { result = retained }
+                else { lock.withLock { initialStartReceipts[id] = result } }
+                delay = initialStartReceiptDelay
+            }
+            lock.withLock { operation = result }
+            if params["applicationLaunchAt"] != nil, lock.withLock({ () -> Bool in
+                if lostStartReceiptCount > 0 { lostStartReceiptCount -= 1; return true }; return false
+            }) { return NativeFixtureReply(body: "") }
+        case "lifecycle.cancel":
+            result = lock.withLock { operation ?? [:] }
+            result["phase"] = "cancelled"; result["cancellable"] = false
             lock.withLock { operation = result }
         case "dashboard.snapshot":
             let filter = params["statusFilter"] as? String ?? "all"

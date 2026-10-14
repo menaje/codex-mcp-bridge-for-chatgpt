@@ -36,7 +36,7 @@ import type {
 import { decodeUtf8Strict } from "./textIntegrity.js";
 import { BoundedHttpDiagnostics, HTTP_DIAGNOSTIC_HEADER, isChildHttpObservation, httpDiagnosticContext,
   type HttpDiagnosticSession, type HttpObservation } from "./httpDiagnostics.js";
-import { createStartupDiagnostics } from "../scripts/runtime-status.mjs";
+import { createStartupDiagnostics, initialStartupContext, initialStartupStageTimeout } from "../scripts/runtime-status.mjs";
 
 type RuntimeStateServiceStatus = NonNullable<
   BridgeRuntimeAdmissionSnapshot["stateService"]
@@ -196,7 +196,7 @@ type RuntimeRpcResponseMessage = {
   error?: { code: string; message: string };
 };
 
-type RuntimeFatalMessage = { type: "fatal"; message: string };
+type RuntimeFatalMessage = { type: "fatal"; message: string; code?: string };
 type RuntimeHttpObservationMessage = { type: "http-observation"; generation: string; observation: HttpObservation };
 
 type RuntimeChildMessage =
@@ -407,6 +407,7 @@ class IsolatedRuntimeController {
   private activeProxyBytes = 0;
   private closed = false;
   private restartAttempts = 0;
+  private initialStartupCompleted = false;
   private restartTimer?: NodeJS.Timeout;
   private stableTimer?: NodeJS.Timeout;
   private startupResolve?: () => void;
@@ -1086,6 +1087,7 @@ class IsolatedRuntimeController {
     if (this.conformanceFixtures) args.push("--conformance-fixtures");
     if (this.httpDiagnostics) args.push("--http-diagnostics");
     startup("child-spawn-start");
+    if (!this.initialStartupCompleted && initialStartupContext(this.childEnvironment)) process.send?.({ type: "initial-start-stage", stage: "state-owner" });
     const child = spawn(process.execPath, args, {
       cwd: process.cwd(),
       env: this.childEnvironment,
@@ -1113,31 +1115,46 @@ class IsolatedRuntimeController {
         (this.stderr ? ` ${this.stderr}` : "")
       )
     ));
-    const startupTimeoutMs = this.restartAttempts === 0
-      ? STARTUP_TIMEOUT_MS
+    const startupAt = Date.now();
+    let startupTimeoutMs = this.restartAttempts === 0
+      ? (this.initialStartupCompleted ? STARTUP_TIMEOUT_MS : initialStartupStageTimeout(75_000, STARTUP_TIMEOUT_MS, this.childEnvironment))
       : this.restartStartupTimeoutMs;
-    this.startupTimer = setTimeout(() => {
+    const startupStageDeadline = startupAt + startupTimeoutMs;
+    const expire = () => {
       if (this.child !== child || this.generation !== undefined) return;
       startup("child-start-timeout");
+      if (!this.initialStartupCompleted && initialStartupContext(this.childEnvironment)) process.send?.({ type: "initial-start-failure", code: "STARTUP_STATE_TIMEOUT" });
       child.kill("SIGKILL");
-      this.startupReject?.(new Error(
-        `RUNTIME_START_TIMEOUT: Isolated Bridge runtime did not start within ` +
-        `${startupTimeoutMs} ms.`
-      ));
-    }, startupTimeoutMs);
+      this.startupReject?.(new Error(`RUNTIME_START_TIMEOUT: Isolated Bridge runtime did not start within ${startupTimeoutMs} ms.`));
+    };
+    this.startupTimer = setTimeout(expire, startupTimeoutMs);
     this.startupTimer.unref();
+    const initialDeadlineUpdate = (message: unknown) => {
+      const context = !this.initialStartupCompleted && initialStartupContext(this.childEnvironment);
+      if (!context || !message || typeof message !== "object") return;
+      const update = message as { type?: string; requestId?: string; token?: string; deadlineAt?: number };
+      if (update.type !== "initial-start-deadline" || update.requestId !== context.requestId || update.token !== context.token ||
+          !Number.isSafeInteger(update.deadlineAt) || update.deadlineAt! >= context.deadlineAt) return;
+      this.childEnvironment.CODEX_MCP_BRIDGE_INITIAL_START_DEADLINE = String(update.deadlineAt);
+      startupTimeoutMs = Math.max(0, Math.min(startupStageDeadline, update.deadlineAt!) - Date.now());
+      if (this.startupTimer) clearTimeout(this.startupTimer);
+      this.startupTimer = setTimeout(expire, startupTimeoutMs);
+      this.startupTimer.unref();
+    };
+    process.on("message", initialDeadlineUpdate);
     try {
       await ready;
       startup("child-ready");
     } catch (error) {
       startup("child-start-failed");
       throw error;
-    }
+    } finally { process.off("message", initialDeadlineUpdate); }
   }
 
   private onMessage(value: unknown): void {
     if (!isRuntimeChildMessage(value)) return;
     if (value.type === "fatal") {
+      if (!this.initialStartupCompleted && initialStartupContext(this.childEnvironment)) process.send?.({ type: "initial-start-failure", code: "STARTUP_STATE_FAILED", causeCode: value.code });
       this.startupReject?.(new Error(`RUNTIME_START_FAILED: ${value.message}`));
       return;
     }
@@ -1146,6 +1163,7 @@ class IsolatedRuntimeController {
         value.protocol !== STATE_OWNER_PROTOCOL ||
         value.protocolVersion !== STATE_OWNER_PROTOCOL_VERSION
       ) {
+        if (!this.initialStartupCompleted && initialStartupContext(this.childEnvironment)) process.send?.({ type: "initial-start-failure", code: "STARTUP_PROTOCOL_MISMATCH" });
         this.startupReject?.(new Error(
           `RUNTIME_PROTOCOL_MISMATCH: Expected ${STATE_OWNER_PROTOCOL_VERSION}, ` +
           `received ${value.protocolVersion}.`
@@ -1165,6 +1183,8 @@ class IsolatedRuntimeController {
       if (value.lastCommitAt !== undefined) this.lastCommitAt = value.lastCommitAt;
       if (this.startupTimer) clearTimeout(this.startupTimer);
       this.startupTimer = undefined;
+      if (!this.initialStartupCompleted && initialStartupContext(this.childEnvironment)) process.send?.({ type: "initial-start-stage", stage: "http" });
+      this.initialStartupCompleted = true;
       this.startupResolve?.();
       this.startupResolve = undefined;
       this.startupReject = undefined;
@@ -1701,7 +1721,7 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
     process.once("SIGTERM", () => { void close(0, false); });
     process.once("SIGINT", () => { void close(0, false); });
   } catch (error) {
-    send({ type: "fatal", message: error instanceof Error ? error.message : String(error) });
+    send({ type: "fatal", message: error instanceof Error ? error.message : String(error), code: runtimeErrorCode(error) });
     await close(1, false);
   }
 }

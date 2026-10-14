@@ -44,7 +44,11 @@ instead of creating a start. Regular lifecycle controls still return their own
 request ID. Retrying an app launch uses the same ID and timestamp.
 
 Opening the menu bar, refreshing status, or reconnecting the helper within the
-same app instance does not submit another launch intent. A helper-only respawn
+same app instance does not create another launch intent. After a transport-only
+lost receipt, a fresh helper observation permits at most two additional native
+receipt submissions with the original request ID and timestamp. These are
+receipt replays, not runtime attempts. User lifecycle actions fence late launch
+responses and suppress those receipt submissions. A helper-only respawn
 keeps completed stop/shutdown/mode-switch outcomes and terminal cancellation or
 failure stopped. A fresh local app launch may start after an older completed
 stop; remote client launches never request a local start. Setup and startup
@@ -57,6 +61,108 @@ For application exit and mode changes, the app claims the handoff only after ver
 The common native notice translates the failure cause and actual configuration rollback outcome, distinguishing a restored configuration from a failed restore or failed restart after restoration. Failure to restore job admission or configuration is terminal rather than an automatic retry against partially recovered state.
 
 Restart and settings reservations continue while the app window is closed. Exit, mode switch and helper replacement can remain prepared until the native app is available to perform their final steps. The app displays waiting reasons and cancellation without treating a planned transition as a lost bridge connection.
+
+## Bounded initial startup (Issue #246)
+
+A configured initial application launch, or a helper launch proven to belong to
+an initial/new OS boot, can recover a confirmed transient startup failure. A
+loaded helper without a handshake is first observed for up to 150 seconds,
+including each hello RPC and sleep. An absent handshake never authorizes helper
+replacement. Permission/contract failures remain failures; confirmed incompatible
+helpers still use the existing replacement reservation, ownership and rollback
+path. Loaded definition changes also require a handshake before replacement.
+
+The helper owns one private durable initial-start record. It consumes an attempt
+and saves its unique owner token before spawning a launcher. There are at most
+**three total attempts (one initial plus two retries)**. The record's request ID,
+origin, target, attempts, backoff and absolute deadline survive helper re-entry;
+a late app launch can only shorten that deadline. The app cannot renew it through
+receipt replay. OS boot identity stays private and distinguishes initial boot
+from KeepAlive re-entry after startup completed. A completed running instance is
+adopted without creating another receipt; a same-boot runtime crash continues to
+use the existing crash-window policy.
+
+The initial-start budget is 300 seconds, anchored to the app's launch timestamp
+or the initial helper intent. Seven seconds inside that budget are reserved for
+a fresh protection read (up to two seconds) and owned process cleanup (up to
+three seconds TERM plus two seconds KILL). The server-start deadline is therefore
+the remaining overall deadline minus that reserve. Initial state-owner readiness
+is capped at 75 seconds, local HTTP at 90 seconds, and Tunnel readiness at 60
+seconds; each cap is the smaller of its stage allowance and remaining time.
+Setup subprocesses in this scope also obey remaining time and retain smaller
+existing command caps. A validated private IPC message can shorten an in-flight
+deadline; it cannot increase it. No fresh whole budget is granted per attempt.
+These values are development bounds, not measured reboot guarantees. Existing
+migration/recovery, indefinite reservation waits, bounded legacy RPCs and ordinary
+runtime crash limits are separate contracts; a known state migration is not
+silently moved into this initial retry policy.
+
+Only structured `STARTUP_STATE_TIMEOUT`, `STARTUP_HTTP_TIMEOUT` and
+`STARTUP_TUNNEL_TIMEOUT` are retry candidates, and only after cleanup is confirmed.
+A raw `RUNTIME_READINESS_EXITED`, text resembling a timeout, storage/authentication
+failure, changed target, rollback/handoff failure, unknown ownership or incomplete
+cleanup does not authorize retry. Fixed child storage categories are retained
+alongside the failing stage and cleanup result. Before another spawn the helper
+rechecks current CLI/configuration, exact lock ownership and the previous process
+group. It releases only an exact stopped owner; it never removes another owner's
+lock or signals an unconfirmed group.
+
+Launcher exit alone does not prove its children have stopped. Initial-start exit
+handling defers to this cleanup policy rather than ordinary crash group cleanup.
+Any surviving attempt group first uses the existing `beginDrain` contract to
+close admission and obtain a fresh protection snapshot including background
+inspection. An idle read-only snapshot cannot authorize cleanup. Drain must be
+acknowledged with admission closed, and exact ownership is checked after the
+snapshot and again before each signal. Protected work, pending admission,
+missing/unreachable protection or changed ownership preserves the group and
+prevents another automatic spawn. On blocked cleanup, `cancelDrain` is attempted
+within the same budget only for the exact owned service, including after a lost
+drain response. An uncertain cancellation is retained in the failure cause;
+admission restoration is not assumed.
+
+Initial cleanup drain and cancellation requests carry the expected launcher PID,
+owner token, original request ID, attempt and absolute deadline. The state-owner
+binds its receiver identity once from the launcher's inherited context, not from
+the current lock file or caller's observation. Validation and the existing Job
+admission gate mutation execute synchronously in the same receiver boundary.
+A replacement service rejects another runtime's expected identity before changing
+admission; sender-side lock rechecks alone are not a solution to this race.
+Cancellation additionally requires the owned drain (or records cancellation
+before a delayed begin), preventing stale begin/cancel from undoing restoration
+or reopening another operation's drain. A later ordinary beginDrain retires the
+initial target and clears its ownership before closing admission, so a late
+initial cancellation cannot reopen that ordinary stop/drain/force/handoff gate.
+The ordinary operation's own cancellation remains available; a delayed initial
+begin cannot revive after that cancellation. Without a later ordinary begin,
+legacy cancel cannot reopen an owned initial cleanup fence. No public grant or
+new admission queue is introduced. Executing user stop/cancel keeps its existing
+rejection plus durable retry-suppression contract, rather than claiming to have
+interrupted protected work.
+
+Process-table inspection is capped at two seconds per call and by the remaining
+absolute initial-start budget, including retry/re-entry cleanup and every
+termination recheck. Deadline expiry, stalled/failed inspection, partial,
+malformed or empty output never proves that cleanup completed. The inspection
+subprocess alone is stopped on timeout; runtime signals require fresh inspection,
+remaining time and the ownership guard. The 300-second budget is not renewed.
+
+If the still-running attempt reports protected work, or its protection state
+cannot be freshly confirmed, it is preserved and startup fails visibly for
+review. A user stop/cancel can replace a cancellable initial retry backoff and
+wins over later app receipt replay. Execution phases keep the existing
+non-cancellable contract. A stop/cancel arriving during an executing initial
+attempt still reports that it cannot interrupt that attempt, but durably disables
+all later automatic attempts. If that attempt succeeds, Stop must be requested
+again to stop it; the reply does not claim the server is already stopped. The
+suppression survives helper re-entry and also prevents implicit crash restart
+until a new explicit start intent. Preparing/retrying/final failure and attempt/elapsed
+information are available in native status; final failures retain their stage.
+Opt-in startup diagnostics use fixed stage/category names, elapsed/CPU time and
+attempt counts, without credentials, settings values or raw authentication output.
+
+This startup policy does not establish the cause of the operational 502 in
+Issue #242. Installed reboot/login/network-delay acceptance remains separate
+from source and isolated fixture validation.
 
 ## Verification
 
