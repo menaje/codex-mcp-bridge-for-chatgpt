@@ -281,6 +281,21 @@ describe("conclusive orphan settlement",()=>{
       expect(f.snapshot()).toBe(original);
     } finally {await server?.close();await f.close();}
   });
+  it.each(["busy","idle","unknown","orphaned"])("revalidates a reloaded empty Thread's current %s foreground after settlement",async status=>{
+    const f=fixture();let server:ReturnType<typeof dashboard>|undefined;try {
+      const original=f.snapshot();expect(await settleReleasedOrphan(f.jobs,f.upstream,f.agentId)).toBe(true);
+      f.read.mockImplementation(async()=>[] as any);f.read.mockClear();
+      f.upstream.probeThread=vi.fn(async()=>status==="idle" ? {state:"resumable",runtimeStatus:"idle"} as any : {state:status} as any);
+      server=dashboard(f);
+      const view=await server.applicationService.dashboardSnapshot({scopeId,inspectRuntime:true,includeHistory:false,
+        problems:{review:"pending",kind:"all",offset:0}});
+      expect(f.upstream.probeThread).toHaveBeenCalledTimes(1);expect(view.counts.backgroundProcesses).toBe(0);
+      expect(view.counts.active).toBe(status==="busy" ? 1 : 0);
+      expect(view.problems?.currentImpactCount).toBe(status==="busy" ? 1 : 0);
+      expect(view.counts.orphanedAgents).toBe(0);expect(f.state.getAgent(f.agentId)?.lifecycle).toBe("idle");
+      expect(f.snapshot()).toBe(original);
+    } finally {await server?.close();await f.close();}
+  });
   it.each(["running","terminating","termination-failed"])("protects a real %s execution",async status=>{
     const f=fixture();try {
       f.state.upsertJob({...f.source,jobId:randomUUID(),requestId:randomUUID(),status,createdAt:now-100,updatedAt:now});

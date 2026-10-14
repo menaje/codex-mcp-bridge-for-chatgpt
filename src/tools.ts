@@ -11623,6 +11623,7 @@ export type DashboardRuntimeCandidate = {
   thread: BridgeAgentThread;
   stamp: string;
   inspectLiveness: boolean;
+  revalidateLoadedForeground?: boolean;
 };
 
 export type BridgeDashboardRuntimePlan = {
@@ -12088,7 +12089,7 @@ async function inspectDashboardRuntime(
   const backendKind = thread.backendKind as CodexBackendKind;
   let state: DashboardRuntimeObservation["state"] = "confirmed";
   let requests = 0;
-  const coverage = inspectLiveness ? "liveness" as const : "background" as const;
+  let coverage: DashboardRuntimeCacheEntry["coverage"] = inspectLiveness ? "liveness" : "background";
   if (inspectLiveness && upstream.probeThread) {
     let probe: CodexThreadResumeProbe;
     try {
@@ -12160,7 +12161,7 @@ async function inspectDashboardRuntime(
   }
   try {
     requests += 1;
-    const terminals = await upstream.listLoadedBackgroundTerminals(thread.threadId, backendKind);
+    let terminals = await upstream.listLoadedBackgroundTerminals(thread.threadId, backendKind);
     if (terminals === null) {
       return {
         observation: {
@@ -12172,12 +12173,30 @@ async function inspectDashboardRuntime(
         coverage
       };
     }
+    if (candidate.revalidateLoadedForeground && terminals.length===0) {
+      // A proof describes a past ended generation. A subsequently loaded
+      // Thread with no background terminals can still have a foreground turn.
+      state="unknown";
+      if (shouldContinue() && upstream.probeThread) {
+        requests++;
+        coverage="liveness";
+        const probe=await upstream.probeThread(thread.threadId,backendKind);
+        if (shouldContinue() && probe.state==="busy") state="busy";
+        else if (shouldContinue() && probe.state==="resumable" && ["idle","notLoaded"].includes(probe.runtimeStatus || "")) {
+          state=probe.runtimeStatus==="notLoaded" ? "not-loaded" : "idle";
+          requests++;
+          terminals=await upstream.listLoadedBackgroundTerminals(thread.threadId,backendKind);
+          if (terminals===null) state="not-loaded";
+          if (!shouldContinue()) state="unknown";
+        }
+      }
+    }
     return {
       observation: {
         state,
         backgroundProcessState: "confirmed",
-        backgroundProcessCount: terminals.length,
-        backgroundProcessIds: terminals.map((terminal) => terminal.processId)
+        backgroundProcessCount: terminals?.length || 0,
+        backgroundProcessIds: terminals?.map((terminal) => terminal.processId) || []
       },
       requests,
       coverage
@@ -12396,7 +12415,7 @@ async function inspectDashboardRuntimes(
           : 0;
       let started = false;
       const request = pool.start(
-        `${dashboardRuntimeCacheKey(candidate.thread)}\0${candidate.stamp}\0${candidate.inspectLiveness}`,
+        `${dashboardRuntimeCacheKey(candidate.thread)}\0${candidate.stamp}\0${candidate.inspectLiveness}\0${Boolean(candidate.revalidateLoadedForeground)}`,
         isCurrent => {
           started = true;
           requests += initiallyCountedRequests;
@@ -12621,6 +12640,7 @@ async function buildDashboardRuntimePlan(
         agentId: agent.agentId,
         thread,
         stamp: dashboardRuntimeStamp(agent, latestJob),
+        revalidateLoadedForeground:endedOrphan,
         inspectLiveness: !endedOrphan && !resolvedOrphan && (
           statusFilter === undefined && visibleAgentIds.has(agent.agentId) ||
           agent.lifecycle === "active" ||
