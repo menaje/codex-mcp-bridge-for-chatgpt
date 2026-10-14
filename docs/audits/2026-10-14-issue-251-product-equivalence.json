@@ -1,0 +1,14 @@
+{
+  "reviewedProductCommit": "b599208492326f256ea3aae76b27a7b9eb01cd1e",
+  "verifiedPublicationCommit": "39e6c9a0e9a7088681920245459dd0ca3679b5da",
+  "excludedDirectories": [
+    "docs/",
+    "test/",
+    "macos/Tests/"
+  ],
+  "algorithm": "SHA-256 over sorted path\\0mode\\0git-blob-id\\n; includes all other tracked paths",
+  "trackedProductPaths": 435,
+  "reviewedDigest": "a2654835e2c72c23b06a6964486a4503c94e5827abbc1bf3d5af2f7ad12eb9cd",
+  "publicationDigest": "a2654835e2c72c23b06a6964486a4503c94e5827abbc1bf3d5af2f7ad12eb9cd",
+  "equal": true
+}

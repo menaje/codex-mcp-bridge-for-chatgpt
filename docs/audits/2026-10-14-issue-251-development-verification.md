@@ -95,8 +95,25 @@ fixtures were updated only after explicit user approval; exact originals,
 authentication boundaries, completion uncertainty and restart equality remain
 asserted. The existing 61-second reservation case is excluded from repeat runs
 under the requested long-duration-test boundary; it is not offered as longevity
-evidence. Final exact-SHA counts, remaining baseline/environment failures and
-integration identifiers are recorded separately after execution.
+evidence. Exact-SHA counts and comparison evidence appear in
+[the validation record](2026-10-14-issue-251-validation.json). At fixture/docs
+commit `39e6c9a`, release/schema checks and the build passed. The full Node run
+reported 1,656 passed / 27 failed / 2 skipped in 149 files, not an overall pass.
+Two failures (process inspection timeout and synthetic DMG mount) passed isolated
+retries. The remaining 25 are in unchanged `issue162Context` (1) and
+`issue246StartupSupervisor` (24) fixtures/runtime; a representative failure from
+each also reproduced on `704020b9`. The complete 24-case baseline was not repeated
+and these existing failures are not claimed repaired. This excluded legacy
+startup/environment work is recorded as a repository validation limitation,
+not concealed by disabled tests or changed production safeguards.
+
+The full native command initially reported 316 tests, three skipped and ten
+assertion failures in two functions. Both failing functions then passed with
+strict concurrency and warnings-as-errors after test-only corrections. All
+other native product/test bytes were unchanged; this is combined boundary
+evidence, not a claim that the original full command passed. No operating-app
+acceptance is implied. The user explicitly excluded #242/#246 full revalidation
+and #247 actual resumption as prerequisites for this development integration.
 
 ## Performance measurement limits
 
