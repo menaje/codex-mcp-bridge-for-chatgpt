@@ -5615,7 +5615,7 @@ export function registerBridgeTools(
         options.backgroundOffset || 0,
         options.historyMode==="jobs"
       );
-      applyExecutionContract(view,jobs.admissionStateStore,options);
+      applyExecutionContract(view,jobs.admissionStateStore,options,modelCatalog);
       projectAccountForDisplay(view, accountRead ? await accountRead : undefined);
       const stage = view.enrichment.state === "enriched"
         ? "dashboard.enriched.total"
@@ -5672,7 +5672,7 @@ export function registerBridgeTools(
         options.backgroundOffset || 0,
         options.historyMode==="jobs"
       );
-      applyExecutionContract(view,jobs.admissionStateStore,options);
+      applyExecutionContract(view,jobs.admissionStateStore,options,modelCatalog);
       cardPerformance.record("dashboard.enriched.read-projection", Date.now() - startedAt, {
         requests: view.enrichment.runtimeRequests,
         timeouts: view.enrichment.timeouts + (view.enrichment.usageTimedOut ? 1 : 0),
@@ -11866,7 +11866,7 @@ const snapshotHandoffThreads=new WeakMap<DashboardView,Map<string,string>>();
 const snapshotActiveStatuses=new WeakMap<DashboardView,Map<string,DashboardStatus>>();
 const snapshotBackgroundOwners=new WeakMap<DashboardView,Array<{row:DashboardRow;jobId?:string}>>();
 
-function applyExecutionContract(view:DashboardView,store:BridgeStateStore,options:BridgeDashboardSnapshotOptions):void {
+function applyExecutionContract(view:DashboardView,store:BridgeStateStore,options:BridgeDashboardSnapshotOptions,modelCatalog:CodexModelCatalogProvider):void {
   const now=Date.now(),counts=store.dashboardExecutionCounts(options.scopeId,now),policy=store.appliedHistoryPolicy(now);
   view.executionContractVersion=2;view.historyModeApplied=options.historyMode || "agents";
   view.counts.progressJobCount=counts.progress;view.counts.executionCount=counts.terminal;
@@ -11883,7 +11883,7 @@ function applyExecutionContract(view:DashboardView,store:BridgeStateStore,option
       entry.row.latestTurn=turn;entry.row.nextExpiryAt=policy.retentionDays===0 || record.endedAt===null ? null : new Date(record.endedAt+policy.retentionDays*86400000).toISOString();Object.assign(entry.row,{jobId:record.jobId,scopeId:record.scopeId,activityId:record.activityId,agentId:record.agentId,status:turn.status});
     } else Object.assign(entry,{executionKey:null,executionName:null,summary:null,error:null,reasonAvailability:entry.reason ? "recorded" : "unrecorded"});
   }
-  if(view.problems) {
+  if(view.problems && options.historyMode!=="jobs") {
     const executionEvents=store.workHistory.problemJobs(options.scopeId),known=new Set(executionEvents.map(x=>x.jobId));
     const eventRefs=[...executionEvents.map(x=>({jobId:x.jobId,scopeId:x.scopeId})),...store.automaticRecovery.listForDashboard(options.scopeId)
       .filter(x=>!x.executionFailureJobId || !known.has(x.executionFailureJobId)).map(x=>({jobId:x.jobId,scopeId:x.scopeId}))];
@@ -11893,6 +11893,12 @@ function applyExecutionContract(view:DashboardView,store:BridgeStateStore,option
     view.problems.systemIncidentCount=eventRefs.filter(x=>!x.jobId).length;
   }
   if(options.historyMode!=="jobs") return;
+  if(view.problems) {
+    // The visible history, its count and its pages all use failed Jobs. Recovery
+    // attempts and system incidents remain diagnostics, not extra history rows.
+    view.problems.affectedExecutionCount=counts.failed+counts.interrupted+counts.cancelled;
+    view.counts.problems=view.problems.affectedExecutionCount;
+  }
   view.historyIncluded=options.includeHistory!==false;
   const page=(rows:DashboardRow[],total:number,offset:number,conversationTotal=0)=>({rows,page:{offset,limit:options.limit || 12,returned:rows.length,total,
     returnedConversations:new Set(rows.map(x=>x.conversationKey)).size,conversationTotal,
@@ -11953,6 +11959,19 @@ function applyExecutionContract(view:DashboardView,store:BridgeStateStore,option
   } else {
     view.statusRows=options.statusFilter==="problems" ? [] : selected.rows;view.statusPagination=selected.page;view.statusRowsComplete=!selected.page.hasNext && !selected.page.hasPrevious;
   }
+  // Older executions may no longer be an Agent's representative row. Restore
+  // their own saved model and usage instead of borrowing the latest Job's data.
+  const rows=[...view.activeRows,...view.terminalRows,...background.rows,...entries.map(entry=>entry.row)];
+  const summaries=store.dashboardJobSummaries(rows.flatMap(row=>row.jobId ? [row.jobId] : []));
+  for(const row of rows) {
+    if(!row.jobId || !row.latestTurn) continue;
+    const saved=summaries.get(row.jobId)?.execution;
+    const parsed=dashboardExecutionOutputSchema.safeParse(isRecord(saved) ? {...saved,isCurrent:false} : undefined);
+    if(parsed.success) row.latestTurn.execution={...dashboardExecutionForSelection(parsed.data,undefined,modelCatalog,false,parsed.data.reroutedModel),
+      requestState:parsed.data.requestState,processingSpeed:parsed.data.processingSpeed};
+    Object.assign(row.latestTurn,dashboardJobTokenUsage(row.jobId,summaries));
+  }
+  view.backgroundRows=JSON.parse(JSON.stringify(background.rows)) as DashboardRow[];
 }
 
 function dashboardRowKey(agentId: string | undefined, jobId?: string): string {
@@ -12972,7 +12991,7 @@ async function buildDashboardView(
   problemQuery?: ProblemQuery,
   includeHistory = true,
   backgroundOffset = 0,
-  prepareBackground = false
+  jobMode = false
 ): Promise<DashboardView> {
   if (problemQuery && statusFilter === undefined) statusFilter = "all";
   const inScope = (row: { scopeId: string }): boolean => !scopeId || row.scopeId === scopeId;
@@ -13014,7 +13033,7 @@ async function buildDashboardView(
       problemQuery,
       includeHistory,
       backgroundOffset,
-      prepareBackground
+      jobMode
     );
   }
   // Read expensive contextual catalog metadata once per backend for this
@@ -13646,6 +13665,7 @@ async function buildDashboardView(
         ...(recovery ? {automatic:automaticSummary(recovery)} : {})}});
     }
     for(const record of automaticRecords) {
+      if(jobMode) continue;
       // Only the exact initial incident/direct recovery belongs to a failure.
       // A new incident key after confirmed recovery remains a distinct occurrence.
       if(record.executionFailureJobId && failedJobs.has(record.executionFailureJobId)) continue;
@@ -13749,7 +13769,7 @@ async function buildDashboardView(
   );
   const backgroundCandidates=activeRows.filter(row=>row.backgroundProcessCount>0);
   const backgroundPreviewOffset=Math.min(Math.max(0,backgroundOffset),backgroundCandidates.length ? Math.floor((backgroundCandidates.length-1)/limit)*limit : 0);
-  const backgroundCacheRows=prepareBackground ? backgroundCandidates.slice(backgroundPreviewOffset,backgroundPreviewOffset+limit) : [];
+  const backgroundCacheRows=jobMode ? backgroundCandidates.slice(backgroundPreviewOffset,backgroundPreviewOffset+limit) : [];
   const cacheRows=[...activePage.rows,...terminalPage.rows,...idlePage.rows,...statusRows,...backgroundCacheRows];
   const previewAgentIds=[...new Set(cacheRows.flatMap(row=>{const id=agentIdByRowKey.get(row.rowKey);return id ? [id] : [];}))];
   const preview=jobs.admissionStateStore.listDashboardArchivedJobsByAgent(scopeId,DASHBOARD_HISTORY_PREVIEW_LIMIT+1,"created",previewAgentIds);

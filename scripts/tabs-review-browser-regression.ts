@@ -49,13 +49,13 @@ try{
  await cli('open','http://127.0.0.1:'+(server.address() as {port:number}).port);writeFileSync(artifacts+'/initial.txt',await cli('snapshot'));
  console.log(await cli('run-code',`async page=>{
  await page.waitForFunction(()=>!document.querySelector('#dashboard-content').hidden);
- await page.locator('#background-filter').click();if(!(await page.locator('#active-list').innerText()).includes('live-background'))throw Error('background work absent');
+ await page.locator('#background-filter').click();if(await page.locator('#active-list .execution-record').count()!==1)throw Error('background work absent');
  await page.locator('[data-status-filter="problems"]').click();if(!(await page.locator('#problem-list').innerText()).includes('Expiring failure'))throw Error('pre-expiry fixture missing');
  await page.evaluate(()=>{__failReads=true;__now+=1000});
  await page.waitForFunction(()=>!document.querySelector('#problem-list').innerText.includes('Expiring failure')&&!document.querySelector('#problem-list').innerText.includes('Expiring preview'));
  if(await page.evaluate(()=>__reads<1))throw Error('expiry refresh was not attempted');
  await page.locator('[data-status-filter="history"]').click();if(await page.locator('#terminal-list .execution-record').count()!==12)throw Error('valid successes were hidden');
- await page.locator('#background-filter').click();if(!(await page.locator('#active-list').innerText()).includes('live-background'))throw Error('expiry hid actual execution');
+ await page.locator('#background-filter').click();if(await page.locator('#active-list .execution-record').count()!==1)throw Error('expiry hid actual execution');
  if((await page.evaluate(()=>__errors)).length)throw Error(JSON.stringify(await page.evaluate(()=>__errors)));
  await page.screenshot({path:'output/playwright/tabs-review/after-expiry-background.png'});
  }`));
@@ -94,21 +94,16 @@ try{
  await page.screenshot({path:'output/playwright/tabs-review/rebase-${change}.png'});
  }`));
  }
- for(const health of ['orphaned','liveness-unknown'])for(const timing of ['before','after']){
+ for(const health of ['orphaned','liveness-unknown']){
  await cli('goto','http://127.0.0.1:'+(server.address() as {port:number}).port+'/runtime-health');
  console.log(await cli('run-code',`async page=>{
  await page.waitForFunction(()=>!document.querySelector('#dashboard-content').hidden);
  await page.locator('#background-filter').click();
- await page.evaluate(()=>{window.__detailReads=0;window.openai.callTool=async(_name,args)=>{if(args.view==='dashboard-execution'){__detailReads++;return {structuredContent:{kind:'dashboard-execution',jobId:args.jobId,scopeId:args.scopeId,executionRevision:args.expectedExecutionRevision,policyRevision:args.expectedPolicyRevision,nextExpiryAt:null,execution:{...response.activeRows[0].latestTurn,jobId:args.jobId,scopeId:args.scopeId,executionRevision:args.expectedExecutionRevision,status:'running',summary:'Durable cached content'}}}}return {structuredContent:response}}});
- const load=async()=>{await page.locator('#active-list .execution-detail summary').click();await page.locator('#active-list [data-execution-load]').click();await page.waitForFunction(()=>document.querySelector('#active-list [data-execution-load]').disabled)};
- if('${timing}'==='before')await load();
  await page.evaluate(health=>{response.activeRows[0].status=health;response.activeRows[0].latestTurn.status=health},'${health}');
  await page.locator('#refresh').click();await page.waitForFunction(()=>!document.querySelector('#refresh').disabled);
- if('${timing}'==='after')await load();
- const badge=page.locator('#active-list .execution-record .status');if(!(await badge.getAttribute('class')).includes('${health}'==='orphaned'?'failed':'attention'))throw Error('cached detail replaced current health');
- if(!(await page.locator('#active-list .execution-detail').innerText()).includes('Durable cached content'))throw Error('valid detail content was lost');
- if(await page.evaluate(()=>__detailReads)!==1)throw Error('health update invalidated durable detail cache');
- await page.screenshot({path:'output/playwright/tabs-review/runtime-${health}-${timing}.png'});
+ const badge=page.locator('#active-list .execution-record .status');if(!(await badge.getAttribute('class')).includes('${health}'==='orphaned'?'failed':'attention'))throw Error('Current health lost');
+ if(await page.locator('[data-execution-load],.execution-detail').count())throw Error('Removed details returned');
+ await page.screenshot({path:'output/playwright/tabs-review/runtime-${health}.png'});
  }`));
  }
  await cli('goto','http://127.0.0.1:'+(server.address() as {port:number}).port+'/omitted-history');
@@ -127,10 +122,10 @@ try{
  await cli('goto','http://127.0.0.1:'+(server.address() as {port:number}).port+'/retained-incident');
  console.log(await cli('run-code',`async page=>{
  await page.waitForFunction(()=>!document.querySelector('#dashboard-content').hidden);await page.locator('[data-status-filter="problems"]').click();
- if(!(await page.locator('#problem-list').innerText()).includes('Expiring failure'))throw Error('retained incident initial reason missing');
+ if((await page.locator('#problem-list').innerText()).includes('Expiring failure'))throw Error('Recovery incident leaked into problem Jobs');
  await page.evaluate(()=>{__failReads=true;__now+=1000});
  await page.waitForFunction(()=>document.querySelectorAll('#problem-list .execution-record').length===0);
- if(await page.locator('#problem-list .problem-row').count()!==1||!(await page.locator('#problem-list').innerText()).includes('Expiring failure'))throw Error('linked Job expiry hid retained incident reason');
+ if((await page.locator('#problem-list').innerText()).includes('Expiring failure'))throw Error('Recovery incident returned after Job expiry');
  if(await page.locator('#problem-list .execution-record').count()!==0)throw Error('expired Job detail remains visible');
  await page.screenshot({path:'output/playwright/tabs-review/retained-incident-expiry.png'});
  }`));
@@ -140,11 +135,11 @@ try{
  await page.waitForFunction(()=>!document.querySelector('#dashboard-content').hidden&&!document.querySelector('#refresh').disabled);
  await page.locator('[data-status-filter="${panel}"]').click();await page.locator('#active-more').click();await page.waitForFunction(()=>typeof __releaseQueuedAppend==='function');
  await page.locator('[data-status-filter="history"]').click();if(await page.locator('#active-list .activity-agent').count()!==0)throw Error('queued History kept current rows');
- await page.evaluate(()=>__releaseQueuedAppend());await page.waitForFunction(()=>document.querySelector('#terminal-list').innerText.includes('Queued history'));
+ await page.evaluate(()=>__releaseQueuedAppend());await page.waitForFunction(()=>document.querySelectorAll('#terminal-list .execution-record').length===1);
  if(await page.evaluate(()=>__queuedReads.filter(x=>x.includeHistory===true&&x.statusOffset===undefined&&x.backgroundOffset===undefined).length)!==1)throw Error('queued History was omitted or dispatched more than once');
  if(await page.locator('#refresh').isDisabled())throw Error('queued History busy was not released');
  await page.screenshot({path:'output/playwright/tabs-review/queued-history-${panel}.png'});
  }`));
  }
- writeFileSync(artifacts+'/report.json',JSON.stringify({passed:true,checks:['active Job with background process outside terminal status page','problem-only Job expiry hides error and preview despite failed refresh','twelve valid success summaries remain','background execution survives expiry','completed Job and current runtime process have one display owner','completed execution history and Job totals remain','independent owner visible beyond twenty-six progress Jobs','bounded Background page has a working more control','Background paging preserves Job totals and uses owner offsets','actual owner-change reload replaces the first page after busy release','actual policy-change reload replaces the first page and releases controls','cached detail preserves current orphaned and unknown health before and after observation without refetch','failed first History read clears previously rendered current rows','retained incident keeps its reason after exact Job expiry even when refresh fails','queued History drains after Running pagination','queued History drains after Background pagination']},null,2));
+ writeFileSync(artifacts+'/report.json',JSON.stringify({passed:true,checks:['active Job with background process outside terminal status page','problem-only Job expiry hides error and preview despite failed refresh','twelve valid success summaries remain','background execution survives expiry','completed Job and current runtime process have one display owner','completed execution history and Job totals remain','independent owner visible beyond twenty-six progress Jobs','bounded Background page has a working more control','Background paging preserves Job totals and uses owner offsets','actual owner-change reload replaces the first page after busy release','actual policy-change reload replaces the first page and releases controls','current orphaned and unknown health remain visible without execution-detail controls','failed first History read clears previously rendered current rows','recovery incidents remain outside problem Job history before and after expiry','queued History drains after Running pagination','queued History drains after Background pagination']},null,2));
 }finally{await cli('close').catch(()=>{});await new Promise<void>(resolve=>server.close(()=>resolve()))}

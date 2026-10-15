@@ -1,5 +1,8 @@
 # Tab execution contract v1 — A/B implementation handoff
 
+> Presentation update (2026-10-15): [Current history presentation](history-presentation.md) supersedes the visible Job identity, exact-detail controls and mixed incident list described in this historical handoff. The underlying read-only detail API remains available.
+
+
 Start/base: dev `2dedefbf9ab63f02a0d8bf0a14a82ce8abae315e`; same installed PR256 build. Tracked checkout clean; only private evidence untracked. Only unrelated PR249 is open and remains untouched. AGENTS.md/release governance read; `.agents/skills` is absent in this checkout/original-path lookup. Existing R server investigation reused; archived bridge-orchestration skill is not invoked in this direct workflow.
 
 ## Snapshot and compatibility

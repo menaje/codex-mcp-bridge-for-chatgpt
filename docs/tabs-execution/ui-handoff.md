@@ -1,5 +1,8 @@
 # Job execution UI handoff
 
+> Presentation update (2026-10-15): [Current history presentation](history-presentation.md) supersedes the visible Job identity, exact-detail controls and mixed incident list described in this historical handoff. The underlying read-only detail API remains available.
+
+
 Base: `2dedefbf9ab63f02a0d8bf0a14a82ce8abae315e`. This UI change consumes A's `server-contract-v1.md` Job projection. It does not modify server projection, policy, schema, adapters, localization catalogs, or generated resources.
 
 Both clients request `historyMode: jobs`. Progress consumes actual Job rows in `activeRows`; history consumes terminal Job rows and `executionCount`. Unsupported mode retries the legacy projection and labels its counts as groups. Exact details use scope/Job/revision/policy identifiers; there is no Agent substitute. The card calls `codex_ui_read` view `dashboard-execution`; native clients call `dashboard.execution-detail`.

@@ -566,7 +566,7 @@ final class DashboardPopoverTests: XCTestCase {
     }
 
     @MainActor
-    func testReviewRetainedIncidentReasonSurvivesEarlierLinkedExecutionExpiry() async throws {
+    func testProblemHistoryHidesExpiredJobEvenWhenItsRecoveryIncidentIsRetained() async throws {
         let f = try PopoverFixture(); defer { f.remove() }
         f.state.jobsContract = true; f.state.rowCount = 1
         let start = ISO8601DateFormatter().date(from: "2026-09-11T00:00:00Z")!
@@ -587,9 +587,75 @@ final class DashboardPopoverTests: XCTestCase {
         var retainedObject = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(problems)) as? [String: Any])
         retainedObject["rows"] = [object]
         let retained = try JSONDecoder().decode(DashboardProblems.self, from: JSONSerialization.data(withJSONObject: retainedObject))
-        XCTAssertEqual(f.model.dashboardRetainedProblems(retained).count, 1)
+        XCTAssertEqual(f.model.dashboardRetainedProblems(retained).count, 0)
         XCTAssertEqual(section.contextReason(problem, using: f.model), "Retained incident failure",
             "An unavailable execution cannot consume the still-retained incident reason")
+    }
+
+    @MainActor
+    func testProblemHistoryAppendsJobsUnderOneAgentAndRejectsChangedPages() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.jobsContract = true
+        f.model.dashboardHistoryNow = { ISO8601DateFormatter().date(from: "2026-09-11T00:00:00Z")! }
+        await f.model.refreshDashboard(enrich: false)
+        var first = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(try XCTUnwrap(f.model.dashboard))) as? [String: Any])
+        let original = (first["problems"] as! [String: Any])["rows"] as! [[String: Any]]
+        func problem(_ index: Int) -> [String: Any] {
+            var value = original[0], row = value["row"] as! [String: Any]
+            let id = "problem-\(index)"
+            value["problemKey"] = id; value["jobId"] = id
+            row["jobId"] = id; row["rowKey"] = id
+            value["row"] = row
+            return value
+        }
+        func collection(_ rows: [[String: Any]], offset: Int) -> [String: Any] {
+            ["query": ["review": "pending", "kind": "all", "offset": offset], "revision": "stable-jobs", "affectedExecutionCount": 13,
+             "pendingCount": 0, "acknowledgedCount": 0, "reviewableCount": 0, "rows": rows,
+             "page": ["offset": offset, "limit": 12, "total": 13, "returned": rows.count, "hasPrevious": offset > 0, "hasNext": offset == 0]]
+        }
+        func encoded(_ object: [String: Any]) throws -> String { String(data: try JSONSerialization.data(withJSONObject: object), encoding: .utf8)! }
+        first["problems"] = collection((0..<12).map(problem), offset: 0)
+        var next = first; next["problems"] = collection([problem(12)], offset: 12)
+        f.state.dashboardJSON = try encoded(first); f.state.problemPageJSON = try encoded(next)
+        await f.model.refreshDashboard(enrich: false); await f.model.loadMoreProblems()
+        let merged = try XCTUnwrap(f.model.dashboard?.problems)
+        XCTAssertEqual(merged.rows.count, 13)
+        XCTAssertEqual(Set(merged.rows.compactMap(\.jobId)).count, 13)
+        XCTAssertFalse(merged.page.hasNext)
+        XCTAssertEqual(DashboardAgentGroup.group(merged.rows.map(\.row)).count, 1)
+        XCTAssertEqual(f.model.dashboardRetainedProblems(merged).count, 13)
+        XCTAssertEqual(f.state.problemPageOffsets, [12])
+        XCTAssertEqual(f.state.exactDetailReads, 0)
+
+        await f.model.refreshDashboard(enrich: false)
+        var changed = next["problems"] as! [String: Any]; changed["revision"] = "changed-jobs"; next["problems"] = changed
+        f.state.problemPageJSON = try encoded(next)
+        let before = f.state.dashboardReadCount
+        await f.model.loadMoreProblems()
+        XCTAssertGreaterThanOrEqual(f.state.dashboardReadCount, before + 2)
+        XCTAssertEqual(f.model.dashboard?.problems?.rows.count, 12)
+        XCTAssertFalse(f.model.loadingMoreProblems)
+
+        next["problems"] = collection([problem(12)], offset: 12)
+        f.state.problemPageJSON = try encoded(next); f.state.problemPageDelay = 0.1
+        let beforeLate = f.state.dashboardReadCount
+        let pending = Task { await f.model.loadMoreProblems() }
+        while f.state.dashboardReadCount == beforeLate { await Task.yield() }
+        await f.model.refreshDashboard(enrich: false); await pending.value
+        XCTAssertEqual(f.model.dashboard?.problems?.rows.count, 12)
+    }
+
+    @MainActor
+    func testProblemHistoryOmitsDuplicateSystemAndUnavailableRows() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.jobsContract = true
+        f.model.dashboardHistoryNow = { ISO8601DateFormatter().date(from: "2026-09-11T00:00:00Z")! }
+        await f.model.refreshDashboard(enrich: false)
+        let problems = try XCTUnwrap(f.model.dashboard?.problems)
+        let visible = f.model.dashboardRetainedProblems(problems)
+        XCTAssertEqual(visible.count, 2)
+        XCTAssertEqual(Set(visible.compactMap(\.jobId)).count, 2)
+        XCTAssertTrue(visible.allSatisfy { $0.source == "execution" && $0.executionAvailability == "retained" })
     }
 
     @MainActor
@@ -1335,6 +1401,10 @@ private final class PopoverReplyState: @unchecked Sendable {
     var delayHistory: Bool { get { lock.withLock { slowHistory } } set { lock.withLock { slowHistory = newValue } } }
     var pagedHistory: Bool { get { lock.withLock { pagedHistoryValue } } set { lock.withLock { pagedHistoryValue = newValue } } }
     var pagedDetail = false
+    var problemPageJSON: String?
+    var problemPageDelay: TimeInterval = 0
+    private var problemOffsets: [Int] = []
+    var problemPageOffsets: [Int] { lock.withLock { problemOffsets } }
     var jobsContract = false
     var rejectJobsMode = false
     var exactDetailIsActive = false
@@ -1420,6 +1490,11 @@ private final class PopoverReplyState: @unchecked Sendable {
             if let offset = params["backgroundOffset"] as? Int, let body = backgroundPageJSON {
                 lock.withLock { backgroundOffsets.append(offset) }
                 return NativeFixtureReply(body: "{\"result\":\(body)}", delay: backgroundPageDelay)
+            }
+            if let query = params["problems"] as? [String: Any], let offset = query["offset"] as? Int,
+               offset > 0, let body = problemPageJSON {
+                lock.withLock { problemOffsets.append(offset) }
+                return NativeFixtureReply(body: "{\"result\":\(body)}", delay: problemPageDelay)
             }
             if let dashboardJSON { return NativeFixtureReply(body: "{\"result\":\(dashboardJSON)}") }
             if rejectJobsMode && params["historyMode"] != nil { return NativeFixtureReply(body: #"{"error":{"code":-32602,"message":"Unrecognized key: historyMode"}}"#) }

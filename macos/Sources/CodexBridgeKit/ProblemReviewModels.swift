@@ -39,8 +39,8 @@ public struct DashboardProblems: Codable, Sendable {
     public let reviewableCount: Int
     public var historyCount: Int? = nil
     public var automaticCount: Int? = nil
-    public let rows: [DashboardProblem]
-    public let page: ProblemPage
+    public var rows: [DashboardProblem]
+    public var page: ProblemPage
 }
 
 public struct ProblemPage: Codable, Sendable {

@@ -57,7 +57,7 @@ function cachedExecutionRenderer(row:any,detail:any,historyPolicy:any){
  const c=vm.createContext({Date,view:{historyModeApplied:'jobs',historyPolicy},widgetInstanceId:'health-widget',historySecurityGeneration:1,selectedScope:'conversation',
   executionDetails:new Map(),executionRequests:new Map(),executionErrors:new Map(),expandedExecutions:new Set(),localeTag:'en',t:{},BUNDLES:{en:{}},reads:0,
   callTool:async()=>{c.reads++;throw Error('valid cached detail must not be refetched');},
-  node:(tag:string,cls:string,text:string)=>new ExecutionElement(tag,cls,text),tone:()=>'',statusLabel:(status:string)=>status,scheduleSizeChanged:()=>{}});
+  node:(tag:string,cls:string,text:string)=>new ExecutionElement(tag,cls,text),tone:()=>'',statusLabel:(status:string)=>status,scheduleSizeChanged:()=>{},appendExecution:()=>{},timeMeta:()=>"Recorded time",rowMeta:()=>"",appendCancellation:(parent:ExecutionElement,cancel:any)=>parent.appendChild(new ExecutionElement("p","",cancel.reason))});
  for(const name of ['uiText','jobRowVisible','executionTarget','executionKey','executionFresh','executionCached'])
   vm.runInContext(DASHBOARD_CARD_HTML.split('\n').find(line=>new RegExp('^\\s*function '+name+'\\(').test(line))!,c);
  vm.runInContext(DASHBOARD_CARD_HTML.split('\n').find(line=>/^\s*async function loadExecutionDetail\(/.test(line))!,c);
@@ -83,7 +83,7 @@ describe('Job-unit execution tabs and read-only exact detail',()=>{
    const after=await f.service().dashboardExecutionDetail!({scopeId:scope,jobId:job.jobId,expectedExecutionRevision:row.executionRevision,expectedPolicyRevision:row.policyRevision});
    expect(row.executionRevision).toBe(healthyRow.executionRevision);expect(after.execution.status).toBe('running');
    for(const result of [await renderer.render(row),await cachedExecutionRenderer(row,after,unhealthy.historyPolicy).render(row),await renderer.render(unhealthy.backgroundRows!.find(x=>x.jobId===job.jobId))]){
-    expect(result).toMatchObject({sameKey:true,sameDetail:true,reads:0});expect(result.texts).toContain(expected);expect(result.texts).not.toContain('running');expect(result.texts).toContain('Cached retained detail');
+    expect(result).toMatchObject({sameKey:true,sameDetail:true,reads:0});expect(result.texts).toContain(expected);expect(result.texts).not.toContain('running');expect(result.texts).not.toContain(job.jobId);expect(result.texts).not.toContain('Execution details');
    }
   }finally{await f.close();}
  });
@@ -94,8 +94,8 @@ describe('Job-unit execution tabs and read-only exact detail',()=>{
    const view=await f.service().dashboardSnapshot(query),row=[...view.activeRows,...view.terminalRows].find(x=>x.jobId===job.jobId)!;
    const detail=await f.service().dashboardExecutionDetail!({scopeId:scope,jobId:job.jobId,expectedExecutionRevision:row.executionRevision});
    const result=await cachedExecutionRenderer(row,detail,view.historyPolicy).render(row);expect(result).toMatchObject({sameKey:true,sameDetail:true,reads:0});
-   expect(result.texts).toContain(status==='cancelled'?'Cancelled':status);expect(result.texts).toContain('Exact cached preview');
-   if(['completed','failed','interrupted','cancelled'].includes(status)){const stale=await cachedExecutionRenderer(row,detail,view.historyPolicy).render({...row,status:'orphaned'});expect(stale.texts).toContain(status==='cancelled'?'Cancelled':status);expect(stale.texts).not.toContain('orphaned');}
+   expect(result.texts).toContain(status);expect(result.texts).not.toContain(job.jobId);
+   if(['completed','failed','interrupted','cancelled'].includes(status)){const stale=await cachedExecutionRenderer(row,detail,view.historyPolicy).render({...row,status:'orphaned'});expect(stale.texts).toContain(status);expect(stale.texts).not.toContain('orphaned');}
   }finally{await f.close();}
  });
 
@@ -243,6 +243,19 @@ describe('Job-unit execution tabs and read-only exact detail',()=>{
    const legacy=await f.service().dashboardSnapshot({...query,historyMode:undefined});expect(legacy.historyModeApplied).toBe('agents');expect(legacy.counts.executionCount).toBe(13);
   } finally {await f.close();}
  });
+ it('preserves each older Job model and reasoning effort in every history and problem page',async()=>{
+  const f=fixture();try {
+   const expected=new Map<string,string>();
+   for(let i=0;i<13;i++){const j=f.seed(i%2?'failed':'completed',1+i/10,{error:i%2?'Recorded error':undefined,executionDecision:{effectiveSelection:{model:'model-'+i,reasoningEffort:i%2?'high':'low'},processingSpeed:'standard'}});expected.set(j.jobId,'model-'+i);}
+   const problemIds:string[]=[];
+   for(const offset of [0,5,10]) { const v=await f.service().dashboardSnapshot({...query,terminalOffset:offset,problems:{kind:'all',review:'pending',offset:offset===10?5:offset}});
+    for(const row of v.terminalRows)expect(row.latestTurn?.execution?.model).toBe(expected.get(row.jobId!));
+    for(const problem of v.problems!.rows){expect(problem.row.latestTurn?.execution?.model).toBe(expected.get(problem.jobId!));expect(problem.row.latestTurn?.execution?.reasoningEffort).toBe('high');if(offset!==10)problemIds.push(problem.jobId!);}
+    expect(v.problems?.affectedExecutionCount).toBe(6);expect(v.problems?.page.total).toBe(6);
+   }
+   expect(new Set(problemIds).size).toBe(6);
+  }finally{await f.close();}
+ });
  it('makes exact scoped details agree with rows and rejects changed policy/content, wrong scope and unavailable Jobs',async()=>{
   const f=fixture(30);try {
    const j=f.seed('failed',1,{executionName:'Actual named Job',summary:'Stored content preview',error:'secret=abcdef0123456789 failed',result:{content:[{type:'text',text:'original retained result'}]}});
@@ -265,16 +278,16 @@ describe('Job-unit execution tabs and read-only exact detail',()=>{
    for(let n=0;n<input.length;n++){const result=f.service().dashboardExecutionDetail!({scopeId:scope,jobId:input[n].jobId});if(days===0||[6,20,40,100][n]<days)await expect(result).resolves.toMatchObject({jobId:input[n].jobId});else await expect(result).rejects.toThrow(/UNAVAILABLE/);}
   } finally {await f.close();}
  });
- it('reports interruption and cancellation separately, deduplicates linked Job events, and labels Jobless system events',async()=>{
+ it('shows only failed, interrupted and cancelled Jobs once, excluding normal Jobs and recovery/system events',async()=>{
   const f=fixture(30);try {
    const failed=f.seed('failed',1),interrupted=f.seed('interrupted',1),cancelled=f.seed('cancelled',1);
    const c={key:automaticRecoveryKey('recheck',[failed.jobId,'later-distinct']),scopeId:scope,agentId:f.agent.agentId,jobId:failed.jobId,kind:'recheck' as const};
    f.writer.automaticRecovery.observeRecheck(c,true,now);f.writer.automaticRecovery.observeRecheck({...c,key:automaticRecoveryKey('recheck',['jobless']),jobId:undefined},true,now);
    const v=await f.service().dashboardSnapshot({...query,limit:12,problems:{view:'history',review:'pending',kind:'all',offset:0}});const p=v.problems!;
-   expect(p.affectedExecutionCount).toBe(3);expect(p.systemIncidentCount).toBe(1);
+   expect(p.affectedExecutionCount).toBe(3);expect(p.page.total).toBe(3);expect(p.rows).toHaveLength(3);expect(p.rows.filter(x=>x.jobId===failed.jobId)).toHaveLength(1);
    expect(p.rows.find(x=>x.jobId===interrupted.jobId)?.kind).toBe('interrupted');expect(p.rows.find(x=>x.jobId===cancelled.jobId)?.kind).toBe('cancelled');
    expect(p.rows.filter(x=>x.source==='execution').every(x=>x.reason===null&&x.reasonAvailability==='unrecorded')).toBe(true);
-   expect(p.rows.find(x=>!x.jobId)?.executionAvailability).toBe('not-linked');
+   expect(p.rows.every(x=>x.source==='execution'&&x.executionAvailability==='retained')).toBe(true);
    expect(p.rows.every(x=>!x.canAcknowledge&&!x.canRecheck&&!x.canRetryStop)).toBe(true);
   } finally {await f.close();}
  });
@@ -282,8 +295,7 @@ describe('Job-unit execution tabs and read-only exact detail',()=>{
   const f=fixture(7);try {
    const old=f.seed('failed',40),current=f.seed('completed',1,{executionName:'Different current Job'});
    f.writer.automaticRecovery.observeRecheck({key:automaticRecoveryKey('recheck',['old-ref']),scopeId:scope,agentId:f.agent.agentId,jobId:old.jobId,kind:'recheck'},true,now);
-   const v=await f.service().dashboardSnapshot({...query,problems:{view:'history',review:'pending',kind:'all',offset:0}});expect(v.problems?.unavailableExecutionCount).toBe(1);
-   const event=v.problems!.rows.find(x=>x.jobId===old.jobId)!;expect(event.executionAvailability).toBe('unavailable');expect(event.executionName).toBeNull();expect(event.row.latestTurn?.jobId).not.toBe(current.jobId);
+   const v=await f.service().dashboardSnapshot({...query,problems:{view:'history',review:'pending',kind:'all',offset:0}});expect(v.problems?.affectedExecutionCount).toBe(0);expect(v.problems?.page.total).toBe(0);expect(v.problems?.rows).toEqual([]);expect(v.terminalRows[0]?.jobId).toBe(current.jobId);
   } finally {await f.close();}
  });
  it('keeps history detail revisions stable through unrelated runtime/progress updates and preserves archived error text',async()=>{

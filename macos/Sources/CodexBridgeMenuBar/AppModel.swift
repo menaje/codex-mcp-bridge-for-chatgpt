@@ -338,6 +338,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var dashboardHistoryLoading = Set<String>()
     @Published private(set) var loadingMoreRunning = false
     @Published private(set) var loadingMoreBackground = false
+    @Published private(set) var loadingMoreProblems = false
     @Published private(set) var dashboardHistoryErrors: [String: String] = [:]
     private var dashboardHistoryRequestIDs: [String: UUID] = [:]
     private var dashboardHistoryContexts: [String: String] = [:]
@@ -368,12 +369,16 @@ final class AppModel: ObservableObject {
     }
 
     func dashboardRetainedProblems(_ problems: DashboardProblems) -> [DashboardProblem] {
-        guard let days = dashboard?.historyPolicy?.retentionDays, days > 0 else { return problems.rows }
         let formatter = ISO8601DateFormatter(); formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let cutoff = dashboardHistoryNow().addingTimeInterval(-Double(days) * 86_400)
+        let days = dashboard?.historyPolicy?.retentionDays ?? 0
+        let cutoff = days > 0 ? dashboardHistoryNow().addingTimeInterval(-Double(days) * 86_400) : Date.distantPast
+        var seen = Set<String>()
         return problems.rows.filter { problem in
+            guard problem.source == "execution", !["unavailable", "not-linked"].contains(problem.executionAvailability ?? ""),
+                  ["failed", "interrupted", "cancelled"].contains(problem.row.latestTurn?.status ?? problem.kind.rawValue),
+                  ExecutionRecordPresentation.retained(problem.row, days: days, now: dashboardHistoryNow()) else { return false }
             guard let at = formatter.date(from: problem.occurredAt ?? problem.observedAt) ?? ISO8601DateFormatter().date(from: problem.occurredAt ?? problem.observedAt) else { return false }
-            return at > cutoff
+            return at > cutoff && seen.insert(problem.jobId ?? problem.row.jobId ?? problem.problemKey).inserted
         }
     }
 
@@ -3201,6 +3206,7 @@ final class AppModel: ObservableObject {
         guard !loadingMoreRunning, let current = dashboard,
               let page = current.historyModeApplied == "jobs" ? current.pagination.active : current.statusPagination,
               page.hasNext, current.historyModeApplied != "jobs" || DashboardPanel.running.rows(in: current).count < (current.counts.progressJobCount ?? 0) else { return }
+        dashboardRequestGeneration += 1
         let connection = connectionGeneration, generation = dashboardRequestGeneration
         loadingMoreRunning = true
         defer { loadingMoreRunning = false }
@@ -3208,6 +3214,13 @@ final class AppModel: ObservableObject {
             let client = try await bridgeClient()
             let next = try await client.dashboardJobs(limit: pageLimit, terminalOffset: 0, statusOffset: DashboardPanel.running.rows(in: current).count, enrich: false, statusFilter: .running, problems: dashboardProblemQuery, includeHistory: false)
             guard connection == connectionGeneration, generation == dashboardRequestGeneration else { return }
+            if current.historyModeApplied == "jobs" &&
+                (next.counts.progressJobCount != current.counts.progressJobCount ||
+                 next.historyPolicy?.policyRevision != current.historyPolicy?.policyRevision ||
+                 next.pagination.active.offset != DashboardPanel.running.rows(in: current).count) {
+                await refreshDashboard(enrich: false)
+                return
+            }
             var merged = current
             var seen = Set<String>()
             if current.historyModeApplied == "jobs" {
@@ -3221,6 +3234,37 @@ final class AppModel: ObservableObject {
             dashboard = merged
             scheduleDashboardHistoryExpiry(merged)
         } catch { dashboardErrorMessage = localizedErrorDescription(error) }
+    }
+
+    func loadMoreProblems() async {
+        guard !loadingMoreProblems, let current = dashboard, let problems = current.problems, problems.page.hasNext else { return }
+        let offset = problems.page.offset + problems.page.returned
+        var query = dashboardProblemQuery
+        query.offset = offset
+        dashboardRequestGeneration += 1
+        let connection = connectionGeneration, generation = dashboardRequestGeneration
+        loadingMoreProblems = true
+        defer { loadingMoreProblems = false }
+        do {
+            let client = try await bridgeClient()
+            let next = try await client.dashboardJobs(limit: pageLimit, terminalOffset: 0, statusOffset: nil,
+                enrich: false, statusFilter: .all, problems: query, includeHistory: false)
+            guard connection == connectionGeneration, generation == dashboardRequestGeneration else { return }
+            guard var data = next.problems, data.revision == problems.revision, data.page.offset == offset,
+                  next.historyPolicy?.policyRevision == current.historyPolicy?.policyRevision else {
+                await refreshDashboard(enrich: false)
+                return
+            }
+            var seen = Set<String>()
+            data.rows = (problems.rows + data.rows).filter { seen.insert($0.jobId ?? $0.row.jobId ?? $0.problemKey).inserted }
+            var merged = dashboard ?? current
+            merged.problems = data
+            dashboard = merged
+            scheduleDashboardHistoryExpiry(merged)
+        } catch {
+            guard connection == connectionGeneration, generation == dashboardRequestGeneration else { return }
+            dashboardErrorMessage = localizedErrorDescription(error)
+        }
     }
 
     func loadMoreRecent() async {

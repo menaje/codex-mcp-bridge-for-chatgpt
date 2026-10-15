@@ -6,63 +6,16 @@ struct DashboardProblemsSection: View {
     let problems: DashboardProblems
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("dashboard.problems").font(.headline)
-                Spacer()
-                Text(problems.affectedExecutionCount ?? problems.incidentCount ?? problems.page.total, format: .number)
-                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-            }
-            Text(BridgeAppLocalization.format("problem.currentImpactCount", locale: model.interfaceLocale, problems.currentImpactCount ?? 0))
-                .font(.caption2).foregroundStyle(.secondary)
-            if problems.affectedExecutionCount != nil {
-            Text(BridgeAppLocalization.format("execution.problemUnits", locale: model.interfaceLocale,
-                problems.affectedExecutionCount ?? 0, problems.systemIncidentCount ?? 0,
-                problems.unavailableExecutionCount ?? 0, problems.incidentCount ?? problems.page.total))
-                .font(.caption2).foregroundStyle(.secondary)
-            } else {
-                Text(BridgeAppLocalization.format("execution.legacyIncidentUnits", locale: model.interfaceLocale,
-                    problems.incidentCount ?? problems.page.total)).font(.caption2).foregroundStyle(.secondary)
-            }
-            if model.dashboardRetainedProblems(problems).isEmpty { Text("problem.historyEmpty").font(.caption).foregroundStyle(.secondary) }
-            ForEach(model.dashboardRetainedProblems(problems)) { problem in
-                VStack(alignment: .leading, spacing: 6) {
-                    if problem.jobId != nil {
-                        ExecutionRecordView(row: problem.row, problem: problem)
-                    } else if problem.source == "execution" && problem.executionAvailability == nil {
-                        Text(BridgeAppLocalization.string("execution.historyGrouped", locale: model.interfaceLocale)).font(.caption2)
-                        ExecutionRecordView(row: problem.row, problem: problem)
-                    } else {
-                        Text(BridgeAppLocalization.string("execution.systemIncident", locale: model.interfaceLocale)).font(.caption.weight(.semibold))
-                        Text([problem.row.activityTitle, problem.row.agentName].compactMap { $0 }.joined(separator: " · "))
-                            .font(.caption2).foregroundStyle(.secondary)
-                    }
-                    Text(DisplayFormat.dateTime(problem.occurredAt ?? problem.observedAt, locale: model.interfaceLocale))
-                        .font(.caption2).foregroundStyle(.secondary)
-                    if let impact = problem.currentImpact, impact != "none" {
-                        Text(BridgeAppLocalization.string(impact == "confirmed" ? "problem.currentImpact.confirmed" : "problem.currentImpact.unknown", locale: model.interfaceLocale))
-                            .font(.caption2).foregroundStyle(impact == "confirmed" ? Color.orange : Color.secondary)
-                    }
-                    if let reason = contextReason(problem, using: model) { Text(reason).font(.caption).textSelection(.enabled) }
-                    if let automatic = problem.automatic { AutomaticRecoveryView(recovery: automatic) }
-                    ForEach(Array((problem.progress ?? []).enumerated()), id: \.offset) { _, progress in
-                        Text([DisplayFormat.dateTime(progress.at, locale: model.interfaceLocale), progress.step,
-                              progress.attempt.map { "#" + String($0) }, progress.reason, progress.evidence].compactMap { $0 }.joined(separator: " · "))
-                            .font(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
-                    }
-                }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
-            }
-            if problems.page.hasPrevious || problems.page.hasNext {
-                HStack {
-                    Button("macos.previous") { Task { await model.selectProblemQuery(offset: max(0, problems.page.offset - problems.page.limit)) } }
-                        .disabled(!problems.page.hasPrevious)
-                    Spacer()
-                    Button("macos.next") { Task { await model.selectProblemQuery(offset: problems.page.offset + problems.page.returned) } }
-                        .disabled(!problems.page.hasNext)
-                }.font(.caption)
-            }
-        }
+        DashboardSection(title: "dashboard.problems", emptyText: "problem.historyEmpty",
+            rows: model.dashboardRetainedProblems(problems).map { problem in
+                var row = problem.row
+                if problem.kind != .cancelled { row.error = row.error ?? problem.error ?? problem.reason }
+                return row
+            },
+            total: problems.affectedExecutionCount ?? problems.page.total,
+            groupsByActivity: true, hasMore: problems.page.hasNext,
+            loadMore: { Task { await model.loadMoreProblems() } })
+            .disabled(model.loadingMoreProblems)
     }
 
     func contextReason(_ problem: DashboardProblem, using model: AppModel) -> String? {
