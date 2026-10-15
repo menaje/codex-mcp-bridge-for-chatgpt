@@ -199,6 +199,9 @@ export const UI_TRANSLATION_PARAMETERS = {
   "dashboard.duration.days": {
     "count": "string-or-number"
   },
+  "dashboard.time.started": {
+    "time": "string-or-number"
+  },
   "dashboard.time.active": {
     "duration": "string-or-number"
   },
@@ -723,6 +726,7 @@ const translations = {
     "dashboard.duration.minutes": "{count}m",
     "dashboard.duration.hours": "{count}h",
     "dashboard.duration.days": "{count}d",
+    "dashboard.time.started": "Started {time}",
     "dashboard.time.active": "Work time {duration}",
     "dashboard.time.updated": "Last status update {relative}",
     "dashboard.time.duration": "Work time {duration}",
@@ -1269,6 +1273,7 @@ const translations = {
     "dashboard.duration.minutes": "{count}분",
     "dashboard.duration.hours": "{count}시간",
     "dashboard.duration.days": "{count}일",
+    "dashboard.time.started": "시작 {time}",
     "dashboard.time.active": "작업시간 {duration}",
     "dashboard.time.updated": "마지막 상태 갱신 {relative}",
     "dashboard.time.duration": "작업시간 {duration}",
@@ -1815,6 +1820,7 @@ const translations = {
     "dashboard.duration.minutes": "{count} 分",
     "dashboard.duration.hours": "{count} 時間",
     "dashboard.duration.days": "{count} 日",
+    "dashboard.time.started": "開始 {time}",
     "dashboard.time.active": "作業時間 {duration}",
     "dashboard.time.updated": "最終状態更新 {relative}",
     "dashboard.time.duration": "作業時間 {duration}",
@@ -2361,6 +2367,7 @@ const translations = {
     "dashboard.duration.minutes": "{count} 分钟",
     "dashboard.duration.hours": "{count} 小时",
     "dashboard.duration.days": "{count} 天",
+    "dashboard.time.started": "开始于{time}",
     "dashboard.time.active": "工作时长 {duration}",
     "dashboard.time.updated": "上次状态更新 {relative}",
     "dashboard.time.duration": "工作时长 {duration}",
@@ -2907,6 +2914,7 @@ const translations = {
     "dashboard.duration.minutes": "{count} 分鐘",
     "dashboard.duration.hours": "{count} 小時",
     "dashboard.duration.days": "{count} 天",
+    "dashboard.time.started": "開始於{time}",
     "dashboard.time.active": "工作時間 {duration}",
     "dashboard.time.updated": "上次狀態更新 {relative}",
     "dashboard.time.duration": "工作時間 {duration}",
@@ -3453,6 +3461,7 @@ const translations = {
     "dashboard.duration.minutes": "{count} min",
     "dashboard.duration.hours": "{count} h",
     "dashboard.duration.days": "{count} d",
+    "dashboard.time.started": "Iniciado {time}",
     "dashboard.time.active": "Tiempo de trabajo {duration}",
     "dashboard.time.updated": "Última actualización de estado {relative}",
     "dashboard.time.duration": "Tiempo de trabajo {duration}",
@@ -3999,6 +4008,7 @@ const translations = {
     "dashboard.duration.minutes": "{count} min",
     "dashboard.duration.hours": "{count} h",
     "dashboard.duration.days": "{count} j",
+    "dashboard.time.started": "Démarré {time}",
     "dashboard.time.active": "Temps de travail {duration}",
     "dashboard.time.updated": "Dernière mise à jour de l’état {relative}",
     "dashboard.time.duration": "Temps de travail {duration}",
@@ -4545,6 +4555,7 @@ const translations = {
     "dashboard.duration.minutes": "{count} Min.",
     "dashboard.duration.hours": "{count} Std.",
     "dashboard.duration.days": "{count} T.",
+    "dashboard.time.started": "Gestartet {time}",
     "dashboard.time.active": "Arbeitszeit {duration}",
     "dashboard.time.updated": "Letzte Statusaktualisierung {relative}",
     "dashboard.time.duration": "Arbeitszeit {duration}",
@@ -5091,6 +5102,7 @@ const translations = {
     "dashboard.duration.minutes": "{count} min",
     "dashboard.duration.hours": "{count} h",
     "dashboard.duration.days": "{count} d",
+    "dashboard.time.started": "Iniciado {time}",
     "dashboard.time.active": "Tempo de trabalho {duration}",
     "dashboard.time.updated": "Última atualização de status {relative}",
     "dashboard.time.duration": "Tempo de trabalho {duration}",

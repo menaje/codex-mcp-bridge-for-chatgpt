@@ -5484,7 +5484,7 @@ export function registerBridgeTools(
               if (jobs.getAgent(current.agentId)?.version !== current.version) return;
               const cache = dashboardRuntimeCaches.get(upstream) || new Map<string,DashboardRuntimeCacheEntry>();
               dashboardRuntimeCaches.set(upstream,cache);
-              cacheDashboardRuntime(cache,candidate,result,deferred,jobs);
+              cacheDashboardRuntime(upstream,cache,candidate,result,deferred,jobs);
               notifyCardObservation(upstream);
             });
           const result = read ? await waitForDisplay(read,CARD_RUNTIME_BUDGET_MS) : {pending:true as const};
@@ -5613,7 +5613,8 @@ export function registerBridgeTools(
         options.problems,
         options.includeHistory !== false,
         options.backgroundOffset || 0,
-        options.historyMode==="jobs"
+        options.historyMode==="jobs",
+        options.cachedRuntime
       );
       applyExecutionContract(view,jobs.admissionStateStore,options,modelCatalog);
       projectAccountForDisplay(view, accountRead ? await accountRead : undefined);
@@ -5757,7 +5758,9 @@ export function registerBridgeTools(
   if (readProjection) {
     applicationService.dashboardSnapshot = async (options = {}, context) => {
       if (!options.inspectRuntime) {
-        const view = await readProjection.dashboardSnapshot(options, context);
+        const view = await readProjection.dashboardSnapshot({
+          ...options, cachedRuntime: dashboardCachedRuntime(upstream)
+        }, context);
         projectAccountForDisplay(view);
         return view;
       }
@@ -11271,6 +11274,8 @@ export type BridgeDashboardSnapshotOptions = {
   idleOffset?: number;
   inspectRuntime?: boolean;
   includeHistory?: boolean;
+  /** Internal display observations carried to an isolated read worker. */
+  cachedRuntime?: DashboardCachedRuntime;
 };
 
 export type BridgeDashboardHistoryDetailOptions = {
@@ -11689,6 +11694,13 @@ type DashboardRuntimeCacheEntry = {
   attemptedAt: number;
 };
 
+type DashboardCachedRuntimeEntry = Pick<DashboardRuntimeCacheEntry,
+  "stamp" | "retainUntil" | "observation" | "unavailable" | "observedAt">;
+type DashboardCachedRuntime = {
+  entries: Array<[string, DashboardCachedRuntimeEntry]>;
+  pendingKeys: string[];
+};
+
 export type DashboardRuntimeCandidate = {
   agentId: string;
   thread: BridgeAgentThread;
@@ -11735,6 +11747,20 @@ const dashboardRuntimeCaches = new WeakMap<
   CodexUpstream,
   Map<string, DashboardRuntimeCacheEntry>
 >();
+const dashboardRuntimeCacheLimits = new WeakMap<CodexUpstream, number>();
+
+function dashboardCachedRuntime(upstream: CodexUpstream): DashboardCachedRuntime {
+  const now = Date.now();
+  const entries: DashboardCachedRuntime["entries"] = [];
+  for (const [key, entry] of dashboardRuntimeCaches.get(upstream) || []) {
+    if (entry.retainUntil <= now) continue;
+    const { stamp, retainUntil, observation, unavailable, observedAt } = entry;
+    entries.push([key, { stamp, retainUntil, observation, unavailable, observedAt }]);
+  }
+  const pendingKeys: string[] = [];
+  dashboardRuntimeReads.get(upstream)?.observePending(key => { pendingKeys.push(key); return true; });
+  return { entries, pendingKeys };
+}
 
 function invalidateCardRuntimeCache(upstream: CodexUpstream, threadId: string): void {
   dashboardRuntimeReads.get(upstream)?.invalidate(key => key.includes(`\0${threadId}\0`));
@@ -12449,10 +12475,10 @@ function dashboardRuntimeStamp(
 
 function cachedDashboardRuntimes(
   upstream: CodexUpstream,
-  candidates: ReadonlyArray<DashboardRuntimeCandidate>
+  candidates: ReadonlyArray<DashboardRuntimeCandidate>,
+  cache: Map<string, DashboardCachedRuntimeEntry> | undefined = dashboardRuntimeCaches.get(upstream)
 ): Map<string, DashboardRuntimeObservation> {
   const observations = new Map<string, DashboardRuntimeObservation>();
-  const cache = dashboardRuntimeCaches.get(upstream);
   if (!cache) return observations;
   const now = Date.now();
   for (const [key, entry] of cache) {
@@ -12469,16 +12495,20 @@ function cachedDashboardRuntimes(
 
 function cachedDashboardEnrichment(
   upstream: CodexUpstream,
-  candidates: ReadonlyArray<DashboardRuntimeCandidate>
+  candidates: ReadonlyArray<DashboardRuntimeCandidate>,
+  cache: Map<string, DashboardCachedRuntimeEntry> | undefined = dashboardRuntimeCaches.get(upstream),
+  pendingKeys?: string[]
 ): CardEnrichmentSummary {
   const now = Date.now();
-  const cache = dashboardRuntimeCaches.get(upstream);
   const entries = candidates.flatMap(candidate => {
     const entry = cache?.get(dashboardRuntimeCacheKey(candidate.thread));
     return entry?.stamp === candidate.stamp && entry.retainUntil > now ? [entry] : [];
   });
   const prefixes = candidates.map(candidate => `${dashboardRuntimeCacheKey(candidate.thread)}\0${candidate.stamp}\0`);
-  const runtimePending = dashboardRuntimeReads.get(upstream)?.observePending(key => prefixes.some(prefix => key.startsWith(prefix))) || 0;
+  const matches = (key: string) => prefixes.some(prefix => key.startsWith(prefix));
+  const runtimePending = pendingKeys
+    ? pendingKeys.filter(matches).length
+    : dashboardRuntimeReads.get(upstream)?.observePending(matches) || 0;
   const revision = upstream.accountRevision?.();
   const usagePending = cardUsageReads.get(upstream)?.observePending(key => key === (revision || "default")) || 0;
   const usageCompletion = cardUsageCompletions.get(upstream);
@@ -12510,6 +12540,7 @@ function runtimeReadPool(upstream: CodexUpstream): DisplayReadPool<DashboardRunt
 }
 
 function cacheDashboardRuntime(
+  upstream: CodexUpstream,
   cache: Map<string, DashboardRuntimeCacheEntry>,
   candidate: DashboardRuntimeCandidate,
   result: DashboardRuntimeResult,
@@ -12570,7 +12601,7 @@ function cacheDashboardRuntime(
           confirmed ? current.observation.state === "busy" ? "active-turn-observed" : "runtime-observed" : undefined);
       }
     }
-    while (cache.size > CARD_RUNTIME_CACHE_MAX_ENTRIES) {
+    while (cache.size > (dashboardRuntimeCacheLimits.get(upstream) || CARD_RUNTIME_CACHE_MAX_ENTRIES)) {
       const oldestKey = cache.keys().next().value;
       if (typeof oldestKey !== "string") break;
       cache.delete(oldestKey);
@@ -12651,7 +12682,7 @@ async function inspectDashboardRuntimes(
           return inspectDashboardRuntime(upstream, candidate, isCurrent);
         },
         (value, deferred) => {
-          cacheDashboardRuntime(cache, candidate, value, deferred, jobs);
+          cacheDashboardRuntime(upstream, cache, candidate, value, deferred, jobs);
           if (deferred) notifyCardObservation(upstream);
         }
       );
@@ -12892,6 +12923,12 @@ async function enrichDashboardRuntimePlan(
   readUpstreamUsage = true
 ): Promise<BridgeDashboardEnrichment> {
   const rankedCandidates = plan.candidates;
+  // Retain one observation per current Thread. A fixed 512-entry LRU never
+  // completed coverage once a bridge had more current Agents than that.
+  dashboardRuntimeCacheLimits.set(upstream, Math.max(
+    CARD_RUNTIME_CACHE_MAX_ENTRIES, rankedCandidates.length,
+    dashboardRuntimeCacheLimits.get(upstream) || 0
+  ));
   const cache = dashboardRuntimeCaches.get(upstream);
   const checkedAt = (candidate: DashboardRuntimeCandidate): number => {
     const entry = cache?.get(dashboardRuntimeCacheKey(candidate.thread));
@@ -12991,7 +13028,8 @@ async function buildDashboardView(
   problemQuery?: ProblemQuery,
   includeHistory = true,
   backgroundOffset = 0,
-  jobMode = false
+  jobMode = false,
+  cachedRuntime?: DashboardCachedRuntime
 ): Promise<DashboardView> {
   if (problemQuery && statusFilter === undefined) statusFilter = "all";
   const inScope = (row: { scopeId: string }): boolean => !scopeId || row.scopeId === scopeId;
@@ -13178,8 +13216,9 @@ async function buildDashboardView(
       };
     })
     .sort((left, right) => right.changedAt - left.changedAt);
+  const runtimeCache = cachedRuntime ? new Map(cachedRuntime.entries) : dashboardRuntimeCaches.get(upstream);
   const runtimeByAgent = enrichment?.runtimeByAgent ||
-    cachedDashboardRuntimes(upstream, runtimeCacheCandidates);
+    cachedDashboardRuntimes(upstream, runtimeCacheCandidates, runtimeCache);
   const runtimeProbeSkippedAgents = enrichment?.runtimeProbeSkippedAgents ??
     Math.max(0, appServerAgents.length - runtimeByAgent.size);
 
@@ -13583,7 +13622,7 @@ async function buildDashboardView(
     ).map(([agentId]) => agentId));
   if (problemQuery?.view) for (const agent of allAgents) {
     const thread = currentThreadFor(agent.agentId);
-    const cached = thread ? dashboardRuntimeCaches.get(upstream)?.get(dashboardRuntimeCacheKey(thread)) : undefined;
+    const cached = thread ? runtimeCache?.get(dashboardRuntimeCacheKey(thread)) : undefined;
     if (cached?.stamp === dashboardRuntimeStamp(agent,jobs.observedLatestJobForAgent(agent.agentId)) &&
       cached.unavailable && cached.observation.state !== "orphaned") runtimeUnknownAgentIds.add(agent.agentId);
   }
@@ -13819,7 +13858,7 @@ async function buildDashboardView(
     ...(statusFilter !== undefined ? { statusFilter } : {}),
     statusSource: "codex-runtime-only",
     coverage: "bridge-known-retained",
-    enrichment: enrichment?.summary || cachedDashboardEnrichment(upstream, runtimeCacheCandidates),
+    enrichment: enrichment?.summary || cachedDashboardEnrichment(upstream, runtimeCacheCandidates, runtimeCache, cachedRuntime?.pendingKeys),
     weeklyUsage,
     counts: {
       trackedProjects,

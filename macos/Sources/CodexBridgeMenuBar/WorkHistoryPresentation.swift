@@ -11,13 +11,17 @@ enum DashboardTimePresentation {
         locale: Locale,
         now: Date = Date()
     ) -> String {
-        let status = turn?.status ?? fallbackStatus
-        let live = turn?.endedAt == nil && ["running", "input-required", "approval-required", "terminating", "liveness-unknown"].contains(status ?? "")
+        let status = fallbackStatus ?? turn?.status
+        let live = turn?.endedAt == nil && ["running", "input-required", "approval-required", "terminating", "termination-failed", "liveness-unknown", "orphaned", "background-process-running"].contains(status ?? "")
+        if live {
+            guard let startedAt = turn?.startedAt, DisplayFormat.parseDate(startedAt) != nil else { return "" }
+            return BridgeAppLocalization.string("dashboard.time.started", locale: locale)
+                .replacingOccurrences(of: "{time}", with: DisplayFormat.dateTime(startedAt, locale: locale))
+        }
         let duration = turn?.durationMs ?? fallbackDurationMs
         let workTime = duration.map {
             BridgeAppLocalization.format("macos.worktime", locale: locale, DisplayFormat.duration($0, locale: locale))
         } ?? BridgeAppLocalization.string("dashboard.time.durationUnknown", locale: locale)
-        if live { return workTime }
         let timestamp = turn?.endedAt ?? turn?.updatedAt ?? fallbackUpdatedAt
         let relative = DisplayFormat.relative(timestamp, relativeTo: now, locale: locale)
         return BridgeAppLocalization.format(

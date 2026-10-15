@@ -515,7 +515,9 @@ struct DashboardPopoverView: View {
 
     @ViewBuilder
     private func dashboardBackgroundStatus(_ dashboard: DashboardSnapshot) -> some View {
-        if dashboard.counts.backgroundProcesses > 0 {
+        let unknown = dashboard.counts.runtimeUnknownAgents > 0 || dashboard.counts.runtimeProbeSkippedAgents > 0 ||
+            (dashboard.enrichment?.timeouts ?? 0) > 0 || (dashboard.enrichment?.runtimeUnavailable ?? 0) > 0
+        if dashboard.counts.backgroundProcesses > 0 || !unknown {
             Button {
                 Task { await model.toggleDashboardPanel(.background) }
             } label: {
@@ -526,11 +528,12 @@ struct DashboardPopoverView: View {
                 ), systemImage: "terminal.fill")
             }
             .buttonStyle(.link)
+            .disabled(dashboard.counts.backgroundProcesses == 0)
             .font(.caption)
             .foregroundStyle(model.dashboardPanel == .background ? Color.accentColor : Color.primary)
             .accessibilityAddTraits(model.dashboardPanel == .background ? [.isSelected] : [])
             .accessibilityIdentifier("dashboard-background")
-        } else if dashboard.counts.runtimeUnknownAgents > 0 || dashboard.counts.runtimeProbeSkippedAgents > 0 {
+        } else if unknown {
             Label("dashboard.backgroundUnknown", systemImage: "questionmark.circle")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -1400,8 +1403,10 @@ struct DashboardRowView: View {
                     .lineLimit(2)
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text(rowTimeText)
-                    .lineLimit(2)
+                if !rowTimeText.isEmpty {
+                    Text(rowTimeText)
+                        .lineLimit(2)
+                }
                 HStack(spacing: 10) {
                     if row.backgroundProcessCount > 0 {
                         Label(BridgeAppLocalization.format(

@@ -213,6 +213,7 @@ enum BridgeGeneratedLocalization {
         "dashboard.time.active": "Work time {duration}",
         "dashboard.time.duration": "Work time {duration}",
         "dashboard.time.durationUnknown": "Work time unavailable",
+        "dashboard.time.started": "Started {time}",
         "dashboard.time.terminal": "{relative}",
         "dashboard.time.updated": "Last status update {relative}",
         "dashboard.title": "Codex status",

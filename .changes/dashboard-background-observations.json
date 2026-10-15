@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Preserve confirmed background process counts and owner lists through isolated dashboard refreshes and retain coverage for all current agents.",
+  "breaking": false,
+  "migration": null
+}
