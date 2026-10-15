@@ -1301,22 +1301,24 @@ private struct CancellationReason: View {
     let cancellation: CancellationDisplay
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text("macos.cancellationreason")
-                .font(.caption.weight(.semibold))
-            Text(cancellation.reason)
-                .textSelection(.enabled)
-            Text(BridgeAppLocalization.format(
-                "macos.format.dotSeparatedTriple",
-                locale: locale,
-                cancellationTargetLabel(cancellation.targetKind, locale: locale),
-                cancellationStatusLabel(cancellation.status, locale: locale),
-                DisplayFormat.dateTime(cancellation.requestedAt, locale: locale)
-            ))
-                .foregroundStyle(.secondary)
+        if !cancellation.reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("macos.cancellationreason")
+                    .font(.caption.weight(.semibold))
+                Text(cancellation.reason)
+                    .textSelection(.enabled)
+                Text(BridgeAppLocalization.format(
+                    "macos.format.dotSeparatedTriple",
+                    locale: locale,
+                    cancellationTargetLabel(cancellation.targetKind, locale: locale),
+                    cancellationStatusLabel(cancellation.status, locale: locale),
+                    DisplayFormat.dateTime(cancellation.requestedAt, locale: locale)
+                ))
+                    .foregroundStyle(.secondary)
+            }
+            .font(.caption)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .font(.caption)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -1463,12 +1465,10 @@ struct DashboardRowView: View {
                presentation == .idle || presentation == .nestedJob || cancellation.targetKind != "activity" {
                 CancellationReason(cancellation: cancellation)
             }
-            if row.status == "cancelled", row.latestTurn?.cancellation == nil {
-                Text(BridgeAppLocalization.string("execution.cancellationReason", locale: model.interfaceLocale) + ": " +
-                    BridgeAppLocalization.string("execution.cancellationUnrecorded", locale: model.interfaceLocale))
-                    .font(.caption).foregroundStyle(.secondary)
-            } else if ["failed", "interrupted", "termination-failed"].contains(row.status),
-                      let error = row.latestTurn?.error ?? row.error, !error.isEmpty {
+            if ["failed", "interrupted", "termination-failed"].contains(row.status),
+               let error = [row.latestTurn?.error, row.error].compactMap({ $0 }).first(where: {
+                   !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+               }) {
                 Text(error).font(.caption).textSelection(.enabled)
             }
             if historyTotal > 0 {

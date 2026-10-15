@@ -22,8 +22,10 @@ The requested corrections apply to both clients:
    Opening or reading these lists does not fetch exact details. The read-only
    detail APIs and their scope/retention protections remain available internally.
 5. Recorded cancellation reasons and recorded error/interruption messages are
-   displayed once per Job. Only a cancellation without a recorded reason gets a
-   missing-reason label. An absent historical error is omitted, not invented.
+   displayed once per Job. Missing or blank reasons have no reason block or
+   placeholder, including cancellations; the Job and its status stay visible.
+   Korean browser examples use Korean fixture messages; stored diagnostics keep
+   their recorded text.
 6. The repeated **Recent Activity** prefix is absent. Activity titles remain.
 
 `tabs-execution-browser-regression.ts` checks both append flows and display
