@@ -1,5 +1,7 @@
 # #247 W2/W3 Worker 인계 — lifecycle 수신·복구
 
+> **2026-10-16 현행 해석 / 역사적 기록:** 이 문서는 #247 당시 Worker 인계와 검사 기록이다. 이후 [#247](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/247)은 방향 변경으로 종료됐고, 현재 일반 중계 구현은 완료된 [#261](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/261)의 비표시 자동 중계 카드 방식이다. 아래의 “일반 Chat Pro 재개용 공식 API가 제공되지 않는다”는 문구는 검증된 API 부재 사실이 아니라 당시의 미확인 판단으로 읽어야 한다. 원래 ChatGPT 대화의 실제 자동 재개, 도구 권한·모델·문맥·사용량 연속성은 별도로 입증되지 않았다. 과거 단계·검사·작업 경로의 본문은 당시 증거로 보존한다.
+
 최신 #247 본문의 실제 재개·A→검토→B 실환경 확인 제외 결정과
 [갱신한 W0~W5 계획](../issue-247-implementation-plan.md)을 적용했다.
 그 시험과 모든 지속시간/soak/축약 대체 시험은 수행하지 않았고 완료 대기
