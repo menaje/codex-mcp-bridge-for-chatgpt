@@ -132,7 +132,7 @@ export class WorkHistoryStore {
   problemJobs(scopeId?: string): HistoryProblemJob[] {
     const rows = this.db.prepare(`SELECT j.job_id,j.scope_id,j.agent_id,j.activity_id,j.status,j.updated_at,j.ended_at,j.problem_summary,h.acknowledged_at,h.review_sequence AS review_seq
       FROM jobs j LEFT JOIN work_history_state h ON h.job_id=j.job_id
-      WHERE j.status IN ('failed','interrupted') AND h.expired_at IS NULL AND ${retainedJobSql(readAppliedHistoryPolicy(this.db),"j")} ${scopeId ? "AND j.scope_id=?" : ""}
+      WHERE j.status IN ('failed','interrupted','cancelled') AND h.expired_at IS NULL AND ${retainedJobSql(readAppliedHistoryPolicy(this.db),"j")} ${scopeId ? "AND j.scope_id=?" : ""}
       ORDER BY j.updated_at DESC,j.job_id`).all(...(scopeId ? [scopeId] : [])) as Array<{
         job_id:string;scope_id:string;agent_id:string|null;activity_id:string;status:string;updated_at:number;ended_at:number;problem_summary:string|null;acknowledged_at:number|null;review_seq:number|null;
       }>;

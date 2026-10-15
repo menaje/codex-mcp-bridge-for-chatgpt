@@ -25,12 +25,21 @@ enum DashboardPanel: String, CaseIterable {
         }
     }
 
-    func rows(in snapshot: DashboardSnapshot) -> [DashboardRow] {
+    func rows(in snapshot: DashboardSnapshot, now: Date = Date()) -> [DashboardRow] {
         if self == .history {
-            return snapshot.activeRows + snapshot.terminalRows
+            return snapshot.historyModeApplied == "jobs" ? snapshot.terminalRows.filter { ExecutionRecordPresentation.retained($0, days: snapshot.historyPolicy?.retentionDays, now: now) } : snapshot.activeRows + snapshot.terminalRows
         }
-        let rows = snapshot.statusRows ?? (snapshot.activeRows + snapshot.terminalRows)
+        let rows = self == .background && snapshot.historyModeApplied == "jobs"
+            ? snapshot.backgroundRows ?? (snapshot.activeRows + snapshot.terminalRows)
+            : snapshot.statusRows ?? (snapshot.activeRows + snapshot.terminalRows)
+        if self == .running && snapshot.historyModeApplied == "jobs" {
+            return snapshot.activeRows.filter { $0.bucket == "active" && $0.jobId != nil }
+        }
         return rows.filter(matches)
+    }
+
+    private func snapshotCompatibilityJob(_ row: DashboardRow) -> Bool {
+        ["running", "input-required", "approval-required", "terminating", "termination-failed"].contains(row.status)
     }
 
     private func matches(_ row: DashboardRow) -> Bool {
@@ -38,7 +47,7 @@ enum DashboardPanel: String, CaseIterable {
         case .history:
             return true
         case .running:
-            return row.bucket == "active"
+            return row.bucket == "active" && (row.jobId != nil || snapshotCompatibilityJob(row))
         case .responseRequired:
             return ["input-required", "approval-required"].contains(row.status)
         case .problems:

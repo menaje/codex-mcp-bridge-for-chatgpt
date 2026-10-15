@@ -48,7 +48,7 @@ describe('R2 client logical expiry regression',()=>{
       const after=await r.service.dashboardSnapshot({scopeId:scope,statusFilter:'all',inspectRuntime:false});const fresh=after.statusRows![0]!;
       expect(fresh.historyCount).toBe(1);// Server revisions may also change at logical expiry; force the former shared identity below to independently test the client defense.
       expect(fresh.nextExpiryAt).not.toBe(row.nextExpiryAt);
-      const context=vm.createContext({Date,widgetInstanceId:'r',historySecurityGeneration:1,selectedScope:'conversation',historyDetails:new Map(),historyErrors:new Map()});
+      const context=vm.createContext({Date,widgetInstanceId:'r',historySecurityGeneration:1,selectedScope:'conversation',executionDetails:new Map(),historyDetails:new Map(),historyErrors:new Map()});
       for(const name of ['historyKey','historyFresh','cachedHistoryDetail']){
         const line=DASHBOARD_CARD_HTML.split('\n').find(x=>x.trimStart().startsWith('function '+name+'('))!;
         expect(line).toBeDefined();vm.runInContext(line,context);
@@ -68,7 +68,7 @@ function cacheContext(){
   vi.useFakeTimers();vi.setSystemTime(now);
   const row={...identity,historyCount:2,nextExpiryAt:new Date(now+1000).toISOString(),history:[{executionKey:'expired'},{executionKey:'kept'}]};
   const page={...row,kind:'dashboard-history',historyHasMore:true,nextCursor:'old-cursor'};
-  const context=vm.createContext({Date,widgetInstanceId:'r2',historySecurityGeneration:1,selectedScope:'conversation',historyDetails:new Map(),historyErrors:new Map(),historyLoading:new Set(),historyRequestTokens:new Map(),mounted:true,hydrationEpoch:1,activeRows:[],terminalRows:[],historyActiveRows:[],historyTerminalRows:[],view:{statusRows:[row]},scheduleSizeChanged:()=>{},paint:()=>{},unwrapHistoryDetail:(value:unknown)=>value,t:{'common.error':'error'},errorText:String});
+  const context=vm.createContext({Date,widgetInstanceId:'r2',historySecurityGeneration:1,selectedScope:'conversation',executionDetails:new Map(),historyDetails:new Map(),historyErrors:new Map(),historyLoading:new Set(),historyRequestTokens:new Map(),mounted:true,hydrationEpoch:1,activeRows:[],terminalRows:[],historyActiveRows:[],historyTerminalRows:[],view:{statusRows:[row]},scheduleSizeChanged:()=>{},paint:()=>{},unwrapHistoryDetail:(value:unknown)=>value,t:{'common.error':'error'},errorText:String});
   for(const name of ['historyKey','historyFresh','cachedHistoryDetail','loadAgentHistory']){
     const line=DASHBOARD_CARD_HTML.split('\n').find(x=>new RegExp('^\\s*(async )?function '+name+'\\(').test(x))!;
     expect(line).toBeDefined();vm.runInContext(line,context);

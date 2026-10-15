@@ -249,6 +249,25 @@ export const UI_TRANSLATION_PARAMETERS = {
   },
   "problem.currentImpactCount": {
     "count": "string-or-number"
+  },
+  "execution.problemUnits": {
+    "jobs": "string-or-number",
+    "system": "string-or-number",
+    "unavailable": "string-or-number",
+    "events": "string-or-number"
+  },
+  "execution.systemAndUnavailable": {
+    "system": "string-or-number",
+    "unavailable": "string-or-number"
+  },
+  "execution.count": {
+    "count": "string-or-number"
+  },
+  "execution.cancellationRequestedAt": {
+    "time": "string-or-number"
+  },
+  "execution.legacyIncidentUnits": {
+    "events": "string-or-number"
   }
 } as const;
 
@@ -780,7 +799,24 @@ const translations = {
     "settings.unsupportedModelEfforts": "{model} does not support {efforts}; these reasoning levels will not be applied.",
     "problem.currentImpactCount": "Current impact: {count}",
     "problem.currentImpact.confirmed": "Current impact confirmed",
-    "problem.currentImpact.unknown": "Current impact unconfirmed"
+    "problem.currentImpact.unknown": "Current impact unconfirmed",
+    "execution.job": "Execution",
+    "execution.details": "Execution details",
+    "execution.loadDetail": "Load exact execution detail",
+    "execution.cancelled": "Cancelled",
+    "execution.cancellationReason": "Cancellation reason",
+    "execution.cancellationUnrecorded": "Unrecorded",
+    "execution.errorUnrecorded": "Error or interruption reason unrecorded",
+    "execution.legacyPartial": "An older version did not retain the original detail",
+    "execution.unavailable": "The linked execution is unavailable",
+    "execution.systemIncident": "System incident without a Job",
+    "execution.problemUnits": "Jobs {jobs} · System incidents {system} · Unavailable jobs {unavailable} · Events {events}",
+    "execution.historyGrouped": "Execution history (legacy Agent groups)",
+    "execution.changed": "Execution content changed. Refresh the list.",
+    "execution.systemAndUnavailable": "System {system} · Unavailable {unavailable}",
+    "execution.count": "{count} executions",
+    "execution.cancellationRequestedAt": "Cancellation requested: {time}",
+    "execution.legacyIncidentUnits": "Legacy event count: {events}. Exact Job totals are unavailable."
   },
   "ko": {
     "problem.history": "실패 기록",
@@ -1309,7 +1345,24 @@ const translations = {
     "settings.unsupportedModelEfforts": "{model} 모델은 {efforts} 추론을 지원하지 않아 적용되지 않습니다.",
     "problem.currentImpactCount": "현재 영향 {count}건",
     "problem.currentImpact.confirmed": "현재 영향 확인됨",
-    "problem.currentImpact.unknown": "현재 영향 미확인"
+    "problem.currentImpact.unknown": "현재 영향 미확인",
+    "execution.job": "실행",
+    "execution.details": "실행 상세",
+    "execution.loadDetail": "정확한 실행 상세 조회",
+    "execution.cancelled": "취소",
+    "execution.cancellationReason": "취소 사유",
+    "execution.cancellationUnrecorded": "미기록",
+    "execution.errorUnrecorded": "오류·중단 사유 미기록",
+    "execution.legacyPartial": "이전 버전에서 원문 미보존",
+    "execution.unavailable": "연결된 실행을 조회할 수 없습니다",
+    "execution.systemIncident": "Job 없는 시스템 사건",
+    "execution.problemUnits": "관련 실행 {jobs} · 시스템 사건 {system} · 조회 불가 실행 {unavailable} · 전체 사건 {events}",
+    "execution.historyGrouped": "실행 기록(구형 Agent 묶음)",
+    "execution.changed": "실행 내용이 변경되었습니다. 목록을 새로고침하세요.",
+    "execution.systemAndUnavailable": "시스템 {system} · 조회 불가 {unavailable}",
+    "execution.count": "실행 {count}개",
+    "execution.cancellationRequestedAt": "취소 요청: {time}",
+    "execution.legacyIncidentUnits": "구형 사건 수 {events}개. 정확한 Job 집계는 제공되지 않았습니다."
   },
   "ja": {
     "problem.history": "失敗の履歴",
@@ -1838,7 +1891,24 @@ const translations = {
     "settings.unsupportedModelEfforts": "{model} は {efforts} に対応していないため、これらの推論レベルは適用されません。",
     "problem.currentImpactCount": "現在の影響: {count}件",
     "problem.currentImpact.confirmed": "現在の影響を確認済み",
-    "problem.currentImpact.unknown": "現在の影響は未確認"
+    "problem.currentImpact.unknown": "現在の影響は未確認",
+    "execution.job": "実行",
+    "execution.details": "実行の詳細",
+    "execution.loadDetail": "正確な実行詳細を取得",
+    "execution.cancelled": "キャンセル",
+    "execution.cancellationReason": "キャンセル理由",
+    "execution.cancellationUnrecorded": "未記録",
+    "execution.errorUnrecorded": "エラーまたは中断理由は未記録",
+    "execution.legacyPartial": "旧バージョンでは元の詳細が保存されませんでした",
+    "execution.unavailable": "関連する実行を取得できません",
+    "execution.systemIncident": "Jobのないシステム事象",
+    "execution.problemUnits": "実行 {jobs} · システム事象 {system} · 取得不可の実行 {unavailable} · 全事象 {events}",
+    "execution.historyGrouped": "実行履歴（旧Agentグループ）",
+    "execution.changed": "実行内容が変更されました。一覧を更新してください。",
+    "execution.systemAndUnavailable": "システム {system} · 取得不可 {unavailable}",
+    "execution.count": "{count}件の実行",
+    "execution.cancellationRequestedAt": "キャンセル要求: {time}",
+    "execution.legacyIncidentUnits": "旧形式の事象数: {events}。正確なJob数は取得できません。"
   },
   "zh-Hans": {
     "problem.history": "失败记录",
@@ -2367,7 +2437,24 @@ const translations = {
     "settings.unsupportedModelEfforts": "{model} 不支持 {efforts}，因此不会应用这些推理级别。",
     "problem.currentImpactCount": "当前影响：{count}",
     "problem.currentImpact.confirmed": "已确认当前影响",
-    "problem.currentImpact.unknown": "当前影响尚未确认"
+    "problem.currentImpact.unknown": "当前影响尚未确认",
+    "execution.job": "执行",
+    "execution.details": "执行详情",
+    "execution.loadDetail": "读取准确的执行详情",
+    "execution.cancelled": "已取消",
+    "execution.cancellationReason": "取消原因",
+    "execution.cancellationUnrecorded": "未记录",
+    "execution.errorUnrecorded": "未记录错误或中断原因",
+    "execution.legacyPartial": "旧版本未保留原始详情",
+    "execution.unavailable": "无法读取关联的执行",
+    "execution.systemIncident": "无Job关联的系统事件",
+    "execution.problemUnits": "执行 {jobs} · 系统事件 {system} · 不可用执行 {unavailable} · 全部事件 {events}",
+    "execution.historyGrouped": "执行记录（旧版Agent分组）",
+    "execution.changed": "执行内容已更改。请刷新列表。",
+    "execution.systemAndUnavailable": "系统 {system} · 不可用 {unavailable}",
+    "execution.count": "{count}次执行",
+    "execution.cancellationRequestedAt": "取消请求: {time}",
+    "execution.legacyIncidentUnits": "旧版事件数: {events}。无法提供准确的Job总数。"
   },
   "zh-Hant": {
     "problem.history": "失敗記錄",
@@ -2896,7 +2983,24 @@ const translations = {
     "settings.unsupportedModelEfforts": "{model} 不支援 {efforts}，因此不會套用這些推理層級。",
     "problem.currentImpactCount": "目前影響：{count}",
     "problem.currentImpact.confirmed": "已確認目前影響",
-    "problem.currentImpact.unknown": "目前影響尚未確認"
+    "problem.currentImpact.unknown": "目前影響尚未確認",
+    "execution.job": "執行",
+    "execution.details": "執行詳細資訊",
+    "execution.loadDetail": "讀取準確的執行詳細資訊",
+    "execution.cancelled": "已取消",
+    "execution.cancellationReason": "取消原因",
+    "execution.cancellationUnrecorded": "未記錄",
+    "execution.errorUnrecorded": "未記錄錯誤或中斷原因",
+    "execution.legacyPartial": "舊版本未保留原始詳細資訊",
+    "execution.unavailable": "無法讀取關聯的執行",
+    "execution.systemIncident": "無Job關聯的系統事件",
+    "execution.problemUnits": "執行 {jobs} · 系統事件 {system} · 無法查詢執行 {unavailable} · 全部事件 {events}",
+    "execution.historyGrouped": "執行記錄（舊版Agent群組）",
+    "execution.changed": "執行內容已變更。請重新整理清單。",
+    "execution.systemAndUnavailable": "系統 {system} · 無法查詢 {unavailable}",
+    "execution.count": "{count}次執行",
+    "execution.cancellationRequestedAt": "取消請求: {time}",
+    "execution.legacyIncidentUnits": "舊版事件數: {events}。無法提供準確的Job總數。"
   },
   "es": {
     "problem.history": "Historial de fallos",
@@ -3425,7 +3529,24 @@ const translations = {
     "settings.unsupportedModelEfforts": "{model} no admite {efforts}; estos niveles de razonamiento no se aplicarán.",
     "problem.currentImpactCount": "Impacto actual: {count}",
     "problem.currentImpact.confirmed": "Impacto actual confirmado",
-    "problem.currentImpact.unknown": "Impacto actual sin confirmar"
+    "problem.currentImpact.unknown": "Impacto actual sin confirmar",
+    "execution.job": "Ejecución",
+    "execution.details": "Detalles de ejecución",
+    "execution.loadDetail": "Cargar detalles de la ejecución exacta",
+    "execution.cancelled": "Cancelada",
+    "execution.cancellationReason": "Motivo de cancelación",
+    "execution.cancellationUnrecorded": "Sin registrar",
+    "execution.errorUnrecorded": "Motivo de error o interrupción sin registrar",
+    "execution.legacyPartial": "Una versión anterior no conservó el detalle original",
+    "execution.unavailable": "La ejecución vinculada no está disponible",
+    "execution.systemIncident": "Incidente del sistema sin Job",
+    "execution.problemUnits": "Ejecuciones {jobs} · Incidentes del sistema {system} · Ejecuciones no disponibles {unavailable} · Eventos {events}",
+    "execution.historyGrouped": "Historial de ejecución (grupos de Agent antiguos)",
+    "execution.changed": "El contenido de la ejecución cambió. Actualiza la lista.",
+    "execution.systemAndUnavailable": "Sistema {system} · No disponibles {unavailable}",
+    "execution.count": "{count} ejecuciones",
+    "execution.cancellationRequestedAt": "Cancelación solicitada: {time}",
+    "execution.legacyIncidentUnits": "Eventos antiguos: {events}. El total exacto de Jobs no está disponible."
   },
   "fr": {
     "problem.history": "Historique des échecs",
@@ -3954,7 +4075,24 @@ const translations = {
     "settings.unsupportedModelEfforts": "{model} ne prend pas en charge {efforts} ; ces niveaux de raisonnement ne seront pas appliqués.",
     "problem.currentImpactCount": "Impact actuel : {count}",
     "problem.currentImpact.confirmed": "Impact actuel confirmé",
-    "problem.currentImpact.unknown": "Impact actuel non confirmé"
+    "problem.currentImpact.unknown": "Impact actuel non confirmé",
+    "execution.job": "Exécution",
+    "execution.details": "Détails de l’exécution",
+    "execution.loadDetail": "Charger les détails de l’exécution exacte",
+    "execution.cancelled": "Annulée",
+    "execution.cancellationReason": "Motif d’annulation",
+    "execution.cancellationUnrecorded": "Non enregistré",
+    "execution.errorUnrecorded": "Motif d’erreur ou d’interruption non enregistré",
+    "execution.legacyPartial": "Une ancienne version n’a pas conservé les détails originaux",
+    "execution.unavailable": "L’exécution liée est indisponible",
+    "execution.systemIncident": "Incident système sans Job",
+    "execution.problemUnits": "Exécutions {jobs} · Incidents système {system} · Exécutions indisponibles {unavailable} · Événements {events}",
+    "execution.historyGrouped": "Historique des exécutions (anciens groupes d’Agent)",
+    "execution.changed": "Le contenu de l’exécution a changé. Actualisez la liste.",
+    "execution.systemAndUnavailable": "Système {system} · Indisponibles {unavailable}",
+    "execution.count": "{count} exécutions",
+    "execution.cancellationRequestedAt": "Annulation demandée : {time}",
+    "execution.legacyIncidentUnits": "Anciens événements : {events}. Le total exact de Jobs est indisponible."
   },
   "de": {
     "problem.history": "Fehlerverlauf",
@@ -4483,7 +4621,24 @@ const translations = {
     "settings.unsupportedModelEfforts": "{model} unterstützt {efforts} nicht; diese Denkstufen werden nicht angewendet.",
     "problem.currentImpactCount": "Aktuelle Auswirkungen: {count}",
     "problem.currentImpact.confirmed": "Aktuelle Auswirkung bestätigt",
-    "problem.currentImpact.unknown": "Aktuelle Auswirkung unbestätigt"
+    "problem.currentImpact.unknown": "Aktuelle Auswirkung unbestätigt",
+    "execution.job": "Ausführung",
+    "execution.details": "Ausführungsdetails",
+    "execution.loadDetail": "Details der genauen Ausführung laden",
+    "execution.cancelled": "Abgebrochen",
+    "execution.cancellationReason": "Abbruchgrund",
+    "execution.cancellationUnrecorded": "Nicht aufgezeichnet",
+    "execution.errorUnrecorded": "Fehler- oder Unterbrechungsgrund nicht aufgezeichnet",
+    "execution.legacyPartial": "Eine ältere Version hat die ursprünglichen Details nicht gespeichert",
+    "execution.unavailable": "Die verknüpfte Ausführung ist nicht verfügbar",
+    "execution.systemIncident": "Systemereignis ohne Job",
+    "execution.problemUnits": "Ausführungen {jobs} · Systemereignisse {system} · Nicht verfügbare Ausführungen {unavailable} · Ereignisse {events}",
+    "execution.historyGrouped": "Ausführungsverlauf (alte Agent-Gruppen)",
+    "execution.changed": "Der Ausführungsinhalt hat sich geändert. Aktualisiere die Liste.",
+    "execution.systemAndUnavailable": "System {system} · Nicht verfügbar {unavailable}",
+    "execution.count": "{count} Ausführungen",
+    "execution.cancellationRequestedAt": "Abbruch angefordert: {time}",
+    "execution.legacyIncidentUnits": "Alte Ereignisse: {events}. Die genaue Job-Gesamtzahl ist nicht verfügbar."
   },
   "pt": {
     "problem.history": "Histórico de falhas",
@@ -5012,7 +5167,24 @@ const translations = {
     "settings.unsupportedModelEfforts": "{model} não suporta {efforts}; esses níveis de raciocínio não serão aplicados.",
     "problem.currentImpactCount": "Impacto atual: {count}",
     "problem.currentImpact.confirmed": "Impacto atual confirmado",
-    "problem.currentImpact.unknown": "Impacto atual não confirmado"
+    "problem.currentImpact.unknown": "Impacto atual não confirmado",
+    "execution.job": "Execução",
+    "execution.details": "Detalhes da execução",
+    "execution.loadDetail": "Carregar detalhes da execução exata",
+    "execution.cancelled": "Cancelada",
+    "execution.cancellationReason": "Motivo do cancelamento",
+    "execution.cancellationUnrecorded": "Não registrado",
+    "execution.errorUnrecorded": "Motivo de erro ou interrupção não registrado",
+    "execution.legacyPartial": "Uma versão anterior não preservou os detalhes originais",
+    "execution.unavailable": "A execução vinculada está indisponível",
+    "execution.systemIncident": "Incidente do sistema sem Job",
+    "execution.problemUnits": "Execuções {jobs} · Incidentes do sistema {system} · Execuções indisponíveis {unavailable} · Eventos {events}",
+    "execution.historyGrouped": "Histórico de execução (grupos antigos de Agent)",
+    "execution.changed": "O conteúdo da execução mudou. Atualize a lista.",
+    "execution.systemAndUnavailable": "Sistema {system} · Indisponíveis {unavailable}",
+    "execution.count": "{count} execuções",
+    "execution.cancellationRequestedAt": "Cancelamento solicitado: {time}",
+    "execution.legacyIncidentUnits": "Eventos antigos: {events}. O total exato de Jobs está indisponível."
   }
 } as const;
 

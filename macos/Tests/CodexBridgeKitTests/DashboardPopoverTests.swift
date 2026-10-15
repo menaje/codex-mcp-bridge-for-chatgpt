@@ -310,7 +310,7 @@ final class DashboardPopoverTests: XCTestCase {
     }
 
     @MainActor
-    func testStatusPanelsUseTheLoadedSnapshotAndHistoryLoadsOnlyWhenOpened() async throws {
+    func testPreparedSnapshotPaneChangesDoNotRequestHistory() async throws {
         let f = try PopoverFixture(); defer { f.remove() }
         let model = f.model
         await model.refreshDashboard(enrich: false)
@@ -326,7 +326,7 @@ final class DashboardPopoverTests: XCTestCase {
         XCTAssertEqual(f.state.dashboardReadCount, initialReads)
         await model.toggleDashboardPanel(.history)
         XCTAssertEqual(model.dashboardPanel, .history)
-        XCTAssertEqual(f.state.dashboardReadCount, initialReads + 1)
+        XCTAssertEqual(f.state.dashboardReadCount, initialReads)
         XCTAssertEqual(model.dashboard?.historyIncluded, true)
         await model.toggleDashboardPanel(.history)
         XCTAssertNil(model.dashboardPanel)
@@ -477,6 +477,194 @@ final class DashboardPopoverTests: XCTestCase {
         XCTAssertEqual(f.state.historyReadCount, 2)
     }
 
+    func testReviewBackgroundIndependentPageFromActualServerWithTwentySixProgressJobs() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let snapshot = try JSONDecoder().decode(DashboardSnapshot.self,
+            from: Data(contentsOf: root.appendingPathComponent("test/fixtures/background-independent-page.json")))
+        XCTAssertEqual(snapshot.activeRows.count, 12)
+        XCTAssertEqual(snapshot.counts.progressJobCount, 26)
+        XCTAssertEqual(snapshot.counts.executionCount, 1)
+        XCTAssertEqual(snapshot.backgroundPagination?.total, 1)
+        XCTAssertEqual(DashboardPanel.background.rows(in: snapshot).count, 1)
+        XCTAssertEqual(DashboardPanel.running.rows(in: snapshot).count, 12)
+    }
+
+    @MainActor
+    func testReviewBackgroundPagingWorksAndRejectsChangedOrLatePages() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        var first = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("test/fixtures/background-independent-page.json"))) as? [String: Any])
+        let original = (first["backgroundRows"] as! [[String: Any]])[0]
+        func owner(_ i: Int) -> [String: Any] { var row = original; row["rowKey"] = String(format: "%032d", i + 1); row["conversationKey"] = "owner-scope-\(i)"; return row }
+        let initial = (0..<12).map(owner)
+        first["backgroundRows"] = initial; first["backgroundRevision"] = String(repeating: "a", count: 64)
+        first["backgroundPagination"] = ["offset": 0, "limit": 12, "returned": 12, "total": 13, "returnedConversations": 12, "conversationTotal": 13, "hasNext": true, "hasPrevious": false]
+        var counts = first["counts"] as! [String: Any]; counts["backgroundProcesses"] = 13; counts["backgroundProcessAgents"] = 13; first["counts"] = counts
+        var next = first; next["backgroundRows"] = [owner(12)]
+        next["backgroundPagination"] = ["offset": 12, "limit": 12, "returned": 1, "total": 13, "returnedConversations": 1, "conversationTotal": 13, "hasNext": false, "hasPrevious": true]
+        func encoded(_ object: [String: Any]) throws -> String { String(data: try JSONSerialization.data(withJSONObject: object), encoding: .utf8)! }
+        f.state.dashboardJSON = try encoded(first); f.state.backgroundPageJSON = try encoded(next)
+        await f.model.refreshDashboard(enrich: false); await f.model.loadMoreBackground()
+        XCTAssertEqual(f.model.dashboard?.backgroundRows?.count, 13)
+        XCTAssertEqual(f.model.dashboard?.backgroundPagination?.hasNext, false)
+        XCTAssertEqual(f.state.backgroundPageOffsets, [12])
+        XCTAssertEqual(f.model.dashboard?.activeRows.count, 12)
+        XCTAssertEqual(f.model.dashboard?.terminalRows.count, 1)
+
+        await f.model.refreshDashboard(enrich: false)
+        next["backgroundRevision"] = String(repeating: "b", count: 64); f.state.backgroundPageJSON = try encoded(next)
+        let before = f.state.dashboardReadCount
+        await f.model.loadMoreBackground()
+        XCTAssertGreaterThanOrEqual(f.state.dashboardReadCount, before + 2)
+        XCTAssertEqual(f.model.dashboard?.backgroundRows?.count, 12, "Changed owner identities must rebase, not merge")
+
+        next["backgroundRevision"] = first["backgroundRevision"]
+        f.state.backgroundPageJSON = try encoded(next); f.state.backgroundPageDelay = 0.1
+        let beforeLate = f.state.dashboardReadCount
+        let pending = Task { await f.model.loadMoreBackground() }
+        while f.state.dashboardReadCount == beforeLate { await Task.yield() }
+        await f.model.refreshDashboard(enrich: false); await pending.value
+        XCTAssertEqual(f.model.dashboard?.backgroundRows?.count, 12, "A late page cannot cross a newer snapshot generation")
+    }
+
+    func testReviewCompletedJobUsesOneCurrentBackgroundOwnerFromServerProjection() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let snapshot = try JSONDecoder().decode(DashboardSnapshot.self,
+            from: Data(contentsOf: root.appendingPathComponent("test/fixtures/terminal-background-projection.json")))
+        XCTAssertEqual(snapshot.counts.backgroundProcesses, 1)
+        XCTAssertEqual(snapshot.counts.progressJobCount, 0)
+        XCTAssertEqual(snapshot.counts.executionCount, 1)
+        XCTAssertEqual(snapshot.terminalRows.count, 1)
+        XCTAssertEqual(snapshot.terminalRows.first?.status, "completed")
+        XCTAssertEqual(snapshot.terminalRows.first?.backgroundProcessCount, 0)
+        XCTAssertEqual(DashboardPanel.background.rows(in: snapshot).count, 1)
+        XCTAssertEqual(DashboardPanel.history.rows(in: snapshot).count, 1)
+        // Identity cannot be reduced to a name or Activity heading.
+        let original = try XCTUnwrap(DashboardPanel.background.rows(in: snapshot).first)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(original)) as? [String: Any])
+        object["rowKey"] = String(repeating: "b", count: 32); object["conversationKey"] = "another-scope"
+        let distinct = try JSONDecoder().decode(DashboardRow.self, from: JSONSerialization.data(withJSONObject: object))
+        var twoOwners = snapshot; twoOwners.activeRows.append(distinct)
+        XCTAssertEqual(DashboardPanel.background.rows(in: twoOwners).count, 2)
+    }
+
+    @MainActor
+    func testReviewBackgroundIncludesAnActiveJobOutsideTheTerminalStatusPage() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.jobsContract = true; f.state.rowCount = 1
+        await f.model.refreshDashboard(enrich: false)
+        var snapshot = try XCTUnwrap(f.model.dashboard)
+        let original = try XCTUnwrap(snapshot.activeRows.first)
+        var activeObject = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(original)) as? [String: Any])
+        activeObject["backgroundProcessCount"] = 1
+        let active = try JSONDecoder().decode(DashboardRow.self, from: JSONSerialization.data(withJSONObject: activeObject))
+        snapshot.activeRows = [active]; snapshot.terminalRows = []; snapshot.statusRows = []
+        XCTAssertEqual(DashboardPanel.background.rows(in: snapshot).map { $0.jobId }, [active.jobId])
+    }
+
+    @MainActor
+    func testReviewProblemOnlyExpiryRepaintsWithoutSuccessfulRefresh() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.jobsContract = true; f.state.rowCount = 1
+        let start = ISO8601DateFormatter().date(from: "2026-09-11T00:00:00Z")!
+        var clock = start
+        f.model.dashboardHistoryNow = { clock }
+        await f.model.refreshDashboard(enrich: false)
+        let snapshot = try XCTUnwrap(f.model.dashboard)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) as? [String: Any])
+        var failed = try XCTUnwrap((object["problems"] as? [String: Any])?["rows"] as? [[String: Any]]).first!
+        var row = failed["row"] as! [String: Any], turn = row["latestTurn"] as! [String: Any]
+        let ended = start.addingTimeInterval(-30 * 86400 + 1)
+        turn["endedAt"] = ISO8601DateFormatter().string(from: ended); turn["summary"] = "Expiring preview"; turn["error"] = "Expiring failure"
+        row["latestTurn"] = turn; row["nextExpiryAt"] = ISO8601DateFormatter().string(from: start.addingTimeInterval(1))
+        failed["row"] = row; failed["occurredAt"] = turn["endedAt"]; failed["reason"] = "Expiring failure"
+        var problems = object["problems"] as! [String: Any]; problems["rows"] = [failed]; object["problems"] = problems
+        object["statusRows"] = []; object["activeRows"] = []; object["terminalRows"] = Array(repeating: (object["terminalRows"] as! [[String: Any]])[0], count: 12)
+        f.state.dashboardJSON = String(data: try JSONSerialization.data(withJSONObject: object), encoding: .utf8)
+        await f.model.refreshDashboard(enrich: false)
+        let before = f.state.dashboardReadCount
+        var invalidations = 0
+        let subscription = f.model.objectWillChange.sink { invalidations += 1 }
+        f.state.failDashboard = true; clock = start.addingTimeInterval(1)
+        try await Task.sleep(for: .milliseconds(1200))
+        XCTAssertGreaterThan(f.state.dashboardReadCount, before)
+        XCTAssertGreaterThan(invalidations, 0, "A local expiry must invalidate views even without a replacement snapshot")
+        XCTAssertNotNil(f.model.dashboard, "A failed refresh retains the other valid summaries")
+        XCTAssertNotNil(f.model.dashboardErrorMessage)
+        XCTAssertTrue(f.model.dashboardRetainedProblems(try XCTUnwrap(f.model.dashboard?.problems)).isEmpty,
+            "Expired problem preview and duplicated error must disappear from the rendered collection")
+        XCTAssertEqual(DashboardPanel.history.rows(in: try XCTUnwrap(f.model.dashboard), now: clock).count, 12)
+        subscription.cancel()
+    }
+
+    @MainActor
+    func testJobModeCountsEveryTerminalJobAndSeparatesSystemEvents() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.jobsContract = true; f.state.rowCount = 1
+        f.model.dashboardHistoryNow = { ISO8601DateFormatter().date(from: "2026-09-11T00:00:00Z")! }
+        await f.model.refreshDashboard(enrich: false)
+        let snapshot = try XCTUnwrap(f.model.dashboard)
+        XCTAssertEqual(snapshot.historyModeApplied, "jobs")
+        XCTAssertEqual(snapshot.counts.executionCount, 4)
+        XCTAssertEqual(snapshot.counts.progressJobCount, 1)
+        XCTAssertEqual(DashboardPanel.history.rows(in: snapshot, now: f.model.dashboardHistoryNow()).count, 4)
+        XCTAssertEqual(DashboardPanel.running.rows(in: snapshot).count, 1, "Progress consumes its own Job page, not the terminal status page")
+        XCTAssertEqual(Set(snapshot.terminalRows.map { $0.status }), ["completed", "failed", "interrupted", "cancelled"])
+        XCTAssertEqual(Set(snapshot.terminalRows.map { $0.agentId }).count, 1)
+        XCTAssertEqual(Set(snapshot.terminalRows.map { $0.jobId }).count, 4)
+        XCTAssertTrue(snapshot.terminalRows.allSatisfy { $0.historyCount == 0 })
+        XCTAssertEqual(snapshot.problems?.affectedExecutionCount, 2)
+        XCTAssertEqual(snapshot.problems?.systemIncidentCount, 1)
+        XCTAssertEqual(snapshot.problems?.unavailableExecutionCount, 1)
+        XCTAssertEqual(snapshot.problems?.incidentCount, 5)
+        XCTAssertEqual(ExecutionRecordPresentation.statusKey("cancelled"), "execution.cancelled")
+        XCTAssertEqual(snapshot.terminalRows.last?.reasonAvailability, "unrecorded")
+    }
+
+    @MainActor
+    func testExactJobDetailCacheSurvivesRefreshAndRejectsExpiryAndLateReplies() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.jobsContract = true; f.state.rowCount = 1
+        var now = ISO8601DateFormatter().date(from: "2026-09-11T00:00:00Z")!
+        f.model.dashboardHistoryNow = { now }
+        await f.model.refreshDashboard(enrich: false)
+        let row = try XCTUnwrap(f.model.dashboard?.terminalRows.first)
+        let target = try XCTUnwrap(f.model.executionTarget(row: row))
+        XCTAssertEqual(f.state.exactDetailReads, 0, "Prepared summary rendering never loads exact detail")
+        await f.model.loadExecutionDetail(target)
+        await f.model.loadExecutionDetail(target)
+        XCTAssertEqual(f.state.exactDetailReads, 1)
+        XCTAssertEqual(f.model.executionDetail(target)?.jobId, "job-completed")
+        await f.model.refreshDashboard(enrich: false)
+        XCTAssertNotNil(f.model.executionDetail(target))
+        now = ISO8601DateFormatter().date(from: "2026-10-10T00:00:00Z")!
+        XCTAssertNil(f.model.executionDetail(target))
+        now = ISO8601DateFormatter().date(from: "2026-09-11T00:00:00Z")!
+        let other = try XCTUnwrap(f.model.dashboard?.terminalRows[1])
+        let delayed = try XCTUnwrap(f.model.executionTarget(row: other))
+        f.state.exactDetailDelay = 0.1
+        let request = Task { await f.model.loadExecutionDetail(delayed) }
+        while f.state.exactDetailReads < 2 { await Task.yield() }
+        await f.model.refreshDashboard(enrich: false)
+        await request.value
+        XCTAssertNil(f.model.executionDetail(delayed), "A late exact reply cannot replace a newer snapshot")
+        XCTAssertEqual(f.state.exactDetailReads, 2)
+    }
+
+    @MainActor
+    func testUnsupportedJobModeRetriesLegacyWithoutInventingJobIdentity() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.rowCount = 1; f.state.rejectJobsMode = true
+        await f.model.refreshDashboard(enrich: false)
+        XCTAssertEqual(f.state.dashboardReadCount, 2)
+        XCTAssertNil(f.model.dashboard?.historyModeApplied)
+        XCTAssertNil(f.model.dashboard?.statusRows?.first?.jobId)
+        XCTAssertEqual(f.state.exactDetailReads, 0)
+    }
+
     @MainActor
     func testStaleDeferredHistoryRefreshesInsteadOfAttachingToANewExecution() async throws {
         let f = try PopoverFixture(); defer { f.remove() }
@@ -520,13 +708,11 @@ final class DashboardPopoverTests: XCTestCase {
         let model = f.model
         await model.refreshDashboard(enrich: false)
         f.state.delayHistory = true
-        let history = Task { await model.toggleDashboardPanel(.history) }
-        for _ in 0..<50 {
-            if model.dashboardDetailLoading { break }
-            try await Task.sleep(for: .milliseconds(5))
-        }
+        await model.toggleDashboardPanel(.history)
+        let history = Task { await model.refreshDashboard(enrich: false) }
+        while f.state.dashboardReadCount < 2 { await Task.yield() }
         XCTAssertEqual(model.dashboard?.counts.running, 3)
-        XCTAssertTrue(model.dashboardDetailLoading)
+        XCTAssertFalse(model.dashboardDetailLoading, "Prepared rows remain visible while an explicit refresh is pending")
         await model.toggleDashboardPanel(.problems)
         await history.value
         XCTAssertEqual(model.dashboardPanel, .problems)
@@ -939,6 +1125,16 @@ private final class PopoverReplyState: @unchecked Sendable {
     private var maximumEnrichments = 0
     private var completedEnrichments = 0
     private var dashboardReads = 0
+    private var backgroundPageJSONValue: String?
+    private var backgroundPageDelayValue: TimeInterval = 0
+    private var backgroundOffsets: [Int] = []
+    var backgroundPageJSON: String? { get { lock.withLock { backgroundPageJSONValue } } set { lock.withLock { backgroundPageJSONValue = newValue } } }
+    var backgroundPageDelay: TimeInterval { get { lock.withLock { backgroundPageDelayValue } } set { lock.withLock { backgroundPageDelayValue = newValue } } }
+    var backgroundPageOffsets: [Int] { lock.withLock { backgroundOffsets } }
+    private var dashboardJSONValue: String?
+    private var failDashboardValue = false
+    var dashboardJSON: String? { get { lock.withLock { dashboardJSONValue } } set { lock.withLock { dashboardJSONValue = newValue } } }
+    var failDashboard: Bool { get { lock.withLock { failDashboardValue } } set { lock.withLock { failDashboardValue = newValue } } }
     private var slowHistory = false
     private var pagedHistoryValue = false
     private var runningRowCount = 0
@@ -974,6 +1170,26 @@ private final class PopoverReplyState: @unchecked Sendable {
     var delayHistory: Bool { get { lock.withLock { slowHistory } } set { lock.withLock { slowHistory = newValue } } }
     var pagedHistory: Bool { get { lock.withLock { pagedHistoryValue } } set { lock.withLock { pagedHistoryValue = newValue } } }
     var pagedDetail = false
+    var jobsContract = false
+    var rejectJobsMode = false
+    var exactDetailDelay: TimeInterval = 0
+    private var exactReads = 0
+    var exactDetailReads: Int { lock.withLock { exactReads } }
+    private func executionFixture(_ status: String) -> [String: Any] {
+        let id = "job-" + status
+        let turn: [String: Any] = ["jobId": id, "scopeId": "11111111-1111-4111-8111-111111111111", "activityId": "shared-activity", "agentId": "shared-agent",
+            "executionKey": String(repeating: "a", count: 32), "executionRevision": String(repeating: "e", count: 64),
+            "executionName": "Run " + id, "summary": "Stored " + status, "error": NSNull(), "reasonAvailability": "unrecorded",
+            "activityTitle": "Shared activity", "status": status, "startedAt": "2026-09-09T00:00:00Z",
+            "updatedAt": "2026-09-10T00:00:00Z", "endedAt": "2026-09-10T00:00:00Z", "durationMs": 86400000]
+        return ["rowKey": id, "jobId": id, "scopeId": "11111111-1111-4111-8111-111111111111", "activityId": "shared-activity", "agentId": "shared-agent",
+            "executionRevision": String(repeating: "e", count: 64), "policyRevision": String(repeating: "c", count: 64), "executionName": "Run " + id,
+            "summary": "Stored " + status, "error": NSNull(), "reasonAvailability": "unrecorded",
+            "activityKey": "shared-activity", "conversationKey": "shared-conversation", "sessionAlias": "Shared scope",
+            "bucket": status == "input-required" ? "active" : "recent", "projectKey": "window-project", "projectName": "Job fixture", "agentName": "Same Agent",
+            "activityTitle": "Shared activity", "status": status, "createdAt": "2026-09-09T00:00:00Z", "updatedAt": "2026-09-10T00:00:00Z",
+            "elapsedMs": 86400000, "backgroundProcessCount": 0, "latestTurn": turn, "history": [], "historyCount": 0]
+    }
     var expiryScenario = false
     private var rowExpiryValue: String?
     private var detailExpiryValue: String?
@@ -1034,6 +1250,13 @@ private final class PopoverReplyState: @unchecked Sendable {
             let filter = params["statusFilter"] as? String ?? "all"
             let includeHistory = params["includeHistory"] as? Bool ?? true
             lock.withLock { dashboardReads += 1 }
+            if failDashboard { return NativeFixtureReply(body: #"{"error":{"code":-32000,"message":"FIXTURE_DASHBOARD_UNAVAILABLE"}}"#) }
+            if let offset = params["backgroundOffset"] as? Int, let body = backgroundPageJSON {
+                lock.withLock { backgroundOffsets.append(offset) }
+                return NativeFixtureReply(body: "{\"result\":\(body)}", delay: backgroundPageDelay)
+            }
+            if let dashboardJSON { return NativeFixtureReply(body: "{\"result\":\(dashboardJSON)}") }
+            if rejectJobsMode && params["historyMode"] != nil { return NativeFixtureReply(body: #"{"error":{"code":-32602,"message":"Unrecognized key: historyMode"}}"#) }
             if params["enrich"] as? Bool == true {
                 let paused = lock.withLock {
                     enrichmentReads += 1
@@ -1105,10 +1328,41 @@ private final class PopoverReplyState: @unchecked Sendable {
                 snapshot["pagination"] = ["active": page,
                     "terminal": historyPage(terminalOffset), "idle": historyPage(idleOffset)]
             }
+            if jobsContract && params["historyMode"] as? String == "jobs" {
+                let terminal = ["completed", "failed", "interrupted", "cancelled"].map(executionFixture)
+                let active = executionFixture("input-required")
+                snapshot["executionContractVersion"] = 2; snapshot["historyModeApplied"] = "jobs"
+                counts["executionCount"] = 4; counts["progressJobCount"] = 1; snapshot["counts"] = counts
+                snapshot["activeRows"] = [active]; snapshot["terminalRows"] = terminal; snapshot["statusRows"] = terminal
+                snapshot["historyIncluded"] = true
+                var terminalPage = page; terminalPage["total"] = 4; terminalPage["returned"] = 4
+                snapshot["pagination"] = ["active": page, "terminal": terminalPage, "idle": page]
+                snapshot["historyPolicy"] = ["retentionDays": 30, "issueAttentionDays": 7, "lastCleanupCount": 0, "totalRemoved": 0, "policyRevision": String(repeating: "c", count: 64)]
+                func problem(_ index: Int, _ row: [String: Any], _ availability: String) -> [String: Any] {
+                    ["problemKey": "event-\(index)", "revision": "revision", "kind": row["status"] as? String == "cancelled" ? "cancelled" : "failed",
+                     "source": "execution", "review": "automatic", "observedAt": "2026-09-10T00:00:00Z", "occurredAt": "2026-09-10T00:00:00Z",
+                     "canAcknowledge": false, "canUnacknowledge": false, "canRecheck": false, "canRetryStop": false,
+                     "jobId": availability == "not-linked" ? NSNull() : row["jobId"]!, "scopeId": row["scopeId"]!,
+                     "executionRevision": String(repeating: "e", count: 64), "executionAvailability": availability, "reasonAvailability": "unrecorded", "row": row]
+                }
+                snapshot["problems"] = ["query": ["review": "pending", "kind": "all", "offset": 0], "revision": "events",
+                    "incidentCount": 5, "affectedExecutionCount": 2, "systemIncidentCount": 1, "unavailableExecutionCount": 1,
+                    "pendingCount": 0, "acknowledgedCount": 0, "reviewableCount": 0,
+                    "rows": [problem(0, terminal[1], "retained"), problem(1, terminal[1], "retained"), problem(2, terminal[3], "retained"), problem(3, active, "not-linked"), problem(4, terminal[2], "unavailable")],
+                    "page": ["offset": 0, "limit": 12, "total": 5, "returned": 5, "hasPrevious": false, "hasNext": false]]
+            }
             if let usageContext { snapshot["usageContext"] = usageContext }
             if let usageAccount { snapshot["codexAccount"] = usageAccount }
             if let usageWeekly { snapshot["weeklyUsage"] = usageWeekly }
             result = snapshot
+        case "dashboard.execution-detail":
+            lock.withLock { exactReads += 1 }
+            let job = params["jobId"] as? String ?? ""
+            let status = job.replacingOccurrences(of: "job-", with: "")
+            let row = executionFixture(status)
+            result = ["kind": "dashboard-execution", "jobId": job, "scopeId": params["scopeId"]!,
+                "executionRevision": String(repeating: "e", count: 64), "policyRevision": String(repeating: "c", count: 64), "execution": row["latestTurn"]!]
+            delay = exactDetailDelay
         case "dashboard.history-detail":
             lock.withLock { historyReads += 1 }
             let rowKey = params["rowKey"] as? String ?? ""

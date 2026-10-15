@@ -1,4 +1,5 @@
 import { dashboardHistoryActionInput } from "./workHistory.js";
+import { dashboardExecutionDetailInputSchema } from "./tools.js";
 import { problemActionSchema, problemQuerySchema } from "./problemReview.js";
 import {
   chmodSync,
@@ -58,6 +59,7 @@ const requestSchema = z.strictObject({
     "changes.wait",
     "dashboard.snapshot",
     "dashboard.history-detail",
+    "dashboard.execution-detail",
     "dashboard.history",
     "dashboard.problem",
     "thread.handoff",
@@ -97,9 +99,11 @@ const requestSchema = z.strictObject({
 
 const emptyParamsSchema = z.strictObject({});
 const dashboardParamsSchema = z.strictObject({
+  historyMode:z.enum(["agents","jobs"]).optional(),
   problems: problemQuerySchema.optional(),
   statusFilter: z.enum(DASHBOARD_STATUS_FILTERS).optional(),
   limit: z.number().int().min(5).max(50).optional(),
+  backgroundOffset:z.number().int().min(0).max(1_000_000_000).optional(),
   statusOffset:z.number().int().min(0).max(1_000_000_000).optional(),
   terminalOffset: z.number().int().min(0).max(1_000_000_000).optional(),
   idleOffset: z.number().int().min(0).max(1_000_000_000).optional(),
@@ -310,6 +314,7 @@ export const REMOTE_COMPANION_APPLICATION_METHODS = new Set([
   "companion.hello",
   "dashboard.snapshot",
   "dashboard.history-detail",
+    "dashboard.execution-detail",
   "dashboard.history",
   "dashboard.problem",
   "settings.snapshot",
@@ -586,6 +591,10 @@ async function dispatchRequest(
       if (!applicationService.historyAction) throw new Error("HISTORY_UNSUPPORTED");
       return applicationService.historyAction(dashboardHistoryActionInput.parse(request.params));
     }
+    case "dashboard.execution-detail": {
+      if (!applicationService.dashboardExecutionDetail) throw new Error("DASHBOARD_EXECUTION_DETAIL_UNSUPPORTED");
+      return applicationService.dashboardExecutionDetail(dashboardExecutionDetailInputSchema.parse(request.params),{signal,deadlineAt:Date.now()+4500});
+    }
     case "dashboard.history-detail": {
       if (!applicationService.dashboardHistoryDetail) {
         throw new Error("DASHBOARD_HISTORY_DETAIL_UNSUPPORTED");
@@ -609,11 +618,13 @@ async function dispatchRequest(
     case "dashboard.snapshot": {
       const params = dashboardParamsSchema.parse(request.params || {});
       return applicationService.dashboardSnapshot({
+        historyMode:params.historyMode,
         problems: params.problems,
         statusFilter: params.statusFilter,
         limit: params.limit,
         terminalOffset: params.terminalOffset,
         statusOffset:params.statusOffset,
+        backgroundOffset:params.backgroundOffset,
         idleOffset: params.idleOffset,
         // Older native clients omit enrich and retain their prior all-in-one
         // snapshot behavior. The current client sends false explicitly.

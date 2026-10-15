@@ -5,6 +5,10 @@ public let bridgeSkillTransportEnvelopeMaxBytes = 72 * 1_024 * 1_024
 public let bridgeSkillPackageCompressedMaxBytes = 16 * 1_024 * 1_024
 
 public protocol BridgeApplicationClient: Sendable {
+    func dashboardJobs(limit: Int, terminalOffset: Int, statusOffset: Int?, enrich: Bool, statusFilter: DashboardStatusFilter, problems: ProblemQuery, includeHistory: Bool) async throws -> DashboardSnapshot
+    func dashboardExecutionDetail(_ target: DashboardExecutionDetailParameters) async throws -> DashboardExecutionDetail
+
+    func dashboardBackgroundPage(limit: Int, offset: Int) async throws -> DashboardSnapshot
     func dashboardStatusPage(limit: Int, offset: Int) async throws -> DashboardSnapshot
     func dashboard(
         limit: Int,
@@ -55,6 +59,17 @@ public protocol BridgeApplicationClient: Sendable {
 }
 
 public extension BridgeApplicationClient {
+    func dashboardBackgroundPage(limit: Int, offset: Int) async throws -> DashboardSnapshot {
+        throw NSError(domain: "DASHBOARD_BACKGROUND_UNAVAILABLE", code: 1)
+    }
+
+    func dashboardJobs(limit: Int, terminalOffset: Int, statusOffset: Int? = nil, enrich: Bool, statusFilter: DashboardStatusFilter, problems: ProblemQuery, includeHistory: Bool) async throws -> DashboardSnapshot {
+        try await dashboardWithProblems(limit: limit, terminalOffset: terminalOffset, idleOffset: 0, enrich: enrich, statusFilter: statusFilter, problems: problems, includeHistory: includeHistory)
+    }
+    func dashboardExecutionDetail(_ target: DashboardExecutionDetailParameters) async throws -> DashboardExecutionDetail {
+        throw NSError(domain: "DASHBOARD_EXECUTION_DETAIL_UNSUPPORTED", code: 1)
+    }
+
     func dashboardStatusPage(limit: Int, offset: Int) async throws -> DashboardSnapshot {
         throw NSError(domain: "DASHBOARD_STATUS_PAGING_UNSUPPORTED", code: 1)
     }

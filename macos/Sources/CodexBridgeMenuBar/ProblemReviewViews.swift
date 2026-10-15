@@ -10,16 +10,34 @@ struct DashboardProblemsSection: View {
             HStack {
                 Text("dashboard.problems").font(.headline)
                 Spacer()
-                Text(problems.incidentCount ?? problems.page.total, format: .number)
+                Text(problems.affectedExecutionCount ?? problems.incidentCount ?? problems.page.total, format: .number)
                     .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
             Text(BridgeAppLocalization.format("problem.currentImpactCount", locale: model.interfaceLocale, problems.currentImpactCount ?? 0))
                 .font(.caption2).foregroundStyle(.secondary)
-            if problems.rows.isEmpty { Text("problem.historyEmpty").font(.caption).foregroundStyle(.secondary) }
-            ForEach(problems.rows) { problem in
+            if problems.affectedExecutionCount != nil {
+            Text(BridgeAppLocalization.format("execution.problemUnits", locale: model.interfaceLocale,
+                problems.affectedExecutionCount ?? 0, problems.systemIncidentCount ?? 0,
+                problems.unavailableExecutionCount ?? 0, problems.incidentCount ?? problems.page.total))
+                .font(.caption2).foregroundStyle(.secondary)
+            } else {
+                Text(BridgeAppLocalization.format("execution.legacyIncidentUnits", locale: model.interfaceLocale,
+                    problems.incidentCount ?? problems.page.total)).font(.caption2).foregroundStyle(.secondary)
+            }
+            if model.dashboardRetainedProblems(problems).isEmpty { Text("problem.historyEmpty").font(.caption).foregroundStyle(.secondary) }
+            ForEach(model.dashboardRetainedProblems(problems)) { problem in
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(problem.row.activityTitle ?? problem.row.agentName).font(.caption.weight(.semibold))
-                    Text(DisplayFormat.relative(problem.occurredAt ?? problem.observedAt, locale: model.interfaceLocale))
+                    if problem.jobId != nil {
+                        ExecutionRecordView(row: problem.row, problem: problem)
+                    } else if problem.source == "execution" && problem.executionAvailability == nil {
+                        Text(BridgeAppLocalization.string("execution.historyGrouped", locale: model.interfaceLocale)).font(.caption2)
+                        ExecutionRecordView(row: problem.row, problem: problem)
+                    } else {
+                        Text(BridgeAppLocalization.string("execution.systemIncident", locale: model.interfaceLocale)).font(.caption.weight(.semibold))
+                        Text([problem.row.activityTitle, problem.row.agentName].compactMap { $0 }.joined(separator: " · "))
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                    Text(DisplayFormat.dateTime(problem.occurredAt ?? problem.observedAt, locale: model.interfaceLocale))
                         .font(.caption2).foregroundStyle(.secondary)
                     if let impact = problem.currentImpact, impact != "none" {
                         Text(BridgeAppLocalization.string(impact == "confirmed" ? "problem.currentImpact.confirmed" : "problem.currentImpact.unknown", locale: model.interfaceLocale))
@@ -28,8 +46,8 @@ struct DashboardProblemsSection: View {
                     if let reason = problem.reason { Text(reason).font(.caption).textSelection(.enabled) }
                     if let automatic = problem.automatic { AutomaticRecoveryView(recovery: automatic) }
                     ForEach(Array((problem.progress ?? []).enumerated()), id: \.offset) { _, progress in
-                        Text([DisplayFormat.relative(progress.at, locale: model.interfaceLocale), progress.step,
-                              progress.reason, progress.evidence].compactMap { $0 }.joined(separator: " · "))
+                        Text([DisplayFormat.dateTime(progress.at, locale: model.interfaceLocale), progress.step,
+                              progress.attempt.map { "#" + String($0) }, progress.reason, progress.evidence].compactMap { $0 }.joined(separator: " · "))
                             .font(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
                     }
                 }.padding(10).frame(maxWidth: .infinity, alignment: .leading)

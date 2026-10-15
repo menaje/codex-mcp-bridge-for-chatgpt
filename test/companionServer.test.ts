@@ -461,6 +461,26 @@ describe("native companion server", () => {
     })).toHaveProperty("error");
   });
 
+  it("forwards Job mode and independent Background offsets through the native read boundary", async () => {
+    const socketPath=temporarySocketPath(),applicationService=fakeApplicationService();
+    servers.push(await startBridgeCompanionServer({socketPath,applicationService}));
+    expect(await request(socketPath,{jsonrpc:"2.0",id:"background-page",method:"dashboard.snapshot",params:{historyMode:"jobs",backgroundOffset:12,enrich:true,includeHistory:false}})).toHaveProperty("result");
+    expect(applicationService.dashboardSnapshot).toHaveBeenCalledWith(expect.objectContaining({historyMode:"jobs",backgroundOffset:12,inspectRuntime:true,includeHistory:false}),expect.objectContaining({signal:expect.any(AbortSignal)}));
+    expect(await request(socketPath,{jsonrpc:"2.0",id:"bad-background-page",method:"dashboard.snapshot",params:{historyMode:"jobs",backgroundOffset:-1}})).toHaveProperty("error");
+    expect(applicationService.dashboardSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("validates and forwards exact scoped execution detail through the private read API", async () => {
+    const socketPath=temporarySocketPath(),applicationService=fakeApplicationService();
+    applicationService.dashboardExecutionDetail=vi.fn(async args=>({kind:"dashboard-execution",...args,executionRevision:"a".repeat(64),policyRevision:"b".repeat(64),nextExpiryAt:null,execution:{}} as any));
+    servers.push(await startBridgeCompanionServer({socketPath,applicationService}));
+    const params={scopeId:"11111111-1111-4111-8111-111111111111",jobId:"legacy-execution",expectedExecutionRevision:"a".repeat(64)};
+    expect(await request(socketPath,{jsonrpc:"2.0",id:1,method:"dashboard.execution-detail",params})).toMatchObject({result:{kind:"dashboard-execution",jobId:params.jobId}});
+    expect(applicationService.dashboardExecutionDetail).toHaveBeenCalledWith(params,expect.objectContaining({signal:expect.any(AbortSignal),deadlineAt:expect.any(Number)}));
+    expect(await request(socketPath,{jsonrpc:"2.0",id:2,method:"dashboard.execution-detail",params:{...params,scopeId:"wrong"}})).toHaveProperty("error");
+    expect(applicationService.dashboardExecutionDetail).toHaveBeenCalledTimes(1);
+  });
+
   it("loads a bounded model description history page through the settings read capability", async () => {
     const socketPath = temporarySocketPath(), applicationService = fakeApplicationService();
     servers.push(await startBridgeCompanionServer({ socketPath, applicationService }));

@@ -337,6 +337,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var dashboardHistoryDetails: [String: DashboardHistoryDetail] = [:]
     @Published private(set) var dashboardHistoryLoading = Set<String>()
     @Published private(set) var loadingMoreRunning = false
+    @Published private(set) var loadingMoreBackground = false
     @Published private(set) var dashboardHistoryErrors: [String: String] = [:]
     private var dashboardHistoryRequestIDs: [String: UUID] = [:]
     private var dashboardHistoryContexts: [String: String] = [:]
@@ -366,18 +367,45 @@ final class AppModel: ObservableObject {
         return date <= dashboardHistoryNow()
     }
 
+    func dashboardRetainedProblems(_ problems: DashboardProblems) -> [DashboardProblem] {
+        guard let days = dashboard?.historyPolicy?.retentionDays, days > 0 else { return problems.rows }
+        let formatter = ISO8601DateFormatter(); formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let cutoff = dashboardHistoryNow().addingTimeInterval(-Double(days) * 86_400)
+        return problems.rows.filter { problem in
+            guard let at = formatter.date(from: problem.occurredAt ?? problem.observedAt) ?? ISO8601DateFormatter().date(from: problem.occurredAt ?? problem.observedAt) else { return false }
+            return at > cutoff
+        }
+    }
+
     private func scheduleDashboardHistoryExpiry(_ snapshot: DashboardSnapshot) {
         dashboardHistoryExpiryTask?.cancel()
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let rows = (snapshot.statusRows ?? []) + snapshot.activeRows + snapshot.terminalRows
-        let dates = rows.compactMap { $0.nextExpiryAt }.compactMap { formatter.date(from: $0) ?? ISO8601DateFormatter().date(from: $0) }
+        let rows = (snapshot.statusRows ?? []) + snapshot.activeRows + snapshot.terminalRows + (snapshot.backgroundRows ?? []) + (snapshot.problems?.rows.map { $0.row } ?? [])
+        let dates = rows.compactMap { row -> Date? in
+            if let raw = row.nextExpiryAt { return formatter.date(from: raw) ?? ISO8601DateFormatter().date(from: raw) }
+            guard snapshot.historyModeApplied == "jobs", let raw = row.latestTurn?.endedAt,
+                  let days = snapshot.historyPolicy?.retentionDays, days > 0,
+                  let ended = formatter.date(from: raw) ?? ISO8601DateFormatter().date(from: raw) else { return nil }
+            return ended.addingTimeInterval(Double(days) * 86_400)
+        }
         let now = dashboardHistoryNow()
-        guard let date = dates.min(), date > now else { return }
+        let incidentDates = (snapshot.problems?.rows ?? []).compactMap { problem -> Date? in
+            guard let days = snapshot.historyPolicy?.retentionDays, days > 0,
+                  let at = formatter.date(from: problem.occurredAt ?? problem.observedAt) ?? ISO8601DateFormatter().date(from: problem.occurredAt ?? problem.observedAt) else { return nil }
+            return at.addingTimeInterval(Double(days) * 86_400)
+        }
+        guard let date = (dates + incidentDates).filter({ $0 > now }).min() else { return }
         let delay = min(date.timeIntervalSince(now), 86_400)
         dashboardHistoryExpiryTask = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(max(0.01, delay))) } catch { return }
-            guard let self, self.bridgeConnected else { return }
+            guard let self else { return }
+            self.dashboardHistoryExpiryTask = nil
+            self.objectWillChange.send()
+            self.dashboardHistoryDetails = self.dashboardHistoryDetails.filter { !self.dashboardHistoryExpired(at: $0.value.nextExpiryAt) }
+            self.executionDetails = self.executionDetails.filter { $0.value.expiresAt.map { $0 > self.dashboardHistoryNow() } ?? true }
+            if let current = self.dashboard { self.scheduleDashboardHistoryExpiry(current) }
+            guard self.bridgeConnected else { return }
             await self.refreshDashboard(enrich: false)
         }
     }
@@ -1804,6 +1832,85 @@ final class AppModel: ObservableObject {
         }
     }
 
+    struct ExecutionTarget: Equatable {
+        let scopeId: String
+        let jobId: String
+        let revision: String
+        let policy: String
+        let project: String
+        let expiresAt: Date?
+    }
+    private struct ExecutionCache {
+        let response: DashboardExecutionDetail
+        let expiresAt: Date?
+    }
+    @Published private var executionDetails: [String: ExecutionCache] = [:]
+    @Published private(set) var executionDetailLoading = Set<String>()
+    @Published private var executionDetailErrors: [String: String] = [:]
+    private var executionDetailRequests: [String: UUID] = [:]
+
+    private func executionCacheKey(_ target: ExecutionTarget) -> String {
+        [String(connectionGeneration), dashboard?.scope ?? "", dashboard?.historyModeApplied ?? "agents", dashboard?.historyPolicy?.policyRevision ?? target.policy,
+         target.project, target.scopeId, target.jobId, target.revision, target.policy].joined(separator: "\u{0}")
+    }
+    func executionTarget(row: DashboardRow, problem: DashboardProblem? = nil) -> ExecutionTarget? {
+        guard problem?.executionAvailability != "unavailable", problem?.executionAvailability != "not-linked",
+              let scope = problem?.scopeId ?? row.scopeId,
+              let job = problem?.jobId ?? row.jobId,
+              let revision = problem?.executionRevision ?? row.executionRevision,
+              let policy = row.policyRevision ?? dashboard?.historyPolicy?.policyRevision else { return nil }
+        var expiry: Date?
+        if let raw = row.latestTurn?.endedAt, let days = dashboard?.historyPolicy?.retentionDays, days > 0 {
+            let formatter = ISO8601DateFormatter(); formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            expiry = (formatter.date(from: raw) ?? ISO8601DateFormatter().date(from: raw))?.addingTimeInterval(Double(days) * 86_400)
+        }
+        return ExecutionTarget(scopeId: scope, jobId: job, revision: revision, policy: policy, project: row.projectKey, expiresAt: expiry)
+    }
+    func executionDetail(_ target: ExecutionTarget?) -> DashboardExecutionDetail? {
+        guard let target, let cached = executionDetails[executionCacheKey(target)],
+              cached.expiresAt.map({ $0 > dashboardHistoryNow() }) ?? true,
+              target.expiresAt.map({ $0 > dashboardHistoryNow() }) ?? true else { return nil }
+        return cached.response
+    }
+    func executionDetailError(_ target: ExecutionTarget?) -> String? {
+        target.flatMap { executionDetailErrors[executionCacheKey($0)] }
+    }
+    func executionDetailIsLoading(_ target: ExecutionTarget?) -> Bool {
+        target.map { executionDetailLoading.contains(executionCacheKey($0)) } ?? false
+    }
+    func loadExecutionDetail(_ target: ExecutionTarget) async {
+        guard bridgeConnected, executionDetail(target) == nil,
+              target.expiresAt.map({ $0 > dashboardHistoryNow() }) ?? true else { return }
+        let key = executionCacheKey(target)
+        guard !executionDetailLoading.contains(key) else { return }
+        let request = UUID(), generation = dashboardRequestGeneration
+        executionDetailRequests[key] = request; executionDetailLoading.insert(key); executionDetailErrors.removeValue(forKey: key)
+        defer {
+            if executionDetailRequests[key] == request {
+                executionDetailRequests.removeValue(forKey: key); executionDetailLoading.remove(key)
+            }
+        }
+        do {
+            let client = try await bridgeClient()
+            let detail = try await client.dashboardExecutionDetail(.init(scopeId: target.scopeId, jobId: target.jobId,
+                expectedExecutionRevision: target.revision, expectedPolicyRevision: target.policy))
+            guard !Task.isCancelled, generation == dashboardRequestGeneration, key == executionCacheKey(target),
+                  executionDetailRequests[key] == request,
+                  detail.kind == "dashboard-execution", detail.scopeId == target.scopeId, detail.jobId == target.jobId,
+                  detail.executionRevision == target.revision, detail.policyRevision == target.policy,
+                  detail.execution.jobId == target.jobId, detail.execution.scopeId == target.scopeId,
+                  detail.execution.executionRevision == target.revision,
+                  target.expiresAt.map({ $0 > dashboardHistoryNow() }) ?? true else { return }
+            if executionDetails.count >= 128 { executionDetails.removeValue(forKey: executionDetails.keys.first!) }
+            executionDetails[key] = ExecutionCache(response: detail, expiresAt: target.expiresAt)
+        } catch {
+            guard generation == dashboardRequestGeneration, key == executionCacheKey(target),
+                  executionDetailRequests[key] == request,
+                  target.expiresAt.map({ $0 > dashboardHistoryNow() }) ?? true else { return }
+            executionDetailErrors[key] = localizedErrorDescription(error)
+        }
+    }
+
     func acknowledgeHistory(_ row: DashboardRow) async {
         return
     }
@@ -1888,6 +1995,8 @@ final class AppModel: ObservableObject {
     }
 
     private func clearDashboardHistoryDetails() {
+        executionDetails.removeAll(); executionDetailRequests.removeAll()
+        executionDetailLoading.removeAll(); executionDetailErrors.removeAll()
         dashboardHistoryExpiryTask?.cancel()
         dashboardHistoryContexts.removeAll()
         dashboardHistoryRequestIDs.removeAll()
@@ -1938,13 +2047,13 @@ final class AppModel: ObservableObject {
         deferredDashboardRead = nil
         let connection = connectionGeneration
         let filter = DashboardStatusFilter.all
-        let includeHistory = dashboardPanel == .history
+        let includeHistory = true
         do {
             let client = try await bridgeClient()
-            let next = try await client.dashboardWithProblems(
+            let next = try await client.dashboardJobs(
                 limit: pageLimit,
                 terminalOffset: 0,
-                idleOffset: 0,
+                statusOffset: nil,
                 enrich: false,
                 statusFilter: filter,
                 problems: self.dashboardProblemQuery,
@@ -1996,7 +2105,7 @@ final class AppModel: ObservableObject {
             generation: generation, terminalOffset: terminalOffset, idleOffset: idleOffset,
             bucket: bucket, requestedOffset: requestedOffset,
             filter: .all, problems: dashboardProblemQuery,
-            includeHistory: dashboardPanel == .history
+            includeHistory: true
         )
         dashboardEnrichmentRequest = request
         // Closing a socket cancels only the native wait, not the server's runtime
@@ -2022,10 +2131,10 @@ final class AppModel: ObservableObject {
                 var inspectRuntime = true
                 while !Task.isCancelled, connection == self.connectionGeneration {
                     do {
-                        let enriched = try await client.dashboardWithProblems(
+                        let enriched = try await client.dashboardJobs(
                             limit: self.pageLimit,
                             terminalOffset: target.terminalOffset,
-                            idleOffset: target.idleOffset,
+                            statusOffset: nil,
                             enrich: inspectRuntime,
                             statusFilter: target.filter,
                             problems: target.problems,
@@ -3064,19 +3173,48 @@ final class AppModel: ObservableObject {
         return receipt
     }
 
+    func loadMoreBackground() async {
+        guard !loadingMoreBackground, let current = dashboard, let page = current.backgroundPagination,
+              page.hasNext else { return }
+        let connection = connectionGeneration, generation = dashboardRequestGeneration, revision = current.backgroundRevision
+        loadingMoreBackground = true
+        defer { loadingMoreBackground = false }
+        do {
+            let client = try await bridgeClient()
+            let next = try await client.dashboardBackgroundPage(limit: pageLimit, offset: page.offset + page.returned)
+            guard connection == connectionGeneration, generation == dashboardRequestGeneration,
+                  dashboard?.backgroundRevision == revision else { return }
+            guard let rows = next.backgroundRows, let nextPage = next.backgroundPagination else { throw NSError(domain: "DASHBOARD_BACKGROUND_UNAVAILABLE", code: 1) }
+            guard next.backgroundRevision == revision, next.historyPolicy?.policyRevision == current.historyPolicy?.policyRevision else { await refreshDashboard(enrich: true); return }
+            var merged = dashboard ?? current, seen = Set<String>()
+            merged.backgroundRows = ((merged.backgroundRows ?? []) + rows).filter { seen.insert($0.rowKey).inserted }
+            merged.backgroundPagination = nextPage
+            dashboard = merged
+        } catch {
+            guard connection == connectionGeneration, generation == dashboardRequestGeneration else { return }
+            dashboardErrorMessage = localizedErrorDescription(error)
+        }
+    }
+
     func loadMoreRunning() async {
         guard !loadingMoreRunning, let current = dashboard,
-              let page = current.statusPagination, page.hasNext else { return }
+              let page = current.historyModeApplied == "jobs" ? current.pagination.active : current.statusPagination,
+              page.hasNext, current.historyModeApplied != "jobs" || DashboardPanel.running.rows(in: current).count < (current.counts.progressJobCount ?? 0) else { return }
         let connection = connectionGeneration, generation = dashboardRequestGeneration
         loadingMoreRunning = true
         defer { loadingMoreRunning = false }
         do {
             let client = try await bridgeClient()
-            let next = try await client.dashboardStatusPage(limit: pageLimit, offset: DashboardPanel.running.rows(in: current).count)
+            let next = try await client.dashboardJobs(limit: pageLimit, terminalOffset: 0, statusOffset: DashboardPanel.running.rows(in: current).count, enrich: false, statusFilter: .running, problems: dashboardProblemQuery, includeHistory: false)
             guard connection == connectionGeneration, generation == dashboardRequestGeneration else { return }
             var merged = current
             var seen = Set<String>()
-            merged.statusRows = ((current.statusRows ?? []) + (next.statusRows ?? [])).filter { seen.insert($0.rowKey).inserted }
+            if current.historyModeApplied == "jobs" {
+                merged.activeRows = (current.activeRows + next.activeRows).filter { seen.insert($0.rowKey).inserted }
+                merged.pagination.active = next.pagination.active
+            } else {
+                merged.statusRows = ((current.statusRows ?? []) + (next.statusRows ?? [])).filter { seen.insert($0.rowKey).inserted }
+            }
             merged.statusPagination = next.statusPagination
             merged.statusRowsComplete = next.statusPagination?.hasNext == false
             dashboard = merged
@@ -3085,16 +3223,19 @@ final class AppModel: ObservableObject {
 
     func loadMoreRecent() async {
         guard let current = dashboard, current.pagination.terminal.hasNext else { return }
+        if current.historyModeApplied == "jobs" && current.terminalRows.contains(where: {
+            !ExecutionRecordPresentation.retained($0, days: current.historyPolicy?.retentionDays, now: dashboardHistoryNow())
+        }) { await refreshDashboard(enrich: false); return }
         let nextOffset = current.pagination.terminal.offset + current.pagination.terminal.returned
         dashboardRequestGeneration += 1
         let generation = dashboardRequestGeneration
         let connection = connectionGeneration
         _ = await performDashboard {
             let client = try await self.bridgeClient()
-            let page = try await client.dashboardWithProblems(
+            let page = try await client.dashboardJobs(
                 limit: self.pageLimit,
                 terminalOffset: nextOffset,
-                idleOffset: 0,
+                statusOffset: nil,
                 enrich: false,
                 statusFilter: .all,
                 problems: self.dashboardProblemQuery,
@@ -3102,6 +3243,9 @@ final class AppModel: ObservableObject {
             )
             guard connection == self.connectionGeneration,
                   generation == self.dashboardRequestGeneration else { return }
+            if current.historyModeApplied == "jobs" && (current.counts.executionCount != page.counts.executionCount || current.historyPolicy?.policyRevision != page.historyPolicy?.policyRevision) {
+                await self.refreshDashboard(enrich: false); return
+            }
             let merged = current.mergingPage(
                 page,
                 bucket: .terminal,

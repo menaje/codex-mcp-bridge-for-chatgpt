@@ -303,6 +303,14 @@ export type DashboardRetainedJobSummary = {
   };
 };
 
+export type DashboardExecutionRecord = {
+  jobId:string;scopeId:string;activityId:string;agentId:string|null;status:string;createdAt:number;updatedAt:number;
+  endedAt:number|null;endedAtSource:string|null;detailAvailability:string;activityTitle:string;agentName:string|null;
+  projectId:string|null;projectName:string|null;executionName:string|null;summary:string|null;error:string|null;
+  cancellationReason:string|null;cancellationSource:string|null;cancellationRequestedAt:number|null;
+  cancellationTargetKind:string|null;cancellationStatus:string|null;blockingKind:string|null;
+};
+
 export type ArchivedJobAdmissionReceipt = {
   managementEnded?: boolean;
   jobId: string;
@@ -1517,6 +1525,61 @@ export class BridgeStateStore {
 
   listDashboardRetainedJobsByIds(jobIds: readonly string[], scopeId?: string): DashboardRetainedJobSummary[] {
     return this.dashboardReadModel.archivedByIds(jobIds, scopeId).map(decodeDashboardArchivedJob);
+  }
+
+  dashboardExecutionCounts(scopeId?:string,now=Date.now()):{progress:number;terminal:number;completed:number;failed:number;interrupted:number;cancelled:number} {
+    const rows=this.database.prepare(`SELECT status,COUNT(*) n FROM jobs j WHERE ${retainedJobSql(this.appliedHistoryPolicy(now),"j")}
+      ${scopeId ? "AND scope_id=?" : ""} GROUP BY status`).all(...(scopeId ? [scopeId] : [])) as Array<{status:string;n:number}>;
+    const n=new Map(rows.map(x=>[x.status,x.n]));
+    return {progress:["running","terminating","termination-failed"].reduce((s,k)=>s+(n.get(k)||0),0),
+      terminal:["completed","failed","interrupted","cancelled"].reduce((s,k)=>s+(n.get(k)||0),0),
+      completed:n.get("completed")||0,failed:n.get("failed")||0,interrupted:n.get("interrupted")||0,cancelled:n.get("cancelled")||0};
+  }
+
+  dashboardExecutionPage(scopeId:string|undefined,statuses:readonly string[],offset:number,limit:number,now=Date.now()):{jobs:DashboardExecutionRecord[];total:number;offset:number;scopeIds:string[]} {
+    const predicate=`${retainedJobSql(this.appliedHistoryPolicy(now),"j")} AND j.status IN (${statuses.map(()=>"?").join(",")}) ${scopeId ? "AND j.scope_id=?" : ""}`;
+    const args=[...statuses,...(scopeId ? [scopeId] : [])];
+    const total=(this.database.prepare(`SELECT COUNT(*) n FROM jobs j WHERE ${predicate}`).get(...args) as {n:number}).n;
+    const bounded=Math.max(1,Math.min(50,limit)),at=Math.min(Math.max(0,offset),total ? Math.floor((total-1)/bounded)*bounded : 0);
+    const ids=this.database.prepare(`SELECT job_id FROM jobs j WHERE ${predicate} ORDER BY created_at DESC,job_id DESC LIMIT ? OFFSET ?`).all(...args,bounded,at) as Array<{job_id:string}>;
+    const scopes=this.database.prepare(`SELECT DISTINCT j.scope_id FROM jobs j WHERE ${predicate}`).all(...args) as Array<{scope_id:string}>;
+    return {jobs:this.dashboardExecutionRecords(ids.map(x=>x.job_id),scopeId,now),total,offset:at,scopeIds:scopes.map(x=>x.scope_id)};
+  }
+
+  dashboardExecutionRecords(jobIds:readonly string[],scopeId?:string,now=Date.now()):DashboardExecutionRecord[] {
+    const result:DashboardExecutionRecord[]=[],ids=[...new Set(jobIds)];
+    for(let offset=0;offset<ids.length;offset+=500) {
+      const part=ids.slice(offset,offset+500);
+      result.push(...this.database.prepare(`SELECT j.job_id jobId,j.scope_id scopeId,j.activity_id activityId,j.agent_id agentId,j.status,
+        j.created_at createdAt,j.updated_at updatedAt,j.ended_at endedAt,j.ended_at_source endedAtSource,j.detail_availability detailAvailability,
+        a.title activityTitle,agent.agent_name agentName,a.project_id projectId,p.name projectName,
+        CASE WHEN json_type(j.payload,'$.executionName')='text' THEN json_extract(j.payload,'$.executionName') END executionName,
+        COALESCE(CASE WHEN json_type(j.payload,'$.summary')='text' THEN json_extract(j.payload,'$.summary') END,
+          CASE WHEN json_type(j.summary,'$.display.summary')='text' THEN json_extract(j.summary,'$.display.summary') END) summary,
+        COALESCE(j.problem_summary,json_extract(j.payload,'$.error')) error,
+        c.reason_text cancellationReason,c.source cancellationSource,c.created_at cancellationRequestedAt,c.target_kind cancellationTargetKind,COALESCE(ci.status,
+          (SELECT i.status FROM cancellation_intents i WHERE i.scope_id=j.scope_id AND i.target_job_id=j.job_id
+           AND i.created_at<=COALESCE(j.ended_at,j.updated_at) ORDER BY i.created_at DESC,i.intent_id DESC LIMIT 1),c.status) cancellationStatus,
+        (SELECT COALESCE(json_extract(i.payload,'$.kind'),'unknown-input') FROM job_interactions i WHERE i.job_id=j.job_id AND i.is_blocking=1 ORDER BY position LIMIT 1) blockingKind
+        FROM jobs j JOIN activities a ON a.activity_id=j.activity_id LEFT JOIN agents agent ON agent.agent_id=j.agent_id LEFT JOIN projects p ON p.project_id=a.project_id
+        LEFT JOIN cancellation_intents ci ON ci.intent_id=j.cancellation_intent_id
+        LEFT JOIN cancellation_operations c ON c.scope_id=j.scope_id AND c.request_id=COALESCE(ci.request_id,
+          (SELECT i.request_id FROM cancellation_intents i WHERE i.scope_id=j.scope_id AND i.target_job_id=j.job_id
+           AND i.created_at<=COALESCE(j.ended_at,j.updated_at) ORDER BY i.created_at DESC,i.intent_id DESC LIMIT 1))
+        WHERE j.job_id IN (${part.map(()=>"?").join(",")}) AND ${retainedJobSql(this.appliedHistoryPolicy(now),"j")}
+          ${scopeId ? "AND j.scope_id=?" : ""} ORDER BY j.created_at DESC,j.job_id DESC`).all(...part,...(scopeId ? [scopeId] : [])) as DashboardExecutionRecord[]);
+    }
+    return result;
+  }
+
+  dashboardExecutionScopes(jobIds:readonly string[],scopeId?:string,now=Date.now()):Map<string,string> {
+    const result=new Map<string,string>(),ids=[...new Set(jobIds)];
+    for(let offset=0;offset<ids.length;offset+=500) {
+      const part=ids.slice(offset,offset+500);
+      for(const row of this.database.prepare(`SELECT job_id,scope_id FROM jobs j WHERE job_id IN (${part.map(()=>"?").join(",")})
+        AND ${retainedJobSql(this.appliedHistoryPolicy(now),"j")} ${scopeId ? "AND scope_id=?" : ""}`).all(...part,...(scopeId ? [scopeId] : [])) as Array<{job_id:string;scope_id:string}>) result.set(row.job_id,row.scope_id);
+    }
+    return result;
   }
 
   dashboardJobSummaries(jobIds: readonly string[]): Map<string, Record<string, unknown>> {
@@ -6521,7 +6584,7 @@ export class BridgeStateStore {
         JSON.stringify(jobPayloadForStorage(job as Record<string, unknown>))
       );
     if (nowTerminal) this.database.prepare(`UPDATE jobs SET ended_at=COALESCE(ended_at,?),
-      ended_at_source=COALESCE(ended_at_source,'recorded'),problem_summary=? WHERE job_id=?`).run(job.updatedAt,(job as Record<string,unknown>).error ?? null,job.jobId);
+      ended_at_source=COALESCE(ended_at_source,'recorded'),problem_summary=COALESCE(?,problem_summary) WHERE job_id=?`).run(job.updatedAt,(job as Record<string,unknown>).error ?? null,job.jobId);
     if (nowTerminal && !wasTerminal && terminalVersion) {
       this.insertJobCompletionDelivery({
         jobId: job.jobId,
