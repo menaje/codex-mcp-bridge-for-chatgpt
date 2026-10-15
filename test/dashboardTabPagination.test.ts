@@ -19,7 +19,7 @@ function context(first=snapshot()){
   elements:{message:{textContent:'',classList:{remove:()=>{}}}},t:{},unwrap:(x:any)=>x,rowIdentity:(r:any)=>r.rowKey,problemQuery:()=>({kind:'all',offset:0}),jobRowVisible:()=>true,
   mergeRows:(a:any[],b:any[])=>[...new Map([...a,...b].map(r=>[r.rowKey,r])).values()],reconcileDashboardPageCaches,
   setBusy:(value:boolean)=>{c.busy=value},setLocale:()=>{},effectiveLocaleTag:()=>'',paint:(next:any)=>{c.view=next},queueEnrichment:()=>{},showError:(e:any)=>{throw e}});
- for(const name of ['hasMoreRunning','retainExpandedPages','render','reload','loadMoreRunning','loadMore','loadMoreProblems'])define(c,name);
+ for(const name of ['hasMoreRunning','refreshExpandedRunning','retainExpandedPages','render','reload','loadMoreRunning','loadMore','loadMoreProblems'])define(c,name);
  return c;
 }
 function define(c:vm.Context,name:string){const source=DASHBOARD_CARD_HTML.split('\n').find(x=>new RegExp('^\\s*(async )?function '+name+'\\(').test(x));expect(source).toBeDefined();vm.runInContext(source!,c)}
@@ -35,10 +35,10 @@ describe('Dashboard tab pagination consistency',()=>{
   expect(calls).toHaveLength(2);expect(calls[1].statusOffset??calls[1].terminalOffset).toBe(0);
   const displayed=tab==='running'?c.view.activeRows:c.historyTerminalRows;expect(ids(displayed)).toEqual(ids(tab==='running'?fresh.activeRows:fresh.terminalRows));expect(displayed).toHaveLength(12);
  });
- it('preserves expanded rows and offsets in all three tabs on unchanged first-page refresh',()=>{
+ it('refreshes expanded running rows and preserves offsets in all three tabs',async()=>{
   const first=snapshot(12);first.activeRows=rows('R');first.terminalRows=rows('H');first.problems.rows=rows('H').map(r=>({problemKey:r.jobId,jobId:r.jobId,row:r}));
-  const c=context(first),next=snapshot();next.activeRows[0]={...next.activeRows[0],status:'input-required'};c.next=next;vm.runInContext('render(next)',c);
-  expect(ids(c.view.activeRows)).toEqual(ids(rows('R')));expect(c.view.activeRows[0].status).toBe('input-required');expect(c.view.pagination.active.offset).toBe(12);
+  const c=context(first),next=snapshot(),tail=snapshot(12);next.activeRows[0]={...next.activeRows[0],status:'input-required'};tail.activeRows[11].status='approval-required';c.dashboardRead=async(args:any)=>args.statusOffset?tail:next;await vm.runInContext('reload(true,false)',c);
+  expect(ids(c.view.activeRows)).toEqual(ids(rows('R')));expect(c.view.activeRows[0].status).toBe('input-required');expect(c.view.pagination.active.offset).toBe(12);expect(c.view.activeRows[23].status).toBe('approval-required');
   expect(ids(c.historyTerminalRows)).toEqual(ids(rows('H')));expect(c.terminalPagination.offset).toBe(12);expect(c.view.problems.rows).toHaveLength(24);expect(c.view.problems.page.offset).toBe(12);
  });
  it('drops stale expanded history even when the changed history body was omitted',()=>{
@@ -68,6 +68,32 @@ describe('Dashboard tab pagination consistency',()=>{
   vm.runInContext('queueEnrichment({scope:selectedScope,statusFilter:"all"},hydrationEpoch)',c);
   await vm.runInContext('loadMoreRunning()',c);expect(c.view.activeRows).toHaveLength(24);
   resolve(snapshot());for(let i=0;i<10&&c.enrichmentRunning;i++)await new Promise(r=>setTimeout(r,0));
-  expect(c.enrichmentRunning).toBe(false);expect(calls).toHaveLength(3);expect(ids(c.view.activeRows)).toEqual(ids(rows('R')));expect(c.view.pagination.active.hasNext).toBe(false);
+  expect(c.enrichmentRunning).toBe(false);expect(calls).toHaveLength(4);expect(ids(c.view.activeRows)).toEqual(ids(rows('R')));expect(c.view.pagination.active.hasNext).toBe(false);
+ });
+});
+
+describe('Review regressions for enrichment and retained observations',()=>{
+ it.each(['before','after'])('applies a pending inspection finishing %s the problem page',async timing=>{
+  const c=context();c.selectedStatus='problems';define(c,'queueEnrichment');define(c,'drainEnrichment');
+  let finishInspection!:(value:any)=>void,finishPage!:(value:any)=>void;let inspected=false;const calls:any[]=[];
+  const observed=()=>({...snapshot(),backgroundRows:[row('background')],weeklyUsage:{marker:'fresh'}});
+  c.dashboardRead=(args:any)=>{calls.push(args);if(args.enrich)return new Promise(r=>{finishInspection=value=>{inspected=true;r(value)}});if(args.problems?.offset)return new Promise(r=>finishPage=r);return Promise.resolve(inspected?observed():snapshot())};
+  vm.runInContext('queueEnrichment({scope:selectedScope,statusFilter:"all"},hydrationEpoch)',c);
+  const more=vm.runInContext('loadMoreProblems()',c);
+  if(timing==='before'){finishInspection(observed());await new Promise(r=>setTimeout(r,0))}
+  finishPage(snapshot(12));await more;
+  if(timing==='after')finishInspection(observed());
+  for(let i=0;i<20&&c.enrichmentRunning;i++)await new Promise(r=>setTimeout(r,0));
+  expect(c.view.problems.rows).toHaveLength(24);expect(c.view.backgroundRows[0].rowKey).toBe('background');expect(c.view.weeklyUsage.marker).toBe('fresh');expect(calls.filter(x=>x.enrich)).toHaveLength(1);expect(c.enrichmentRunning).toBe(false);
+ });
+ it('discards an old tail when membership changes during expanded running refresh',async()=>{
+  const first=snapshot(12);first.activeRows=rows('R');const c=context(first);let reads=0;
+  c.dashboardRead=async(args:any)=>{reads++;const value=snapshot(args.statusOffset||0);if(reads>1){value.progressRevision='progress-b';value.activeRows=args.statusOffset?rows('R').slice(11,23):[row('R25'),...rows('R').slice(0,11)]}return value};
+  await vm.runInContext('reload(true,false)',c);expect(reads).toBe(3);expect(c.view.activeRows).toHaveLength(12);expect(c.view.activeRows[0].jobId).toBe('R25');expect(c.view.pagination.active.offset).toBe(0);
+ });
+ it('does not apply an expanded refresh after the scope changed during a tail read',async()=>{
+  const first=snapshot(12);first.activeRows=rows('R');const c=context(first);let finish!:(value:any)=>void;
+  c.dashboardRead=(args:any)=>args.statusOffset?new Promise(r=>finish=r):Promise.resolve(snapshot());
+  const pending=vm.runInContext('reload(true,false)',c);await new Promise(r=>setTimeout(r,0));c.hydrationEpoch++;c.view={scope:'replacement'};finish(snapshot(12));await pending;expect(c.view.scope).toBe('replacement');
  });
 });

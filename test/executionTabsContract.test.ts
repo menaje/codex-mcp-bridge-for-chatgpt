@@ -108,6 +108,22 @@ describe('Job-unit execution tabs and read-only exact detail',()=>{
    const global=await f.service().dashboardSnapshot({...query,scopeId:undefined});expect(global.progressRevision).not.toBe(first.progressRevision);
   }finally{await f.close();}
  });
+ it('refreshes blocking interactions and progress outside the first expanded running page',async()=>{
+  const f=fixture();try {
+   const seeded=Array.from({length:24},(_,i)=>f.seed('running',0,{createdAt:now-i*1000}));
+   const args={...query,limit:12},first=await f.service().dashboardSnapshot(args),tail=await f.service().dashboardSnapshot({...args,statusFilter:'running',statusOffset:12});
+   const previous={...first,activeRows:[...first.activeRows,...tail.activeRows],pagination:{...first.pagination,active:tail.pagination.active}};
+   const target=seeded.find(job=>job.jobId===tail.activeRows.at(-1)!.jobId)!;
+   f.writer.upsertJob({...target,version:2,updatedAt:now+1,summary:'Updated progress after expansion',pendingInteractions:[{interactionId:'new-question',isBlocking:true,kind:'user-input'}]});
+   const fresh=await f.service().dashboardSnapshot(args);expect(fresh.progressRevision).toBe(first.progressRevision);
+   const c=vm.createContext({mounted:true,hydrationEpoch:1,PAGE_LIMIT:12,previous,fresh,unwrap:(x:any)=>x,mergeRows:(a:any[],b:any[])=>[...new Map([...a,...b].map(r=>[r.rowKey,r])).values()],
+    dashboardRead:(request:any)=>f.service().dashboardSnapshot({...args,statusFilter:request.statusFilter,statusOffset:request.statusOffset,includeHistory:request.includeHistory})});
+   const source=DASHBOARD_CARD_HTML.split('\n').find(line=>/^\s*async function refreshExpandedRunning\(/.test(line));expect(source).toBeDefined();vm.runInContext(source!,c);
+   const refreshed=await vm.runInContext('refreshExpandedRunning(fresh,previous,{},1)',c);
+   expect(refreshed.activeRows).toHaveLength(24);expect(refreshed.pagination.active.offset).toBe(12);
+   expect(refreshed.activeRows.find((row:any)=>row.jobId===target.jobId)).toMatchObject({status:'input-required',summary:'Updated progress after expansion'});
+  }finally{await f.close();}
+ });
  it('orders history by immutable end time across pages while progress keeps newest starts first',async()=>{
   const f=fixture();try {
    const minute=60000;

@@ -59,6 +59,43 @@ public protocol BridgeApplicationClient: Sendable {
 }
 
 public extension BridgeApplicationClient {
+    /// Refresh the running rows the user has already expanded. A collection
+    /// revision proves membership, not the freshness of individual observations.
+    func refreshingExpandedRunning(_ first: DashboardSnapshot, from previous: DashboardSnapshot?, limit: Int, problems: ProblemQuery) async throws -> DashboardSnapshot {
+        guard let previous, first.historyModeApplied == "jobs", previous.historyModeApplied == "jobs",
+              let revision = first.progressRevision, revision == previous.progressRevision,
+              first.scope == previous.scope,
+              first.historyPolicy?.policyRevision == previous.historyPolicy?.policyRevision,
+              first.historyPolicy?.totalRemoved == previous.historyPolicy?.totalRemoved,
+              first.counts.progressJobCount == previous.counts.progressJobCount,
+              first.pagination.active.offset == 0, previous.pagination.active.offset > 0 else { return first }
+        let desired = previous.activeRows.filter { $0.jobId != nil }.count
+        var result = first
+        while result.activeRows.filter({ $0.jobId != nil }).count < desired, result.pagination.active.hasNext {
+            try Task.checkCancellation()
+            let page = result.pagination.active
+            guard page.returned > 0 else { return first }
+            let offset = page.offset + page.returned
+            let next = try await dashboardJobs(limit: limit, terminalOffset: 0, statusOffset: offset,
+                enrich: false, statusFilter: .running, problems: problems, includeHistory: false)
+            guard next.historyModeApplied == "jobs", next.progressRevision == revision,
+                  next.scope == first.scope, next.counts.progressJobCount == first.counts.progressJobCount,
+                  next.historyPolicy?.policyRevision == first.historyPolicy?.policyRevision,
+                  next.historyPolicy?.totalRemoved == first.historyPolicy?.totalRemoved,
+                  next.pagination.active.offset == offset else {
+                // Membership changed during the read. Start from a coherent first
+                // page instead of joining pages from different collections.
+                return try await dashboardJobs(limit: limit, terminalOffset: first.pagination.terminal.offset,
+                    statusOffset: nil, enrich: false, statusFilter: .all, problems: problems,
+                    includeHistory: first.historyIncluded != false)
+            }
+            var seen = Set(result.activeRows.map(\.rowKey))
+            result.activeRows += next.activeRows.filter { seen.insert($0.rowKey).inserted }
+            result.pagination.active = next.pagination.active
+        }
+        return result
+    }
+
     func dashboardBackgroundPage(limit: Int, offset: Int) async throws -> DashboardSnapshot {
         throw NSError(domain: "DASHBOARD_BACKGROUND_UNAVAILABLE", code: 1)
     }

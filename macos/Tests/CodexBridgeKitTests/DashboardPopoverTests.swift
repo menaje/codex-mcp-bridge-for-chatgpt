@@ -1409,9 +1409,13 @@ private final class PopoverReplyState: @unchecked Sendable {
     var backgroundPageOffsets: [Int] { lock.withLock { backgroundOffsets } }
     private var dashboardJSONValue: String?
     private var dashboardAppendJSONValue: String?
+    private var runningPageJSONValue: String?
+    private var dashboardAppendDelayValue: TimeInterval = 0
     private var dashboardEnrichmentJSONValue: String?
     private var failDashboardValue = false
     var dashboardJSON: String? { get { lock.withLock { dashboardJSONValue } } set { lock.withLock { dashboardJSONValue = newValue } } }
+    var dashboardAppendDelay: TimeInterval { get { lock.withLock { dashboardAppendDelayValue } } set { lock.withLock { dashboardAppendDelayValue = newValue } } }
+    var runningPageJSON: String? { get { lock.withLock { runningPageJSONValue } } set { lock.withLock { runningPageJSONValue = newValue } } }
     var dashboardAppendJSON: String? { get { lock.withLock { dashboardAppendJSONValue } } set { lock.withLock { dashboardAppendJSONValue = newValue } } }
     var dashboardEnrichmentJSON: String? { get { lock.withLock { dashboardEnrichmentJSONValue } } set { lock.withLock { dashboardEnrichmentJSONValue = newValue } } }
     var failDashboard: Bool { get { lock.withLock { failDashboardValue } } set { lock.withLock { failDashboardValue = newValue } } }
@@ -1545,12 +1549,15 @@ private final class PopoverReplyState: @unchecked Sendable {
                 lock.withLock { problemOffsets.append(offset) }
                 return NativeFixtureReply(body: "{\"result\":\(body)}", delay: problemPageDelay)
             }
+            if (params["statusOffset"] as? Int ?? 0) > 0, let body = runningPageJSON {
+                return NativeFixtureReply(body: "{\"result\":\(body)}", delay: dashboardAppendDelay)
+            }
             if params["enrich"] as? Bool == true, let body = dashboardEnrichmentJSON {
                 lock.withLock { enrichmentReads += 1 }
                 return NativeFixtureReply(body: "{\"result\":\(body)}", delay: 0.1)
             }
             if ((params["statusOffset"] as? Int ?? 0) > 0 || (params["terminalOffset"] as? Int ?? 0) > 0), let body = dashboardAppendJSON {
-                return NativeFixtureReply(body: "{\"result\":\(body)}")
+                return NativeFixtureReply(body: "{\"result\":\(body)}", delay: dashboardAppendDelay)
             }
             if let dashboardJSON { return NativeFixtureReply(body: "{\"result\":\(dashboardJSON)}") }
             if rejectJobsMode && params["historyMode"] != nil { return NativeFixtureReply(body: #"{"error":{"code":-32602,"message":"Unrecognized key: historyMode"}}"#) }
@@ -1790,11 +1797,78 @@ extension DashboardPopoverTests {
     }
 
     @MainActor
+    func testExpandedRunningRefreshUpdatesBlockingStateWithoutCollapsing() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        let base = try await tabBase(f)
+        f.state.dashboardJSON = try tabJSON(tabSnapshot(base))
+        await f.model.refreshDashboard(enrich: false)
+        var tail = tabSnapshot(base, activeOffset: 12)
+        f.state.runningPageJSON = try tabJSON(tail)
+        await f.model.loadMoreRunning()
+        var rows = tail["activeRows"] as! [[String: Any]]
+        rows[11]["status"] = "approval-required"
+        rows[11]["summary"] = "Updated progress outside the first page"
+        tail["activeRows"] = rows
+        f.state.runningPageJSON = try tabJSON(tail)
+        await f.model.refreshDashboard(enrich: false)
+        XCTAssertEqual(f.model.dashboard?.activeRows.count, 24)
+        XCTAssertEqual(f.model.dashboard?.activeRows.last?.status, "approval-required")
+        XCTAssertEqual(f.model.dashboard?.activeRows.last?.summary, "Updated progress outside the first page")
+        XCTAssertEqual(f.model.dashboard?.pagination.active.offset, 12)
+        XCTAssertFalse(try XCTUnwrap(f.model.dashboard).hasMoreRunning)
+        // Enrichment and history paging also refresh the expanded running rows.
+        rows[11]["status"] = "input-required"; tail["activeRows"] = rows
+        f.state.runningPageJSON = try tabJSON(tail)
+        f.state.dashboardAppendJSON = try tabJSON(tabSnapshot(base, historyOffset: 12))
+        await f.model.loadMoreRecent()
+        XCTAssertEqual(f.model.dashboard?.activeRows.last?.status, "input-required")
+        XCTAssertEqual(f.model.dashboard?.activeRows.count, 24)
+    }
+
+    @MainActor
+    func testPendingEnrichmentSurvivesMoreBeforeAndAfterPageCompletion() async throws {
+        for panel in ["problems", "running", "history"] {
+            for inspectionFinishesFirst in [false, true] {
+                let f = try PopoverFixture(); defer { f.remove() }
+                let base = try await tabBase(f), first = tabSnapshot(base)
+                var observed = first, counts = first["counts"] as! [String: Any]
+                counts["backgroundProcesses"] = 2; observed["counts"] = counts
+                f.state.dashboardJSON = try tabJSON(first)
+                f.state.dashboardEnrichmentJSON = try tabJSON(observed)
+                f.state.problemPageJSON = try tabJSON(tabSnapshot(base, problemOffset: 12))
+                f.state.problemPageDelay = inspectionFinishesFirst ? 0.3 : 0
+                f.state.dashboardAppendDelay = inspectionFinishesFirst ? 0.3 : 0
+                f.state.runningPageJSON = try tabJSON(tabSnapshot(base, activeOffset: 12))
+                f.state.dashboardAppendJSON = try tabJSON(tabSnapshot(base, historyOffset: 12))
+                await f.model.refreshDashboard(enrich: true)
+                for _ in 0..<100 {
+                    if f.state.enrichmentReadCount > 0 { break }
+                    try await Task.sleep(for: .milliseconds(5))
+                }
+                // The completed inspection's observations are available to cached reads.
+                f.state.dashboardJSON = try tabJSON(observed)
+                if panel == "problems" { await f.model.loadMoreProblems() }
+                else if panel == "running" { await f.model.loadMoreRunning() }
+                else { await f.model.loadMoreRecent() }
+                for _ in 0..<100 {
+                    if f.model.dashboard?.counts.backgroundProcesses == 2 { break }
+                    try await Task.sleep(for: .milliseconds(10))
+                }
+                XCTAssertEqual(f.model.dashboard?.counts.backgroundProcesses, 2, panel)
+                XCTAssertEqual(f.state.enrichmentReadCount, 1, panel)
+                if panel == "problems" { XCTAssertEqual(f.model.dashboard?.problems?.rows.count, 24) }
+                else if panel == "running" { XCTAssertEqual(f.model.dashboard?.activeRows.count, 24) }
+                else { XCTAssertEqual(f.model.dashboard?.terminalRows.count, 24) }
+            }
+        }
+    }
+
+    @MainActor
     func testUnchangedRefreshAndEnrichmentPreserveAllExpandedTabs() async throws {
         let f = try PopoverFixture(); defer { f.remove() }
         let base = try await tabBase(f), first = tabSnapshot(base)
         f.state.dashboardJSON = try tabJSON(first); await f.model.refreshDashboard(enrich: false)
-        f.state.dashboardAppendJSON = try tabJSON(tabSnapshot(base, activeOffset: 12)); await f.model.loadMoreRunning()
+        f.state.runningPageJSON = try tabJSON(tabSnapshot(base, activeOffset: 12)); await f.model.loadMoreRunning()
         f.state.dashboardAppendJSON = try tabJSON(tabSnapshot(base, historyOffset: 12)); await f.model.loadMoreRecent()
         f.state.problemPageJSON = try tabJSON(tabSnapshot(base, problemOffset: 12)); await f.model.loadMoreProblems()
         XCTAssertEqual(f.model.dashboard?.activeRows.count, 24); XCTAssertEqual(f.model.dashboard?.terminalRows.count, 24); XCTAssertEqual(f.model.dashboard?.problems?.rows.count, 24)

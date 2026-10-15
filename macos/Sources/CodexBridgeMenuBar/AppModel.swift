@@ -2038,6 +2038,7 @@ final class AppModel: ObservableObject {
     }
 
     private func readDashboard(enrich: Bool, applyCachedEnrichment: Bool) async {
+        let hadEnrichment = dashboardEnrichmentTask != nil
         dashboardRequestGeneration += 1
         let generation = dashboardRequestGeneration
         guard bridgeConnected else {
@@ -2055,7 +2056,7 @@ final class AppModel: ObservableObject {
         let includeHistory = true
         do {
             let client = try await bridgeClient()
-            let next = try await client.dashboardJobs(
+            let first = try await client.dashboardJobs(
                 limit: pageLimit,
                 terminalOffset: 0,
                 statusOffset: nil,
@@ -2064,6 +2065,9 @@ final class AppModel: ObservableObject {
                 problems: self.dashboardProblemQuery,
                 includeHistory: includeHistory
             )
+            guard !Task.isCancelled, connection == connectionGeneration,
+                  generation == dashboardRequestGeneration else { return }
+            let next = try await client.refreshingExpandedRunning(first, from: dashboard, limit: pageLimit, problems: dashboardProblemQuery)
             guard !Task.isCancelled, connection == connectionGeneration,
                   generation == dashboardRequestGeneration else { return }
             let retained = next.retainingExpandedPages(from: dashboard)
@@ -2083,8 +2087,8 @@ final class AppModel: ObservableObject {
             if applyCachedEnrichment, next.enrichment?.pendingReads != nil {
                 recordDashboardEnrichment(next)
             }
-            if (!applyCachedEnrichment && enrich) || dashboardEnrichmentTask != nil {
-                scheduleDashboardEnrichment(generation: generation, terminalOffset: 0, idleOffset: 0)
+            if (!applyCachedEnrichment && enrich) || hadEnrichment || dashboardEnrichmentTask != nil {
+                scheduleDashboardEnrichment(generation: generation, terminalOffset: 0, idleOffset: 0, inspect: !applyCachedEnrichment && enrich)
             }
         } catch {
             guard !Task.isCancelled, connection == connectionGeneration,
@@ -2105,7 +2109,8 @@ final class AppModel: ObservableObject {
         terminalOffset: Int,
         idleOffset: Int,
         bucket: DashboardAppendBucket? = nil,
-        requestedOffset: Int = 0
+        requestedOffset: Int = 0,
+        inspect: Bool = true
     ) {
         let request = DashboardEnrichmentRequest(
             generation: generation, terminalOffset: terminalOffset, idleOffset: idleOffset,
@@ -2134,10 +2139,10 @@ final class AppModel: ObservableObject {
             do {
                 let client = try await self.bridgeClient()
                 var target = request
-                var inspectRuntime = true
+                var inspectRuntime = inspect
                 while !Task.isCancelled, connection == self.connectionGeneration {
                     do {
-                        let enriched = try await client.dashboardJobs(
+                        let first = try await client.dashboardJobs(
                             limit: self.pageLimit,
                             terminalOffset: target.terminalOffset,
                             statusOffset: nil,
@@ -2154,6 +2159,15 @@ final class AppModel: ObservableObject {
                             // Project those caches onto the newest panel/page. Repeat
                             // if another refresh wins while that projection is in flight.
                             target = latest
+                            inspectRuntime = false
+                            continue
+                        }
+                        let enriched = try await client.refreshingExpandedRunning(first, from: self.dashboard, limit: self.pageLimit, problems: target.problems)
+                        guard !Task.isCancelled, connection == self.connectionGeneration,
+                              let currentRequest = self.dashboardEnrichmentRequest,
+                              currentRequest.generation == self.dashboardRequestGeneration else { return }
+                        if currentRequest.generation != target.generation {
+                            target = currentRequest
                             inspectRuntime = false
                             continue
                         }
@@ -3209,8 +3223,15 @@ final class AppModel: ObservableObject {
 
     func loadMoreRunning() async {
         guard !loadingMoreRunning, let current = dashboard, current.hasMoreRunning else { return }
+        let hadEnrichment = dashboardEnrichmentTask != nil
         dashboardRequestGeneration += 1
         let connection = connectionGeneration, generation = dashboardRequestGeneration
+        defer {
+            if connection == connectionGeneration, generation == dashboardRequestGeneration,
+               hadEnrichment || dashboardEnrichmentTask != nil {
+                scheduleDashboardEnrichment(generation: generation, terminalOffset: 0, idleOffset: 0, inspect: false)
+            }
+        }
         loadingMoreRunning = true
         defer { loadingMoreRunning = false }
         do {
@@ -3237,19 +3258,23 @@ final class AppModel: ObservableObject {
             merged.statusRowsComplete = next.statusPagination?.hasNext == false
             dashboard = merged
             scheduleDashboardHistoryExpiry(merged)
-            if dashboardEnrichmentTask != nil {
-                scheduleDashboardEnrichment(generation: generation, terminalOffset: 0, idleOffset: 0)
-            }
         } catch { dashboardErrorMessage = localizedErrorDescription(error) }
     }
 
     func loadMoreProblems() async {
         guard !loadingMoreProblems, let current = dashboard, let problems = current.problems, problems.page.hasNext else { return }
+        let hadEnrichment = dashboardEnrichmentTask != nil
         let offset = problems.page.offset + problems.page.returned
         var query = dashboardProblemQuery
         query.offset = offset
         dashboardRequestGeneration += 1
         let connection = connectionGeneration, generation = dashboardRequestGeneration
+        defer {
+            if connection == connectionGeneration, generation == dashboardRequestGeneration,
+               hadEnrichment || dashboardEnrichmentTask != nil {
+                scheduleDashboardEnrichment(generation: generation, terminalOffset: 0, idleOffset: 0, inspect: false)
+            }
+        }
         loadingMoreProblems = true
         defer { loadingMoreProblems = false }
         do {
@@ -3276,6 +3301,7 @@ final class AppModel: ObservableObject {
 
     func loadMoreRecent() async {
         guard let current = dashboard, current.pagination.terminal.hasNext else { return }
+        let hadEnrichment = dashboardEnrichmentTask != nil
         if current.historyModeApplied == "jobs" && current.terminalRows.contains(where: {
             !ExecutionRecordPresentation.retained($0, days: current.historyPolicy?.retentionDays, now: dashboardHistoryNow())
         }) { await refreshDashboard(enrich: false); return }
@@ -3283,9 +3309,15 @@ final class AppModel: ObservableObject {
         dashboardRequestGeneration += 1
         let generation = dashboardRequestGeneration
         let connection = connectionGeneration
+        defer {
+            if connection == connectionGeneration, generation == dashboardRequestGeneration,
+               hadEnrichment || dashboardEnrichmentTask != nil {
+                scheduleDashboardEnrichment(generation: generation, terminalOffset: current.historyModeApplied == "jobs" ? 0 : nextOffset, idleOffset: 0, bucket: current.historyModeApplied == "jobs" ? nil : .terminal, requestedOffset: nextOffset, inspect: false)
+            }
+        }
         _ = await performDashboard {
             let client = try await self.bridgeClient()
-            let page = try await client.dashboardJobs(
+            let first = try await client.dashboardJobs(
                 limit: self.pageLimit,
                 terminalOffset: nextOffset,
                 statusOffset: nil,
@@ -3294,6 +3326,7 @@ final class AppModel: ObservableObject {
                 problems: self.dashboardProblemQuery,
                 includeHistory: true
             )
+            let page = try await client.refreshingExpandedRunning(first, from: self.dashboard, limit: self.pageLimit, problems: self.dashboardProblemQuery)
             guard connection == self.connectionGeneration,
                   generation == self.dashboardRequestGeneration else { return }
             if current.historyModeApplied == "jobs" && (current.executionHistoryRevision != page.executionHistoryRevision || current.counts.executionCount != page.counts.executionCount || current.historyPolicy?.policyRevision != page.historyPolicy?.policyRevision) {
@@ -3313,13 +3346,20 @@ final class AppModel: ObservableObject {
 
     func loadMoreIdle() async {
         guard let current = dashboard, current.pagination.idle.hasNext else { return }
+        let hadEnrichment = dashboardEnrichmentTask != nil
         let nextOffset = current.pagination.idle.offset + current.pagination.idle.returned
         dashboardRequestGeneration += 1
         let generation = dashboardRequestGeneration
         let connection = connectionGeneration
+        defer {
+            if connection == connectionGeneration, generation == dashboardRequestGeneration,
+               hadEnrichment || dashboardEnrichmentTask != nil {
+                scheduleDashboardEnrichment(generation: generation, terminalOffset: 0, idleOffset: nextOffset, bucket: .idle, requestedOffset: nextOffset, inspect: false)
+            }
+        }
         _ = await performDashboard {
             let client = try await self.bridgeClient()
-            let page = try await client.dashboardWithProblems(
+            let first = try await client.dashboardWithProblems(
                 limit: self.pageLimit,
                 terminalOffset: 0,
                 idleOffset: nextOffset,
@@ -3328,6 +3368,7 @@ final class AppModel: ObservableObject {
                 problems: self.dashboardProblemQuery,
                 includeHistory: true
             )
+            let page = try await client.refreshingExpandedRunning(first, from: self.dashboard, limit: self.pageLimit, problems: self.dashboardProblemQuery)
             guard connection == self.connectionGeneration,
                   generation == self.dashboardRequestGeneration else { return }
             let merged = current.mergingPage(

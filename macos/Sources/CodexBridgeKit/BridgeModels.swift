@@ -105,20 +105,13 @@ public extension DashboardSnapshot {
         return statusPagination?.hasNext == true
     }
 
-    /// A first-page refresh can update visible observations without collapsing
-    /// expanded pages, but only when the server proves unchanged membership.
+    /// Retain immutable history pages when membership is unchanged. Expanded
+    /// running observations are refreshed through the client before merging.
     func retainingExpandedPages(from previous: DashboardSnapshot?) -> DashboardSnapshot {
         guard let previous, historyModeApplied == "jobs", previous.historyModeApplied == "jobs",
               scope == previous.scope, historyPolicy?.policyRevision == previous.historyPolicy?.policyRevision,
               historyPolicy?.totalRemoved == previous.historyPolicy?.totalRemoved else { return self }
         var result = self
-        if let progressRevision, progressRevision == previous.progressRevision,
-           pagination.active.offset == 0, previous.pagination.active.offset > 0,
-           previous.activeRows.count > activeRows.count,
-           counts.progressJobCount == previous.counts.progressJobCount {
-            result.activeRows = Self.mergeRows(previous.activeRows.filter { $0.jobId != nil }, activeRows)
-            result.pagination.active = previous.pagination.active
-        }
         if historyIncluded != false, let executionHistoryRevision, executionHistoryRevision == previous.executionHistoryRevision,
            pagination.terminal.offset == 0, previous.pagination.terminal.offset > 0,
            previous.terminalRows.count > terminalRows.count,
