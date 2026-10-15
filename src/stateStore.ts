@@ -1536,16 +1536,20 @@ export class BridgeStateStore {
       completed:n.get("completed")||0,failed:n.get("failed")||0,interrupted:n.get("interrupted")||0,cancelled:n.get("cancelled")||0};
   }
 
-  dashboardExecutionPage(scopeId:string|undefined,statuses:readonly string[],offset:number,limit:number,now=Date.now()):{jobs:DashboardExecutionRecord[];total:number;offset:number;scopeIds:string[]} {
+  dashboardExecutionPage(scopeId:string|undefined,statuses:readonly string[],offset:number,limit:number,now=Date.now()):{jobs:DashboardExecutionRecord[];total:number;offset:number;scopeIds:string[];revision:string} {
     const predicate=`${retainedJobSql(this.appliedHistoryPolicy(now),"j")} AND j.status IN (${statuses.map(()=>"?").join(",")}) ${scopeId ? "AND j.scope_id=?" : ""}`;
     const args=[...statuses,...(scopeId ? [scopeId] : [])];
-    const total=(this.database.prepare(`SELECT COUNT(*) n FROM jobs j WHERE ${predicate}`).get(...args) as {n:number}).n;
+    // Hash only durable scalar membership/order, never history bodies or live
+    // enrichment. The retention predicate also catches expiry before cleanup.
+    const collection=this.database.prepare(`SELECT COUNT(*) n,json_group_array(json_array(job_id,status,created_at,ended_at)) identities
+      FROM (SELECT job_id,status,created_at,ended_at FROM jobs j WHERE ${predicate} ORDER BY job_id)`).get(...args) as {n:number;identities:string};
+    const total=collection.n,revision=createHash("sha256").update(JSON.stringify(["execution-list-v1",scopeId ?? null,statuses,collection.identities])).digest("hex");
     const bounded=Math.max(1,Math.min(50,limit)),at=Math.min(Math.max(0,offset),total ? Math.floor((total-1)/bounded)*bounded : 0);
     const orderColumn=statuses.every(status=>["completed","failed","interrupted","cancelled"].includes(status)) ? "ended_at" : "created_at";
     const ids=this.database.prepare(`SELECT job_id FROM jobs j WHERE ${predicate} ORDER BY ${orderColumn} DESC,job_id DESC LIMIT ? OFFSET ?`).all(...args,bounded,at) as Array<{job_id:string}>;
     const scopes=this.database.prepare(`SELECT DISTINCT j.scope_id FROM jobs j WHERE ${predicate}`).all(...args) as Array<{scope_id:string}>;
     const records=new Map(this.dashboardExecutionRecords(ids.map(x=>x.job_id),scopeId,now).map(record=>[record.jobId,record]));
-    return {jobs:ids.flatMap(({job_id})=>{const record=records.get(job_id);return record ? [record] : [];}),total,offset:at,scopeIds:scopes.map(x=>x.scope_id)};
+    return {jobs:ids.flatMap(({job_id})=>{const record=records.get(job_id);return record ? [record] : [];}),total,offset:at,scopeIds:scopes.map(x=>x.scope_id),revision};
   }
 
   dashboardExecutionRecords(jobIds:readonly string[],scopeId?:string,now=Date.now()):DashboardExecutionRecord[] {

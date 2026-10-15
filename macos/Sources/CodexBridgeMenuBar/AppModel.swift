@@ -2066,9 +2066,10 @@ final class AppModel: ObservableObject {
             )
             guard !Task.isCancelled, connection == connectionGeneration,
                   generation == dashboardRequestGeneration else { return }
-            dashboard = dashboardWithCurrentUsage(next, previous: dashboard)
-            scheduleDashboardHistoryExpiry(next)
-            let rows = (next.statusRows ?? []) + next.activeRows + next.terminalRows
+            let retained = next.retainingExpandedPages(from: dashboard)
+            dashboard = dashboardWithCurrentUsage(retained, previous: dashboard)
+            scheduleDashboardHistoryExpiry(retained)
+            let rows = (retained.statusRows ?? []) + retained.activeRows + retained.terminalRows
             dashboardHistoryDetails = dashboardHistoryDetails.filter { key, detail in
                 rows.contains { $0.rowKey == key && dashboardHistoryMatches(detail, row: $0) }
             }
@@ -2157,13 +2158,17 @@ final class AppModel: ObservableObject {
                             continue
                         }
                         if let bucket = target.bucket, let current = self.dashboard {
+                            if current.historyModeApplied == "jobs", current.executionHistoryRevision != enriched.executionHistoryRevision {
+                                await self.refreshDashboard(enrich: false, applyCachedEnrichment: true)
+                                return
+                            }
                             self.dashboard = self.dashboardWithCurrentUsage(current.mergingPage(
                                 enriched,
                                 bucket: bucket,
                                 requestedOffset: target.requestedOffset
                             ), previous: current)
                         } else {
-                            self.dashboard = self.dashboardWithCurrentUsage(enriched, previous: self.dashboard)
+                            self.dashboard = self.dashboardWithCurrentUsage(enriched.retainingExpandedPages(from: self.dashboard), previous: self.dashboard)
                         }
                         self.lastDashboardRefresh = Date()
                         self.recordDashboardEnrichment(enriched)
@@ -3203,9 +3208,7 @@ final class AppModel: ObservableObject {
     }
 
     func loadMoreRunning() async {
-        guard !loadingMoreRunning, let current = dashboard,
-              let page = current.historyModeApplied == "jobs" ? current.pagination.active : current.statusPagination,
-              page.hasNext, current.historyModeApplied != "jobs" || DashboardPanel.running.rows(in: current).count < (current.counts.progressJobCount ?? 0) else { return }
+        guard !loadingMoreRunning, let current = dashboard, current.hasMoreRunning else { return }
         dashboardRequestGeneration += 1
         let connection = connectionGeneration, generation = dashboardRequestGeneration
         loadingMoreRunning = true
@@ -3215,7 +3218,8 @@ final class AppModel: ObservableObject {
             let next = try await client.dashboardJobs(limit: pageLimit, terminalOffset: 0, statusOffset: DashboardPanel.running.rows(in: current).count, enrich: false, statusFilter: .running, problems: dashboardProblemQuery, includeHistory: false)
             guard connection == connectionGeneration, generation == dashboardRequestGeneration else { return }
             if current.historyModeApplied == "jobs" &&
-                (next.counts.progressJobCount != current.counts.progressJobCount ||
+                (next.progressRevision != current.progressRevision ||
+                 next.counts.progressJobCount != current.counts.progressJobCount ||
                  next.historyPolicy?.policyRevision != current.historyPolicy?.policyRevision ||
                  next.pagination.active.offset != DashboardPanel.running.rows(in: current).count) {
                 await refreshDashboard(enrich: false)
@@ -3233,6 +3237,9 @@ final class AppModel: ObservableObject {
             merged.statusRowsComplete = next.statusPagination?.hasNext == false
             dashboard = merged
             scheduleDashboardHistoryExpiry(merged)
+            if dashboardEnrichmentTask != nil {
+                scheduleDashboardEnrichment(generation: generation, terminalOffset: 0, idleOffset: 0)
+            }
         } catch { dashboardErrorMessage = localizedErrorDescription(error) }
     }
 
@@ -3289,7 +3296,7 @@ final class AppModel: ObservableObject {
             )
             guard connection == self.connectionGeneration,
                   generation == self.dashboardRequestGeneration else { return }
-            if current.historyModeApplied == "jobs" && (current.counts.executionCount != page.counts.executionCount || current.historyPolicy?.policyRevision != page.historyPolicy?.policyRevision) {
+            if current.historyModeApplied == "jobs" && (current.executionHistoryRevision != page.executionHistoryRevision || current.counts.executionCount != page.counts.executionCount || current.historyPolicy?.policyRevision != page.historyPolicy?.policyRevision) {
                 await self.refreshDashboard(enrich: false); return
             }
             let merged = current.mergingPage(

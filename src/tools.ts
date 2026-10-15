@@ -823,6 +823,8 @@ const cardEnrichmentOutputSchema = z.strictObject({
 
 const dashboardViewOutputSchema = z.strictObject({
   executionContractVersion:z.literal(2).optional(),historyModeApplied:z.enum(["agents","jobs"]).optional(),
+  progressRevision:z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  executionHistoryRevision:z.string().regex(/^[a-f0-9]{64}$/).optional(),
   problems: dashboardProblemsOutputSchema.optional(),
   historyPolicy: workHistoryPolicyOutputSchema.optional(),
   kind: z.literal("dashboard"),
@@ -12004,6 +12006,7 @@ function applyExecutionContract(view:DashboardView,store:BridgeStateStore,option
   const offset=options.statusOffset ?? options.terminalOffset ?? 0,limit=options.limit || 12;
   const progress=store.dashboardExecutionPage(options.scopeId,["running","terminating","termination-failed"],options.statusFilter==="running" ? offset : 0,limit,now);
   const terminal=store.dashboardExecutionPage(options.scopeId,["completed","failed","interrupted","cancelled"],offset,limit,now);
+  view.progressRevision=progress.revision;view.executionHistoryRevision=terminal.revision;
   const progressRows=progress.jobs.map(record=>makeRow(record)),runtimeOnly=snapshotRuntimeOnlyRows.get(view) || [];
   const activeTotal=progress.total+runtimeOnly.length;
   const activeOffset=options.statusFilter==="running" ? Math.min(offset,activeTotal ? Math.floor((activeTotal-1)/limit)*limit : 0) : 0;

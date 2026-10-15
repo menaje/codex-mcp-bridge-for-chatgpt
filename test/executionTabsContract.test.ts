@@ -71,6 +71,43 @@ function cachedExecutionRenderer(row:any,detail:any,historyPolicy:any){
  }};
 }
 describe('Job-unit execution tabs and read-only exact detail',()=>{
+ it('uses page-independent list revisions and detects a same-count running replacement',async()=>{
+  const f=fixture();try{
+   const oldest=f.seed('running',3),newest=f.seed('running',1);f.seed('completed',2);
+   const first=await f.service().dashboardSnapshot({...query,limit:1});
+   const second=await f.service().dashboardSnapshot({...query,limit:1,statusFilter:'running',statusOffset:1});
+   expect(first.progressRevision).toMatch(/^[a-f0-9]{64}$/);expect(second.progressRevision).toBe(first.progressRevision);
+   const later=await f.service().dashboardSnapshotWithEnrichment!({...query,limit:1},{runtimeByAgent:[],runtimeProbeSkippedAgents:0,weeklyUsage:null,summary:{...first.enrichment,state:'enriched'}} as any);
+   expect(later.progressRevision).toBe(first.progressRevision);expect(later.executionHistoryRevision).toBe(first.executionHistoryRevision);
+   f.writer.upsertJob({...oldest,status:'completed',updatedAt:now});f.writer.deleteJob(oldest.jobId);const replacement=f.seed('running',0);
+   const changed=await f.service().dashboardSnapshot({...query,limit:1,statusFilter:'running',statusOffset:1});
+   expect(changed.counts.progressJobCount).toBe(first.counts.progressJobCount);expect(changed.progressRevision).not.toBe(first.progressRevision);
+   expect(changed.executionHistoryRevision).not.toBe(first.executionHistoryRevision);
+   const fresh=await f.service().dashboardSnapshot(query);expect(fresh.activeRows.map(x=>x.jobId)).toEqual([replacement.jobId,newest.jobId]);
+  }finally{await f.close();}
+ });
+ it('detects unseen history expiry plus a new completion without cleanup or a count change',async()=>{
+  const f=fixture(7);try{
+   f.seed('completed',7-500/day);f.seed('completed',1);const running=f.seed('running',0);
+   const first=await f.service().dashboardSnapshot({...query,limit:1});
+   expect((await f.service().dashboardSnapshot({...query,limit:1,terminalOffset:1})).executionHistoryRevision).toBe(first.executionHistoryRevision);
+   vi.spyOn(Date,'now').mockReturnValue(now+1000);
+   f.writer.upsertJob({...running,status:'completed',updatedAt:now+1000});f.writer.deleteJob(running.jobId);
+   const changed=await f.service().dashboardSnapshot({...query,limit:1,terminalOffset:1});
+   expect(changed.counts.executionCount).toBe(first.counts.executionCount);expect(changed.historyPolicy?.totalRemoved).toBe(first.historyPolicy?.totalRemoved);
+   expect(changed.historyPolicy?.policyRevision).toBe(first.historyPolicy?.policyRevision);expect(changed.executionHistoryRevision).not.toBe(first.executionHistoryRevision);
+   expect((await f.service().dashboardSnapshot({...query,limit:1})).terminalRows[0].jobId).toBe(running.jobId);
+  }finally{await f.close();}
+ });
+ it('does not invalidate a scoped list for unrelated-scope work',async()=>{
+  const f=fixture();try{
+   f.seed('running',1);f.seed('completed',1);const first=await f.service().dashboardSnapshot(query);
+   const activity=f.writer.createActivity({scopeId:other,title:'Other'}),agent=f.writer.createAgent({scopeId:other,agentName:'Other'});
+   f.seed('running',0,{scopeId:other,agentId:agent.agentId,activityId:activity.activityId});f.seed('completed',0,{scopeId:other,agentId:agent.agentId,activityId:activity.activityId});
+   const next=await f.service().dashboardSnapshot(query);expect(next.progressRevision).toBe(first.progressRevision);expect(next.executionHistoryRevision).toBe(first.executionHistoryRevision);
+   const global=await f.service().dashboardSnapshot({...query,scopeId:undefined});expect(global.progressRevision).not.toBe(first.progressRevision);
+  }finally{await f.close();}
+ });
  it('orders history by immutable end time across pages while progress keeps newest starts first',async()=>{
   const f=fixture();try {
    const minute=60000;

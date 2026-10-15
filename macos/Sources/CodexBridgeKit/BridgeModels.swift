@@ -7,6 +7,8 @@ public struct EmptyParameters: Codable, Sendable {
 public struct DashboardSnapshot: Codable, Sendable {
     public var executionContractVersion: Int? = nil
     public var historyModeApplied: String? = nil
+    public var progressRevision: String? = nil
+    public var executionHistoryRevision: String? = nil
     public var problems: DashboardProblems? = nil
     public let kind: String
     public let generatedAt: String
@@ -96,6 +98,51 @@ public enum DashboardAppendBucket: Sendable {
 }
 
 public extension DashboardSnapshot {
+    var hasMoreRunning: Bool {
+        if historyModeApplied == "jobs" {
+            return pagination.active.hasNext && activeRows.filter { $0.bucket == "active" && $0.jobId != nil }.count < (counts.progressJobCount ?? 0)
+        }
+        return statusPagination?.hasNext == true
+    }
+
+    /// A first-page refresh can update visible observations without collapsing
+    /// expanded pages, but only when the server proves unchanged membership.
+    func retainingExpandedPages(from previous: DashboardSnapshot?) -> DashboardSnapshot {
+        guard let previous, historyModeApplied == "jobs", previous.historyModeApplied == "jobs",
+              scope == previous.scope, historyPolicy?.policyRevision == previous.historyPolicy?.policyRevision,
+              historyPolicy?.totalRemoved == previous.historyPolicy?.totalRemoved else { return self }
+        var result = self
+        if let progressRevision, progressRevision == previous.progressRevision,
+           pagination.active.offset == 0, previous.pagination.active.offset > 0,
+           previous.activeRows.count > activeRows.count,
+           counts.progressJobCount == previous.counts.progressJobCount {
+            result.activeRows = Self.mergeRows(previous.activeRows.filter { $0.jobId != nil }, activeRows)
+            result.pagination.active = previous.pagination.active
+        }
+        if historyIncluded != false, let executionHistoryRevision, executionHistoryRevision == previous.executionHistoryRevision,
+           pagination.terminal.offset == 0, previous.pagination.terminal.offset > 0,
+           previous.terminalRows.count > terminalRows.count,
+           counts.executionCount == previous.counts.executionCount {
+            result.terminalRows = Self.mergeRows(previous.terminalRows, terminalRows)
+            result.pagination.terminal = previous.pagination.terminal
+        }
+        if var incoming = problems, let old = previous.problems, incoming.revision == old.revision,
+           incoming.query.kind == old.query.kind, incoming.query.review == old.query.review, incoming.query.view == old.query.view,
+           incoming.page.total == old.page.total, old.page.offset > 0, incoming.page.offset <= old.page.offset,
+           old.rows.count > incoming.rows.count {
+            var indices = Dictionary(uniqueKeysWithValues: old.rows.enumerated().map { ($0.element.problemKey, $0.offset) })
+            var rows = old.rows
+            for row in incoming.rows {
+                if let index = indices[row.problemKey] { rows[index] = row }
+                else { indices[row.problemKey] = rows.count; rows.append(row) }
+            }
+            incoming.rows = rows
+            incoming.page = old.page
+            result.problems = incoming
+        }
+        return result
+    }
+
     /// A missing usage field is an incomplete observation only while the
     /// server proves the same account and applied CLI context.
     func retainingUsage(from previous: DashboardSnapshot?) -> DashboardSnapshot {
@@ -171,7 +218,7 @@ public extension DashboardSnapshot {
         if result.idleRows.count > result.pagination.idle.total {
             result.idleRows = Array(next.idleRows.prefix(result.pagination.idle.total))
         }
-        return result
+        return result.retainingExpandedPages(from: self)
     }
 
     private static func mergeRows(

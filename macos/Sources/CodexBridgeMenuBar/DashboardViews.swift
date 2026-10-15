@@ -489,12 +489,12 @@ struct DashboardPopoverView: View {
                 Button("macos.showmore") { Task { await model.loadMoreBackground() } }
                     .disabled(model.loadingMoreBackground)
             }
-            if panel == .running, dashboard.historyModeApplied == "jobs" ? currentRows.count < (dashboard.counts.progressJobCount ?? 0) : dashboard.statusPagination?.hasNext == true {
+            if panel == .running, dashboard.hasMoreRunning {
                 Button("macos.showmore") { Task { await model.loadMoreRunning() } }
                     .buttonStyle(.link)
                     .disabled(model.loadingMoreRunning || model.isBusy)
             }
-            if panel == .history, dashboard.pagination.active.hasNext {
+            if panel == .history, dashboard.historyModeApplied != "jobs", dashboard.pagination.active.hasNext {
                 Label(BridgeAppLocalization.format(
                     "macos.onlyactiveitemsareshown",
                     locale: model.interfaceLocale,

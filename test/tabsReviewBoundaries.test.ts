@@ -34,7 +34,8 @@ describe('PR257 independent review boundaries',()=>{
  for(const result of ['accept','scope-changed','count-changed','policy-changed'])it(`appends running Jobs and fences ${result}`,async()=>{
   const row=(id:string)=>({jobId:id,rowKey:id,bucket:'active'}),first=[row('one'),row('two')];let request:any,reloads=0,release!:(x:any)=>void;
   const c=vm.createContext({busy:false,mounted:true,view:{historyModeApplied:'jobs',activeRows:first,counts:{progressJobCount:3},historyPolicy:{policyRevision:'policy'},pagination:{active:{offset:0,returned:2,total:3,hasNext:true}}},hydrationEpoch:1,selectedStatus:'running',selectedScope:'all',widgetInstanceId:'widget',PAGE_LIMIT:2,setBusy:(value:boolean)=>{c.busy=value},unwrap:(x:any)=>x,dashboardRead:async(args:any)=>{request=args;return await new Promise(resolve=>{release=resolve})},mergeRows:(a:any[],b:any[])=>[...a,...b],paint:()=>{},reload:async()=>{reloads++},showError:()=>{}});
-  load('loadMoreRunning',c);const pending=vm.runInContext('loadMoreRunning()',c);if(result==='scope-changed')c.hydrationEpoch++;
+  c.problemQuery=()=>({kind:'all',offset:0});c.queueEnrichment=()=>{};
+  load('hasMoreRunning',c);load('loadMoreRunning',c);const pending=vm.runInContext('loadMoreRunning()',c);if(result==='scope-changed')c.hydrationEpoch++;
   release({activeRows:[row('three')],counts:{progressJobCount:result==='count-changed'?4:3},historyPolicy:{policyRevision:result==='policy-changed'?'other':'policy'},pagination:{active:{offset:2,returned:1,total:3,hasNext:false}}});await pending;
   expect(request.statusOffset).toBe(2);expect(c.view.activeRows).toHaveLength(result==='accept'?3:2);expect(reloads).toBe(['count-changed','policy-changed'].includes(result)?1:0);
  });
