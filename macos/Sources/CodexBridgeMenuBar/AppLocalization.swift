@@ -31,9 +31,10 @@ enum BridgeAppLocalization {
     static func string(_ key: String, locale: Locale) -> String {
         // Every call site and generated String Catalog entry uses a semantic
         // key. A missing bundle/key must never leak that identifier to users.
-        let fallback = BridgeGeneratedLocalization.defaultStrings[key]
-            ?? BridgeGeneratedLocalization.unavailableFallback
         let language = languageCode(for: locale)
+        let fallback = BridgeGeneratedLocalization.defaultStrings[key]
+            ?? BridgeGeneratedLocalization.unavailableFallbacks[language]
+            ?? BridgeGeneratedLocalization.unavailableFallback
         guard let path = Bundle.main.path(forResource: language, ofType: "lproj"),
               let bundle = Bundle(path: path) else {
             return fallback

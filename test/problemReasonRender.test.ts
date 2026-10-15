@@ -1,6 +1,7 @@
 import vm from 'node:vm';
 import {describe, expect, it} from 'vitest';
 import {DASHBOARD_CARD_HTML,groupDashboardRowsByActivity,groupDashboardRowsByAgent} from '../src/dashboardCard.js';
+import {SUPPORTED_UI_LOCALES,UI_TRANSLATIONS} from '../src/generated/localization.js';
 class Element {
   children: Element[] = []; dataset: Record<string,string> = {}; textContent = ''; hidden = false; open = false;
   constructor(readonly tag: string, readonly className = '', text = '') { this.textContent = text; }
@@ -25,6 +26,22 @@ function problem(status='failed', error: string|null='Recorded failure') {
   return {problemKey:'event',jobId:'internal-job-id',source:'execution',executionAvailability:'retained',reason:error,kind:status,observedAt:new Date().toISOString(),row:{error,rowKey:'row',jobId:'internal-job-id',agentId:'agent',agentName:'Agent name',activityKey:'activity',activityTitle:'Activity title',status,latestTurn:{status,error,...(status==='cancelled'?{cancellation:{reason:'Requested cancellation',targetKind:'job',requestedAt:new Date().toISOString()}}:{})}}};
 }
 describe('compact problem history presentation',()=>{
+  for(const language of SUPPORTED_UI_LOCALES)it(`localizes both cancellation targets and every outcome in ${language}`,()=>{
+    const translations=UI_TRANSLATIONS[language],parent=new Element('div');
+    const context=vm.createContext({Date,localeTag:language,t:translations,node:(tag:string,cls:string,text:string)=>new Element(tag,cls,text)});
+    for(const name of ['cancellationHeading','appendCancellation'])vm.runInContext(DASHBOARD_CARD_HTML.split('\n').find(line=>line.trimStart().startsWith(`function ${name}(`))!,context);
+    for(const targetKind of ['activity','job'] as const)for(const status of ['requested','succeeded','failed'] as const){
+      parent.replaceChildren();
+      const reason='사용자가 취소를 요청했습니다.';
+      context.parent=parent;context.cancellation={targetKind,status,reason,requestedAt:'2026-10-13T00:47:25.657Z'};
+      vm.runInContext('appendCancellation(parent,cancellation)',context);
+      const text=parent.texts(),heading=status==='requested'?'cancellation.requestReason':status==='failed'?'cancellation.attemptReason':'cancellation.reason';
+      expect(text).toContain(translations[heading]);
+      expect(text.some(value=>value.startsWith(translations[`cancellation.target.${targetKind}`]+' · '))).toBe(true);
+      expect(text).toContain(reason);
+      expect(text.join(' ')).not.toContain('Localized text');
+    }
+  });
   it('renders the recorded error once under its Activity and Agent',()=>{const text=render([problem()]);for(const name of ['Activity title','Agent name','Recorded failure'])expect(text.filter(x=>x===name)).toHaveLength(1);});
   it('shows cancellation prose only once and no missing-error placeholder',()=>{expect(render([problem('cancelled')]).filter(x=>x.includes('Requested cancellation'))).toHaveLength(1);for(const status of ['failed','interrupted'])expect(render([problem(status,null)]).join(' ')).not.toMatch(/unrecorded|Unrecorded|Cancellation reason/);});
   for(const status of ['failed','interrupted','cancelled'])for(const reason of [null,'',String.fromCharCode(32,10,9)])it(`omits absent or blank ${status} reasons while keeping its status`,()=>{const p=problem(status,reason);if(status==='cancelled'){if(reason===null)delete p.row.latestTurn.cancellation;else p.row.latestTurn.cancellation!.reason=reason;}const text=render([p]);expect(text).toContain(status);expect(text).toContain('Agent name');expect(text.join(' ')).not.toMatch(/unrecorded|Unrecorded|Cancellation reason|Requested cancellation/);});

@@ -158,6 +158,38 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertNotEqual(value, "settings.codexAppThreads")
     }
 
+    func testMissingNativeLocalizationUsesTheSelectedLanguageWithoutBundleResources() {
+        let expected = [
+            "en": "Unavailable", "ko": "표시할 수 없음", "ja": "表示できません",
+            "zh-Hans": "无法显示", "zh-Hant": "無法顯示", "es": "No disponible",
+            "fr": "Indisponible", "de": "Nicht verfügbar", "pt": "Indisponível"
+        ]
+        XCTAssertEqual(Set(expected.keys), Set(BridgeAppLocalization.supportedLanguageCodes))
+        for (language, fallback) in expected {
+            let value = BridgeAppLocalization.string("missing.translation.key", locale: Locale(identifier: language))
+            XCTAssertEqual(value, fallback)
+            XCTAssertFalse(value.contains("missing.translation.key"))
+            XCTAssertFalse(value.contains("Localized text"))
+        }
+        XCTAssertEqual(
+            BridgeAppLocalization.string("Activity", locale: Locale(identifier: "ko-KR")),
+            "표시할 수 없음"
+        )
+    }
+
+    func testCancellationTargetsUseTheSharedActivityAndJobNames() {
+        for language in BridgeAppLocalization.supportedLanguageCodes {
+            let locale = Locale(identifier: language)
+            XCTAssertEqual(CancellationPresentation.targetLabel("activity", locale: locale), "Activity")
+            XCTAssertEqual(CancellationPresentation.targetLabel("job", locale: locale), "Job")
+            for (status, label) in [("requested", "Requested"), ("succeeded", "Processed"), ("failed", "Failed")] {
+                XCTAssertEqual(CancellationPresentation.statusLabel(status, locale: locale), label)
+            }
+            XCTAssertEqual(CancellationPresentation.targetLabel("internal-target", locale: locale), "Unavailable")
+            XCTAssertEqual(CancellationPresentation.statusLabel("internal-status", locale: locale), "Unavailable")
+        }
+    }
+
     func testReasoningEffortLabelsUseCanonicalLowercaseValuesInEveryLocale() {
         for language in BridgeAppLocalization.supportedLanguageCodes {
             let locale = BridgeAppLocalization.locale(for: language)

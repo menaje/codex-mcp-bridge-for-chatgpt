@@ -1310,8 +1310,8 @@ private struct CancellationReason: View {
                 Text(BridgeAppLocalization.format(
                     "macos.format.dotSeparatedTriple",
                     locale: locale,
-                    cancellationTargetLabel(cancellation.targetKind, locale: locale),
-                    cancellationStatusLabel(cancellation.status, locale: locale),
+                    CancellationPresentation.targetLabel(cancellation.targetKind, locale: locale),
+                    CancellationPresentation.statusLabel(cancellation.status, locale: locale),
                     DisplayFormat.dateTime(cancellation.requestedAt, locale: locale)
                 ))
                     .foregroundStyle(.secondary)
@@ -1919,23 +1919,25 @@ enum DashboardExecutionPresentation {
     }
 }
 
-private func cancellationTargetLabel(_ value: String, locale: Locale) -> String {
-    let key: String
-    switch value {
-    case "activity": key = "Activity"
-    case "job": key = "macos.task"
-    default: return value
+enum CancellationPresentation {
+    static func targetLabel(_ value: String, locale: Locale) -> String {
+        let key: String
+        switch value {
+        case "activity": key = "cancellation.target.activity"
+        case "job": key = "cancellation.target.job"
+        default: key = "macos.localization.unavailable"
+        }
+        return BridgeAppLocalization.string(key, locale: locale)
     }
-    return BridgeAppLocalization.string(key, locale: locale)
-}
 
-private func cancellationStatusLabel(_ value: String, locale: Locale) -> String {
-    let key: String
-    switch value {
-    case "requested": key = "macos.requested"
-    case "succeeded": key = "macos.processed"
-    case "failed": key = "macos.failed"
-    default: return value
+    static func statusLabel(_ value: String, locale: Locale) -> String {
+        let key: String
+        switch value {
+        case "requested": key = "macos.requested"
+        case "succeeded": key = "macos.processed"
+        case "failed": key = "macos.failed"
+        default: key = "macos.localization.unavailable"
+        }
+        return BridgeAppLocalization.string(key, locale: locale)
     }
-    return BridgeAppLocalization.string(key, locale: locale)
 }

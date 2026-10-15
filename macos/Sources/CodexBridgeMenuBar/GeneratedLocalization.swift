@@ -649,6 +649,7 @@ enum BridgeGeneratedLocalization {
         "macos.loadingoverview": "Loading overview…",
         "macos.loadingsettings": "Loading settings…",
         "macos.loadingskilllibrary": "Loading skill library…",
+        "macos.localization.unavailable": "Unavailable",
         "macos.localService.permissionDenied": "Access to the local service was denied. Check the connection permissions.",
         "macos.localService.responseTimedOut": "The local service did not respond in time. Refresh its status.",
         "macos.localService.unavailable": "The local service could not be reached. Check the server status.",
@@ -1480,5 +1481,16 @@ enum BridgeGeneratedLocalization {
         "waiting.user": "Waiting for user",
         "waiting.verification": "Waiting for verification",
     ]
-    static let unavailableFallback = "Localized text is unavailable."
+    static let unavailableFallbacks: [String: String] = [
+        "de": "Nicht verfügbar",
+        "en": "Unavailable",
+        "es": "No disponible",
+        "fr": "Indisponible",
+        "ja": "表示できません",
+        "ko": "표시할 수 없음",
+        "pt": "Indisponível",
+        "zh-Hans": "无法显示",
+        "zh-Hant": "無法顯示",
+    ]
+    static let unavailableFallback = "Unavailable"
 }
