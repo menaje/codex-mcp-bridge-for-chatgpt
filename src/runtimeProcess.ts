@@ -91,6 +91,7 @@ const APPLICATION_RPC_METHODS = [
   "threadHandoff",
   "dashboardSnapshot",
   "dashboardHistoryDetail",
+  "dashboardExecutionDetail",
   "settingsSnapshot",
   "updateSettings",
   "runtimeSnapshot",
@@ -119,12 +120,13 @@ const APPLICATION_RPC_METHODS = [
 
 type ApplicationRpcMethod = (typeof APPLICATION_RPC_METHODS)[number];
 type ApplicationRpcKind = "command" | "query" | "control";
-const OBSERVATION_READ_METHODS = new Set<ApplicationRpcMethod>(["dashboardSnapshot", "dashboardHistoryDetail", "settingsSnapshot"]);
+const OBSERVATION_READ_METHODS = new Set<ApplicationRpcMethod>(["dashboardSnapshot", "dashboardHistoryDetail", "dashboardExecutionDetail", "settingsSnapshot"]);
 
 const APPLICATION_QUERY_METHODS = new Set<ApplicationRpcMethod>([
   "nativeCompletionAvailability",
   "dashboardSnapshot",
   "dashboardHistoryDetail",
+  "dashboardExecutionDetail",
   "settingsSnapshot",
   "runtimeSnapshot",
   "skillLibrarySnapshot",
@@ -472,6 +474,7 @@ class IsolatedRuntimeController {
       threadHandoff: (...args) => rpc("threadHandoff", ...args),
       dashboardSnapshot: (options, context) => this.rpc("dashboardSnapshot", [options || {}], context) as ReturnType<BridgeApplicationService["dashboardSnapshot"]>,
       dashboardHistoryDetail: (options, context) => this.rpc("dashboardHistoryDetail", [options], context) as Promise<import("./tools.js").DashboardHistoryDetail>,
+      dashboardExecutionDetail: (options, context) => this.rpc("dashboardExecutionDetail", [options], context) as Promise<import("./tools.js").DashboardExecutionDetail>,
       settingsSnapshot: (options, context) => this.rpc("settingsSnapshot", [options || {}], context) as ReturnType<BridgeApplicationService["settingsSnapshot"]>,
       updateSettings: (...args) => rpc("updateSettings", ...args),
       runtimeSnapshot: (...args) => rpc("runtimeSnapshot", ...args),
