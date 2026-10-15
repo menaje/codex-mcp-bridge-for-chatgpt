@@ -45,19 +45,21 @@ or retroactive delivery certainty is claimed.
 
 ## Verification scope
 
-Checks use Node 24.11.1, temporary state and controlled upstream/host replies.
+Final implementation checks ran on the content committed as
+`d290d9bb3e8117d2352f13361a52b2deb42eb539`, using Node 24.11.1, temporary state
+and controlled upstream/host replies.
 No operational DB, user Job, actual Codex work session or runtime deployment is
 part of this correction.
 
 | Check | Result |
 | --- | --- |
 | Baseline red proof | 4 focused regressions failed before production edits. |
-| Delivery / admission / contract selection | 133 passed in 12 files: `relayDelivery`, `relayAdmission`, `relayCard`, `stateStore`, `questionStore`, `questionOrchestration`, `issue247Followups`, `issue221Delivery`, `outputContracts`, `uiResourceCompatibility`, `uiResourceFiles`, `releaseManifest`. |
-| Relay subset within that selection | 42 cases: 29 SQLite delivery/authority/retention fixtures, 5 HTTP MCP admission groups, 8 shipped-HTML script cases under Node `vm`. |
+| Delivery / admission / contract selection | 136 passed in 12 files: `relayDelivery`, `relayAdmission`, `relayCard`, `stateStore`, `questionStore`, `questionOrchestration`, `issue247Followups`, `issue221Delivery`, `outputContracts`, `uiResourceCompatibility`, `uiResourceFiles`, `releaseManifest`. |
+| Relay subset within that selection | 45 cases: 29 SQLite delivery/authority/retention fixtures, 8 HTTP MCP admission/status groups, 8 shipped-HTML script cases under Node `vm`. |
 | General task regression | 55 passed, 1 duration case explicitly excluded. |
 | Build | `npm run build` passed, including localization and release metadata/policy checks. |
 | Fast schema | `npm run validate:fast` passed using an isolated repository-pinned Codex CLI 0.153.3 (416 JSON / 827 TypeScript generated schema files). The installed user's CLI was not replaced. |
-| Native checks | Running; final result will be recorded before integration. |
+| Native checks | `npm run macos:check` passed: localization/native-input contracts and 343 Swift tests, including 3 existing opt-in skips, with 0 failures. |
 
 The delivery coverage now includes the three P1 outcomes through owner
 reconnection, each across a SQLite restart, actual resolution/replacement and
@@ -108,5 +110,21 @@ stop and a directly constructed closed-goal state; they failed against the
 first fixed code and pass after the correction. Execution continues and only
 followups-only stopping preserves pending notices in that fixture.
 
-Final fixed-commit re-review and final validation are pending. No final review
-approval or integration is claimed by this draft.
+The same independent reviewer then reviewed the new fixed commit
+`d290d9bb3e8117d2352f13361a52b2deb42eb539`. Its completed report states:
+
+> No actionable findings in the reviewed change or exercised surrounding paths.
+
+The reviewer independently reran 45 Relay suite tests and the 15 supplemental
+history scenarios, and passed six new HTTP variants: enabled, relay stop,
+followups-only stop, ended goal, paused input and missing registration. Each
+compared message, next actions and terminal notice eligibility. TypeScript
+`--noEmit`, diff checks and the clean/fixed-HEAD check passed again. Paused and
+ended states were constructed directly; the latter does not assert that a
+running Activity can be completed through its public tool.
+
+The [retained reports, reproducible scripts and raw status observations](2026-10-15-issue-261-review-evidence/README.md)
+preserve the reviewer-created bytes with SHA-256 checksums. The final audit
+update adds only documentation/evidence after the reviewed code; production
+source and regression tests remain identical to the reviewed commit. Integration
+target remains `dev`; this code review is not human or real-host acceptance.

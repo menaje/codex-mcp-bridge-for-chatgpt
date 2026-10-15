@@ -1,0 +1,36 @@
+Independent read-only fixed-commit re-review
+
+Reviewed SHA: d290d9bb3e8117d2352f13361a52b2deb42eb539
+Prior reviewed SHA: 56e850bc25034c7fd138336797164f446ac9b417
+Original baseline SHA: ba6d8a669674114773280cf109a85fc710e8b68d
+Worktree: /Volumes/Data/Dev/codex-mcp-bridge-issue-261-review-fix
+
+No actionable findings in the reviewed change or exercised surrounding paths. The prior P2 is addressed: message and nextActions use shared current-goal descriptions; relay stop/ended goal suppress terminal notifications, followups-only stop retains notifications, and enabled relay wording is conditional on host connection availability. The paused-input and missing-registration descriptions also matched independently exercised status states. The prior P1 delivery-history barrier remained intact in the rerun scenarios.
+
+Reviewer-run verification at this SHA:
+- node_modules/.bin/vitest run test/relayDelivery.test.ts test/relayAdmission.test.ts test/relayCard.test.ts --maxWorkers=2 : 3 files, 45 tests passed.
+- node_modules/.bin/tsx /tmp/issue261-independent-review.mts : 15 disposable functional scenarios passed.
+- node_modules/.bin/tsx /tmp/issue261-independent-status-rereview.mts <scenario> : all six HTTP MCP variants passed: enabled, relay, followups, ended, paused, unregistered. Each asserts exact status message, nextActions and terminal notice eligibility; each uses a fresh disposable SQLite file and controlled upstream, and asserts HEAD is this exact SHA. The paused and ended variants construct those protocol states directly; they are not claims of live execution-owner failure or Activity completion with running work.
+- node_modules/.bin/tsc --noEmit -p tsconfig.json : passed.
+- git diff --check 56e850bc25034c7fd138336797164f446ac9b417 d290d9bb3e8117d2352f13361a52b2deb42eb539 : passed.
+- Worktree remained clean and HEAD remained the reviewed SHA.
+
+Evidence scripts/reports:
+/tmp/issue261-independent-review.mts (unchanged first-review supplemental history scenarios; rerun here)
+/tmp/issue261-independent-status.mts (unchanged first-review P2 reproduction)
+/tmp/issue261-independent-status-rereview.mts (new six-variant asserted status fixture)
+/tmp/issue261-independent-review-56e850bc.txt (retained first-review report)
+/tmp/issue261-independent-review-d290d9bb.txt (this report)
+
+Raw outputs of the new status variants:
+/tmp/issue261-independent-status-rereview-enabled.log
+/tmp/issue261-independent-status-rereview-relay.log
+/tmp/issue261-independent-status-rereview-followups.log
+/tmp/issue261-independent-status-rereview-ended.log
+/tmp/issue261-independent-status-rereview-paused.log
+/tmp/issue261-independent-status-rereview-unregistered.log
+
+Scripts import source through the explicit review-worktree absolute path. Preserve that path or adapt imports when retaining the fixtures elsewhere. Reports summarize reviewer-run results; the implementation agent's concurrent general tools/native/schema checks are not counted here.
+
+Limitations:
+No repository edits, commits, integration, pushes, production state, runtime deployment, real Codex/GPT execution, real-host Relay E2E, duration/soak, accelerated-lifetime tests, GPT autoresumption, or real A->review->B. No host-wide delivery guarantees are inferred. Scope is source inspection plus finite controlled functional cases, not exhaustive state-space verification.

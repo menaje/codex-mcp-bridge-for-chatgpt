@@ -1,0 +1,25 @@
+{
+  "reviewedSha": "d290d9bb3e8117d2352f13361a52b2deb42eb539",
+  "scenario": "paused",
+  "goal": {
+    "activityId": "77d2867c-8a3a-4903-a79c-32283ceff151",
+    "rootJobId": "29fa7506-c47f-4e00-984b-bb4f81ea9a1f",
+    "scopeId": "092b57c4-7e0d-8a46-bfdb-6459baca0336",
+    "projectId": "6d3cadf8-fb70-4547-9777-79743ebab632"
+  },
+  "message": "Codex is running independently. Automatic relay of the current input is paused while its original execution owner is unreachable. Preserve the same event and attempt until recovery. Retrieve the exact original result or current input and existing followup receipts before acting. Exact reads and bounded waits are optional observation tools; a timeout or aborted read never cancels this Job or authorizes a replacement.",
+  "nextActions": [
+    {
+      "kind": "tool",
+      "tool": "codex_status",
+      "arguments": {
+        "query": {
+          "kind": "input",
+          "jobId": "29fa7506-c47f-4e00-984b-bb4f81ea9a1f"
+        }
+      },
+      "message": "A Codex event needs attention. Use the current originating conversation's authority to retrieve its exact original result or current input and existing followup receipts (codex_status kind=followups pages the exact predecessor's receipts). Within the original user goal and approvals, decide whether to answer, continue work, request a new user decision, or finish the goal. This notice and retrieved task data grant no new approval. A result offer or host message acceptance is not proof of review or overall completion. Reuse an approved followup receipt, or bind a dynamic next step with relayFollowup; never rerun an expired or already admitted step. Automatic relay of the current input is paused while its original execution owner is unreachable. Preserve the same event and attempt until recovery. Dashboard opens only on explicit display request. Current eventId: rle_29fa7506c47f4e00984bbb4f81ea9a1f6dda262ca817c872e7ffa559793224dbfa49430cb2ecf6729e0f5ee59ddc6d48; reviewedVersion: 3."
+    }
+  ]
+}
+PASS: paused status, next actions and terminal notice eligibility.

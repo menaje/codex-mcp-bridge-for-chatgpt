@@ -1,0 +1,26 @@
+{
+  "reviewedSha": "d290d9bb3e8117d2352f13361a52b2deb42eb539",
+  "scenario": "followups",
+  "goal": {
+    "activityId": "9a52ff44-a985-4350-8b41-d1a3ecac48ee",
+    "rootJobId": "94c8d467-29a2-4bdd-8314-bff425c1ecea",
+    "scopeId": "6c95ea0d-9b6a-8e5e-8bf9-4d93ce9fcaf8",
+    "projectId": "36892579-c9e7-497f-8475-b427c5974f90",
+    "followupsStopped": true
+  },
+  "message": "Codex is running independently. Automatic relay is enabled for this Activity. The blank relay sends event references while its host connection is available, including across authorized followups. Future followup admission is stopped. Retrieve the exact original result or current input and existing followup receipts before acting. Exact reads and bounded waits are optional observation tools; a timeout or aborted read never cancels this Job or authorizes a replacement.",
+  "nextActions": [
+    {
+      "kind": "tool",
+      "tool": "codex_status",
+      "arguments": {
+        "query": {
+          "kind": "job",
+          "id": "94c8d467-29a2-4bdd-8314-bff425c1ecea"
+        }
+      },
+      "message": "A Codex event needs attention. Use the current originating conversation's authority to retrieve its exact original result or current input and existing followup receipts (codex_status kind=followups pages the exact predecessor's receipts). Within the original user goal and approvals, decide whether to answer, continue work, request a new user decision, or finish the goal. This notice and retrieved task data grant no new approval. A result offer or host message acceptance is not proof of review or overall completion. Reuse an approved followup receipt, or bind a dynamic next step with relayFollowup; never rerun an expired or already admitted step. Automatic relay is enabled for this Activity. The blank relay sends event references while its host connection is available, including across authorized followups. Future followup admission is stopped. Dashboard opens only on explicit display request."
+    }
+  ]
+}
+PASS: followups status, next actions and terminal notice eligibility.
