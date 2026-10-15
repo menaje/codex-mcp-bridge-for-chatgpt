@@ -1972,7 +1972,7 @@ final class AppPresentationTests: XCTestCase {
             reroutedModel: "gpt-6-astra", isCurrent: false, serviceTier: "fast",
             processingSpeed: "fast", serviceTierScope: "turn", requestState: "accepted")
         let text = DashboardExecutionPresentation.text(accepted, locale: Locale(identifier: "en"))
-        XCTAssertEqual(text, "Sol ⚡ Fast → gpt-6-astra · medium")
+        XCTAssertEqual(text, "Sol ⚡ → gpt-6-astra · medium")
         XCTAssertFalse(text.contains("requested"))
         XCTAssertFalse(text.contains("accepted"))
         XCTAssertFalse(text.contains("unconfirmed"))
@@ -1987,10 +1987,12 @@ final class AppPresentationTests: XCTestCase {
             let historical = try dashboardExecution(model: "sol", displayName: nil, effort: "medium",
                 reroutedModel: nil, isCurrent: false, serviceTier: tier, requestState: "requested")
             let text = DashboardExecutionPresentation.text(historical, locale: Locale(identifier: "en"))
-            XCTAssertEqual(text, tier == "ultrafast" ? "sol 🚀 Ultrafast · medium" : "sol · medium")
+            XCTAssertEqual(text, tier == "ultrafast" ? "sol 🚀 · medium" : "sol · medium")
             XCTAssertFalse(text.contains("clear conversation speed"))
             XCTAssertFalse(text.contains("unconfirmed"))
             XCTAssertEqual(historical.serviceTier, tier)
+            XCTAssertEqual(DashboardExecutionPresentation.speedBadgeHelp(historical, locale: Locale(identifier: "en")),
+                tier == "ultrafast" ? "Selected processing speed: 🚀 Ultrafast" : "")
         }
         for mode in ["standard", "inherit", "future-tier"] {
             let execution = try dashboardExecution(model: "sol", displayName: nil, effort: "medium",

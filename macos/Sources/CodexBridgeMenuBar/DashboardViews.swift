@@ -1867,18 +1867,18 @@ enum DashboardExecutionPresentation {
         normalizedServiceTier(execution?.serviceTier) == "fast"
     }
 
-    static func speedBadge(_ execution: DashboardExecution?) -> String {
+    static func speedBadge(_ execution: DashboardExecution?, includeLabel: Bool = false) -> String {
         guard let execution else { return "" }
         let mode = normalized(execution.processingSpeed ?? "")
         guard mode.isEmpty || ["legacy", "fast", "ultrafast"].contains(mode) else { return "" }
         let tier = normalized(execution.serviceTier ?? "")
-        if tier == "ultrafast" || mode == "ultrafast" { return "🚀 Ultrafast" }
-        if ["fast", "priority"].contains(tier) || mode == "fast" { return "⚡ Fast" }
+        if tier == "ultrafast" || mode == "ultrafast" { return "🚀" + (includeLabel ? " Ultrafast" : "") }
+        if ["fast", "priority"].contains(tier) || mode == "fast" { return "⚡" + (includeLabel ? " Fast" : "") }
         return ""
     }
 
     static func speedBadgeHelp(_ execution: DashboardExecution?, locale: Locale) -> String {
-        let speed = speedBadge(execution)
+        let speed = speedBadge(execution, includeLabel: true)
         return speed.isEmpty ? "" : BridgeAppLocalization.string(
             "dashboard.execution.speedBadgeHint", locale: locale)
             .replacingOccurrences(of: "{speed}", with: speed)

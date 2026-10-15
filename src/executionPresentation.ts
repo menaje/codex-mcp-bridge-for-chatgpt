@@ -11,14 +11,14 @@ export function processingSpeedLabelKey(mode: string, legacyFast = false): strin
     ["inherit", "standard", "fast", "ultrafast"].includes(mode) ? "settings.processingSpeed." + mode : "settings.processingSpeed.unknown";
 }
 
-/** Labels the recorded selection, never a server-confirmed processing grade. */
-export function executionSpeedBadge(execution: { processingSpeed?: string; serviceTier?: string } | null | undefined): string {
+/** Shows the recorded selection; labels are reserved for explanatory tooltips. */
+export function executionSpeedBadge(execution: { processingSpeed?: string; serviceTier?: string } | null | undefined, includeLabel = false): string {
   if (!execution) return "";
   const mode = execution.processingSpeed?.trim().toLowerCase();
   if (mode && !["legacy", "fast", "ultrafast"].includes(mode)) return "";
   const tier = execution.serviceTier?.trim().toLowerCase();
   // ASCII source keeps the serialized function identical in esbuild and tsc.
-  if (tier === "ultrafast" || mode === "ultrafast") return String.fromCodePoint(128640) + " Ultrafast";
-  if (tier === "fast" || tier === "priority" || mode === "fast") return String.fromCodePoint(9889) + " Fast";
+  if (tier === "ultrafast" || mode === "ultrafast") return String.fromCodePoint(128640) + (includeLabel ? " Ultrafast" : "");
+  if (tier === "fast" || tier === "priority" || mode === "fast") return String.fromCodePoint(9889) + (includeLabel ? " Fast" : "");
   return "";
 }

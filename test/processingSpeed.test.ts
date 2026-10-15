@@ -84,11 +84,11 @@ describe("processing speed scope", () => {
     expect(wireSpeedArguments(admitted, "turn")).toEqual({ serviceTierForTurn: "fast" });
   });
   it.each([
-    [{ processingSpeed: "fast", serviceTier: "fast" }, "⚡ Fast"],
-    [{ processingSpeed: "legacy", serviceTier: "priority" }, "⚡ Fast"],
-    [{ serviceTier: " PRIORITY " }, "⚡ Fast"],
-    [{ processingSpeed: "ultrafast", serviceTier: "ultrafast" }, "🚀 Ultrafast"],
-    [{ serviceTier: "ultrafast" }, "🚀 Ultrafast"],
+    [{ processingSpeed: "fast", serviceTier: "fast" }, "⚡"],
+    [{ processingSpeed: "legacy", serviceTier: "priority" }, "⚡"],
+    [{ serviceTier: " PRIORITY " }, "⚡"],
+    [{ processingSpeed: "ultrafast", serviceTier: "ultrafast" }, "🚀"],
+    [{ serviceTier: "ultrafast" }, "🚀"],
     [{ processingSpeed: "standard", serviceTier: "default" }, ""],
     [{ processingSpeed: "inherit" }, ""],
     [{ processingSpeed: "legacy" }, ""],
@@ -96,6 +96,8 @@ describe("processing speed scope", () => {
     [{ serviceTier: "flex" }, ""]
   ])("shows only recognized recorded faster selections: %j", (execution, badge) => {
     expect(executionSpeedBadge(execution)).toBe(badge);
+    const label = badge === "⚡" ? "⚡ Fast" : badge === "🚀" ? "🚀 Ultrafast" : "";
+    expect(executionSpeedBadge(execution, true)).toBe(label);
   });
   it("explains selected speed in every locale without acceptance or confirmation boilerplate", () => {
     for (const translations of Object.values(UI_TRANSLATIONS)) {
