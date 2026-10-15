@@ -26,10 +26,16 @@ const base=${JSON.stringify({...independentProjection,uiLocalePreference:'en'})}
 function response(offset=0){if(!${many})return base;const owner=base.backgroundRows[0],all=Array.from({length:13},(_,i)=>({...owner,rowKey:String(i+1).padStart(32,'0'),conversationKey:'owner-scope-'+i}));return {...base,counts:{...base.counts,backgroundProcesses:13,backgroundProcessAgents:13},backgroundRows:all.slice(offset,offset+12),backgroundPagination:{offset,limit:12,returned:Math.min(12,13-offset),total:13,returnedConversations:Math.min(12,13-offset),conversationTotal:13,hasPrevious:offset>0,hasNext:offset+12<13}}}
 window.openai={toolOutput:response(),toolResponseMetadata:{},locale:'en-US',notifyIntrinsicHeight:()=>{},callTool:async(_name,args)=>{if(args.backgroundOffset!==undefined)__backgroundOffsets.push(args.backgroundOffset);return {structuredContent:response(args.backgroundOffset||0)}}};
 </script></head>`)}
+function rebaseHtml(change:string){return DASHBOARD_CARD_HTML.replace('</head>',`<script>
+const base=${JSON.stringify({...independentProjection,uiLocalePreference:'en',scope:'bridge-wide',filter:{mode:'all',conversationAvailable:true,conversationHasWork:true}})},owner=base.backgroundRows[0];window.__reads=[];let changed=false;
+const old={...base,counts:{...base.counts,backgroundProcesses:13,backgroundProcessAgents:13},backgroundRows:Array.from({length:12},(_,i)=>({...owner,rowKey:String(i+1).padStart(32,'0')})),backgroundPagination:{offset:0,limit:12,returned:12,total:13,hasNext:true,hasPrevious:false}};
+const fresh={...base,backgroundRows:[{...owner,agentName:'Fresh owner'}],backgroundRevision:'b'.repeat(64),historyPolicy:{...base.historyPolicy,policyRevision:${JSON.stringify(change)}==='policy'?'c'.repeat(64):base.historyPolicy.policyRevision}};
+window.openai={toolOutput:old,toolResponseMetadata:{},locale:'en-US',notifyIntrinsicHeight:()=>{},callTool:async(_name,args)=>{__reads.push(args);if(args.backgroundOffset!==undefined){changed=true;return {structuredContent:{...fresh,backgroundRevision:${JSON.stringify(change)}==='owners'?fresh.backgroundRevision:old.backgroundRevision,backgroundRows:[{...owner,agentName:'Must not merge'}],backgroundPagination:{offset:12,limit:12,returned:1,total:13,hasNext:false,hasPrevious:true}}}}return {structuredContent:changed?fresh:old}}};
+</script></head>`)}
 const execute=promisify(execFile),session='tabs-review-'+process.pid;
 const wrapper=path.join(process.env.CODEX_HOME || path.join(homedir(),'.codex'),'skills/playwright/scripts/playwright_cli.sh');
 async function cli(...args:string[]){const r=await execute(existsSync(wrapper)?wrapper:'npx',[...(existsSync(wrapper)?[]:['--yes','--package','@playwright/cli@0.1.19','playwright-cli']),'--session',session,'--raw',...args],{timeout:40000,maxBuffer:3*1024*1024});if(r.stdout.includes('### Error'))throw Error(r.stdout);return r.stdout}
-const server=createServer((req,res)=>{res.setHeader('Content-Type','text/html');res.end(req.url==='/completed'?completedHtml:req.url==='/independent'?independentHtml():req.url==='/many-background'?independentHtml(true):html)});await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
+const server=createServer((req,res)=>{res.setHeader('Content-Type','text/html');res.end(req.url==='/rebase-owners'?rebaseHtml('owners'):req.url==='/rebase-policy'?rebaseHtml('policy'):req.url==='/completed'?completedHtml:req.url==='/independent'?independentHtml():req.url==='/many-background'?independentHtml(true):html)});await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
 try{
  await cli('open','http://127.0.0.1:'+(server.address() as {port:number}).port);writeFileSync(artifacts+'/initial.txt',await cli('snapshot'));
  console.log(await cli('run-code',`async page=>{
@@ -67,5 +73,17 @@ try{
  if(JSON.stringify(await page.evaluate(()=>__backgroundOffsets))!==JSON.stringify([12]))throw Error('background offset is based on progress Jobs');
  await page.screenshot({path:'output/playwright/tabs-review/background-page-complete.png'});
  }`));
- writeFileSync(artifacts+'/report.json',JSON.stringify({passed:true,checks:['active Job with background process outside terminal status page','problem-only Job expiry hides error and preview despite failed refresh','twelve valid success summaries remain','background execution survives expiry','completed Job and current runtime process have one display owner','completed execution history and Job totals remain','independent owner visible beyond twenty-six progress Jobs','bounded Background page has a working more control','Background paging preserves Job totals and uses owner offsets']},null,2));
+ for(const change of ['owners','policy']){
+ await cli('goto','http://127.0.0.1:'+(server.address() as {port:number}).port+'/rebase-'+change);writeFileSync(artifacts+'/rebase-'+change+'.txt',await cli('snapshot'));
+ console.log(await cli('run-code',`async page=>{
+ await page.waitForFunction(()=>!document.querySelector('#dashboard-content').hidden);
+ await page.locator('#background-filter').click();await page.locator('#active-more').click();
+ await page.waitForFunction(()=>document.querySelector('#active-list').innerText.includes('Fresh owner'));
+ if(await page.locator('#active-list .activity-agent').count()!==1||(await page.locator('#active-list').innerText()).includes('Must not merge'))throw Error('mismatching page was merged');
+ const requests=await page.evaluate(()=>__reads),start=requests.findIndex(value=>value.backgroundOffset===12);if(start<0||requests.length<start+2||requests[start+1].backgroundOffset!==undefined)throw Error('first-page rebase read was suppressed: '+JSON.stringify(requests));
+ if(await page.locator('#refresh').isDisabled()||await page.locator('main').getAttribute('aria-busy')!=='false')throw Error('rebase controls remain busy');
+ await page.screenshot({path:'output/playwright/tabs-review/rebase-${change}.png'});
+ }`));
+ }
+ writeFileSync(artifacts+'/report.json',JSON.stringify({passed:true,checks:['active Job with background process outside terminal status page','problem-only Job expiry hides error and preview despite failed refresh','twelve valid success summaries remain','background execution survives expiry','completed Job and current runtime process have one display owner','completed execution history and Job totals remain','independent owner visible beyond twenty-six progress Jobs','bounded Background page has a working more control','Background paging preserves Job totals and uses owner offsets','actual owner-change reload replaces the first page after busy release','actual policy-change reload replaces the first page and releases controls']},null,2));
 }finally{await cli('close').catch(()=>{});await new Promise<void>(resolve=>server.close(()=>resolve()))}
