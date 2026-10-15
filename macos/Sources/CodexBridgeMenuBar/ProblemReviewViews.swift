@@ -43,7 +43,7 @@ struct DashboardProblemsSection: View {
                         Text(BridgeAppLocalization.string(impact == "confirmed" ? "problem.currentImpact.confirmed" : "problem.currentImpact.unknown", locale: model.interfaceLocale))
                             .font(.caption2).foregroundStyle(impact == "confirmed" ? Color.orange : Color.secondary)
                     }
-                    if let reason = problem.reason { Text(reason).font(.caption).textSelection(.enabled) }
+                    if let reason = contextReason(problem) { Text(reason).font(.caption).textSelection(.enabled) }
                     if let automatic = problem.automatic { AutomaticRecoveryView(recovery: automatic) }
                     ForEach(Array((problem.progress ?? []).enumerated()), id: \.offset) { _, progress in
                         Text([DisplayFormat.dateTime(progress.at, locale: model.interfaceLocale), progress.step,
@@ -64,6 +64,13 @@ struct DashboardProblemsSection: View {
             }
         }
     }
+
+    private func contextReason(_ problem: DashboardProblem) -> String? {
+        let target = model.executionTarget(row: problem.row, problem: problem)
+        let turn = model.executionDetail(target)?.execution ?? problem.row.latestTurn
+        return ProblemReasonPresentation.contextReason(problem, turn: turn)
+    }
+
 }
 
 private struct AutomaticRecoveryView: View {
@@ -98,5 +105,24 @@ private struct AutomaticRecoveryView: View {
             return "problem.auto.protected"
         }
         return "problem.auto.unconfirmed"
+    }
+}
+
+// The surrounding incident can add recovery context, but the execution record owns
+// its exact error or cancellation reason.
+enum ProblemReasonPresentation {
+    static func contextReason(_ problem: DashboardProblem, turn: DashboardTurn?) -> String? {
+        guard let reason = problem.reason else { return nil }
+        guard problem.jobId != nil || (problem.source == "execution" && problem.executionAvailability == nil) else { return reason }
+        let status = turn?.status ?? (problem.source == "execution" ? problem.kind.rawValue : nil) ?? problem.row.status
+        let rendered: String?
+        if status == "cancelled" {
+            rendered = turn?.cancellation?.reason
+        } else if ["failed", "interrupted"].contains(status) {
+            rendered = turn?.error ?? problem.error ?? problem.row.error
+        } else {
+            rendered = nil
+        }
+        return reason == rendered ? nil : reason
     }
 }

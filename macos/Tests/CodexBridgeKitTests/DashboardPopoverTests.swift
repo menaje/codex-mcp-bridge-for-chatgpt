@@ -566,6 +566,79 @@ final class DashboardPopoverTests: XCTestCase {
     }
 
     @MainActor
+    func testReviewProblemReasonKeepsOnlyDistinctIncidentContext() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.jobsContract = true; f.state.rowCount = 1
+        await f.model.refreshDashboard(enrich: false)
+        let original = try XCTUnwrap(f.model.dashboard?.problems?.rows.first)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(original)) as? [String: Any])
+        var row = object["row"] as! [String: Any], turn = row["latestTurn"] as! [String: Any]
+        turn["error"] = "Exact failure"; object["reason"] = "Exact failure"
+        row["latestTurn"] = turn; object["row"] = row
+        func decoded() throws -> DashboardProblem { try JSONDecoder().decode(DashboardProblem.self, from: JSONSerialization.data(withJSONObject: object)) }
+        var problem = try decoded()
+        XCTAssertNil(ProblemReasonPresentation.contextReason(problem, turn: problem.row.latestTurn))
+        object["reason"] = "Worker recovery pending"; problem = try decoded()
+        XCTAssertEqual(ProblemReasonPresentation.contextReason(problem, turn: problem.row.latestTurn), "Worker recovery pending")
+        object["reason"] = "Exact failure"; object["jobId"] = NSNull(); object["source"] = "runtime"; object["executionAvailability"] = "not-linked"
+        problem = try decoded()
+        XCTAssertEqual(ProblemReasonPresentation.contextReason(problem, turn: problem.row.latestTurn), "Exact failure")
+    }
+
+    @MainActor
+    func testReviewMergedPagesScheduleEarlierLocalExpiryEvenIfRefreshFails() async throws {
+        for background in [false, true] {
+            let f = try PopoverFixture(); defer { f.remove() }
+            f.state.jobsContract = true; f.state.rowCount = 1
+            let start = ISO8601DateFormatter().date(from: "2026-09-11T00:00:00Z")!
+            var clock = start
+            f.model.dashboardHistoryNow = { clock }
+            await f.model.refreshDashboard(enrich: false)
+            var first = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(try XCTUnwrap(f.model.dashboard))) as? [String: Any])
+            let row = (first["terminalRows"] as! [[String: Any]])[0]
+            let page: [String: Any] = ["offset": 0, "limit": 12, "returned": 1, "total": 2, "returnedConversations": 1, "conversationTotal": 2, "hasNext": true, "hasPrevious": false]
+            first["activeRows"] = []; first["statusRows"] = []; first["problems"] = NSNull()
+            first["terminalRows"] = [row]
+            var pagination = first["pagination"] as! [String: Any]; pagination["terminal"] = page; first["pagination"] = pagination
+            first["backgroundRows"] = background ? [row] : []
+            first["backgroundPagination"] = page; first["backgroundRevision"] = "stable-owners"
+            func encoded(_ object: [String: Any]) throws -> String { String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self) }
+            f.state.dashboardJSON = try encoded(first)
+            await f.model.refreshDashboard(enrich: false)
+            var expiring = row, turn = row["latestTurn"] as! [String: Any]
+            turn["endedAt"] = ISO8601DateFormatter().string(from: start.addingTimeInterval(-30 * 86400 + 1))
+            turn["summary"] = "Expiring appended detail"
+            expiring["latestTurn"] = turn; expiring["rowKey"] = "appended-row"; expiring["jobId"] = "appended-job"
+            var next = first, nextPage = page
+            nextPage["offset"] = 1; nextPage["returned"] = 1; nextPage["hasNext"] = false; nextPage["hasPrevious"] = true
+            if background {
+                next["backgroundRows"] = [expiring]; next["backgroundPagination"] = nextPage
+                f.state.backgroundPageJSON = try encoded(next)
+                await f.model.loadMoreBackground()
+            } else {
+                next["terminalRows"] = [expiring]; pagination["terminal"] = nextPage; next["pagination"] = pagination
+                f.state.dashboardJSON = try encoded(next)
+                await f.model.loadMoreRecent()
+            }
+            let rows = background ? f.model.dashboard?.backgroundRows : f.model.dashboard?.terminalRows
+            XCTAssertEqual(rows?.count, 2)
+            let appended = try XCTUnwrap(rows?.last)
+            let target = try XCTUnwrap(f.model.executionTarget(row: appended))
+            XCTAssertGreaterThan(try XCTUnwrap(target.expiresAt), clock)
+            let before = f.state.dashboardReadCount
+            var invalidations = 0
+            let subscription = f.model.objectWillChange.sink { invalidations += 1 }
+            f.state.failDashboard = true; clock = start.addingTimeInterval(1)
+            try await Task.sleep(for: .milliseconds(1200))
+            XCTAssertGreaterThan(f.state.dashboardReadCount, before, "Merged \(background ? "Background" : "History") must reschedule the earlier boundary")
+            XCTAssertGreaterThan(invalidations, 0, "Local expiry must repaint even if refresh fails")
+            XCTAssertFalse(ExecutionRecordPresentation.retained(appended, days: 30, now: clock), "The repainted record must hide its expired summary and detail")
+            XCTAssertNotNil(f.model.dashboardErrorMessage)
+            subscription.cancel()
+        }
+    }
+
+    @MainActor
     func testReviewProblemOnlyExpiryRepaintsWithoutSuccessfulRefresh() async throws {
         let f = try PopoverFixture(); defer { f.remove() }
         f.state.jobsContract = true; f.state.rowCount = 1

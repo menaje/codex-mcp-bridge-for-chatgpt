@@ -63,7 +63,7 @@
       {
         "name": "dashboard",
         "uriVersion": 5,
-        "digest": "07865844c5fe922861e87ad8b472ac78b9588413bd6cf7651e9bb534edd9a3f1",
+        "digest": "fc7bcbfc0206c4dc116803c07b80c350df10ed265615a86d0fb61a44c88fd67e",
         "uri": "ui://codex-mcp-bridge/dashboard/v5.html",
         "inventories": [
           "development-current"
@@ -128,7 +128,7 @@
     },
     "dashboard": {
       "uriVersion": 5,
-      "digest": "07865844c5fe922861e87ad8b472ac78b9588413bd6cf7651e9bb534edd9a3f1",
+      "digest": "fc7bcbfc0206c4dc116803c07b80c350df10ed265615a86d0fb61a44c88fd67e",
       "uri": "ui://codex-mcp-bridge/dashboard/v5.html",
       "metadata": {
         "descriptor": {

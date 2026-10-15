@@ -48,6 +48,47 @@ function fixture(days=0) {
 }
 const query={scopeId:scope,historyMode:'jobs' as const,statusFilter:'all' as const,inspectRuntime:false,includeHistory:true,limit:5};
 describe('Job-unit execution tabs and read-only exact detail',()=>{
+ it('marks an omitted history body as omitted so first History selection fetches it',async()=>{
+  const f=fixture();try{
+   f.seed('completed',1);
+   const first=await f.service().dashboardSnapshot({...query,includeHistory:false});
+   expect(first.historyIncluded).toBe(false);expect(first.terminalRows).toEqual([]);expect(first.counts.executionCount).toBe(1);
+   const fetched=await f.service().dashboardSnapshot({...query,includeHistory:true});expect(fetched.historyIncluded).toBe(true);expect(fetched.terminalRows).toHaveLength(1);
+   const c=vm.createContext({view:first,selectedStatus:'all',problemMutationInFlight:false,mounted:true,historyLoadQueued:false,busy:false,requests:0,
+    closeWorkDetails:()=>{},syncStatusFilter:()=>{},reload:async()=>{c.requests++;c.view=fetched;},paint:()=>{}});
+   vm.runInContext(DASHBOARD_CARD_HTML.split('\n').find(x=>/^\s*async function selectStatus\(/.test(x))!,c);
+   await vm.runInContext('selectStatus("history")',c);expect(c.requests).toBe(1);expect(c.view.terminalRows).toHaveLength(1);
+  }finally{await f.close();}
+ });
+ it.each(['orphaned','idle','not-loaded'])('preserves %s runtime health on exact active Job rows and background owners',async state=>{
+  const f=fixture();try{
+   const live=f.seed('running',0,{threadId:'runtime-health-thread'});f.seed('completed',1);
+   const first=await f.service().dashboardSnapshot(query);
+   const view=await f.service().dashboardSnapshotWithEnrichment!(query,{runtimeByAgent:[[f.agent.agentId,{state,backgroundProcessState:'confirmed',backgroundProcessCount:1}]],runtimeProbeSkippedAgents:0,weeklyUsage:null,summary:{...first.enrichment,state:'enriched'}} as any);
+   const expected=state==='orphaned'?'orphaned':'liveness-unknown',row=view.activeRows.find(x=>x.jobId===live.jobId)!;
+   expect(row.status).toBe(expected);expect(row.latestTurn?.status).toBe(expected);
+   expect(view.backgroundRows?.find(x=>x.jobId===live.jobId)?.status).toBe(expected);
+   expect(view.terminalRows[0].status).toBe('completed');
+   await expect(f.service().dashboardExecutionDetail!({scopeId:scope,jobId:live.jobId,expectedExecutionRevision:row.executionRevision})).resolves.toMatchObject({jobId:live.jobId});
+  }finally{await f.close();}
+ });
+ it.each(['running','completed'])('routes an exact %s Job handoff to its current owning Agent thread and rejects stale or unrelated targets',async status=>{
+  const f=fixture();try{
+   f.writer.linkAgentThread({agentId:f.agent.agentId,threadId:'33333333-3333-4333-8333-333333333333',backendKind:'app-server',cwd:f.root,sandbox:'read-only',contextMode:'fresh',now});
+   const job=f.seed(status,0,{threadId:'33333333-3333-4333-8333-333333333333'});
+   f.writer.upsertSession({threadId:'33333333-3333-4333-8333-333333333333',scopeId:scope,cwd:f.root,lastUsedAt:now,backendKind:'app-server',visibleInCodexApp:true});
+   const handoff=vi.spyOn(CodexJobRegistry.prototype,'threadHandoff').mockReturnValue({phase:'released',handoffRequested:true,evidence:'thread-unloaded'} as any);
+   const v=await f.service().dashboardSnapshot(query),row=[...v.activeRows,...v.terminalRows].find(x=>x.jobId===job.jobId)!;
+   expect(row.codexThreadUrl).toBe('codex://threads/33333333-3333-4333-8333-333333333333');
+   await expect(f.service().threadHandoff({rowKey:row.rowKey,codexThreadUrl:row.codexThreadUrl!,action:'request'})).resolves.toMatchObject({phase:'released',canOpen:true});
+   expect(handoff).toHaveBeenCalledWith('33333333-3333-4333-8333-333333333333','request');
+   await expect(f.service().threadHandoff({rowKey:row.rowKey,codexThreadUrl:'codex://threads/foreign-thread',action:'request'})).rejects.toThrow(/TARGET_CHANGED/);
+   f.writer.linkAgentThread({agentId:f.agent.agentId,threadId:'44444444-4444-4444-8444-444444444444',backendKind:'app-server',cwd:f.root,sandbox:'read-only',contextMode:'fresh',now:now+1});
+   await expect(f.service().threadHandoff({rowKey:row.rowKey,codexThreadUrl:row.codexThreadUrl!,action:'request'})).rejects.toThrow(/TARGET_CHANGED/);
+   expect(handoff).toHaveBeenCalledTimes(1);
+  }finally{await f.close();}
+ });
+
  it('paginates every terminal Job independently of a single Agent/Activity and excludes active Jobs from executionCount',async()=>{
   const f=fixture();try {
    const jobs=Array.from({length:13},(_,n)=>f.seed(['completed','failed','interrupted','cancelled'][n%4],n+1,{error:n%4===1?'recorded failure':undefined}));

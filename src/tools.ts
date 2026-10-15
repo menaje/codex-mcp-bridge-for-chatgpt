@@ -5535,8 +5535,23 @@ export function registerBridgeTools(
       }) as Promise<{ok:true}>;
     },
     async threadHandoff(input) {
-      const agent = listAllDashboardAgents(jobs).find(candidate => dashboardRowKey(candidate.agentId) === input.rowKey);
-      const thread = agent && jobs.listAgentThreads(agent.agentId).find(candidate => input.codexThreadUrl === `codex://threads/${candidate.threadId}` &&
+      const agents = listAllDashboardAgents(jobs);
+      // Job rows carry their own opaque identity. Resolve only active Jobs or the
+      // current representative, then verify the exact retained Job/thread pair.
+      const activeJob = jobs.list(Math.max(jobs.size, config.maxRetainedJobs)).find(candidate =>
+        isActiveActivityJobStatus(candidate.status) && dashboardRowKey(undefined, candidate.jobId) === input.rowKey);
+      const latest = jobs.admissionStateStore.latestControlJobs(agents.map(candidate => candidate.agentId));
+      const jobOwner = activeJob?.agentId ? agents.find(candidate => candidate.agentId === activeJob.agentId)
+        : agents.find(candidate => {
+          const job = latest.get(candidate.agentId);
+          return job && dashboardRowKey(undefined, job.jobId) === input.rowKey;
+        });
+      const agent = jobOwner || agents.find(candidate => dashboardRowKey(candidate.agentId) === input.rowKey);
+      const jobId = jobOwner ? activeJob?.jobId || latest.get(jobOwner.agentId)?.jobId : undefined;
+      const recordTarget = jobId && agent ? jobs.admissionStateStore.dashboardExecutionRecords([jobId], agent.scopeId)[0] : undefined;
+      const exactJobTarget = !jobOwner || Boolean(recordTarget && recordTarget.agentId === agent?.agentId &&
+        input.codexThreadUrl === `codex://threads/${recordTarget.threadId}`);
+      const thread = exactJobTarget && agent && jobs.listAgentThreads(agent.agentId).find(candidate => input.codexThreadUrl === `codex://threads/${candidate.threadId}` &&
         (input.action !== "request" || candidate.isCurrent));
       if (!agent || !thread || thread.backendKind !== "app-server" || input.codexThreadUrl !== `codex://threads/${thread.threadId}`) {
         throw new Error("THREAD_HANDOFF_TARGET_CHANGED: Refresh this Agent before continuing in Codex.");
@@ -11845,6 +11860,7 @@ function buildDashboardExecutionDetail(store:BridgeStateStore,input:BridgeDashbo
 }
 
 const snapshotRuntimeOnlyRows=new WeakMap<DashboardView,DashboardRow[]>();
+const snapshotActiveStatuses=new WeakMap<DashboardView,Map<string,DashboardStatus>>();
 const snapshotBackgroundOwners=new WeakMap<DashboardView,Array<{row:DashboardRow;jobId?:string}>>();
 
 function applyExecutionContract(view:DashboardView,store:BridgeStateStore,options:BridgeDashboardSnapshotOptions):void {
@@ -11874,6 +11890,7 @@ function applyExecutionContract(view:DashboardView,store:BridgeStateStore,option
     view.problems.systemIncidentCount=eventRefs.filter(x=>!x.jobId).length;
   }
   if(options.historyMode!=="jobs") return;
+  view.historyIncluded=options.includeHistory!==false;
   const page=(rows:DashboardRow[],total:number,offset:number,conversationTotal=0)=>({rows,page:{offset,limit:options.limit || 12,returned:rows.length,total,
     returnedConversations:new Set(rows.map(x=>x.conversationKey)).size,conversationTotal,
     hasPrevious:offset>0,hasNext:offset+rows.length<total}});
@@ -11881,11 +11898,15 @@ function applyExecutionContract(view:DashboardView,store:BridgeStateStore,option
   const makeRow=(record:DashboardExecutionRecord,ownerTemplate?:DashboardRow):DashboardRow=> {
     const template=ownerTemplate || templates.find(x=>x.latestTurn?.executionKey===dashboardRowKey(undefined,record.jobId));
     const turn=executionTurn(record);
+    // Runtime health is transient presentation state; keep the durable exact-
+    // detail revision stable while preserving the canonical live status.
+    const runtimeStatus=snapshotActiveStatuses.get(view)?.get(record.jobId);
+    const status=runtimeStatus==="orphaned" || runtimeStatus==="liveness-unknown" ? runtimeStatus : turn.status;
     return {rowKey:turn.executionKey!,activityKey:turn.activityKey!,conversationKey:dashboardConversationKey(record.scopeId),sessionAlias:dashboardSessionAlias(record.scopeId),
-      ...(template?.conversationUrl ? {conversationUrl:template.conversationUrl} : {}),...(template?.codexThreadUrl ? {codexThreadUrl:template.codexThreadUrl} : {}),
+      ...(template?.conversationUrl ? {conversationUrl:template.conversationUrl} : {}),...(template?.codexThreadUrl && template.codexThreadUrl===`codex://threads/${record.threadId}` ? {codexThreadUrl:template.codexThreadUrl} : {}),
       bucket:isActiveActivityJobStatus(record.status) ? "active" : "recent",...dashboardProjectIdentity({projectId:record.projectId || undefined,projectName:record.projectName || undefined}),
-      agentName:dashboardAgentName(record.agentName || undefined),activityTitle:record.activityTitle,status:turn.status,createdAt:turn.startedAt!,updatedAt:turn.updatedAt,
-      elapsedMs:turn.durationMs ?? Math.max(0,now-record.createdAt),backgroundProcessCount:isActiveActivityJobStatus(record.status) ? template?.backgroundProcessCount || 0 : 0,controlKind:template?.controlKind || null,latestTurn:{...turn,
+      agentName:dashboardAgentName(record.agentName || undefined),activityTitle:record.activityTitle,status,createdAt:turn.startedAt!,updatedAt:turn.updatedAt,
+      elapsedMs:turn.durationMs ?? Math.max(0,now-record.createdAt),backgroundProcessCount:isActiveActivityJobStatus(record.status) ? template?.backgroundProcessCount || 0 : 0,controlKind:template?.controlKind || null,latestTurn:{...turn,status,
         ...(template?.latestTurn?.execution ? {execution:template.latestTurn.execution} : {}),...(template?.latestTurn?.tokenUsage ? {tokenUsage:template.latestTurn.tokenUsage} : {})},
       history:[],historyCount:0,historyHasMore:false,historyRevision:turn.executionRevision,policyRevision:policy.policyRevision,representativeExecutionKey:turn.executionKey,
       nextExpiryAt:policy.retentionDays===0 || record.endedAt===null ? null : new Date(record.endedAt+policy.retentionDays*86400000).toISOString(),
@@ -13804,6 +13825,7 @@ async function buildDashboardView(
     uiLocalePreference: preferences.uiLocalePreference
   });
   snapshotRuntimeOnlyRows.set(parsedView,recoveryRows.map(x=>x.row));
+  snapshotActiveStatuses.set(parsedView,new Map(allJobs.filter(job=>isActiveActivityJobStatus(job.status)).map(job=>[job.jobId,statusForJob(job)])));
   const activeJobByExecutionKey=new Map(allJobs.filter(job=>isActiveActivityJobStatus(job.status)).map(job=>[dashboardRowKey(undefined,job.jobId),job.jobId]));
   snapshotBackgroundOwners.set(parsedView,activeRows.filter(row=>row.backgroundProcessCount>0).map(row=>({row,
     jobId:agentById.get(agentIdByRowKey.get(row.rowKey) || "")?.currentJobId || (row.latestTurn?.executionKey ? activeJobByExecutionKey.get(row.latestTurn.executionKey) : undefined)})));

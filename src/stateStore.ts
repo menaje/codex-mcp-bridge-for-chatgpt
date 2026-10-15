@@ -304,7 +304,7 @@ export type DashboardRetainedJobSummary = {
 };
 
 export type DashboardExecutionRecord = {
-  jobId:string;scopeId:string;activityId:string;agentId:string|null;status:string;createdAt:number;updatedAt:number;
+  jobId:string;scopeId:string;activityId:string;agentId:string|null;threadId:string|null;status:string;createdAt:number;updatedAt:number;
   endedAt:number|null;endedAtSource:string|null;detailAvailability:string;activityTitle:string;agentName:string|null;
   projectId:string|null;projectName:string|null;executionName:string|null;summary:string|null;error:string|null;
   cancellationReason:string|null;cancellationSource:string|null;cancellationRequestedAt:number|null;
@@ -1550,7 +1550,7 @@ export class BridgeStateStore {
     const result:DashboardExecutionRecord[]=[],ids=[...new Set(jobIds)];
     for(let offset=0;offset<ids.length;offset+=500) {
       const part=ids.slice(offset,offset+500);
-      result.push(...this.database.prepare(`SELECT j.job_id jobId,j.scope_id scopeId,j.activity_id activityId,j.agent_id agentId,j.status,
+      result.push(...this.database.prepare(`SELECT j.job_id jobId,j.scope_id scopeId,j.activity_id activityId,j.agent_id agentId,j.thread_id threadId,j.status,
         j.created_at createdAt,j.updated_at updatedAt,j.ended_at endedAt,j.ended_at_source endedAtSource,j.detail_availability detailAvailability,
         a.title activityTitle,agent.agent_name agentName,a.project_id projectId,p.name projectName,
         CASE WHEN json_type(j.payload,'$.executionName')='text' THEN json_extract(j.payload,'$.executionName') END executionName,
