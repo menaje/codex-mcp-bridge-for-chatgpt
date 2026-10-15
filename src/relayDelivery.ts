@@ -5,6 +5,7 @@ import { parseJsonTextStrict } from "./textIntegrity.js";
 
 const GOAL = "relay_goal_v1/";
 const JOB = "relay_job_v1/";
+const HISTORY = "relay_event_history_v1/";
 const MEMBER = "relay_member_v1/";
 const READY = "relay_ready_v1/";
 export const RELAY_EVENT_PATTERN = /^rle_[a-f0-9]{96}$/;
@@ -21,7 +22,7 @@ export type RelayEvent = {
   state: "pending" | "leased" | "sending" | "accepted" | "unknown" | "rejected";
   attemptId?: string; cardId?: string; leaseUntil?: number; attempts: number; retryAt?: number;
 };
-type Registration = Owner & { jobId: string; activityId: string; projectId?: string; event?: RelayEvent };
+type Registration = Owner & { jobId: string; activityId: string; projectId?: string; event?: RelayEvent; paused?: boolean };
 export type RelayOutcome = "accepted" | "unknown" | "rejected" | "retryable-rejection" | "not-sent";
 
 function digest(value: string): string { return createHash("sha256").update(value).digest("hex"); }
@@ -32,17 +33,22 @@ function canonical(value: unknown): string {
 export function relayPresentationRef(requestId: string): string { return digest(`codex/relay-open/v1\0${requestId}`); }
 
 /** One stable event per exact terminal generation or current input set. No
- * result, question text, approval, path or scope is copied into the event. */
+ * result, question text, approval, path or scope is copied into the event.
+ * Owner reachability controls dispatch, not the identity or delivery history. */
 export function relayEvent(job: EventJob): RelayEvent | undefined {
   const terminal = job.terminalVersion && ["completed", "failed", "interrupted", "cancelled"].includes(job.status);
   const inputs = (job.pendingInteractions || []).filter(input => input && typeof input === "object");
-  if (!terminal && (job.status !== "running" || job.trackingState && job.trackingState !== "connected" || !inputs.length)) return;
+  if (!terminal && (job.status !== "running" || !inputs.length)) return;
   const identity = terminal ? `terminal/${job.terminalVersion}` : `input/${canonical({
     worker: job.workerId, generation: job.workerGeneration, thread: job.threadId,
     inputs: inputs.sort((a, b) => canonical(a).localeCompare(canonical(b)))
   })}`;
   return { eventId: "rle_" + job.jobId.replaceAll("-", "") + digest(`codex/relay-event/v1\0${identity}`),
     jobId: job.jobId, kind: terminal ? "terminal" : "input", version: job.version || 1, state: "pending", attempts: 0 };
+}
+
+function dispatchable(job: EventJob, event: RelayEvent): boolean {
+  return event.kind === "terminal" || !job.trackingState || job.trackingState === "connected";
 }
 
 export function relayEventJobId(eventId: string): string {
@@ -96,12 +102,22 @@ export class RelayDeliveryStore {
     if (!goal || goal.ended || goal.monitoringStopped || goal.scopeId !== job.scopeId ||
         goal.mcpPrincipal !== job.mcpPrincipal || goal.projectId !== job.projectId) return;
     const next = relayEvent(job);
-    if (record.event?.eventId === next?.eventId) return;
+    const sameEvent = record.event?.eventId === next?.eventId;
+    const paused = Boolean(next && !dispatchable(job, next));
+    if (sameEvent && Boolean(record.paused) === paused) return;
     if (record.event) this.state.deleteMeta(this.readyKey(record.activityId, record.event.eventId));
-    record.event = next;
+    if (!sameEvent) {
+      // A resolved/replaced input loses current eligibility, not its receipt.
+      // Archive only on identity changes; progress and liveness do not append.
+      if (record.event) this.save(this.historyKey(job.jobId, record.event.eventId), record.event);
+      record.event = next ? this.read<RelayEvent>(this.historyKey(job.jobId, next.eventId)) || next : undefined;
+      if (next) this.state.deleteMeta(this.historyKey(job.jobId, next.eventId));
+    }
+    if (paused) record.paused = true;
+    else delete record.paused;
     this.save(JOB + job.jobId, record);
-    if (next) {
-      this.save(this.readyKey(record.activityId, next.eventId), { jobId: job.jobId });
+    if (record.event && !paused && ["pending", "leased"].includes(record.event.state)) {
+      this.save(this.readyKey(record.activityId, record.event.eventId), { jobId: job.jobId });
       this.state.markRelayReady(record.activityId, job.jobId);
     }
   }
@@ -126,8 +142,11 @@ export class RelayDeliveryStore {
     for (const row of rows) {
       const { jobId } = parseJsonTextStrict(row.value, "Relay member") as { jobId: string };
       const job = this.state.getRelayJobSnapshot(jobId);
-      if (job && this.state.retainedJobVisible(jobId) &&
-          relayEvent(job)?.eventId !== this.registration(jobId)?.event?.eventId) changes.push(job);
+      if (job && this.state.retainedJobVisible(jobId)) {
+        const next = relayEvent(job), record = this.registration(jobId);
+        if (next?.eventId !== record?.event?.eventId ||
+            Boolean(record?.paused) !== Boolean(next && !dispatchable(job, next))) changes.push(job);
+      }
     }
     if (changes.length) this.state.transaction(() => { for (const job of changes) this.reconcileJob(job); });
     return rows.length === 32 ? rows[rows.length - 1]!.key.slice(prefix.length) : null;
@@ -141,7 +160,7 @@ export class RelayDeliveryStore {
       const { jobId } = parseJsonTextStrict(row.value, "Relay readiness") as { jobId: string };
       const record = this.registration(jobId), event = record?.event;
       const current = this.state.getRelayJobSnapshot(jobId);
-      if (!event || !current || !this.state.retainedJobVisible(jobId) || relayEvent(current)?.eventId !== event.eventId) continue;
+      if (!event || !current || !this.state.retainedJobVisible(jobId) || relayEvent(current)?.eventId !== event.eventId || !dispatchable(current, event)) continue;
       if (event.state === "pending" && (event.retryAt || 0) <= now || event.state === "leased" &&
           ((event.leaseUntil || 0) <= now || event.cardId !== goal.cardId)) result.push(event);
     }
@@ -190,8 +209,10 @@ export class RelayDeliveryStore {
         outcome === "not-sent" || outcome === "retryable-rejection" && event.attempts < 3 ? "pending" : "rejected";
       if (event.state === "pending") {
         event.retryAt = Date.now() + 2_000 * event.attempts;
-        this.save(this.readyKey(activityId, eventId), { jobId: record.jobId });
-        this.state.markRelayReady(activityId, record.jobId);
+        if (!record.paused) {
+          this.save(this.readyKey(activityId, eventId), { jobId: record.jobId });
+          this.state.markRelayReady(activityId, record.jobId);
+        }
       } else this.state.deleteMeta(this.readyKey(activityId, eventId));
       this.save(JOB + record.jobId, record);
       this.diagnose(record);
@@ -231,6 +252,7 @@ export class RelayDeliveryStore {
   }
 
   forgetJob(jobId: string): void {
+    this.state.deleteMetaPrefix(`${HISTORY}${jobId}/`);
     const record = this.registration(jobId);
     if (!record) return;
     if (record.event) this.state.deleteMeta(this.readyKey(record.activityId, record.event.eventId));
@@ -252,6 +274,7 @@ export class RelayDeliveryStore {
     if (!record || record.activityId !== activityId || record.event?.eventId !== eventId || !current ||
         !this.state.retainedJobVisible(record.jobId) || this.state.isEventActivityEnded(activityId) ||
         relayEvent(current)?.eventId !== eventId) throw new Error("RELAY_EVENT_STALE: Read the exact current Job.");
+    if (!dispatchable(current, record.event)) throw new Error("RELAY_EVENT_PAUSED: The original input owner is not currently connected; preserve this event and attempt.");
     return record;
   }
 
@@ -261,6 +284,7 @@ export class RelayDeliveryStore {
     });
   }
   private readyKey(activityId: string, eventId: string): string { return `${READY}${activityId}/${eventId}`; }
+  private historyKey(jobId: string, eventId: string): string { return `${HISTORY}${jobId}/${eventId}`; }
   private read<T>(key: string): T | undefined {
     const raw = this.state.getMeta(key);
     return raw === undefined ? undefined : parseJsonTextStrict(raw, "Relay journal") as T;

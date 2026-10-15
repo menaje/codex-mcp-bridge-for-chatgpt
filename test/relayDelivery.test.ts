@@ -86,6 +86,130 @@ describe("#261 durable relay delivery", () => {
     expect(f.state.relay.pending(f.activity.activityId)).toEqual([]);
   });
 
+  it.each(["accepted", "unknown", "sending"] as const)("preserves %s input delivery through owner liveness loss and recovery", outcome => {
+    const f = fixture(), input = { interactionId: "same-question", kind: "user-input", origin: "codex-question",
+      questions: [{ id: "choice", header: "Choice", question: "Original question" }] };
+    const a = f.seed({ trackingState: "connected", workerId: "original-worker", workerGeneration: 1,
+      threadId: randomUUID(), pendingInteractions: [input] });
+    const event = f.state.relay.registration(a.jobId)!.event!, card = f.connect(), attempt = randomUUID();
+    f.state.relay.claim(f.activity.activityId, f.owner, card, event.eventId, attempt);
+    expect(f.state.relay.enter(f.activity.activityId, f.owner, card, event.eventId, attempt)).toBe(true);
+    if (outcome !== "sending") f.state.relay.acknowledge(f.activity.activityId, f.owner, card, event.eventId, attempt, outcome);
+    const before = f.state.relay.registration(a.jobId)!.event!;
+    f.state.upsertJob({ ...a, version: 2, trackingState: "liveness-unknown" });
+    expect.soft(f.state.relay.registration(a.jobId)?.event).toEqual(before);
+    expect(f.state.relay.pending(f.activity.activityId)).toEqual([]);
+    const replacement = f.connect(); f.state.relay.recover(f.activity.activityId);
+    f.state.upsertJob({ ...a, version: 3, trackingState: "connected" });
+    expect.soft(f.state.relay.registration(a.jobId)?.event).toEqual(before);
+    expect.soft(f.state.relay.pending(f.activity.activityId)).toEqual([]);
+    const repeatedAttempt = randomUUID();
+    f.state.relay.claim(f.activity.activityId, f.owner, replacement, event.eventId, repeatedAttempt);
+    expect(f.state.relay.enter(f.activity.activityId, f.owner, replacement, event.eventId, repeatedAttempt)).toBe(false);
+  });
+
+  it.each(["pending", "leased"] as const)("pauses %s inputs without losing a claim and signals readiness only on committed recovery", phase => {
+    const f = fixture(), a = f.seed({ trackingState: "connected", pendingInteractions: [{ interactionId: "waiting-question" }] });
+    const event = f.state.relay.registration(a.jobId)!.event!, card = f.connect(), attempt = randomUUID();
+    if (phase === "leased") f.state.relay.claim(f.activity.activityId, f.owner, card, event.eventId, attempt);
+    const before = f.state.relay.registration(a.jobId)!.event!, signal = vi.fn(); f.state.subscribeRelayReady(signal);
+    f.state.upsertJob({ ...a, version: 2, trackingState: "liveness-unknown" });
+    expect(f.state.relay.registration(a.jobId)).toMatchObject({ paused: true, event: before });
+    expect(f.state.listMeta(`relay_ready_v1/${f.activity.activityId}/`, 64)).toEqual([]);
+    expect(signal).not.toHaveBeenCalled();
+    expect(() => f.state.relay.claim(f.activity.activityId, f.owner, card, event.eventId, attempt)).toThrow(/RELAY_EVENT_PAUSED/);
+    expect(() => f.state.relay.enter(f.activity.activityId, f.owner, card, event.eventId, attempt)).toThrow(/RELAY_EVENT_PAUSED/);
+    const transaction = vi.spyOn(f.state, "transaction"), write = vi.spyOn(f.state, "setMeta");
+    f.state.relay.recover(f.activity.activityId); f.state.relay.recover(f.activity.activityId);
+    expect(transaction).not.toHaveBeenCalled(); expect(write).not.toHaveBeenCalled();
+    transaction.mockRestore(); write.mockRestore();
+    expect(() => f.state.transaction(() => { f.state.upsertJob({ ...a, version: 3 }); throw new Error("rollback recovery"); })).toThrow("rollback recovery");
+    expect(f.state.relay.registration(a.jobId)).toMatchObject({ paused: true, event: before });
+    expect(signal).not.toHaveBeenCalled();
+    f.state.transaction(() => { f.state.upsertJob({ ...a, version: 3 }); expect(signal).not.toHaveBeenCalled(); });
+    // The existing card's live lease is retained, so it is not a new offer.
+    expect(signal).toHaveBeenCalledTimes(phase === "pending" ? 1 : 0);
+    expect(f.state.relay.registration(a.jobId)?.event).toEqual(before);
+    expect(f.state.relay.registration(a.jobId)?.paused).toBeUndefined();
+    expect(f.state.relay.claim(f.activity.activityId, f.owner, card, event.eventId, attempt)?.attempts).toBe(1);
+    expect(f.state.relay.enter(f.activity.activityId, f.owner, card, event.eventId, attempt)).toBe(true);
+    expect(f.state.relay.enter(f.activity.activityId, f.owner, card, event.eventId, attempt)).toBe(false);
+  });
+
+  it.each(["accepted", "unknown", "sending"] as const)("retains %s input receipts across resolution, replacement and return of the exact identity", outcome => {
+    const f = fixture(), input = { interactionId: "original-question", questions: [{ question: "Private original body" }] };
+    const a = f.seed({ trackingState: "connected", workerId: "worker", workerGeneration: 1, threadId: randomUUID(), pendingInteractions: [input] });
+    const event = f.state.relay.registration(a.jobId)!.event!, card = f.connect(), attempt = randomUUID();
+    f.state.relay.claim(f.activity.activityId, f.owner, card, event.eventId, attempt);
+    expect(f.state.relay.enter(f.activity.activityId, f.owner, card, event.eventId, attempt)).toBe(true);
+    if (outcome !== "sending") f.state.relay.acknowledge(f.activity.activityId, f.owner, card, event.eventId, attempt, outcome);
+    const before = f.state.relay.registration(a.jobId)!.event!, historyKey = `relay_event_history_v1/${a.jobId}/${event.eventId}`;
+    f.state.upsertJob({ ...a, version: 2, pendingInteractions: [] });
+    expect(f.state.relay.registration(a.jobId)?.event).toBeUndefined();
+    expect(JSON.parse(f.state.getMeta(historyKey)!)).toEqual(before);
+    expect(f.state.getMeta(historyKey)).not.toContain("Private original body");
+    expect(() => f.state.relay.enter(f.activity.activityId, f.owner, card, event.eventId, attempt)).toThrow(/RELAY_EVENT_STALE/);
+    expect(f.state.relay.acknowledge(f.activity.activityId, f.owner, card, event.eventId, attempt, "accepted")).toBeUndefined();
+    f.state.upsertJob({ ...a, version: 3, pendingInteractions: [{ ...input, interactionId: "replacement-question" }] });
+    expect(f.state.relay.registration(a.jobId)?.event?.eventId).not.toBe(event.eventId);
+    f.state.upsertJob({ ...a, version: 4 });
+    expect(f.state.relay.registration(a.jobId)?.event).toEqual(before);
+    expect(f.state.getMeta(historyKey)).toBeUndefined();
+    const repeatedAttempt = randomUUID();
+    expect(f.state.relay.claim(f.activity.activityId, f.owner, card, event.eventId, repeatedAttempt)).toBeUndefined();
+    expect(f.state.relay.enter(f.activity.activityId, f.owner, card, event.eventId, repeatedAttempt)).toBe(false);
+  });
+
+  it.each(["accepted", "unknown", "sending"] as const)("recovers a paused %s input after SQLite restart without another send", outcome => {
+    const directory = mkdtempSync(path.join(tmpdir(), "relay-paused-restart-")); directories.push(directory);
+    const file = path.join(directory, "state.sqlite"), f = fixture(file);
+    const a = f.seed({ trackingState: "connected", pendingInteractions: [{ interactionId: "same-question" }] });
+    const event = f.state.relay.registration(a.jobId)!.event!, card = f.connect(), attempt = randomUUID();
+    f.state.relay.claim(f.activity.activityId, f.owner, card, event.eventId, attempt);
+    f.state.relay.enter(f.activity.activityId, f.owner, card, event.eventId, attempt);
+    if (outcome !== "sending") f.state.relay.acknowledge(f.activity.activityId, f.owner, card, event.eventId, attempt, outcome);
+    const before = f.state.relay.registration(a.jobId)!.event!;
+    f.state.upsertJob({ ...a, version: 2, trackingState: "liveness-unknown" }); f.state.close();
+    const restarted = new BridgeStateStore({ file }); stores.push(restarted);
+    const nextCard = randomUUID(); restarted.relay.connect(f.activity.activityId, f.owner, nextCard);
+    restarted.relay.recover(f.activity.activityId);
+    expect(restarted.relay.registration(a.jobId)).toMatchObject({ paused: true, event: before });
+    expect(restarted.relay.pending(f.activity.activityId)).toEqual([]);
+    restarted.upsertJob({ ...a, version: 3 });
+    expect(restarted.relay.registration(a.jobId)?.event).toEqual(before);
+    const repeatedAttempt = randomUUID();
+    expect(restarted.relay.claim(f.activity.activityId, f.owner, nextCard, event.eventId, repeatedAttempt)).toBeUndefined();
+    expect(restarted.relay.enter(f.activity.activityId, f.owner, nextCard, event.eventId, repeatedAttempt)).toBe(false);
+  });
+
+  it("records the same send's late ACK while its input owner is paused", () => {
+    const f = fixture(), a = f.seed({ trackingState: "connected", pendingInteractions: [{ interactionId: "waiting-question" }] });
+    const event = f.state.relay.registration(a.jobId)!.event!, card = f.connect(), attempt = randomUUID();
+    f.state.relay.claim(f.activity.activityId, f.owner, card, event.eventId, attempt);
+    f.state.relay.enter(f.activity.activityId, f.owner, card, event.eventId, attempt);
+    f.state.upsertJob({ ...a, version: 2, trackingState: "liveness-unknown" }); f.connect();
+    expect(f.state.relay.acknowledge(f.activity.activityId, f.owner, card, event.eventId, attempt, "accepted")?.state).toBe("accepted");
+    f.state.upsertJob({ ...a, version: 3 });
+    expect(f.state.relay.registration(a.jobId)?.event).toMatchObject({ eventId: event.eventId, attemptId: attempt, attempts: 1, state: "accepted" });
+    expect(f.state.relay.pending(f.activity.activityId)).toEqual([]);
+  });
+
+  it.each(["not-sent", "retryable-rejection"] as const)("holds a proven %s retry until owner recovery without resetting its attempt", outcome => {
+    const f = fixture(), a = f.seed({ trackingState: "connected", pendingInteractions: [{ interactionId: "retry-question" }] });
+    const event = f.state.relay.registration(a.jobId)!.event!, card = f.connect(), attempt = randomUUID();
+    f.state.relay.claim(f.activity.activityId, f.owner, card, event.eventId, attempt);
+    if (outcome === "retryable-rejection") f.state.relay.enter(f.activity.activityId, f.owner, card, event.eventId, attempt);
+    f.state.upsertJob({ ...a, version: 2, trackingState: "liveness-unknown" });
+    expect(f.state.relay.acknowledge(f.activity.activityId, f.owner, card, event.eventId, attempt, outcome))
+      .toMatchObject({ state: "pending", attempts: 1, attemptId: attempt });
+    const before = f.state.relay.registration(a.jobId)!.event!;
+    expect(before.retryAt).toBeDefined();
+    expect(f.state.listMeta(`relay_ready_v1/${f.activity.activityId}/`, 64)).toEqual([]);
+    f.state.upsertJob({ ...a, version: 3 });
+    expect(f.state.relay.registration(a.jobId)?.event).toEqual(before);
+    expect(f.state.listMeta(`relay_ready_v1/${f.activity.activityId}/`, 64)).toHaveLength(1);
+  });
+
   it("keeps exact-result offers separate from receipt, and idempotent ACKs separate from the Activity goal", () => {
     const f = fixture(), a = f.seed(), event = f.finish(a), card = f.connect(), attempt = randomUUID();
     f.state.recordJobCompletionResultOffer({ scopeId: f.scopeId, jobId: a.jobId, source: "direct-query" });
@@ -126,17 +250,20 @@ describe("#261 durable relay delivery", () => {
     expect(f.state.relay.enter(f.activity.activityId, f.owner, card, event.eventId, attempt)).toBe(true);
     // An already-expired source is constructed directly, with the current
     // ordinary policy. No elapsed-time or accelerated lifetime is tested.
-    const old = f.seed({ createdAt: Date.now() - 40 * 86_400_000 });
+    const old = f.seed({ createdAt: Date.now() - 40 * 86_400_000, pendingInteractions: [{ interactionId: "expired-question" }] });
     f.state.upsertJob({ ...old, status: "completed", version: 2, updatedAt: old.createdAt });
+    expect(f.state.listMeta(`relay_event_history_v1/${old.jobId}/`, 1)).toHaveLength(1);
     expect(f.state.retainedJobVisible(old.jobId)).toBe(false);
     f.state.maintainHistoryRetention();
     expect(f.state.relay.registration(old.jobId)).toBeUndefined();
+    expect(f.state.listMeta(`relay_event_history_v1/${old.jobId}/`, 1)).toEqual([]);
     expect(f.state.listMeta(`relay_ready_v1/${f.activity.activityId}/`, 64)).not.toContainEqual(expect.objectContaining({ value: JSON.stringify({ jobId: old.jobId }) }));
     expect(f.state.getArchivedJobAdmissionReceipt(f.scopeId, { kind: "request", requestId: old.requestId })?.jobId).toBe(old.jobId);
   });
 
   it("removes project relay references at deletion and cannot connect them to a re-registered folder", () => {
-    const f = fixture(":memory:", true), a = f.seed(); f.finish(a);
+    const f = fixture(":memory:", true), a = f.seed({ pendingInteractions: [{ interactionId: "project-question" }] }); f.finish(a);
+    expect(f.state.listMeta(`relay_event_history_v1/${a.jobId}/`, 1)).toHaveLength(1);
     const projectId = f.project!.id, apply = (operations: any[]) => f.state.applyProjectOperations(operations, f.state.getProjectRegistryRevision(), [f.directory!]);
     apply([{ kind: "archive", projectId }]);
     const intent = f.state.projectLifecycle.pending().find(item => item.projectId === projectId)!;
@@ -144,6 +271,7 @@ describe("#261 durable relay delivery", () => {
     expect(() => f.connect()).toThrow(/OWNER_REQUIRED/);
     apply([{ kind: "delete", projectId }]);
     expect(f.state.relay.registration(a.jobId)).toBeUndefined(); expect(f.state.relay.goal(f.activity.activityId)).toBeUndefined();
+    expect(f.state.listMeta(`relay_event_history_v1/${a.jobId}/`, 1)).toEqual([]);
     const replacement = apply([{ kind: "add", project: { name: "Project", cwd: f.directory! } }]).projects[0]!;
     expect(replacement.id).not.toBe(projectId); expect(() => f.connect()).toThrow(/OWNER_REQUIRED/);
     expect(f.state.getArchivedJobAdmissionReceipt(f.scopeId, { kind: "request", requestId: a.requestId })?.managementEnded).toBe(true);

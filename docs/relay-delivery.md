@@ -48,7 +48,7 @@ Relay or admit new dynamic relay steps. Its explicit Events admission is unchang
 ## Durable delivery boundary
 
 The existing SQLite `bridge_meta` journal stores versioned `relay_goal_v1/`,
-`relay_job_v1/`, `relay_member_v1/` and `relay_ready_v1/` records. No separate DB,
+`relay_job_v1/`, `relay_event_history_v1/`, `relay_member_v1/` and `relay_ready_v1/` records. No separate DB,
 SQL schema migration or general workflow engine is introduced. Job admission,
 goal enrollment and event intent commit in the existing Unit of Work before
 dispatch. Source changes issue an internal readiness invalidation only after
@@ -65,6 +65,24 @@ commit. Progress-only changes do not create new events.
 | `unknown` | Send timeout or connection uncertainty; never automatically resent. |
 | `rejected` | Explicit permanent rejection, or exhaustion of three proven retryable rejection attempts. |
 
+An input owner's temporary non-connected state, including `liveness-unknown`,
+pauses dispatch without resolving the question or changing its event/attempt.
+The registration retains its exact state, attempt ID, counter, lease and retry
+facts; it leaves the readiness index while paused. Claim and entry reject with
+`RELAY_EVENT_PAUSED`. The same attempt's ACK can still record acceptance or
+uncertainty. Recovery of the same input identity restores dispatch eligibility,
+never a fresh `pending` event. `accepted`, `unknown` and `sending` remain ineligible
+for another send, including after a SQLite restart.
+
+Actual question resolution/replacement removes current eligibility. Its minimal
+event and delivery receipt move to `relay_event_history_v1/<jobId>/<eventId>`;
+the current event remains authoritative in its Job registration. Returning to
+the exact same identity restores that receipt instead of resetting attempts.
+An inactive event cannot be entered or answered through its old reference, and
+an old ACK cannot reopen it. Only identity transitions archive receipts;
+ordinary progress and liveness changes do not append records. History recovery
+uses exact indexed keys, without an event-history scan.
+
 A send-entry response loss is a conservative no-send gap. A crashed/removed
 card can leave `sending` without a final ACK; it has the same non-replay rule as
 `unknown`, including after restart, lease expiry or takeover. Proven pre-entry
@@ -79,6 +97,11 @@ event/Job lookup references. If an ACK response is lost, only that identical
 attempt's outcome is retried; the message is not resent. Direct result offers
 remain independent of host acceptance and never consume a pending event.
 No conversation-wide exactly-once guarantee is claimed.
+
+Running `relay-card` Job status describes automatic relay consistently with
+`nextActions`. Exact queries and bounded waits remain optional observation
+tools. Their timeout or cancellation does not cancel execution or authorize a
+replacement Job.
 
 `codex_relay_wait` uses an instance epoch/revision and commit subscription,
 bounded to 25 seconds, eight waits per state store and two per goal. Replacement
@@ -143,7 +166,7 @@ Other Activity connections are unaffected.
 Common history policy remains the only original-body retention authority. No
 relay hold or new retention preference extends it. Capacity archival preserves
 delivery while the original remains retained; expiry removes Job/member/ready
-references and bodies, leaving only existing admission/replay proof and minimal
+references, inactive event receipts and bodies, leaving only existing admission/replay proof and minimal
 Activity stop intent. Project deletion removes its relay references through the
 existing identity-aware cleanup; re-registering a folder creates a new project
 identity and cannot inherit old events. Diagnostics record route/state/attempt
@@ -157,6 +180,11 @@ The retired Dashboard completion endpoint, receipt-status route and automatic
 Dashboard inputs remain refused. Server refusal cannot revoke old iframe memory
 or already-posted host messages; teardown old mounts and refresh discovery when
 upgrading. The new resource is packaged alongside Settings v6 and Dashboard v5.
+
+The recovery fix preserves records still present when the fixed code takes
+over. It cannot reconstruct an accepted or uncertain attempt already erased by
+the earlier liveness reconciliation defect. No historical delivery certainty,
+automatic replay or operational data repair is inferred from the upgrade.
 
 Functional regression fixtures cover event ordering, ownership, claims, send
 uncertainty, ACK loss, dynamic admission, restart, retention and project identity.

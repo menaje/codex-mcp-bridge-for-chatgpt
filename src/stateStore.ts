@@ -4526,6 +4526,11 @@ export class BridgeStateStore {
 
   deleteMeta(key: string): void { this.database.prepare("DELETE FROM bridge_meta WHERE key=?").run(key); }
 
+  /** Indexed cleanup within the owning Job's existing retention transaction. */
+  deleteMetaPrefix(prefix: string): void {
+    this.database.prepare("DELETE FROM bridge_meta WHERE key>=? AND key<?").run(prefix, prefix + "\uffff");
+  }
+
   get mcpEvents(): McpEventStore { return new McpEventStore(this); }
   get mcpEventAccess(): McpEventAccessStore { return new McpEventAccessStore(this); }
   get taskFollowups(): TaskFollowupStore { return new TaskFollowupStore(this); }

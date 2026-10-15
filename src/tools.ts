@@ -11098,6 +11098,8 @@ function formatJobStatus(
             ? "Codex termination is unconfirmed; refresh status and retry the explicit cancellation if needed."
             : job.trackingState === "liveness-unknown"
               ? "This Job's last committed state is active, but current execution-owner liveness is unconfirmed. Recover the same Job and original result; do not start a replacement turn from this observation."
+            : job.completionDeliveryPolicy === "relay-card"
+              ? "Codex is running independently with automatic relay for this Activity. The blank relay sends event references; retrieve the exact original result or current input and existing followup receipts before acting. Exact reads and bounded waits are optional observation tools; a timeout or aborted read never cancels this Job or authorizes a replacement."
             : job.completionDeliveryPolicy !== "events"
               ? "Codex is running independently with direct result delivery. Keep the current orchestration active with bounded terminal waits on this exact Job; a timeout or aborted read does not cancel it."
               : job.completionDeliveryPolicy === "events"

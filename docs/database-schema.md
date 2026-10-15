@@ -76,8 +76,11 @@ Job payload also retains the immutable admission-time `completionDeliveryPolicy`
 legacy rows default to `live-card`. New ordinary rows use `relay-card`; previously
 admitted `direct-wait` policies remain immutable. Historical Dashboard claims/sends
 stay retired. New relay goals/events/attempts use versioned `bridge_meta` namespaces
-and existing Unit-of-Work hooks, without another SQL migration. Common history
-expiry removes their body-linked references; minimal replay/stop proof stays
+and existing Unit-of-Work hooks, without another SQL migration. Temporary owner
+disconnection preserves the current event's delivery record. Resolved/replaced
+events retain minimal receipts under `relay_event_history_v1/<jobId>/<eventId>`
+and restore them if that exact identity returns. Common history
+expiry removes these receipts and body-linked references; minimal replay/stop proof stays
 separate. See [goal relay](relay-delivery.md). Schema 24
 added GPT–user Decision Card tables. The feature was retired in #141, but this
 migration remains immutable for older database upgrades. Schema 25

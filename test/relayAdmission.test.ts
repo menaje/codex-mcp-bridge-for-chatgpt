@@ -328,4 +328,18 @@ describe("#261 bounded followup contracts", () => {
     expect((await task(args)).isError).toBe(true); expect(state.listJobs()).toHaveLength(1);
     expect(state.getEventJobSnapshot(a.jobId)?.status).toBe("completed");
   });
+
+  it("describes automatic relay consistently in running exact status and its next actions", async () => {
+    const hold = upstream.hold(), a = taskResult(await initial());
+    await hold.started.promise;
+    const result = await call("codex_status", { query: { kind: "job", id: a.jobId } });
+    const item = (result.structuredContent as any).items[0];
+    expect(item.completionDeliveryPolicy).toBe("relay-card");
+    expect(item.message).toContain("automatic relay");
+    expect(item.message).not.toContain("direct result delivery");
+    expect(item.message).toContain("optional");
+    expect(JSON.stringify(item.nextActions)).toContain("relay");
+    expect(JSON.stringify(item.nextActions)).not.toContain("bounded terminal wait");
+    await finish(a, hold);
+  });
 });
