@@ -777,6 +777,7 @@ const dashboardCountsOutputSchema = z.strictObject({
   problems: z.number().int().min(0).optional(),
   backgroundProcesses: z.number().int().min(0),
   backgroundProcessAgents: z.number().int().min(0),
+  backgroundProcessUnknownAgents: z.number().int().min(0).optional(),
   runtimeUnknownAgents: z.number().int().min(0),
   runtimeProbeSkippedAgents: z.number().int().min(0),
   completed: z.number().int().min(0),
@@ -13588,6 +13589,8 @@ async function buildDashboardView(
     .reduce((total, observation) => total + observation.backgroundProcessCount, 0);
   const backgroundProcessAgents = [...runtimeByAgent.values()]
     .filter((observation) => observation.backgroundProcessCount > 0).length;
+  const backgroundProcessUnknownAgents = [...runtimeByAgent.values()]
+    .filter(observation => observation.backgroundProcessState === "unknown").length;
   const runtimeUnknownAgentIds = new Set([...runtimeByAgent]
     .filter(
       ([,observation]) =>
@@ -13848,6 +13851,7 @@ async function buildDashboardView(
       problems,
       backgroundProcesses,
       backgroundProcessAgents,
+      backgroundProcessUnknownAgents,
       runtimeUnknownAgents,
       runtimeProbeSkippedAgents,
       completed: allJobs.filter((job) => job.status === "completed").length + archivedCounts.completed,

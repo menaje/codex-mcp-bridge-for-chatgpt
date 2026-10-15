@@ -212,6 +212,7 @@ public enum DashboardStatusFilter: String, Codable, Sendable {
 public struct DashboardCounts: Codable, Sendable {
     public var progressJobCount: Int? = nil
     public var executionCount: Int? = nil
+    public var backgroundProcessUnknownAgents: Int? = nil
     public let trackedProjects: Int
     public let trackedConversations: Int
     public let retainedJobs: Int

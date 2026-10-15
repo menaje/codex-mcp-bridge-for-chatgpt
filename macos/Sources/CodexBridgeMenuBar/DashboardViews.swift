@@ -515,8 +515,10 @@ struct DashboardPopoverView: View {
 
     @ViewBuilder
     private func dashboardBackgroundStatus(_ dashboard: DashboardSnapshot) -> some View {
-        let unknown = dashboard.counts.runtimeUnknownAgents > 0 || dashboard.counts.runtimeProbeSkippedAgents > 0 ||
-            (dashboard.enrichment?.timeouts ?? 0) > 0 || (dashboard.enrichment?.runtimeUnavailable ?? 0) > 0
+        let unknown = (dashboard.counts.backgroundProcessUnknownAgents ?? dashboard.counts.runtimeUnknownAgents) > 0 ||
+            dashboard.counts.runtimeProbeSkippedAgents > 0 ||
+            dashboard.counts.backgroundProcessUnknownAgents == nil &&
+            ((dashboard.enrichment?.timeouts ?? 0) > 0 || (dashboard.enrichment?.runtimeUnavailable ?? 0) > 0)
         if dashboard.counts.backgroundProcesses > 0 || !unknown {
             Button {
                 Task { await model.toggleDashboardPanel(.background) }

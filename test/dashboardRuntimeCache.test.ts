@@ -66,6 +66,7 @@ describe('background observations across isolated dashboard reads',()=>{
       expect(f.probe).toHaveBeenCalledOnce();
       expect(next.counts.backgroundProcesses).toBe(2);expect(next.backgroundRows).toHaveLength(1);
       expect(next.backgroundRows![0].backgroundProcessCount).toBe(2);
+      expect(next.counts.backgroundProcessUnknownAgents).toBe(0);
       const cached=await f.read(false,scope);
       expect(cached.counts.backgroundProcesses).toBe(2);expect(cached.backgroundRows).toHaveLength(1);
     }finally{await f.close();}
@@ -80,6 +81,7 @@ describe('background observations across isolated dashboard reads',()=>{
       f.list.mockResolvedValue([]);
       const afterFreshness=Date.now()+5001;vi.spyOn(Date,'now').mockReturnValue(afterFreshness);
       const next=await f.read(true,scope);expect(next.counts.backgroundProcesses).toBe(0);expect(next.backgroundRows).toEqual([]);
+      expect(next.counts.backgroundProcessUnknownAgents).toBe(0);
       const cached=await f.read(false,scope);expect(cached.counts.backgroundProcesses).toBe(0);expect(cached.backgroundRows).toEqual([]);
     }finally{await f.close();}
   },15000);
