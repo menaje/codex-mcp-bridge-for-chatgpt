@@ -1,0 +1,22 @@
+{
+  "capturedAt": "2026-10-15T23:38:26.907439+00:00",
+  "repositoryBase": "f8395a5fe643394397d82d050e6e91ddb4873db8",
+  "repositoryTree": "12751860223babba6e3ba0f740785d39a314120c",
+  "installed": {
+    "build": {
+      "version": "0.4.1",
+      "commit": "0129ae123694ac53b876240968269b7a29f9f003",
+      "dirty": false,
+      "sourceHash": "d4a2a1d2ac951336b8414ad17925a5873534842d85a0ecc1d52f22ea6a9c8086",
+      "builtAt": "2026-10-15T20:06:21.186Z",
+      "id": "0129ae123694:d4a2a1d2ac95"
+    },
+    "bundleVersion": "16",
+    "bundleIdentifier": "com.menaje.codex-mcp-bridge",
+    "nativeSHA256": "e88f8ecb7b6dd1cfd82f9f08e9fbd64b4d7b227c23e783759d95297791910ed9",
+    "signatureVerification": "codesign --verify --deep --strict: exit 0"
+  },
+  "productSourceDiff": "git diff 0129ae1 f8395a5 -- src macos scripts package.json package-lock.json: empty",
+  "currentSourceHash": "d4a2a1d2ac951336b8414ad17925a5873534842d85a0ecc1d52f22ea6a9c8086",
+  "integrationTarget": "dev"
+}
