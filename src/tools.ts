@@ -12343,21 +12343,11 @@ async function inspectDashboardRuntime(
   let requests = 0;
   let coverage: DashboardRuntimeCacheEntry["coverage"] = inspectLiveness ? "liveness" : "background";
   if (inspectLiveness && upstream.probeThread) {
-    let probe: CodexThreadResumeProbe;
+    let probe: CodexThreadResumeProbe | undefined;
     try {
       requests += 1;
       probe = await upstream.probeThread(thread.threadId, backendKind);
-    } catch {
-      return {
-        observation: {
-          state: "unknown",
-          backgroundProcessState: "unknown",
-          backgroundProcessCount: 0
-        },
-        requests,
-        coverage
-      };
-    }
+    } catch { /* A failed liveness read does not prevent a non-loading process read. */ }
     if (!shouldContinue()) {
       return {
         observation: {
@@ -12369,29 +12359,7 @@ async function inspectDashboardRuntime(
         coverage
       };
     }
-    if (probe.state === "orphaned") {
-      return {
-        observation: {
-          state: "orphaned",
-          backgroundProcessState: "unknown",
-          backgroundProcessCount: 0
-        },
-        requests,
-        coverage
-      };
-    }
-    if (probe.state === "unknown") {
-      return {
-        observation: {
-          state: "unknown",
-          backgroundProcessState: "unknown",
-          backgroundProcessCount: 0
-        },
-        requests,
-        coverage
-      };
-    }
-    if (probe.state === "resumable" && probe.runtimeStatus === "notLoaded") {
+    if (probe?.state === "resumable" && probe.runtimeStatus === "notLoaded") {
       return {
         observation: {
           state: "not-loaded",
@@ -12402,7 +12370,7 @@ async function inspectDashboardRuntime(
         coverage
       };
     }
-    state = probe.state === "busy" ? "busy" : "idle";
+    state = probe?.state === "busy" ? "busy" : probe?.state === "resumable" ? "idle" : probe?.state ?? "unknown";
   }
   if (!upstream.listLoadedBackgroundTerminals) {
     return {
@@ -12569,7 +12537,13 @@ function cacheDashboardRuntime(
     // cannot monopolize every inspection batch.
     const keepPrevious = !stable && observation.state !== "orphaned" && previous?.stamp === candidate.stamp && previous.retainUntil > Date.now();
     const retained = keepPrevious
-      ? {...previous.observation, ...(result.coverage === "liveness" && ["idle","busy","not-loaded"].includes(observation.state)
+      ? {...previous.observation,
+        ...(observation.backgroundProcessState === "confirmed" ? {
+          backgroundProcessState: observation.backgroundProcessState,
+          backgroundProcessCount: observation.backgroundProcessCount,
+          backgroundProcessIds: observation.backgroundProcessIds
+        } : {}),
+        ...(result.coverage === "liveness" && ["idle","busy","not-loaded"].includes(observation.state)
         ? {state:observation.state} : {})} : observation;
     cache.delete(cacheKey);
     cache.set(cacheKey, {

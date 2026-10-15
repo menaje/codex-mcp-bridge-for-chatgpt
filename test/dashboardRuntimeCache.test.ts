@@ -46,10 +46,44 @@ async function fixture(count=3) {
   const server=createBridgeMcpServer(config,upstream,new SessionRegistry({stateStore:reader,projectionOnly:true}),jobs,undefined,
     new UserSettingsStore(config,{stateStore:reader,projectionOnly:true}),new ScopeResolver({stateStore:reader}),undefined,undefined,undefined,worker);
   const read=(enrich:boolean,scopeId?:string)=>server.applicationService.dashboardSnapshot({historyMode:'jobs',statusFilter:'all',includeHistory:true,limit:12,inspectRuntime:enrich,scopeId});
-  return {writer,reader,owners,list,probe,read,async close(){await server.close();await worker.close();reader.close();writer.close();await rm(root,{recursive:true,force:true});}};
+  function activateFirstOwner() {
+    const owner=owners[0],now=Date.now(),jobId=randomUUID();
+    const activity=writer.createActivity({scopeId:owner.scopeId,title:'Current background work',now});
+    writer.upsertJob({jobId,requestId:randomUUID(),scopeId:owner.scopeId,agentId:owner.agentId,activityId:activity.activityId,
+      status:'running',createdAt:now,updatedAt:now,version:1,threadId:owner.threadId});
+    writer.setAgentExecutionState(owner.agentId,'active',{currentJobId:jobId,now});
+  }
+  return {writer,reader,owners,list,probe,read,activateFirstOwner,async close(){await server.close();await worker.close();reader.close();writer.close();await rm(root,{recursive:true,force:true});}};
 }
 
 describe('background observations across isolated dashboard reads',()=>{
+  it.each(['unknown','error','orphaned'])('still observes loaded background processes when the liveness probe is %s',async state=>{
+    const f=await fixture();try {
+      f.activateFirstOwner();
+      if(state==='error')f.probe.mockRejectedValue(new Error('Liveness unavailable'));
+      else f.probe.mockResolvedValue({state} as any);
+      const next=await f.read(true,scope);
+      expect(f.probe).toHaveBeenCalledOnce();
+      expect(next.counts.backgroundProcesses).toBe(2);expect(next.backgroundRows).toHaveLength(1);
+      expect(next.backgroundRows![0].backgroundProcessCount).toBe(2);
+      const cached=await f.read(false,scope);
+      expect(cached.counts.backgroundProcesses).toBe(2);expect(cached.backgroundRows).toHaveLength(1);
+    }finally{await f.close();}
+  },15000);
+
+  it('replaces a previous positive count with a confirmed empty list even when liveness becomes unknown',async()=>{
+    const f=await fixture();try {
+      f.activateFirstOwner();
+      f.probe.mockResolvedValue({state:'busy'} as any);
+      expect((await f.read(true,scope)).counts.backgroundProcesses).toBe(2);
+      f.probe.mockResolvedValue({state:'unknown'} as any);
+      f.list.mockResolvedValue([]);
+      const afterFreshness=Date.now()+5001;vi.spyOn(Date,'now').mockReturnValue(afterFreshness);
+      const next=await f.read(true,scope);expect(next.counts.backgroundProcesses).toBe(0);expect(next.backgroundRows).toEqual([]);
+      const cached=await f.read(false,scope);expect(cached.counts.backgroundProcesses).toBe(0);expect(cached.backgroundRows).toEqual([]);
+    }finally{await f.close();}
+  },15000);
+
   it('keeps confirmed counts and owner rows through structural refreshes and conversation filters without new runtime reads',async()=>{
     const f=await fixture();try {
       const enriched=await f.read(true);expect(enriched.counts.backgroundProcesses).toBe(5);expect(enriched.backgroundRows).toHaveLength(2);
