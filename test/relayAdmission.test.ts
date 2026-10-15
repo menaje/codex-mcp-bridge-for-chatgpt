@@ -335,11 +335,32 @@ describe("#261 bounded followup contracts", () => {
     const result = await call("codex_status", { query: { kind: "job", id: a.jobId } });
     const item = (result.structuredContent as any).items[0];
     expect(item.completionDeliveryPolicy).toBe("relay-card");
-    expect(item.message).toContain("automatic relay");
+    expect(item.message).toMatch(/automatic relay/i);
     expect(item.message).not.toContain("direct result delivery");
     expect(item.message).toContain("optional");
     expect(JSON.stringify(item.nextActions)).toContain("relay");
     expect(JSON.stringify(item.nextActions)).not.toContain("bounded terminal wait");
     await finish(a, hold);
+  });
+
+  it.each(["relay", "followups", "ended"] as const)("reflects the current %s stop in status without changing execution or other stop semantics", async stop => {
+    const hold = upstream.hold(), a = taskResult(await initial()); await hold.started.promise;
+    if (stop === "ended") state.transaction(() => state.relay.endActivity(a.activityId));
+    else expect((await call("codex_relay_control", { activityId: a.activityId, stop })).isError).not.toBe(true);
+    const result = await call("codex_status", { query: { kind: "job", id: a.jobId } });
+    const item = (result.structuredContent as any).items[0], next = JSON.stringify(item.nextActions);
+    expect(item.state).toBe("running"); expect(item.completionDeliveryPolicy).toBe("relay-card");
+    expect(item.message).not.toContain("direct result delivery");
+    if (stop === "followups") {
+      expect(item.message).toMatch(/automatic relay.*enabled/i);
+      expect(item.message).toContain("Future followup admission is stopped");
+      expect(next).toContain("Future followup admission is stopped");
+    } else {
+      const guidance = stop === "relay" ? "Automatic relay is stopped" : "automatic relay is closed";
+      expect(item.message).toContain(guidance); expect(next).toContain(guidance);
+      expect(next).not.toContain("remains connected");
+    }
+    await finish(a, hold);
+    expect(state.relay.pending(a.activityId)).toHaveLength(stop === "followups" ? 1 : 0);
   });
 });

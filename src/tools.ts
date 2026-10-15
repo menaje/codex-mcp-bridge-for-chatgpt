@@ -10980,11 +10980,24 @@ function formatJobStatus(
     (eventSubscription?.state === "pending" || eventSubscription?.reason === "expired");
   const relayRecord = registry?.admissionStateStore.relay.registration(job.jobId);
   const relayNotice = relayRecord?.event;
+  const relayGoal = relayRecord && registry?.admissionStateStore.relay.goal(relayRecord.activityId);
+  const relayEnded = relayGoal?.ended || (job.completionDeliveryPolicy === "relay-card" &&
+    registry?.admissionStateStore.isEventActivityEnded(job.activityId));
+  const relayDescription = (relayEnded
+    ? "This Activity has ended; automatic relay is closed and future followup admission is stopped."
+    : relayGoal?.monitoringStopped
+      ? "Automatic relay is stopped for this Activity. Existing Jobs may continue; use exact reads for their original results and current input. A remount or late completion does not resume notifications."
+      : !relayRecord || !relayGoal
+        ? "This Job has no active relay registration; recover this exact Job before relying on automatic notices."
+        : relayRecord.paused
+          ? "Automatic relay of the current input is paused while its original execution owner is unreachable. Preserve the same event and attempt until recovery."
+          : "Automatic relay is enabled for this Activity. The blank relay sends event references while its host connection is available, including across authorized followups.") +
+    (relayGoal?.followupsStopped && !relayEnded ? " Future followup admission is stopped." : "");
   const followupReferences = registry?.admissionStateStore.taskFollowups.references(job);
   const nextActions = job.completionDeliveryPolicy === "relay-card"
     ? [{ tool: "codex_status", arguments: { query: relayNotice?.kind === "input"
         ? { kind: "input", jobId: job.jobId } : { kind: "job", id: job.jobId } },
-        userPrompt: RELAY_GUIDANCE + " A blank relay is attached automatically and remains connected across authorized followups. Dashboard opens only on explicit display request." +
+        userPrompt: RELAY_GUIDANCE + " " + relayDescription + " Dashboard opens only on explicit display request." +
           (relayNotice ? ` Current eventId: ${relayNotice.eventId}; reviewedVersion: ${job.version}.` : "") }]
     : eventSubscription
     ? !canIssueEventAccess ? [] : [{
@@ -11099,7 +11112,7 @@ function formatJobStatus(
             : job.trackingState === "liveness-unknown"
               ? "This Job's last committed state is active, but current execution-owner liveness is unconfirmed. Recover the same Job and original result; do not start a replacement turn from this observation."
             : job.completionDeliveryPolicy === "relay-card"
-              ? "Codex is running independently with automatic relay for this Activity. The blank relay sends event references; retrieve the exact original result or current input and existing followup receipts before acting. Exact reads and bounded waits are optional observation tools; a timeout or aborted read never cancels this Job or authorizes a replacement."
+              ? "Codex is running independently. " + relayDescription + " Retrieve the exact original result or current input and existing followup receipts before acting. Exact reads and bounded waits are optional observation tools; a timeout or aborted read never cancels this Job or authorizes a replacement."
             : job.completionDeliveryPolicy !== "events"
               ? "Codex is running independently with direct result delivery. Keep the current orchestration active with bounded terminal waits on this exact Job; a timeout or aborted read does not cancel it."
               : job.completionDeliveryPolicy === "events"

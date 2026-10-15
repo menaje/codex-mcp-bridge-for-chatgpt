@@ -78,7 +78,35 @@ exactly-once delivery are not established by these fixtures.
 
 ## Fixed-commit independent review
 
-Pending: the implementation will be committed before an independent reviewer
-examines the fixed SHA. This draft does not claim reviewer approval or final
-integration. The completed review record will name its exact commit, findings,
-checks and limitations, with any subsequent source correction reviewed again.
+A fresh Codex reviewer agent, without implementation conversation history or
+editing responsibility, reviewed `56e850bc25034c7fd138336797164f446ac9b417`
+against the baseline. This is a separate agent's code review, not a claim of
+human approval or real-host acceptance. The reviewer reported:
+
+> The original P1 delivery-history reset did not reproduce. Inspection and
+> functional checks supported preservation across pause/resume,
+> resolution/replacement/reactivation, restart, late ACK, and cleanup.
+
+The review found one actionable **P2** at `src/tools.ts:11101` and its
+`nextActions` guidance: after successful HTTP `codex_relay_control` relay stop,
+exact running status still promised automatic relay/remained connected even
+though terminal completion correctly produced no pending notice. A
+followups-only stop must continue allowing notices.
+
+Reviewer-run checks at that SHA: 42 Relay suite tests; 15 independent disposable
+scenarios for inactive-history restart/reactivation, additional owner states,
+ownership denial, archive/restore rollback, stops and indexed recovery at 32/64
+records; an additional HTTP fixture reproducing P2; TypeScript `--noEmit` and
+`git diff --check`. The worktree remained clean. These are the reviewer's
+functional reports, separate from the implementation checks above.
+
+The P2 correction derives shared message/next-action guidance from current goal
+stops, closed Activity, paused input and registration, while keeping the
+admission policy immutable. Enabled delivery is conditional on an available
+host connection. Three HTTP status regressions cover relay stop, followups-only
+stop and a directly constructed closed-goal state; they failed against the
+first fixed code and pass after the correction. Execution continues and only
+followups-only stopping preserves pending notices in that fixture.
+
+Final fixed-commit re-review and final validation are pending. No final review
+approval or integration is claimed by this draft.

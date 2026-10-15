@@ -101,7 +101,11 @@ No conversation-wide exactly-once guarantee is claimed.
 Running `relay-card` Job status describes automatic relay consistently with
 `nextActions`. Exact queries and bounded waits remain optional observation
 tools. Their timeout or cancellation does not cancel execution or authorize a
-replacement Job.
+replacement Job. Both descriptions reflect current relay/Activity stops,
+paused input ownership and missing registration rather than relying only on
+the immutable admission policy. A followups-only stop leaves notices enabled;
+relay stop and goal closure suppress notices without implying Job cancellation.
+Enabled relay still depends on an available host connection.
 
 `codex_relay_wait` uses an instance epoch/revision and commit subscription,
 bounded to 25 seconds, eight waits per state store and two per goal. Replacement
