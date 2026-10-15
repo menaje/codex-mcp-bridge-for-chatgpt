@@ -203,6 +203,35 @@ describe('Job-unit execution tabs and read-only exact detail',()=>{
    await expect(f.service().threadHandoff({rowKey:row.rowKey,codexThreadUrl:'codex://threads/'+sessionId,action:'request'})).rejects.toThrow(/TARGET_CHANGED/);expect(handoff).not.toHaveBeenCalled();
   }finally{await f.close();}
  });
+ it.each([['running','AABBCCDD-ABCD-4ABC-8ABC-AABBCCDDEEFF',undefined],['completed','AABBCCDD-ABCD-4ABC-8ABC-AABBCCDDEEFF',undefined],['running','durable-opaque-thread','abcdefab-abcd-4abc-8abc-abcdefabcdef'],['completed','durable-opaque-thread','abcdefab-abcd-4abc-8abc-abcdefabcdef']])('restores durable %s handoff state from stored thread %s rather than its URL route',async(status,threadId,sessionId)=>{
+  const f=fixture();try{
+   f.writer.linkAgentThread({agentId:f.agent.agentId,threadId:threadId!,sessionId,backendKind:'app-server',cwd:f.root,sandbox:'read-only',contextMode:'fresh',now});
+   f.writer.upsertSession({threadId:threadId!,sessionId,scopeId:scope,cwd:f.root,lastUsedAt:now,backendKind:'app-server',visibleInCodexApp:true});
+   const job=f.seed(status,0,{threadId,backendKind:'app-server'});
+   expect(f.writer.threadConnections.update(threadId!,{phase:'waiting',handoffRequested:true,reason:'active-work'},now)).toBeDefined();
+   // Construct the read service only after durable intent exists: no client or
+   // service-local handoff cache can supply the restored waiting/cancel state.
+   const first=await f.service().dashboardSnapshot(query),row=[...first.activeRows,...first.terminalRows].find(x=>x.jobId===job.jobId)!;
+   expect(row.handoff).toMatchObject({phase:'waiting',requested:true,canOpen:false,reason:'active-work'});
+   const enriched=await f.service().dashboardSnapshotWithEnrichment!(query,{runtimeByAgent:[[f.agent.agentId,{state:status==='running'?'busy':'idle',backgroundProcessState:'confirmed',backgroundProcessCount:1}]],runtimeProbeSkippedAgents:0,weeklyUsage:null,summary:{...first.enrichment,state:'enriched'}} as any);
+   expect(enriched.backgroundRows).toHaveLength(1);expect(enriched.backgroundRows![0].handoff).toMatchObject({phase:'waiting',requested:true,canOpen:false});
+   const legacy=await f.service().dashboardSnapshot({...query,historyMode:undefined}),legacyRows=[...legacy.activeRows,...legacy.terminalRows,...legacy.idleRows].filter(x=>x.codexThreadUrl===row.codexThreadUrl);
+   expect(legacyRows.length).toBeGreaterThan(0);expect(legacyRows.every(x=>x.handoff?.requested===true)).toBe(true);
+   f.writer.threadConnections.update(threadId!,{phase:'released',handoffRequested:true,evidence:'worker-exited'},now+1);
+   const released=await f.service().dashboardSnapshot(query);expect([...released.activeRows,...released.terminalRows].find(x=>x.jobId===job.jobId)?.handoff).toMatchObject({phase:'released',requested:true,canOpen:true});
+  }finally{await f.close();}
+ });
+ it('projects the stored Agent thread handoff when its Job uses different UUID case',async()=>{
+  const f=fixture();try{
+   const threadId='aabbccdd-abcd-4abc-8abc-aabbccddeeff';
+   f.writer.linkAgentThread({agentId:f.agent.agentId,threadId,backendKind:'app-server',cwd:f.root,sandbox:'read-only',contextMode:'fresh',now});
+   f.writer.upsertSession({threadId,scopeId:scope,cwd:f.root,lastUsedAt:now,backendKind:'app-server',visibleInCodexApp:true});
+   const job=f.seed('running',0,{threadId:threadId.toUpperCase(),backendKind:'app-server'});
+   f.writer.threadConnections.update(threadId,{phase:'waiting',handoffRequested:true,reason:'active-work'},now);
+   const view=await f.service().dashboardSnapshot(query),row=view.activeRows.find(x=>x.jobId===job.jobId)!;
+   expect(row.handoff).toMatchObject({phase:'waiting',requested:true,reason:'active-work'});
+  }finally{await f.close();}
+ });
  it('paginates every terminal Job independently of a single Agent/Activity and excludes active Jobs from executionCount',async()=>{
   const f=fixture();try {
    const jobs=Array.from({length:13},(_,n)=>f.seed(['completed','failed','interrupted','cancelled'][n%4],n+1,{error:n%4===1?'recorded failure':undefined}));

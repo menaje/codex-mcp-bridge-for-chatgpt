@@ -566,6 +566,33 @@ final class DashboardPopoverTests: XCTestCase {
     }
 
     @MainActor
+    func testReviewRetainedIncidentReasonSurvivesEarlierLinkedExecutionExpiry() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.jobsContract = true; f.state.rowCount = 1
+        let start = ISO8601DateFormatter().date(from: "2026-09-11T00:00:00Z")!
+        var clock = start
+        f.model.dashboardHistoryNow = { clock }
+        await f.model.refreshDashboard(enrich: false)
+        let problems = try XCTUnwrap(f.model.dashboard?.problems)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(try XCTUnwrap(problems.rows.first))) as? [String: Any])
+        var row = object["row"] as! [String: Any], turn = row["latestTurn"] as! [String: Any]
+        turn["endedAt"] = ISO8601DateFormatter().string(from: start.addingTimeInterval(-30 * 86400 + 1)); turn["error"] = "Retained incident failure"
+        row["latestTurn"] = turn; object["row"] = row; object["reason"] = "Retained incident failure"
+        object["occurredAt"] = ISO8601DateFormatter().string(from: start)
+        let problem = try JSONDecoder().decode(DashboardProblem.self, from: JSONSerialization.data(withJSONObject: object))
+        let section = DashboardProblemsSection(problems: problems)
+        XCTAssertNil(section.contextReason(problem, using: f.model), "Valid linked execution renders the reason once")
+        clock = start.addingTimeInterval(1)
+        XCTAssertFalse(ExecutionRecordPresentation.retained(problem.row, days: 30, now: clock))
+        var retainedObject = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(problems)) as? [String: Any])
+        retainedObject["rows"] = [object]
+        let retained = try JSONDecoder().decode(DashboardProblems.self, from: JSONSerialization.data(withJSONObject: retainedObject))
+        XCTAssertEqual(f.model.dashboardRetainedProblems(retained).count, 1)
+        XCTAssertEqual(section.contextReason(problem, using: f.model), "Retained incident failure",
+            "An unavailable execution cannot consume the still-retained incident reason")
+    }
+
+    @MainActor
     func testReviewProblemReasonKeepsOnlyDistinctIncidentContext() async throws {
         let f = try PopoverFixture(); defer { f.remove() }
         f.state.jobsContract = true; f.state.rowCount = 1

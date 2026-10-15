@@ -5539,7 +5539,6 @@ export function registerBridgeTools(
       const canonicalUrl = (thread: {threadId:string;sessionId?:string|null}) => dashboardCodexThreadUrl(true, {
         threadId:thread.threadId,...(thread.sessionId ? {sessionId:thread.sessionId} : {}),backendKind:"app-server"
       });
-      const sameThread = (left:string,right:string) => left===right || (SCOPE_ID_PATTERN.test(left.trim()) && SCOPE_ID_PATTERN.test(right.trim()) && left.trim().toLowerCase()===right.trim().toLowerCase());
       // Resolve the submitted Job against retained identities on this exact
       // thread, rather than an unfiltered latest Job that may have expired.
       const legacyAgent = agents.find(candidate => dashboardRowKey(candidate.agentId) === input.rowKey);
@@ -5549,7 +5548,7 @@ export function registerBridgeTools(
       const agent = legacyAgent || (recordTarget && agents.find(candidate => candidate.agentId === recordTarget.agentId && candidate.scopeId === recordTarget.scopeId));
       const exactJobTarget = !recordTarget || Boolean(recordTarget.threadId && input.codexThreadUrl === canonicalUrl({threadId:recordTarget.threadId,sessionId:recordTarget.sessionId}));
       const matches = exactJobTarget && agent ? jobs.listAgentThreads(agent.agentId).filter(candidate => input.codexThreadUrl === canonicalUrl(candidate) &&
-        (!recordTarget || Boolean(recordTarget.threadId && sameThread(candidate.threadId,recordTarget.threadId))) &&
+        (!recordTarget || Boolean(recordTarget.threadId && dashboardThreadIdsEqual(candidate.threadId,recordTarget.threadId))) &&
         (input.action !== "request" || candidate.isCurrent)) : [];
       const thread = matches.length===1 ? matches[0] : undefined;
       if (!agent || !thread || thread.backendKind !== "app-server" || input.codexThreadUrl !== canonicalUrl(thread)) {
@@ -11767,6 +11766,10 @@ function dashboardSessionAlias(scopeId: string): string {
   return `Session ${digest}`;
 }
 
+function dashboardThreadIdsEqual(left:string,right:string):boolean {
+  return left===right || (SCOPE_ID_PATTERN.test(left.trim()) && SCOPE_ID_PATTERN.test(right.trim()) && left.trim().toLowerCase()===right.trim().toLowerCase());
+}
+
 function dashboardCodexThreadUrl(
   visibleInCodexApp: boolean,
   ...sources: Array<{
@@ -11859,6 +11862,7 @@ function buildDashboardExecutionDetail(store:BridgeStateStore,input:BridgeDashbo
 }
 
 const snapshotRuntimeOnlyRows=new WeakMap<DashboardView,DashboardRow[]>();
+const snapshotHandoffThreads=new WeakMap<DashboardView,Map<string,string>>();
 const snapshotActiveStatuses=new WeakMap<DashboardView,Map<string,DashboardStatus>>();
 const snapshotBackgroundOwners=new WeakMap<DashboardView,Array<{row:DashboardRow;jobId?:string}>>();
 
@@ -11901,8 +11905,13 @@ function applyExecutionContract(view:DashboardView,store:BridgeStateStore,option
     // detail revision stable while preserving the canonical live status.
     const runtimeStatus=snapshotActiveStatuses.get(view)?.get(record.jobId);
     const status=runtimeStatus==="orphaned" || runtimeStatus==="liveness-unknown" ? runtimeStatus : turn.status;
+    const codexThreadUrl=template?.codexThreadUrl && record.threadId && template.codexThreadUrl===dashboardCodexThreadUrl(true,{threadId:record.threadId,...(record.sessionId ? {sessionId:record.sessionId} : {}),backendKind:"app-server"}) ? template.codexThreadUrl : undefined;
+    if(codexThreadUrl && record.threadId) {
+      const sourceThread=template && snapshotHandoffThreads.get(view)?.get(template.rowKey);
+      snapshotHandoffThreads.get(view)?.set(turn.executionKey!,sourceThread && dashboardThreadIdsEqual(sourceThread,record.threadId) ? sourceThread : record.threadId);
+    }
     return {rowKey:turn.executionKey!,activityKey:turn.activityKey!,conversationKey:dashboardConversationKey(record.scopeId),sessionAlias:dashboardSessionAlias(record.scopeId),
-      ...(template?.conversationUrl ? {conversationUrl:template.conversationUrl} : {}),...(template?.codexThreadUrl && record.threadId && template.codexThreadUrl===dashboardCodexThreadUrl(true,{threadId:record.threadId,...(record.sessionId ? {sessionId:record.sessionId} : {}),backendKind:"app-server"}) ? {codexThreadUrl:template.codexThreadUrl} : {}),
+      ...(template?.conversationUrl ? {conversationUrl:template.conversationUrl} : {}),...(codexThreadUrl ? {codexThreadUrl} : {}),
       bucket:isActiveActivityJobStatus(record.status) ? "active" : "recent",...dashboardProjectIdentity({projectId:record.projectId || undefined,projectName:record.projectName || undefined}),
       agentName:dashboardAgentName(record.agentName || undefined),activityTitle:record.activityTitle,status,createdAt:turn.startedAt!,updatedAt:turn.updatedAt,
       elapsedMs:turn.durationMs ?? Math.max(0,now-record.createdAt),backgroundProcessCount:isActiveActivityJobStatus(record.status) ? template?.backgroundProcessCount || 0 : 0,controlKind:template?.controlKind || null,latestTurn:{...turn,status,
@@ -11962,12 +11971,16 @@ function dashboardHistoryRevision(agent: Pick<BridgeAgent, "agentId" | "version"
 }
 
 function projectDashboardHandoffs(view: DashboardView, jobs: CodexJobRegistry): void {
-  const rows = [...view.activeRows, ...view.terminalRows, ...view.idleRows, ...(view.statusRows || [])];
-  const connections = new Map(jobs.admissionStateStore.threadConnections.listByThreadIds(rows.flatMap(row =>
-    row.codexThreadUrl ? [row.codexThreadUrl.replace("codex://threads/", "")] : []))
-    .map(connection => [connection.threadId, connection]));
+  const rows = [...view.activeRows, ...view.terminalRows, ...view.idleRows, ...(view.statusRows || []), ...(view.backgroundRows || [])];
+  // Canonical routes may use a session alias or normalized UUID. Durable intent
+  // belongs to the actual stored thread captured from each row's source.
+  const threadIds=snapshotHandoffThreads.get(view);
+  const connections = new Map(jobs.admissionStateStore.threadConnections.listByThreadIds(rows.flatMap(row => {
+    const threadId=threadIds?.get(row.rowKey);return row.codexThreadUrl && threadId ? [threadId] : [];
+  })).map(connection => [connection.threadId, connection]));
   for (const row of rows) {
-    const connection = row.codexThreadUrl ? connections.get(row.codexThreadUrl.replace("codex://threads/", "")) : undefined;
+    const threadId=threadIds?.get(row.rowKey);
+    const connection = row.codexThreadUrl && threadId ? connections.get(threadId) : undefined;
     if (connection) row.handoff = { phase: connection.phase,
       ...(connection.reason !== undefined ? { reason: connection.reason } : {}),
       requested: connection.handoffRequested, canOpen: connection.phase === "released" && Boolean(connection.evidence) };
@@ -13267,6 +13280,7 @@ async function buildDashboardView(
   };
 
   const agentIdByRowKey = new Map<string, string>();
+  const handoffThreadByRowKey = new Map<string,string>();
 
   // Advertise only controls that the current Dashboard detail read can sign.
   const controlKindForAgent = (
@@ -13303,6 +13317,8 @@ async function buildDashboardView(
     const codexThreadUrl = codexThreadUrlFor(thread, currentSession, trackedSession);
     const project = dashboardProjectIdentity(job, trackedSession, thread);
     const rowKey = dashboardRowKey(job.agentId, job.jobId);
+    const routeThread=thread || currentSession || trackedSession;
+    if(codexThreadUrl && routeThread) handoffThreadByRowKey.set(rowKey,routeThread.threadId);
     if (job.agentId) agentIdByRowKey.set(rowKey, job.agentId);
     return {
       rowKey,
@@ -13420,6 +13436,7 @@ async function buildDashboardView(
         : {})
     };
     agentIdByRowKey.set(recoveryRow.rowKey, agent.agentId);
+    if(codexThreadUrl && thread) handoffThreadByRowKey.set(recoveryRow.rowKey,thread.threadId);
     recoveryRows.push({ agentId: agent.agentId, row: recoveryRow });
     activeRows.push(recoveryRow);
   }
@@ -13505,6 +13522,7 @@ async function buildDashboardView(
           : {})
       };
       agentIdByRowKey.set(row.rowKey, agent.agentId);
+      if(codexThreadUrl && thread) handoffThreadByRowKey.set(row.rowKey,thread.threadId);
       return row;
     })
     .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
@@ -13824,6 +13842,7 @@ async function buildDashboardView(
     uiLocalePreference: preferences.uiLocalePreference
   });
   snapshotRuntimeOnlyRows.set(parsedView,recoveryRows.map(x=>x.row));
+  snapshotHandoffThreads.set(parsedView,handoffThreadByRowKey);
   snapshotActiveStatuses.set(parsedView,new Map(allJobs.filter(job=>isActiveActivityJobStatus(job.status)).map(job=>[job.jobId,statusForJob(job)])));
   const activeJobByExecutionKey=new Map(allJobs.filter(job=>isActiveActivityJobStatus(job.status)).map(job=>[dashboardRowKey(undefined,job.jobId),job.jobId]));
   snapshotBackgroundOwners.set(parsedView,activeRows.filter(row=>row.backgroundProcessCount>0).map(row=>({row,

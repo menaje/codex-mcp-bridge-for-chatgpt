@@ -24,10 +24,15 @@ struct ExecutionRecordView: View {
         }
         return turn?.status ?? (problem?.source == "execution" ? problem?.kind.rawValue : nil) ?? row.status
     }
+    func presentationAvailable(using model: AppModel) -> Bool {
+        let target = model.executionTarget(row: row, problem: problem)
+        return ExecutionRecordPresentation.retained(row, days: model.dashboard?.historyPolicy?.retentionDays, now: model.dashboardHistoryNow())
+            && !(target?.expiresAt.map { $0 <= model.dashboardHistoryNow() } ?? false)
+    }
     private func localized(_ key: String) -> String { BridgeAppLocalization.string(key, locale: model.interfaceLocale) }
 
     @ViewBuilder var body: some View {
-        if !ExecutionRecordPresentation.retained(row, days: model.dashboard?.historyPolicy?.retentionDays, now: model.dashboardHistoryNow()) || target?.expiresAt.map({ $0 <= model.dashboardHistoryNow() }) == true {
+        if !presentationAvailable(using: model) {
             Text(localized("execution.unavailable")).font(.caption2).foregroundStyle(.secondary)
         } else {
             VStack(alignment: .leading, spacing: 5) {
