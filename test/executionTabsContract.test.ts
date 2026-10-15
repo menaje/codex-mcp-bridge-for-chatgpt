@@ -140,6 +140,42 @@ describe('Job-unit execution tabs and read-only exact detail',()=>{
   }finally{await f.close();}
  });
 
+ it.each(['running','completed'])('keeps canonical links and exact handoff for an uppercase-thread %s Job',async status=>{
+  const f=fixture();try{
+   const threadId='AABBCCDD-ABCD-4ABC-8ABC-AABBCCDDEEFF',url='codex://threads/'+threadId.toLowerCase();
+   f.writer.linkAgentThread({agentId:f.agent.agentId,threadId,backendKind:'app-server',cwd:f.root,sandbox:'read-only',contextMode:'fresh',now});
+   f.writer.upsertSession({threadId,scopeId:scope,cwd:f.root,lastUsedAt:now,backendKind:'app-server',visibleInCodexApp:true});
+   const job=f.seed(status,0,{threadId});const handoff=vi.spyOn(CodexJobRegistry.prototype,'threadHandoff').mockReturnValue({phase:'released',handoffRequested:true,evidence:'thread-unloaded'} as any);
+   const view=await f.service().dashboardSnapshot(query),row=[...view.activeRows,...view.terminalRows].find(x=>x.jobId===job.jobId)!;
+   expect(row.codexThreadUrl).toBe(url);
+   await expect(f.service().threadHandoff({rowKey:row.rowKey,codexThreadUrl:url,action:'request'})).resolves.toMatchObject({canOpen:true});
+   expect(handoff).toHaveBeenCalledWith(threadId,'request');
+  }finally{await f.close();}
+ });
+ it('resolves a retained older terminal Job when the newer Job has expired, with foreign and policy fences',async()=>{
+  const f=fixture(7);try{
+   const threadId='abcdefab-abcd-4abc-8abc-abcdefabcdef',url='codex://threads/'+threadId;
+   f.writer.linkAgentThread({agentId:f.agent.agentId,threadId,backendKind:'app-server',cwd:f.root,sandbox:'read-only',contextMode:'fresh',now});
+   f.writer.upsertSession({threadId,scopeId:scope,cwd:f.root,lastUsedAt:now,backendKind:'app-server',visibleInCodexApp:true});
+   const retained=f.seed('completed',6,{threadId,createdAt:now-10*day}),expired=f.seed('completed',8,{threadId,createdAt:now-9*day});
+   expect(f.writer.latestControlJobs([f.agent.agentId]).get(f.agent.agentId)?.jobId).toBe(expired.jobId);
+   const handoff=vi.spyOn(CodexJobRegistry.prototype,'threadHandoff').mockReturnValue({phase:'released',handoffRequested:true,evidence:'thread-unloaded'} as any);
+   const view=await f.service().dashboardSnapshot(query),row=view.terminalRows.find(x=>x.jobId===retained.jobId)!;
+   expect(view.counts.executionCount).toBe(1);expect(row.codexThreadUrl).toBe(url);
+   await expect(f.service().threadHandoff({rowKey:row.rowKey,codexThreadUrl:url,action:'request'})).resolves.toMatchObject({canOpen:true});
+   await expect(f.service().threadHandoff({rowKey:row.rowKey,codexThreadUrl:'codex://threads/ffffffff-ffff-4fff-8fff-ffffffffffff',action:'request'})).rejects.toThrow(/TARGET_CHANGED/);
+   f.writer.writeSettings({historyRetentionDays:0},1,now);
+   const all=await f.service().dashboardSnapshot(query),expiredRow=all.terminalRows.find(x=>x.jobId===expired.jobId)!;
+   f.writer.writeSettings({historyRetentionDays:7},2,now);
+   await expect(f.service().threadHandoff({rowKey:expiredRow.rowKey,codexThreadUrl:url,action:'request'})).rejects.toThrow(/TARGET_CHANGED/);
+   expect(handoff).toHaveBeenCalledTimes(1);
+   f.writer.maintainRetention(now);expect(f.writer.workHistory.expired(expired.jobId)).toBe(true);
+   await expect(f.service().threadHandoff({rowKey:row.rowKey,codexThreadUrl:url,action:'request'})).resolves.toMatchObject({canOpen:true});
+   f.writer.writeSettings({historyRetentionDays:0},3,now);
+   await expect(f.service().threadHandoff({rowKey:expiredRow.rowKey,codexThreadUrl:url,action:'request'})).rejects.toThrow(/TARGET_CHANGED/);
+   expect(handoff).toHaveBeenCalledTimes(2);
+  }finally{await f.close();}
+ });
  it('paginates every terminal Job independently of a single Agent/Activity and excludes active Jobs from executionCount',async()=>{
   const f=fixture();try {
    const jobs=Array.from({length:13},(_,n)=>f.seed(['completed','failed','interrupted','cancelled'][n%4],n+1,{error:n%4===1?'recorded failure':undefined}));

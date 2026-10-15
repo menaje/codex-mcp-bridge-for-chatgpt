@@ -1572,6 +1572,13 @@ export class BridgeStateStore {
     return result;
   }
 
+  /** Only scalar identities for this exact thread; history bodies are not loaded. */
+  dashboardExecutionIdentitiesForThread(threadId:string,now=Date.now()):Array<Pick<DashboardExecutionRecord,"jobId"|"scopeId"|"agentId"|"threadId">> {
+    return this.database.prepare(`SELECT j.job_id jobId,j.scope_id scopeId,j.agent_id agentId,j.thread_id threadId
+      FROM jobs j WHERE LOWER(TRIM(j.thread_id))=? AND ${retainedJobSql(this.appliedHistoryPolicy(now),"j")}`)
+      .all(threadId.trim().toLowerCase()) as Array<Pick<DashboardExecutionRecord,"jobId"|"scopeId"|"agentId"|"threadId">>;
+  }
+
   dashboardExecutionScopes(jobIds:readonly string[],scopeId?:string,now=Date.now()):Map<string,string> {
     const result=new Map<string,string>(),ids=[...new Set(jobIds)];
     for(let offset=0;offset<ids.length;offset+=500) {
