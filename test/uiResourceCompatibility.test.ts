@@ -4,6 +4,7 @@ import { runInNewContext } from "node:vm";
 import { ModuleKind, ScriptTarget, transpileModule } from "typescript";
 import { describe, expect, it } from "vitest";
 import { DASHBOARD_CARD_HTML } from "../src/dashboardCard.js";
+import { RELAY_CARD_HTML } from "../src/relayCard.js";
 import { SETTINGS_CARD_HTML, uiBridgeErrorMessage } from "../src/settingsCard.js";
 import { UI_RESOURCE_MANIFEST } from "../src/uiManifest.generated.js";
 import { serializeUiFunction } from "../src/uiFunctionSerialization.js";
@@ -29,7 +30,7 @@ describe("serialized card runtime compatibility", () => {
   });
 
   it("keeps all serialized card helpers free of compiler helpers", () => {
-    for (const html of [SETTINGS_CARD_HTML, DASHBOARD_CARD_HTML]) {
+    for (const html of [SETTINGS_CARD_HTML, DASHBOARD_CARD_HTML, RELAY_CARD_HTML]) {
       expect(html).not.toContain("__name(");
     }
     const format = runInNewContext(`(${uiBridgeErrorMessage.toString()})`);
@@ -68,8 +69,9 @@ describe("serialized card runtime compatibility", () => {
 
   for (const [name, currentHtml] of Object.entries({
     settings: SETTINGS_CARD_HTML,
-    dashboard: DASHBOARD_CARD_HTML
-  }) as Array<["settings" | "dashboard", string]>) {
+    dashboard: DASHBOARD_CARD_HTML,
+    relay: RELAY_CARD_HTML
+  }) as Array<["settings" | "dashboard" | "relay", string]>) {
     it(`serves the current ${name} resource file`, () => {
       const revision = currentUiResourceRevision(name);
       const currentFile = readCurrentFile(name);
@@ -77,14 +79,14 @@ describe("serialized card runtime compatibility", () => {
       expect(currentFile, revision.uri).toBe(rendered);
       expect(rendered).toContain("<!doctype html>");
       expect(revision.uri).toBe(
-        `ui://codex-mcp-bridge/${name}/v${name === "settings" ? 6 : 5}.html`
+        `ui://codex-mcp-bridge/${name}/v${name === "settings" ? 6 : name === "dashboard" ? 5 : 1}.html`
       );
     });
   }
 
-  it("keeps Settings and Dashboard in the active resource manifest", () => {
+  it("keeps Settings, Dashboard and Relay in the active resource manifest", () => {
     expect(Object.keys(UI_RESOURCE_MANIFEST.resources).sort()).toEqual([
-      "dashboard", "settings"
+      "dashboard", "relay", "settings"
     ]);
   });
 

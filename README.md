@@ -73,7 +73,7 @@ Then continue the existing context:
 
 For an implementation, first allow the required access in Bridge settings and the server's access ceiling, then approve the specific change. Ask for the work's status or open the Codex Dashboard to see running work and run history.
 
-ChatGPT follows the same Job while it runs, asks for needed decisions in the conversation, and reads the original result before continuing approved work. Closing a screen or losing a connection does not cancel Codex. Return to the originating conversation and ask to read the existing work before starting anything again. See [task and result recovery](docs/chatgpt-setup.md#5-use-the-current-task-contract).
+Ordinary tasks and question answers automatically attach a blank goal relay, without a separate activation. It sends event references to the originating GPT, which reads exact original results and existing followup receipts before continuing approved work or requesting a decision. Dashboard opens only when requested. Host teardown stops that iframe; automatic GPT resumption while the app is closed is not guaranteed. See [relay delivery](docs/relay-delivery.md). Closing a screen or losing a connection does not cancel Codex. Return to the originating conversation and ask to read the existing work before starting anything again. See [task and result recovery](docs/chatgpt-setup.md#5-use-the-current-task-contract).
 
 ## Reuse procedures with the skill library
 

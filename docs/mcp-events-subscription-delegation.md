@@ -1,6 +1,6 @@
 # Restricted original-conversation Events delegation
 
-This is a separate disabled-by-default experiment. Startup requires `CODEX_MCP_BRIDGE_EXPERIMENTAL_PROFILE=events` and `CODEX_MCP_BRIDGE_EVENTS_ENABLED=1` in addition to the authentication configuration below. A legacy enable flag alone does not activate it. Ordinary direct-wait setup requires none of these services.
+This is a separate disabled-by-default experiment. Startup requires `CODEX_MCP_BRIDGE_EXPERIMENTAL_PROFILE=events` and `CODEX_MCP_BRIDGE_EVENTS_ENABLED=1` in addition to the authentication configuration below. A legacy enable flag alone does not activate it. Ordinary automatic-relay setup requires none of these services.
 
 Status: **implemented for opt-in OAuth Events Jobs; ordinary Chat Pro host support remains unconfirmed. Real-host trials are excluded from #247 code completion.**
 The user explicitly authorized this design in [#213's card-free acceptance supplement](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/213#issuecomment-5942805508).

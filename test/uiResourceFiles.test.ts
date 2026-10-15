@@ -49,8 +49,8 @@ describe("single-file UI resource lifecycle", () => {
       const initial = syncUiResources(root, manifest);
       expect(initial.resources.settings.uri).toBe("ui://codex-mcp-bridge/settings/v6.html");
       expect(initial.resources.dashboard.uri).toBe("ui://codex-mcp-bridge/dashboard/v5.html");
-      expect(sourceFiles(root)).toEqual(["dashboard.html", "settings.html"]);
-      expect(packagedFiles(root)).toEqual(["dashboard.html", "settings.html"]);
+      expect(sourceFiles(root)).toEqual(["dashboard.html", "relay.html", "settings.html"]);
+      expect(packagedFiles(root)).toEqual(["dashboard.html", "relay.html", "settings.html"]);
       expect(checkUiResources(root, manifest)).toEqual(initial);
 
       writeRenderer(root, "updated");
@@ -59,8 +59,8 @@ describe("single-file UI resource lifecycle", () => {
       expect(updated.resources.dashboard.uri).toBe(initial.resources.dashboard.uri);
       expect(updated.resources.settings.digest).not.toBe(initial.resources.settings.digest);
       expect(updated.resources.dashboard.digest).not.toBe(initial.resources.dashboard.digest);
-      expect(sourceFiles(root)).toEqual(["dashboard.html", "settings.html"]);
-      expect(packagedFiles(root)).toEqual(["dashboard.html", "settings.html"]);
+      expect(sourceFiles(root)).toEqual(["dashboard.html", "relay.html", "settings.html"]);
+      expect(packagedFiles(root)).toEqual(["dashboard.html", "relay.html", "settings.html"]);
       expect(readFileSync(path.join(root, "ui-resources", "settings.html"), "utf8"))
         .toContain("settings-updated");
 
@@ -73,10 +73,10 @@ describe("single-file UI resource lifecycle", () => {
       writeFileSync(path.join(legacyDirectory, `${"b".repeat(64)}.html`), "legacy", "utf8");
       expect(() => checkUiResources(root, manifest)).toThrow(/ui-resources file inventory/);
       syncUiResources(root, manifest);
-      expect(sourceFiles(root)).toEqual(["dashboard.html", "settings.html"]);
+      expect(sourceFiles(root)).toEqual(["dashboard.html", "relay.html", "settings.html"]);
 
       expect(copyUiResourcesToDist(root)).toEqual(updated);
-      expect(packagedFiles(root)).toEqual(["dashboard.html", "settings.html"]);
+      expect(packagedFiles(root)).toEqual(["dashboard.html", "relay.html", "settings.html"]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -87,7 +87,7 @@ function writeRenderer(root: string, marker: string): void {
   const catalog = JSON.parse(readFileSync(path.join(root, "ui-release-catalog.json"), "utf8")) as {
     currentContracts: Record<string, { uriVersion: number }>;
   };
-  const resources = Object.fromEntries(["settings", "dashboard"].map((name) => [
+  const resources = Object.fromEntries(["settings", "dashboard", "relay"].map((name) => [
     name,
     {
       uri: `ui://codex-mcp-bridge/${name}/v${catalog.currentContracts[name]!.uriVersion}.html`,
@@ -115,6 +115,8 @@ function writeDescriptorSource(root: string): void {
     [
       'const SETTINGS_CARD_URI = "ui://codex-mcp-bridge/settings/v2.html";',
       'const DASHBOARD_CARD_URI = "ui://codex-mcp-bridge/dashboard/v5.html";',
+      'const RELAY_CARD_URI = "ui://codex-mcp-bridge/relay/v1.html";',
+      'const relay = { ui: { resourceUri: RELAY_CARD_URI }, "openai/outputTemplate": RELAY_CARD_URI };',
       'const settings = { ui: { resourceUri: SETTINGS_CARD_URI }, "openai/outputTemplate": SETTINGS_CARD_URI };',
       'const dashboard = { ui: { resourceUri: DASHBOARD_CARD_URI }, "openai/outputTemplate": DASHBOARD_CARD_URI };'
     ].join("\n"),

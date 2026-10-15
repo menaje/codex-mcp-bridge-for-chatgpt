@@ -1,5 +1,7 @@
+import { RELAY_TOOL_METADATA } from "./relayCard.js";
+import { relayToolResult } from "./relayTools.js";
 import * as z from "zod/v4";
-import type { McpServer, ToolCallback } from "@modelcontextprotocol/server";
+import type { McpServer, ToolCallback, ServerContext } from "@modelcontextprotocol/server";
 import type { CodexJobRegistry } from "./tools.js";
 import type { ScopeResolver, ToolCallMetadata } from "./scopeResolver.js";
 import { ordinaryCodexQuestion, questionReference } from "./codexInputs.js";
@@ -7,6 +9,7 @@ import { questionHash } from "./questionStore.js";
 import { InteractionNotDispatchedError } from "./interactionDispatch.js";
 import { defineToolResultContract, projectToolResult } from "./toolResultContracts.js";
 import { guidance, modelNextActionOutputSchema } from "./nextActions.js";
+import { authenticatedMcpPrincipal } from "./mcpPrincipal.js";
 
 const identifier = z.string().trim().min(1).max(200);
 const questionField = z.strictObject({
@@ -44,10 +47,10 @@ export const CODEX_INPUT_MODEL_OUTPUT_SCHEMAS = {
 const writeAnnotations = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const inFlight = new WeakMap<CodexJobRegistry, Map<string, { hash: string; promise: Promise<Record<string, unknown>> }>>();
 
-export function registerCodexInputTools(server: McpServer, jobs: CodexJobRegistry, scopeResolver: ScopeResolver) {
+export function registerCodexInputTools(server: McpServer, jobs: CodexJobRegistry, scopeResolver: ScopeResolver, relayEnabled = true) {
   const store = jobs.admissionStateStore.questions;
   const scope = (meta: unknown) => scopeResolver.require(meta as ToolCallMetadata, undefined, "Codex input orchestration").scopeId;
-  const ownedJob = (scopeId: string, id: string) => {
+  const ownedJob = (scopeId: string, id: string, extra: Pick<ServerContext, "http" | "mcpReq">) => {
     const job = jobs.get(id);
     if (!job && jobs.admissionStateStore.projectLifecycle.jobReceipt(id)?.scope_id === scopeId) {
       throw new Error("PROJECT_MANAGEMENT_ENDED: This Job's input management has ended.");
@@ -55,6 +58,12 @@ export function registerCodexInputTools(server: McpServer, jobs: CodexJobRegistr
     const activity = job && jobs.getActivity(job.activityId);
     const agent = job?.agentId && jobs.getAgent(job.agentId);
     if (!job || job.scopeId !== scopeId || activity?.scopeId !== scopeId || !agent || agent.scopeId !== scopeId) {
+      throw new Error("INPUT_JOB_UNAVAILABLE: The Job is unavailable in this conversation.");
+    }
+    if ((job.completionDeliveryPolicy === "relay-card" || jobs.admissionStateStore.relay.registration(id)) &&
+        (scopeResolver.resolve(extra.mcpReq._meta as ToolCallMetadata)?.source !== "host-metadata" ||
+         job.mcpPrincipal !== authenticatedMcpPrincipal(extra) ||
+         job.projectId && !jobs.admissionStateStore.isEventProjectAvailable(job.projectId))) {
       throw new Error("INPUT_JOB_UNAVAILABLE: The Job is unavailable in this conversation.");
     }
     return job;
@@ -67,9 +76,9 @@ export function registerCodexInputTools(server: McpServer, jobs: CodexJobRegistr
   });
   const readInput: ToolCallback<typeof questionInputSchema> = async (args, extra) => {
     const scopeId = scope(extra.mcpReq._meta);
-    ownedJob(scopeId, args.jobId);
+    ownedJob(scopeId, args.jobId, extra);
     const result = await jobs.waitForInput(args.jobId, args.afterCursor, args.waitMs, extra.mcpReq.signal);
-    ownedJob(scopeId, args.jobId);
+    ownedJob(scopeId, args.jobId, extra);
     return resultOf({ kind: "codex-input", ...result });
   };
 
@@ -83,10 +92,15 @@ export function registerCodexInputTools(server: McpServer, jobs: CodexJobRegistr
       answers: answersSchema.describe("Answers keyed by the exact question IDs; preserve allowed option labels.")
     }),
     outputSchema: CODEX_INPUT_MODEL_OUTPUT_SCHEMAS.codex_answer,
+    _meta: relayEnabled ? RELAY_TOOL_METADATA : {},
     annotations: { ...writeAnnotations, destructiveHint: true }
   }, async (args, extra) => {
     const scopeId = scope(extra.mcpReq._meta);
-    ownedJob(scopeId, args.jobId);
+    ownedJob(scopeId, args.jobId, extra);
+    const answerOutput = (value: Record<string, unknown>) => {
+      const output = resultOf(value);
+      return relayEnabled ? relayToolResult(output, jobs.admissionStateStore, args.requestId) : output;
+    };
     const hash = questionHash(args);
     const key = `${scopeId}:${args.requestId}`;
     const operations = inFlight.get(jobs) || new Map();
@@ -94,15 +108,15 @@ export function registerCodexInputTools(server: McpServer, jobs: CodexJobRegistr
     const pending = operations.get(key);
     if (pending) {
       if (pending.hash !== hash) throw new Error("ANSWER_REQUEST_CONFLICT: A different answer is already being dispatched.");
-      return resultOf(await pending.promise);
+      return answerOutput(await pending.promise);
     }
     jobs.admissionStateStore.projectLifecycle.assertRequest("question",scopeId,args.requestId,hash);
     const previous = store.delivery(scopeId, args.requestId, hash);
     if (previous && previous !== "not-delivered") {
-      return resultOf(answerResult(args.jobId, args.questionRef, previous === "delivered" ? "delivered" : "uncertain"));
+      return answerOutput(answerResult(args.jobId, args.questionRef, previous === "delivered" ? "delivered" : "uncertain"));
     }
     const operation = (async () => {
-      const job = ownedJob(scopeId, args.jobId);
+      const job = ownedJob(scopeId, args.jobId, extra);
       if (job.status !== "running" || job.trackingState !== "connected" || !job.workerId || job.workerGeneration === undefined) {
         throw new Error("QUESTION_UNAVAILABLE: The original worker and turn are no longer active.");
       }
@@ -128,7 +142,7 @@ export function registerCodexInputTools(server: McpServer, jobs: CodexJobRegistr
       }
     })();
     operations.set(key, { hash, promise: operation });
-    try { return resultOf(await operation); } finally { operations.delete(key); }
+    try { return answerOutput(await operation); } finally { operations.delete(key); }
   });
 
   return { readInput, questionInputSchema };

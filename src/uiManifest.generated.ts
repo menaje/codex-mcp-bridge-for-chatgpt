@@ -8,14 +8,16 @@ export const UI_RESOURCE_MANIFEST = {
   "hashAlgorithm": "sha256",
   "minimumContractGeneration": {
     "settings": 9,
-    "dashboard": 6
+    "dashboard": 6,
+    "relay": 1
   },
   "releaseInventory": {
     "catalog": "ui-release-catalog.json",
-    "catalogSha256": "ba2c11ff02c15d5a5d9696fd419b08ae3f65dba384581f9da97682b0a6b7a92d",
+    "catalogSha256": "386b60ac8a1a9548c02b75259f4c66050289999c2cf2d7dac38adcc66d7f8498",
     "activeResources": [
       "settings",
-      "dashboard"
+      "dashboard",
+      "relay"
     ],
     "compatibilityResources": [],
     "retirement": {
@@ -81,6 +83,27 @@ export const UI_RESOURCE_MANIFEST = {
           "codex_ui_problem",
           "codex_ui_read",
           "codex_interaction_respond"
+        ]
+      },
+      {
+        "name": "relay",
+        "uriVersion": 1,
+        "digest": "05ef4df5d0bee4526d3794ac268b38f9a32827a85fa85c94848345756faf7bfd",
+        "uri": "ui://codex-mcp-bridge/relay/v1.html",
+        "inventories": [
+          "development-current"
+        ],
+        "sourceIds": [
+          "rendered-current"
+        ],
+        "presenterTool": "codex_task",
+        "requiredTools": [
+          "codex_task",
+          "codex_answer",
+          "codex_status",
+          "codex_relay",
+          "codex_relay_wait",
+          "codex_relay_control"
         ]
       }
     ]
@@ -175,6 +198,53 @@ export const UI_RESOURCE_MANIFEST = {
           "codex_ui_problem",
           "codex_ui_read",
           "codex_interaction_respond"
+        ]
+      }
+    },
+    "relay": {
+      "uriVersion": 1,
+      "digest": "05ef4df5d0bee4526d3794ac268b38f9a32827a85fa85c94848345756faf7bfd",
+      "uri": "ui://codex-mcp-bridge/relay/v1.html",
+      "metadata": {
+        "descriptor": {
+          "title": "Codex Relay",
+          "description": "Automatic event relay for the originating Codex goal.",
+          "mimeType": "text/html;profile=mcp-app"
+        },
+        "content": {
+          "ui": {
+            "prefersBorder": false,
+            "csp": {
+              "connectDomains": [],
+              "resourceDomains": []
+            },
+            "domain": "https://web-sandbox.oaiusercontent.com"
+          },
+          "openai/widgetPrefersBorder": false,
+          "openai/widgetDescription": "Blank automatic relay; no status or management UI.",
+          "openai/widgetCSP": {
+            "connect_domains": [],
+            "resource_domains": []
+          },
+          "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+          "codex/uiContractGeneration": 1
+        }
+      },
+      "releaseProvenance": {
+        "inventories": [
+          "development-current"
+        ],
+        "sourceIds": [
+          "rendered-current"
+        ],
+        "presenterTool": "codex_task",
+        "requiredTools": [
+          "codex_task",
+          "codex_answer",
+          "codex_status",
+          "codex_relay",
+          "codex_relay_wait",
+          "codex_relay_control"
         ]
       }
     }

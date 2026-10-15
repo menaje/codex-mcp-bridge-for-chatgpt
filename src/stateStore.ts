@@ -8,8 +8,9 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 import Database from "better-sqlite3";
 import { EVENT_RESULT_RECOVERY_MS, McpEventStore, type EventJob, type LifecycleRoot } from "./mcpEventStore.js";
+import { RelayDeliveryStore } from "./relayDelivery.js";
 import { McpEventAccessStore } from "./mcpEventAccess.js";
-import { TaskFollowupStore, issueApprovedFollowups, readFollowupReference, type ApprovedFollowup, type FollowupReference } from "./taskFollowups.js";
+import { TaskFollowupStore, issueApprovedFollowups, readFollowupReference, type ApprovedFollowup, type FollowupReference, type DynamicFollowupReference } from "./taskFollowups.js";
 import { canonicalHumanText, parseJsonTextStrict } from "./textIntegrity.js";
 import {
   CURRENT_STATE_SCHEMA,
@@ -199,6 +200,8 @@ type JobRowInput = {
   mcpPrincipal?: string;
   approvedFollowups?: ApprovedFollowup[];
   followup?: FollowupReference;
+  relayFollowup?: DynamicFollowupReference;
+  requestEnvelopeHash?: string;
   jobId: string;
   scopeId: string;
   requestId: string;
@@ -231,7 +234,7 @@ type JobRowInput = {
   sessionDecision?: { threadId?: string };
   terminalOrigin?: JobTerminalOrigin;
   cancellationIntentId?: string;
-  completionDeliveryPolicy?: "live-card" | "direct-wait" | "events";
+  completionDeliveryPolicy?: "live-card" | "direct-wait" | "relay-card" | "events";
 };
 
 /**
@@ -705,6 +708,9 @@ export class BridgeStateStore {
   private readonly insertedNotifyCompletions = new Set<number>();
   private readonly completionReadyListeners = new Set<() => void>();
   private readonly mcpEventReadyListeners = new Set<() => void>();
+  private readonly relayReadyListeners = new Set<(activityId: string) => void>();
+  private readonly relayReadyPending = new Map<string, string>();
+  private relayRevisionNumber = 0;
   private readonly mcpEventReadyPending = new Map<string, { jobId: string; id: string }>();
   private closed = false;
 
@@ -1174,6 +1180,8 @@ export class BridgeStateStore {
       const releasePolicyGate=this.releaseSettingsPolicyGate;
       this.releaseSettingsPolicyGate=undefined;
       releasePolicyGate?.();
+      const relayReady = [...this.relayReadyPending.entries()];
+      this.relayReadyPending.clear();
       const eventReady = [...this.mcpEventReadyPending.values()];
       this.mcpEventReadyPending.clear();
       const inserted = [...this.insertedNotifyCompletions];
@@ -1195,7 +1203,34 @@ export class BridgeStateStore {
           try { listener(); } catch { /* Invalidation cannot undo a durable commit. */ }
         }
       }
-      if (committed) this.emitMcpEventReady(eventReady);
+      if (committed) {
+        this.emitMcpEventReady(eventReady);
+        this.emitRelayReady(relayReady);
+      }
+    }
+  }
+
+  get relayRevision(): string { return `${this.currentInstanceId}:${this.relayRevisionNumber}`; }
+
+  subscribeRelayReady(listener: (activityId: string) => void): () => void {
+    this.relayReadyListeners.add(listener);
+    return () => { this.relayReadyListeners.delete(listener); };
+  }
+
+  markRelayReady(activityId: string, jobId: string): void {
+    if (this.transactionDepth) this.relayReadyPending.set(jobId, activityId);
+    else this.emitRelayReady([[jobId, activityId]]);
+  }
+
+  private emitRelayReady(records: Array<[string, string]>): void {
+    for (const activityId of new Set(records.map(([, activityId]) => activityId))) {
+      try {
+        if (!this.relay.pending(activityId).length) continue;
+        this.relayRevisionNumber += 1;
+        for (const listener of this.relayReadyListeners) {
+          try { listener(activityId); } catch { /* Committed source remains recoverable. */ }
+        }
+      } catch { /* A lost signal is recovered by the next exact read. */ }
     }
   }
 
@@ -2017,6 +2052,7 @@ export class BridgeStateStore {
     this.database.prepare("DELETE FROM job_result_bodies WHERE job_id=?").run(candidate.jobId);
     // Retain outcome/hash/request identity only; never interpret expiry as delivery.
     this.database.prepare("UPDATE steering_deliveries SET result=NULL WHERE job_id=?").run(candidate.jobId);
+    this.relay.forgetJob(candidate.jobId);
     this.mcpEventAccess.forgetJob(candidate.jobId);
     this.eventRetention.deleteJobEventsForHistory(candidate.jobId);
     this.database.prepare("DELETE FROM job_completion_deliveries WHERE job_id=?")
@@ -3335,6 +3371,7 @@ export class BridgeStateStore {
         createdAt: now,
         payload: { source: "explicit-update", reason: normalizeOptionalBoundedText(reason, 2_000) || null }
       });
+      this.relay.endActivity(activityId);
       if (this.experimentalEventsEnabled) this.mcpEvents.stopActivity(activityId);
       if (activity.handoffPolicy === "notify") {
         this.insertCompletionOutbox({
@@ -3493,6 +3530,7 @@ export class BridgeStateStore {
         createdAt: now,
         payload: { evidence: normalizedEvidence }
       });
+      this.relay.endActivity(activityId);
       if (this.experimentalEventsEnabled) this.mcpEvents.stopActivity(activityId);
       return this.requireActivity(activityId);
     });
@@ -3630,10 +3668,13 @@ export class BridgeStateStore {
       }
       const eventDetails = payload && typeof payload === "object"
         ? (payload as { details?: { interaction?: unknown; resolvedInteractionId?: unknown } }).details : undefined;
-      if (this.experimentalEventsEnabled && (eventType.startsWith("app-input-required-") ||
+      if ((eventType.startsWith("app-input-required-") ||
           eventType.startsWith("app-approval-required-") || eventDetails?.interaction || eventDetails?.resolvedInteractionId)) {
         const eventJob = this.getEventJobSnapshot(jobId);
-        if (eventJob) this.mcpEvents.enqueueLifecycle(eventJob);
+        if (eventJob) {
+          if (this.experimentalEventsEnabled) this.mcpEvents.enqueueLifecycle(eventJob);
+          this.relay.reconcileJob(eventJob);
+        }
       }
       return scopeVersion;
     });
@@ -3642,9 +3683,12 @@ export class BridgeStateStore {
   updateJobProgressState(jobId: string, state: JobProgressStateInput): boolean {
     return this.transaction(() => {
       const update = this.updateJobProgressStateInternal(jobId, state);
-      if (this.experimentalEventsEnabled && (state.pendingInteractions.length || update.agentStateChanged)) {
+      if (state.pendingInteractions.length || update.agentStateChanged) {
         const eventJob = this.getEventJobSnapshot(jobId);
-        if (eventJob) this.mcpEvents.enqueueLifecycle(eventJob);
+        if (eventJob) {
+          if (this.experimentalEventsEnabled) this.mcpEvents.enqueueLifecycle(eventJob);
+          this.relay.reconcileJob(eventJob);
+        }
       }
       if (!update.resumedFromTerminationFailure && !update.agentStateChanged) return false;
       const scopeVersion = this.nextRuntimeScopeVersion(update.row.scope_id, state.updatedAt);
@@ -4485,6 +4529,7 @@ export class BridgeStateStore {
   get mcpEvents(): McpEventStore { return new McpEventStore(this); }
   get mcpEventAccess(): McpEventAccessStore { return new McpEventAccessStore(this); }
   get taskFollowups(): TaskFollowupStore { return new TaskFollowupStore(this); }
+  get relay(): RelayDeliveryStore { return new RelayDeliveryStore(this); }
   get readOnly(): boolean { return this.options.readOnly === true; }
 
   isEventActivityEnded(activityId: string): boolean {
@@ -4498,16 +4543,23 @@ export class BridgeStateStore {
     return this.readEventJobSnapshots("j.job_id=?", [jobId], 1)[0];
   }
 
+  /** Registry capacity archival is distinct from common history expiry. Relay
+   * recovery must still find an enrolled terminal result retained in history. */
+  getRelayJobSnapshot(jobId: string): EventJob | undefined {
+    return this.readEventJobSnapshots("j.job_id=?", [jobId], 1, true)[0];
+  }
+
   listEventLifecycleJobs(root: LifecycleRoot, scopeId: string): EventJob[] {
     return this.readEventJobSnapshots("j.agent_id=? AND j.scope_id=? AND j.activity_id=? AND j.created_at>=?",
       [root.agentId, scopeId, root.activityId, root.createdAt], 256);
   }
 
-  private readEventJobSnapshots(where: string, bindings: unknown[], limit: number): EventJob[] {
+  private readEventJobSnapshots(where: string, bindings: unknown[], limit: number, includeArchived = false): EventJob[] {
     return (this.database.prepare(`
       SELECT j.job_id,j.scope_id,j.activity_id,j.agent_id,a.project_id,j.status,j.job_version,
              j.terminal_version,j.created_at,j.updated_at,
              json_extract(j.payload,'$.mcpPrincipal') AS principal,
+             j.worker_id,j.worker_generation,j.thread_id,json_extract(j.payload,'$.trackingState') AS tracking_state,
              json_extract(j.payload,'$.completionDeliveryPolicy') AS delivery_policy,
              COALESCE((SELECT json_group_array(json(payload)) FROM (
                SELECT json_patch(payload,json_object('interactionId',interaction_id,
@@ -4515,11 +4567,15 @@ export class BridgeStateStore {
                  FROM job_interactions WHERE job_id=j.job_id ORDER BY position
              )),'[]') AS interactions
         FROM jobs j JOIN activities a ON a.activity_id=j.activity_id
-       WHERE j.archived_at IS NULL AND ${where} ORDER BY j.updated_at DESC LIMIT ?
+       WHERE ${includeArchived ? retainedJobSql(this.appliedHistoryPolicy(), "j") : "j.archived_at IS NULL"} AND ${where} ORDER BY j.updated_at DESC LIMIT ?
     `).all(...bindings, limit) as Array<Record<string, unknown>>).map(row => ({
       jobId: String(row.job_id), scopeId: String(row.scope_id), activityId: String(row.activity_id),
-      agentId: String(row.agent_id), projectId: String(row.project_id), status: String(row.status),
+      agentId: String(row.agent_id), projectId: typeof row.project_id === "string" ? row.project_id : undefined, status: String(row.status),
       version: Number(row.job_version), terminalVersion: row.terminal_version ? Number(row.terminal_version) : undefined,
+      workerId: typeof row.worker_id === "string" ? row.worker_id : undefined,
+      workerGeneration: typeof row.worker_generation === "number" ? row.worker_generation : undefined,
+      threadId: typeof row.thread_id === "string" ? row.thread_id : undefined,
+      trackingState: typeof row.tracking_state === "string" ? row.tracking_state : undefined,
       createdAt: Number(row.created_at), updatedAt: Number(row.updated_at),
       mcpPrincipal: typeof row.principal === "string" ? row.principal : undefined,
       completionDeliveryPolicy: row.delivery_policy as EventJob["completionDeliveryPolicy"],
@@ -4544,7 +4600,7 @@ export class BridgeStateStore {
       FROM jobs j JOIN job_completion_deliveries d ON d.job_id=j.job_id
       JOIN activities a ON a.activity_id=j.activity_id LEFT JOIN projects p ON p.project_id=a.project_id
       WHERE (a.project_id IS NULL OR (p.archive_state='active' AND p.deleted_at IS NULL)) AND j.job_id=? AND j.scope_id=? AND j.job_version=? AND j.status='completed'
-        AND j.archived_at IS NULL AND (d.direct_result_offered_at IS NOT NULL OR d.completion_result_offered_at IS NOT NULL)`)
+        AND ${retainedJobSql(this.appliedHistoryPolicy(), "j")} AND (d.direct_result_offered_at IS NOT NULL OR d.completion_result_offered_at IS NOT NULL)`)
       .get(jobId, scopeId, version) as { threadId: string | null; sandbox: string; selection: string | null } | undefined;
     return row ? { ...row, selection: row.selection ? JSON.parse(row.selection) : null } : undefined;
   }
@@ -6281,6 +6337,13 @@ export class BridgeStateStore {
       `)
       .get(job.jobId) as PreviousJobRow | undefined;
     if (previous && isTerminalActivityJobStatus(previous.status) && isActiveActivityJobStatus(job.status)) return;
+    const relayGoal = !previous ? this.relay.goal(activityId) : undefined;
+    if (relayGoal && (relayGoal.scopeId !== scopeId || relayGoal.mcpPrincipal !== job.mcpPrincipal)) {
+      throw new Error("RELAY_OWNER_REQUIRED: New work must retain the original goal owner.");
+    }
+    if (relayGoal?.followupsStopped) {
+      throw new Error("RELAY_FOLLOWUPS_STOPPED: This Activity no longer accepts followup work.");
+    }
     if (!previous && this.tableHasColumn("projects","archive_state")) {
       this.projectLifecycle.assertRequest("task",scopeId,job.requestId);
       this.projectLifecycle.assertActive(job.projectId || this.getActivityProjectAdmission(activityId)?.projectId);
@@ -6364,12 +6427,14 @@ export class BridgeStateStore {
       job.completionDeliveryPolicy !== undefined &&
       job.completionDeliveryPolicy !== "live-card" &&
       job.completionDeliveryPolicy !== "direct-wait" &&
+      job.completionDeliveryPolicy !== "relay-card" &&
       job.completionDeliveryPolicy !== "events"
     ) {
       throw new Error("Invalid Codex job completion delivery policy.");
     }
     const completionDeliveryPolicy = job.completionDeliveryPolicy ||
       (previous?.completion_delivery_policy === "events" ? "events" :
+        previous?.completion_delivery_policy === "relay-card" ? "relay-card" :
         previous?.completion_delivery_policy === "direct-wait" ? "direct-wait" : "live-card");
     if (previous && previous.completion_delivery_policy !== completionDeliveryPolicy) {
       throw new Error("A persisted Codex job completion delivery policy cannot change.");
@@ -6613,6 +6678,11 @@ export class BridgeStateStore {
     if (nowTerminal && this.experimentalEventsEnabled) this.mcpEvents.enqueue(job);
     this.replaceJobInteractions(job.jobId, job.pendingInteractions || []);
     if (this.experimentalEventsEnabled) this.mcpEvents.enqueueLifecycle(job);
+    if (job.completionDeliveryPolicy === "relay-card" || this.relay.registration(job.jobId) ||
+        !previous && job.completionDeliveryPolicy !== "events" && job.completionDeliveryPolicy !== "live-card" && this.relay.goal(activityId)) {
+      const snapshot = this.getEventJobSnapshot(job.jobId);
+      if (snapshot) { this.relay.register(snapshot); this.relay.reconcileJob(snapshot); }
+    }
 
     const agentStateChanged = agentId
       ? this.syncAgentForJob(job, agentId, activityId, job.updatedAt)
@@ -6849,6 +6919,7 @@ export class BridgeStateStore {
       createdAt: now,
       payload: { counts, waitingOn: decision.waitingOn }
     });
+    if (decision.lifecycle === "completed") this.relay.endActivity(activityId);
     if (this.experimentalEventsEnabled && decision.lifecycle === "completed") this.mcpEvents.stopActivity(activityId);
     if (completionTransition && decision.completionChannel) {
       this.insertCompletionOutbox({
@@ -7324,6 +7395,7 @@ export class BridgeStateStore {
       payload
     });
     this.acknowledgeCompletionOutbox(activity.activityId, undefined, now);
+    this.relay.endActivity(activity.activityId);
     if (this.experimentalEventsEnabled) this.mcpEvents.stopActivity(activity.activityId);
     return this.requireActivity(activity.activityId);
   }

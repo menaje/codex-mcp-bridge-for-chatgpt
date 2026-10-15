@@ -1183,7 +1183,7 @@ export function checkUiResources(repoRoot = DEFAULT_REPO_ROOT, manifest = loadRe
     drift.push(UI_GENERATED_SOURCE);
   }
 
-  const descriptorFiles = ["src/tools.ts"]
+  const descriptorFiles = ["src/tools.ts", ...UI_RESOURCE_NAMES.map(name => `src/${name}Card.ts`)]
     .filter((relative) => existsSync(path.join(repoRoot, relative)));
   const descriptorSource = descriptorFiles.map((relative) =>
     readTextFile(path.join(repoRoot, relative), relative)

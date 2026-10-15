@@ -1,12 +1,14 @@
 import { createHash } from "node:crypto";
 import type { BridgeStateStore } from "./stateStore.js";
 import { parseJsonTextStrict } from "./textIntegrity.js";
+import { relayEventJobId } from "./relayDelivery.js";
 
 const PREFIX = "task_followup_v1/";
 const APPROVAL_LIFETIME_MS = 7 * 24 * 60 * 60 * 1_000;
 /** stepId is retained only for previously persisted v1 Jobs, never new input. */
 export type ApprovedFollowup = { followupId?: string; stepId?: string; promptSha256: string };
 export type FollowupReference = { followupId: string; reviewedVersion: number };
+export type DynamicFollowupReference = { eventId: string; step: string; reviewedVersion: number };
 export type FollowupView = {
   followupId: string; requestId: string;
   status: "approved-pending" | "admitted" | "expired";
@@ -15,17 +17,19 @@ export const FOLLOWUP_ID_PATTERN = /^fup_[a-f0-9]{96}$/;
 type FollowupJob = {
   jobId: string; scopeId: string; activityId?: string; agentId?: string;
   requestId: string; approvedFollowups?: ApprovedFollowup[]; followup?: FollowupReference;
+  relayFollowup?: DynamicFollowupReference; requestEnvelopeHash?: string;
   createdAt?: number; mcpPrincipal?: string;
-  completionDeliveryPolicy?: "live-card" | "direct-wait" | "events";
+  completionDeliveryPolicy?: "live-card" | "direct-wait" | "relay-card" | "events";
   sandbox?: string; threadId?: string; executionDecision?: { effectiveSelection: { model: string; reasoningEffort: string; serviceTier?: string } };
 };
 type FollowupReceipt = ApprovedFollowup & {
   followupId: string;
   parentJobId: string; scopeId: string; activityId: string; agentId: string;
   mcpPrincipal?: string;
-  completionDeliveryPolicy?: "live-card" | "direct-wait" | "events";
+  completionDeliveryPolicy?: "live-card" | "direct-wait" | "relay-card" | "events";
   requestId: string; expiresAt: number; admittedJobId?: string;
   reviewedVersion?: number; reviewClaimedAt?: number;
+  dynamic?: { eventId: string; step: string; payloadSha256: string };
 };
 
 export function approvedFollowupDigests(steps?: Array<{ prompt: string }>): ApprovedFollowup[] | undefined {
@@ -75,6 +79,12 @@ function canonicalRequestId(scopeId: string, jobId: string, step: ApprovedFollow
 export class TaskFollowupStore {
   constructor(private readonly state: BridgeStateStore) {}
 
+  dynamicIdentity(scopeId: string, reference: Pick<DynamicFollowupReference, "eventId" | "step">): { followupId: string; requestId: string } {
+    const parentJobId = relayEventJobId(reference.eventId);
+    const followupId = followupIdForSlot(parentJobId, promptDigest(`codex/relay-step/v1\0${reference.eventId}\0${reference.step}`));
+    return { followupId, requestId: canonicalRequestId(scopeId, parentJobId, { followupId, promptSha256: "" }) };
+  }
+
   get(followupId: string): FollowupReceipt | undefined {
     const { jobId, slot } = followupTarget(followupId);
     const raw = this.state.getMeta(`${PREFIX}${jobId}/${slot}`);
@@ -87,19 +97,66 @@ export class TaskFollowupStore {
   }
 
   references(job: Pick<FollowupJob, "jobId" | "scopeId" | "mcpPrincipal" | "approvedFollowups">, now = Date.now()): FollowupView[] {
-    return (issueApprovedFollowups(job.jobId, job.approvedFollowups) || []).map(step => {
+    const declared = (issueApprovedFollowups(job.jobId, job.approvedFollowups) || []).map(step => {
       const receipt = this.get(step.followupId!);
       if (receipt && (receipt.scopeId !== job.scopeId || receipt.mcpPrincipal !== job.mcpPrincipal || receipt.promptSha256 !== step.promptSha256)) {
         throw new Error("FOLLOWUP_OWNER_REQUIRED: Issued reference does not match the predecessor's retained approval.");
       }
       return { followupId: step.followupId!, requestId: receipt?.requestId || canonicalRequestId(job.scopeId, job.jobId, step),
-        status: receipt?.admittedJobId ? "admitted" : receipt && receipt.expiresAt > now ? "approved-pending" : "expired" };
+        status: (receipt?.admittedJobId ? "admitted" : receipt && receipt.expiresAt > now ? "approved-pending" : "expired") as FollowupView["status"] };
     });
+    const dynamic = this.state.listMeta(`${PREFIX}${job.jobId}/`, 25).map(row =>
+      parseJsonTextStrict(row.value, "Dynamic followup receipt") as FollowupReceipt)
+      .filter(receipt => receipt.dynamic && receipt.scopeId === job.scopeId && receipt.mcpPrincipal === job.mcpPrincipal)
+      .map(receipt => ({ followupId: receipt.followupId, requestId: receipt.requestId, status: "admitted" as const }));
+    return [...declared, ...dynamic].slice(0, 24);
+  }
+
+  /** Exact predecessor pagination keeps large parallel fan-outs recoverable
+   * without an unbounded result or global receipt scan. */
+  page(job: Pick<FollowupJob, "jobId" | "scopeId" | "mcpPrincipal">, after?: string, now = Date.now()): {
+    receipts: FollowupView[]; after: string | null
+  } {
+    const prefix = `${PREFIX}${job.jobId}/`;
+    const cursor = after ? followupTarget(after) : undefined;
+    if (cursor && cursor.jobId !== job.jobId) throw new Error("FOLLOWUP_OWNER_REQUIRED: Cursor belongs to another predecessor.");
+    const rows = this.state.listMeta(prefix, 25, cursor ? prefix + cursor.slot : undefined);
+    const receipts = rows.slice(0, 24).map(row => {
+      const receipt = parseJsonTextStrict(row.value, "Followup receipt page") as FollowupReceipt;
+      if (receipt.scopeId !== job.scopeId || receipt.mcpPrincipal !== job.mcpPrincipal) throw new Error("FOLLOWUP_OWNER_REQUIRED: Receipt owner changed.");
+      return { followupId: receipt.followupId, requestId: receipt.requestId,
+        status: (receipt.admittedJobId ? "admitted" : receipt.expiresAt > now ? "approved-pending" : "expired") as FollowupView["status"] };
+    });
+    return { receipts, after: rows.length > 24 ? receipts.at(-1)!.followupId : null };
   }
 
   /** The caller invokes this inside the Job transaction, before execution. */
   admit(job: FollowupJob): void {
     if (this.state.projectLifecycle.jobReceipt(job.jobId)) throw new Error("PROJECT_MANAGEMENT_ENDED: This Job was retired.");
+    if (job.relayFollowup) {
+      const reference = job.relayFollowup;
+      const identity = this.dynamicIdentity(job.scopeId, reference);
+      const receipt = this.get(identity.followupId);
+      if (!job.activityId || !job.agentId || !job.requestEnvelopeHash || identity.requestId !== job.requestId) {
+        throw new Error("FOLLOWUP_ADMISSION_CONFLICT: Dynamic admission requires its canonical request and payload.");
+      }
+      if (receipt) {
+        if (receipt.scopeId !== job.scopeId || receipt.mcpPrincipal !== job.mcpPrincipal ||
+            receipt.admittedJobId !== job.jobId || receipt.dynamic?.payloadSha256 !== job.requestEnvelopeHash) {
+          throw new Error("FOLLOWUP_ADMISSION_CONFLICT: The dynamic step already belongs to another payload or Job.");
+        }
+      } else {
+        const parent = this.state.relay.requireFollowup(reference.eventId, job, reference.reviewedVersion);
+        if (parent.activityId !== job.activityId) throw new Error("FOLLOWUP_OWNER_REQUIRED: Continue the original Activity.");
+        this.state.setMeta(this.key(identity.followupId), JSON.stringify({ ...identity,
+          parentJobId: parent.jobId, scopeId: job.scopeId, activityId: job.activityId, agentId: job.agentId,
+          mcpPrincipal: job.mcpPrincipal, completionDeliveryPolicy: job.completionDeliveryPolicy,
+          promptSha256: "", expiresAt: Date.now(), admittedJobId: job.jobId,
+          reviewedVersion: reference.reviewedVersion, reviewClaimedAt: Date.now(),
+          dynamic: { eventId: reference.eventId, step: reference.step, payloadSha256: job.requestEnvelopeHash }
+        } satisfies FollowupReceipt));
+      }
+    }
     if (job.followup) {
       const receipt = this.get(job.followup.followupId);
       if (!receipt || receipt.scopeId !== job.scopeId || receipt.activityId !== job.activityId ||

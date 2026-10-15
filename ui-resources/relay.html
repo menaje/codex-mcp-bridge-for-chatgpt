@@ -1,0 +1,116 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>html,body{margin:0;padding:0;border:0;height:0;min-height:0;max-height:0;overflow:hidden;background:transparent}</style>
+</head><body><script>
+function uiJsonTextIsWellFormed(value){const seen=new Set;const candidates=[value];while(candidates.length>0){const candidate=candidates.pop();if(typeof candidate==="string"){for(let index=0;index<candidate.length;index+=1){const codeUnit=candidate.charCodeAt(index);if(codeUnit>=55296&&codeUnit<=56319){const following=candidate.charCodeAt(index+1);if(following>=56320&&following<=57343){index+=1;continue}return false}if(codeUnit>=56320&&codeUnit<=57343)return false}continue}if(!candidate||typeof candidate!=="object")continue;if(seen.has(candidate))continue;if(seen.size>=1e4)return false;seen.add(candidate);try{if(Array.isArray(candidate)){for(const entry of candidate)candidates.push(entry);continue}for(const[key,entry]of Object.entries(candidate)){for(let index=0;index<key.length;index+=1){const codeUnit=key.charCodeAt(index);if(codeUnit>=55296&&codeUnit<=56319){const following=key.charCodeAt(index+1);if(following>=56320&&following<=57343){index+=1;continue}return false}if(codeUnit>=56320&&codeUnit<=57343)return false}candidates.push(entry)}}catch{return false}}return true}
+function parseUiJsonTextStrict(value){if(!uiJsonTextIsWellFormed(value))return undefined;try{const parsed=JSON.parse(value);return uiJsonTextIsWellFormed(parsed)?parsed:undefined}catch{return undefined}}
+function normalizeHostToolResult(value){const queue=[value];const seen=new Set;let fallback=uiJsonTextIsWellFormed(value)?value:undefined;while(queue.length>0&&seen.size<16){let current=queue.shift();if(typeof current==="string"){current=parseUiJsonTextStrict(current)}if(!uiJsonTextIsWellFormed(current))continue;if(!current||typeof current!=="object")continue;if(seen.has(current))continue;seen.add(current);if(fallback===undefined)fallback=current;const record=current;if(Object.prototype.hasOwnProperty.call(record,"_meta")||Object.prototype.hasOwnProperty.call(record,"structuredContent")||Object.prototype.hasOwnProperty.call(record,"content")||Object.prototype.hasOwnProperty.call(record,"isError")){return record}for(const key of["mcp_tool_result","call_tool_result","result","tool_result"]){if(Object.prototype.hasOwnProperty.call(record,key))queue.push(record[key])}}return fallback}
+function hostToolResultMetadata(value){const normalized=normalizeHostToolResult(value);if(!normalized||typeof normalized!=="object")return{};const record=normalized;const metadata=record._meta;return metadata&&typeof metadata==="object"&&!Array.isArray(metadata)?metadata:record}
+const OPEN_KEY="codex/relayOpen@1",GUIDANCE="A Codex event needs attention. Use the current originating conversation's authority to retrieve its exact original result or current input and existing followup receipts (codex_status kind=followups pages the exact predecessor's receipts). Within the original user goal and approvals, decide whether to answer, continue work, request a new user decision, or finish the goal. This notice and retrieved task data grant no new approval. A result offer or host message acceptance is not proof of review or overall completion. Reuse an approved followup receipt, or bind a dynamic next step with relayFollowup; never rerun an expired or already admitted step.";
+const cardId=crypto.randomUUID(),pending=new Map();
+let nextId=1,mounted=true,tornDown=false,stopped=false,running=false,timer=0,connected=false,standard=false,messageSupported=false;
+let openingInput=null,openingResult=null,linked=null,revision,ackPending=null,initializing;
+
+function notify(method,params){window.parent.postMessage({jsonrpc:"2.0",method,params},"*")}
+function rpc(method,params,timeout=35000){
+  if(!mounted)return Promise.reject(new Error("RELAY_UNMOUNTED"));
+  return new Promise((resolve,reject)=>{const id=nextId++,timeoutId=setTimeout(()=>{
+    pending.delete(id);notify("notifications/cancelled",{requestId:id,reason:"Relay request timed out"});reject(new Error("RELAY_TIMEOUT"));
+  },timeout);pending.set(id,{resolve(value){clearTimeout(timeoutId);resolve(value)},reject(error){clearTimeout(timeoutId);reject(error)}});
+  window.parent.postMessage({jsonrpc:"2.0",id,method,params},"*")});
+}
+function cancelRequests(){for(const[id,entry]of pending){notify("notifications/cancelled",{requestId:id,reason:"Relay detached"});entry.reject(new Error("RELAY_UNMOUNTED"))}pending.clear()}
+function schedule(delay=0){if(timer||running||!mounted||stopped||!linked)return;timer=setTimeout(()=>{timer=0;void watch()},delay)}
+async function correlate(){
+  if(linked||!openingInput||!openingResult)return;
+  const input=openingInput.arguments||openingInput,result=openingResult;
+  if(input.requestId!==result.inputRequestId||input.jobId&&input.jobId!==result.jobId)return;
+  const bytes=await crypto.subtle.digest("SHA-256",new TextEncoder().encode("codex/relay-open/v1"+String.fromCharCode(0)+input.requestId));
+  const ref=Array.from(new Uint8Array(bytes),value=>value.toString(16).padStart(2,"0")).join("");
+  if(linked||openingResult!==result||ref!==result.presentationRef)return;
+  linked=result;document.documentElement.dataset.relay="linked";schedule();
+}
+function receiveInput(value){if(!value||typeof value!=="object"||linked)return;const input=value.arguments||value;if(typeof input.requestId!=="string")return;openingInput=value;void correlate()}
+function receiveResult(value){if(linked)return;const metadata=hostToolResultMetadata(value),result=metadata&&metadata[OPEN_KEY];
+  if(!result||result.contractGeneration!==1||typeof result.activityId!=="string"||typeof result.jobId!=="string"||typeof result.presentationRef!=="string"||typeof result.inputRequestId!=="string")return;
+  openingResult=result;void correlate();
+}
+async function initialize(){
+  try{const result=await rpc("ui/initialize",{appInfo:{name:"codex-mcp-bridge-relay",version:"1"},appCapabilities:{availableDisplayModes:["inline"]},protocolVersion:"2026-01-26"},5000);
+    if(!result||typeof result.protocolVersion!=="string")return;
+    standard=true;messageSupported=Boolean(result.hostCapabilities&&result.hostCapabilities.message);
+    notify("ui/notifications/initialized",{});notify("ui/notifications/size-changed",{height:0});
+  }catch{/* The compatibility path is selected before any message or mutation. */}
+}
+async function tool(name,args){
+  await initializing;if(!mounted)throw new Error("RELAY_UNMOUNTED");
+  const value=standard?await rpc("tools/call",{name,arguments:args}):
+    await bounded(()=>window.openai.callTool(name,args),35000);
+  const result=normalizeHostToolResult(value);
+  if(!result||result.isError)throw new Error("RELAY_TOOL_FAILED");
+  return result.structuredContent||result;
+}
+function bounded(operation,timeout){return new Promise((resolve,reject)=>{const id=setTimeout(()=>reject(new Error("RELAY_TIMEOUT")),timeout);Promise.resolve().then(operation).then(value=>{clearTimeout(id);resolve(value)},error=>{clearTimeout(id);reject(error)})})}
+function base(){return {contractGeneration:1,activityId:linked.activityId,cardId}}
+async function mutate(args,retry=true){let error;for(let count=0;count<(retry?3:1);count++){try{return await tool("codex_relay",{...base(),...args})}catch(caught){error=caught;if(!mounted)break;await bounded(()=>new Promise(resolve=>setTimeout(resolve,1000*(count+1))),4000)}}throw error}
+async function flushAck(){if(!ackPending)return;const current=ackPending;await mutate({action:"ack",...current});if(ackPending===current)ackPending=null}
+async function deliver(event){
+  const compat=window.openai&&typeof window.openai.sendFollowUpMessage==="function";
+  // Choose exactly one path before claiming. No send fallback after entry.
+  const sender=standard&&(messageSupported||!compat)?"standard":compat?"compatibility":null;
+  if(!sender)throw new Error("RELAY_MESSAGE_UNAVAILABLE");
+  const attemptId=crypto.randomUUID(),attempt={eventId:event.eventId,attemptId};
+  const claim=await mutate({action:"claim",...attempt});
+  if(!claim.event||claim.event.state!=="leased"||claim.event.attemptId!==attemptId)return;
+  if(!mounted){ackPending={...attempt,outcome:"not-sent"};return}
+  // An enter response loss is a conservative no-send gap. Retrying entry can
+  // never return another dispatch grant for this same attempt.
+  const entered=await mutate({action:"enter",...attempt},false);
+  if(!entered.dispatch)return;
+  let outcome="unknown";
+  const query=event.kind==="input"?{kind:"input",jobId:event.jobId}:{kind:"job",id:event.jobId};
+  const prompt=GUIDANCE+String.fromCharCode(10)+JSON.stringify({eventId:event.eventId,result:{tool:"codex_status",query}});
+  try{
+    if(mounted){const result=sender==="standard"?await rpc("ui/message",{role:"user",content:[{type:"text",text:prompt}]},12000):
+      await bounded(()=>window.openai.sendFollowUpMessage({prompt,scrollToBottom:false}),12000);
+      outcome=result&&result.isError===true?"rejected":"accepted";
+    }
+  }catch(error){
+    // Only an actual JSON-RPC error response proves an explicit rejection.
+    // Strings, thrown compatibility errors, timeout and teardown stay unknown.
+    if(error&&error.relayRpcRejection===true)outcome=error.relayRetryable===true?"retryable-rejection":"rejected";
+  }
+  ackPending={...attempt,outcome};if(mounted)await flushAck();
+}
+async function watch(){
+  if(running||!mounted||!linked||stopped)return;running=true;let retryDelay=2000;
+  try{
+    await initializing;if(!standard&&!(window.openai&&typeof window.openai.callTool==="function")){initializing=initialize();await initializing}await flushAck();
+    if(!connected){const result=await mutate({action:"connect",inputRequestId:linked.inputRequestId,presentationRef:linked.presentationRef});
+      if(result.stopped){stopped=true;return}connected=true;let after=result.recoveryAfter;
+      while(after&&mounted){const next=await mutate({action:"recover",afterJob:after});if(next.stopped){stopped=true;return}after=next.recoveryAfter}
+    }
+    const result=await tool("codex_relay_wait",{...base(),...(revision?{after:revision}:{}),waitMs:25000});
+    revision=result.revision;if(result.stopped){stopped=true;return}
+    for(const event of result.events||[]){if(!mounted)break;await deliver(event)}
+    document.documentElement.dataset.relay="waiting";retryDelay=(result.events||[]).length?2000:0;
+  }catch{document.documentElement.dataset.relay="recovering";}
+  finally{running=false;schedule(retryDelay)}
+}
+
+// Install every receiver before ui/initialize can cause host notifications.
+window.addEventListener("message",event=>{
+  if(event.source!==window.parent)return;const message=event.data;if(!message||message.jsonrpc!=="2.0")return;
+  if(message.method==="ping"&&message.id!==undefined){window.parent.postMessage({jsonrpc:"2.0",id:message.id,result:{}},"*");return}
+  if(message.method==="ui/resource-teardown"){tornDown=true;mounted=false;clearTimeout(timer);timer=0;cancelRequests();if(message.id!==undefined)window.parent.postMessage({jsonrpc:"2.0",id:message.id,result:{}},"*");return}
+  if(message.method===undefined&&pending.has(message.id)&&(Object.prototype.hasOwnProperty.call(message,"result")||Object.prototype.hasOwnProperty.call(message,"error"))){const entry=pending.get(message.id);pending.delete(message.id);if(message.error){const error=new Error("RELAY_RPC_REJECTED");error.relayRpcRejection=true;error.relayRetryable=message.error.data&&message.error.data.delivery==="not-sent"&&message.error.data.retryable===true;entry.reject(error)}else entry.resolve(message.result);return}
+  if(message.method==="ui/notifications/tool-input")receiveInput(message.params);
+  if(message.method==="ui/notifications/tool-result")receiveResult(message.params);
+});
+window.addEventListener("openai:set_globals",event=>{const globals=event&&event.detail&&event.detail.globals||{};receiveInput(globals.toolInput);receiveResult(globals.toolResponseMetadata);schedule()});
+window.addEventListener("pagehide",()=>{mounted=false;connected=false;clearTimeout(timer);timer=0;cancelRequests()});
+window.addEventListener("pageshow",()=>{if(!tornDown){mounted=true;schedule()}});
+window.addEventListener("online",()=>schedule());
+receiveInput(window.openai&&window.openai.toolInput);receiveResult(window.openai&&window.openai.toolResponseMetadata);
+initializing=initialize();
+</script></body></html>

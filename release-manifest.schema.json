@@ -148,30 +148,33 @@
         "minimumContractGeneration": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["settings", "dashboard"],
+          "required": ["settings", "dashboard", "relay"],
           "properties": {
             "settings": { "type": "integer", "minimum": 1 },
-            "dashboard": { "type": "integer", "minimum": 1 }
+            "dashboard": { "type": "integer", "minimum": 1 },
+            "relay": { "type": "integer", "minimum": 1 }
           }
         },
         "resources": {
           "type": "array",
-          "minItems": 2,
-          "maxItems": 2,
+          "minItems": 3,
+          "maxItems": 3,
           "uniqueItems": true,
-          "items": { "enum": ["settings", "dashboard"] },
+          "items": { "enum": ["settings", "dashboard", "relay"] },
           "allOf": [
             { "contains": { "const": "settings" } },
-            { "contains": { "const": "dashboard" } }
+            { "contains": { "const": "dashboard" } },
+            { "contains": { "const": "relay" } }
           ]
         },
         "activeResources": {
           "type": "array",
-          "minItems": 2,
-          "maxItems": 2,
+          "minItems": 3,
+          "maxItems": 3,
           "prefixItems": [
             { "const": "settings" },
-            { "const": "dashboard" }
+            { "const": "dashboard" },
+            { "const": "relay" }
           ],
           "items": false
         },

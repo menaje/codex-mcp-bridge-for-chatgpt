@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "Automatically relay Codex goal events through a blank card with durable single-send claims and idempotent dynamic followup admission.",
+  "breaking": false,
+  "migration": null
+}

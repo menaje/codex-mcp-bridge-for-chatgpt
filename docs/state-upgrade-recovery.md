@@ -232,7 +232,12 @@ through schema 5, retired automatic model fallbacks are removed, project JSON is
 turned into a registry identity, and saved full-access intent remains subject to
 the current operator sandbox ceiling.
 
-The #221 payload-compatible delivery transition does not rewrite Jobs, request hashes or approval receipts and does not change the schema migration catalog. New ordinary Jobs use direct-wait; old card claim/ACK/retry execution is removed. Historical delivery fields remain readable and retain their existing protection windows. See the [transition and reapproval rules](issue-221-delivery-transition.md).
+Current #261 relay adds versioned metadata journals and admission/commit hooks,
+without rewriting existing identities or SQL migration provenance. New ordinary
+Jobs use `relay-card`; common retention and identity-aware project deletion govern
+its references. See [relay upgrade boundaries](relay-delivery.md).
+
+Historical transition: the #221 payload-compatible delivery transition does not rewrite Jobs, request hashes or approval receipts and does not change the schema migration catalog. New ordinary Jobs use direct-wait; old card claim/ACK/retry execution is removed. Historical delivery fields remain readable and retain their existing protection windows. See the [transition and reapproval rules](issue-221-delivery-transition.md).
 
 Schema 21 adds live-card completion rows for newly terminal Jobs without
 replaying older terminal Jobs. Schema 22 records whether a consumed completion

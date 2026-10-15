@@ -168,7 +168,7 @@ Installation**, **Connection**, and **Server** when each destination applies to
 the current role and connection state. A pinned card at the bottom identifies the
 currently managed Mac or remote server and its health, and opens Connection when
 selected. General contains language, operational/security notifications,
-launch behavior, conversation storage, and separate app visibility. New ordinary Jobs always use direct-wait; the retired delivery switch is absent. Shared access, model, processing speed,
+launch behavior, conversation storage, and separate app visibility. New ordinary Jobs attach the blank goal relay automatically; the retired delivery switch is absent. See [relay delivery and host lifetime](relay-delivery.md). Shared access, model, processing speed,
 concurrency, and retention controls live under Models & Execution. Projects uses
 a list-oriented manager, while the Server destination retains an explicit
 apply-and-restart confirmation because those values are stored in the private

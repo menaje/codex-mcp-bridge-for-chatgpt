@@ -22,10 +22,14 @@ export type EventJob = {
   agentId?: string;
   projectId?: string;
   mcpPrincipal?: string;
-  completionDeliveryPolicy?: "live-card" | "direct-wait" | "events";
+  completionDeliveryPolicy?: "live-card" | "direct-wait" | "relay-card" | "events";
   status: string;
   terminalVersion?: number;
   version?: number;
+  workerId?: string;
+  workerGeneration?: number;
+  threadId?: string;
+  trackingState?: string;
   updatedAt: number;
   createdAt?: number;
   pendingInteractions?: unknown[];

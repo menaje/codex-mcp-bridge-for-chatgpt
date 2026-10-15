@@ -1,3 +1,4 @@
+import { RELAY_CARD_CONTENT_METADATA, RELAY_CARD_HTML, RELAY_CARD_RESOURCE_DESCRIPTOR, RELAY_CARD_URI } from "../src/relayCard.js";
 import {
   SETTINGS_CARD_CONTENT_METADATA,
   SETTINGS_CARD_HTML,
@@ -13,6 +14,7 @@ import {
 
 process.stdout.write(JSON.stringify({
   resources: {
+    relay: { uri: RELAY_CARD_URI, html: RELAY_CARD_HTML, metadata: { descriptor: RELAY_CARD_RESOURCE_DESCRIPTOR, content: RELAY_CARD_CONTENT_METADATA } },
     settings: {
       uri: SETTINGS_CARD_URI,
       html: SETTINGS_CARD_HTML,

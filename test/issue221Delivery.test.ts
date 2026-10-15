@@ -260,12 +260,12 @@ describe("#221 delivery transition", () => {
       }
     } finally { db.close(); }
   }
-  it.each([false, true])("uses direct-wait for the legacy switch value %s", async legacy => {
+  it.each([false, true])("uses automatic relay for the legacy switch value %s", async legacy => {
     settings.update({ experimentalDirectResultDelivery: legacy }, settings.current.revision);
     const result = await admit();
-    expect(result.structuredContent).toMatchObject({ completionDeliveryPolicy: "direct-wait" });
+    expect(result.structuredContent).toMatchObject({ completionDeliveryPolicy: "relay-card" });
     expect(JSON.stringify((result.structuredContent as any).nextActions)).not.toContain("codex_dashboard");
-    expect(result._meta).not.toHaveProperty("openai/outputTemplate");
+    expect(result._meta).toHaveProperty("openai/outputTemplate", "ui://codex-mcp-bridge/relay/v1.html");
     await exact((result.structuredContent as any).jobId);
   });
   it("keeps the entire ordinary path independent of Events", async () => {
@@ -327,7 +327,7 @@ describe("#221 delivery transition", () => {
       activity: { mode: "existing", id: parent.items[0].activityId },
       agent: { mode: "existing", id: parent.items[0].agentId, context: "continue" } });
     expect(reapproved.isError, JSON.stringify(reapproved)).not.toBe(true);
-    expect(reapproved.structuredContent).toMatchObject({ completionDeliveryPolicy: "direct-wait" });
+    expect(reapproved.structuredContent).toMatchObject({ completionDeliveryPolicy: "relay-card" });
     await exact((reapproved.structuredContent as any).jobId);
     expect(state.listMeta("task_followup_v1/", 100)).toEqual(before);
   });

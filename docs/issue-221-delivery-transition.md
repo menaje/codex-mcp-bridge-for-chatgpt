@@ -1,5 +1,9 @@
 # Ordinary Chat delivery transition (#221)
 
+> Historical decision/transition record. #261 supersedes ordinary direct-wait-only
+> delivery and the no-card constraint with the [automatic blank goal relay](relay-delivery.md).
+> Existing ownership, receipt, stop and historical-data protections remain.
+
 The integration target is `dev`, starting at
 `4fc1619b07a50c4454daa6c079cbd495ba7d02b4`. This document fixes the transition
 contract before the delivery implementation. Implementation, fixture evidence,

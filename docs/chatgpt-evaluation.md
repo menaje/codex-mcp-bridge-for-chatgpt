@@ -1,7 +1,15 @@
 # ChatGPT 도구·UI 반복 평가
 
+> #261 current scope: automatic blank Relay is separate from explicitly opened
+> Dashboard. Use deterministic event/order fixtures for delivery, ownership,
+> followup admission and retention. Real GPT automatic resumption/A→review→B,
+> duration/soak and accelerated substitutes are excluded from implementation
+> completion; user observation during normal use is not an approval gate.
+> Historical live-host and duration evidence below remains version-specific.
+> See [current relay contract](relay-delivery.md).
+
 현재 공개 도구와 Settings·Dashboard를 평가하는 절차다. 기준은 중앙 실행 정책과
-현재 15개 도구 계약이다. 각 실행에서는 실제 소스 커밋과 설치된 빌드를 따로
+현재 19개 일반 도구 계약이다. 각 실행에서는 실제 소스 커밋과 설치된 빌드를 따로
 기록한다. 아래 기대 결과와 미실행 항목은 실제 호스트 통과 기록이 아니다.
 
 ## 준비와 현재 계약
@@ -12,7 +20,7 @@
 - `codex_dashboard`의 현황 카드는 **이 대화 / 전체 현황**을 전환한다. 완료·보관 기록까지 포함해 현재 대화의 기록이 있으면 이 대화로 시작한다. 실행 중·응답 필요·문제 요약과 목록에 동일한 범위를 적용한다. 전체 현황을 열었다고 GPT의 일반 도구 호출 범위가 넓어지지 않는다.
 - 현황의 선택한 작업 상세에서 원본 승인·입력, 작업 중단과 남은 프로세스 종료를 처리한다. 종료된 실패 이력, 현재 처리 필요 항목, 자동 처리 기록을 구분한다. 선택적 확인은 원래 작업 결과를 바꾸지 않는다.
 - 일반 질문은 `codex_status`의 `input` query로 읽는다. GPT가 판단할 수 있는 질문에는 `codex_answer` 또는 정확한 활성 turn의 `codex_steer`를 사용한다. 사용자 의견이 필요하면 현재 ChatGPT 대화에서 묻고, 답을 받은 뒤 유효한 정확한 질문에만 `codex_answer`를 호출한다. 이는 원본 승인을 허가하지 않는다.
-- Settings의 모델·Ultra·모델 설명·언어·기록 보존을 확인한다. 새 일반 Job은 direct-wait로 접수하며 카드 없이 same Job bounded wait→현재 질문·승인→원본 검토→사전 승인 B→동일 B replay를 검증한다. 명시적으로 연 현황카드는 표시·관리 기능과 채팅 무송신을 별도로 확인한다. 구형 완료 요청 차단과 이미 결과를 받은 iframe의 종료 절차를 구분한다. native 알림은 독립 보조 채널이며 ChatGPT 전달 성공으로 계산하지 않는다. 사용자 모델 설명의 저장·공식 비교·복원, 충돌과 초안 보존을 포함한다.
+- Settings의 모델·Ultra·모델 설명·언어·기록 보존을 확인한다. 새 일반 Job은 빈 Relay를 자동 연결하고, 결정적 fixture로 현재 질문·승인→원본 offer→후행 receipt→동일 B replay를 검증한다. 실제 GPT 재개와 장시간 대체 시험은 #261 완료 조건에 넣지 않는다. 명시적으로 연 현황카드는 표시·관리 기능과 채팅 무송신을 별도로 확인한다. 구형 완료 요청 차단과 이미 결과를 받은 iframe의 종료 절차를 구분한다. native 알림은 독립 보조 채널이며 ChatGPT 전달 성공으로 계산하지 않는다. 사용자 모델 설명의 저장·공식 비교·복원, 충돌과 초안 보존을 포함한다.
 - 현재 리소스는 Settings와 Dashboard뿐이다. 이전 Activity·Question 리소스와 그 카드 전용 설정은 새 평가의 필수 흐름으로 요구하지 않는다.
 
 기준 커밋, 브리지 버전과 빌드 ID, 실제 실행 백엔드/CLI 버전, task 계약, 카드 리소스 세대, ChatGPT 앱/브라우저 버전 및 날짜를 기록한다. 선택적 session/subject/organization metadata는 값 자체 대신 존재 여부만 남긴다. opaque scope는 검증 중 비공개로 대조하고 공개 기록에는 A/B/C 관계만 남긴다.
@@ -47,9 +55,9 @@
 | E9-6 · 언어 전환 | 실제 호스트 언어를 바꾸고 Settings와 Dashboard의 문구·선택값을 확인한다. 제공되는 미지원 언어에서는 정의된 fallback을 확인한다. | 이전 Question-card 초안 검증은 역사적 기록이다. 현재 리소스의 실제 ChatGPT 재검증은 남긴다. |
 | 일반 질문 전달 | `codex_status` input query에서 정확한 질문을 읽고, 현재 대화에서 받은 답을 `codex_answer`로 보낸다. stale 질문·다른 scope·불확실한 전달은 거부하거나 보류하며 새 request ID나 다른 채널로 자동 재전송하지 않는다. | 카드 기반 #68 검증은 역사적 기록이다. 현재 ChatGPT에서의 직접 대화·전달 재검증은 남긴다. |
 | 현재 리소스·알림 회귀 | Settings와 Dashboard를 다시 열고 갱신한다. Dashboard 자동 표시, 작업 상세, 카드와 독립된 native completion outbox 전달, 설정이 충돌하지 않아야 한다. Dashboard 또는 `ui/message`가 outbox를 claim하지 않는지도 확인한다. | 구형 Activity/Question 리소스를 다시 열어야 한다는 요구는 없다. |
-| 실험적 직접 결과 연속 오케스트레이션 | 실험을 켠 뒤 새 Job을 시작하고 같은 대화, 다른 대화로 이동, 앱 백그라운드, 화면 잠금, 연결 유실·복구를 각각 별도 실행한다. 성공은 원래 대화에 사용자가 다시 들어오지 않아도 GPT가 정확한 종료 결과를 받고 검토한 뒤 승인 범위 안의 다음 Job까지 시작한 경우다. 새 승인·입력이 필요하면 중단해야 한다. | 자동화된 브리지·카드 검사는 정책 스냅샷, bounded wait, 중복 방지만 증명한다. 각 호스트 상태는 실제 ChatGPT에서 관찰한 경우에만 `pass`로 기록하고, host가 run을 중단하면 Codex 지속성과 GPT 자동 연속 실행을 별도 판정한다. |
+| 과거 실험적 직접 결과 연속 오케스트레이션 (현행 #261 필수 시험 아님) | 실험을 켠 뒤 새 Job을 시작하고 같은 대화, 다른 대화로 이동, 앱 백그라운드, 화면 잠금, 연결 유실·복구를 각각 별도 실행한다. 성공은 원래 대화에 사용자가 다시 들어오지 않아도 GPT가 정확한 종료 결과를 받고 검토한 뒤 승인 범위 안의 다음 Job까지 시작한 경우다. 새 승인·입력이 필요하면 중단해야 한다. | 자동화된 브리지·카드 검사는 정책 스냅샷, bounded wait, 중복 방지만 증명한다. 각 호스트 상태는 실제 ChatGPT에서 관찰한 경우에만 `pass`로 기록하고, host가 run을 중단하면 Codex 지속성과 GPT 자동 연속 실행을 별도 판정한다. |
 
-직접 수신 수락시험에는 두 종류의 프롬프트를 분리한다. 경로 진단용에는 exact wait
+아래 직접 수신 수락시험 절차는 과거 계약의 기록이며 #261의 구현·완료 선행 조건이 아니다. 당시 시험에는 두 종류의 프롬프트를 분리했다. 경로 진단용에는 exact wait
 지시를 넣어도 되지만, **설정 단독 효과** 시험에는 사용자가 평소처럼 읽기 전용
 2단계 작업만 요청하고 `direct-wait`, `codex_status`, Dashboard 금지 등의 구현
 지시를 넣지 않는다. 다른 대화 이동 시험은 원대화를 떠난 UTC 시각과 다시 연 UTC

@@ -23,7 +23,17 @@ const view = { ...dashboardView("structural"), scope: "conversation", historyInc
   filter: { mode: "conversation", conversationAvailable: true, conversationHasWork: true } };
 function cardHtml(old: boolean): string {
   let html = htmlForUiResource("dashboard", currentUiResourceUri("dashboard"), DASHBOARD_CARD_HTML);
-  if (old) html = html.replace(/<script>[\s\S]*?<\/script>/, () => `<script>${oldScript}</script>`);
+  if (old) {
+    // v5 retired these problem controls. The unchanged v3 script still binds
+    // them at startup; retain its fixture DOM so legacy delivery is exercised.
+    html = html.replace("<body>", `<body><div hidden>
+      <select id="problem-kind"><option value="all">All</option></select>
+      <button id="problem-ack-all"></button><button id="problem-ack-selected"></button>
+      <div id="problem-notice"></div><button id="problem-confirm"></button>
+      <button id="problem-previous"></button><span id="problem-page-label"></span>
+      <p id="problem-policy"></p></div>`);
+    html = html.replace(/<script>[\s\S]*?<\/script>/, () => `<script>${oldScript}</script>`);
+  }
   // Scale only the fixture timers, preserving the production state machine.
   html = html.replaceAll("TOOL_CALL_TIMEOUT_MS=15000", "TOOL_CALL_TIMEOUT_MS=300")
     .replaceAll("COMPLETION_WAIT_MS=8000", "COMPLETION_WAIT_MS=100")

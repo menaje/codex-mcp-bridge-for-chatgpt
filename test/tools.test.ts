@@ -1819,14 +1819,14 @@ describe("current bridge tool contracts", () => {
       contractVersion: "4",
       state: "running",
       terminal: false,
-      completionDeliveryPolicy: "direct-wait",
+      completionDeliveryPolicy: "relay-card",
       jobId: expect.any(String),
       requestId: expect.any(String),
       threadId: null,
       resultAvailability: "pending"
     });
     expect(result.structuredContent).not.toHaveProperty("waitContext");
-    expect(result._meta).not.toHaveProperty("openai/outputTemplate");
+    expect(result._meta).toHaveProperty("openai/outputTemplate", "ui://codex-mcp-bridge/relay/v1.html");
     await hold.started;
     expect(upstream.calls).toHaveLength(1);
     hold.release();
@@ -1941,16 +1941,16 @@ describe("current bridge tool contracts", () => {
       upstream.setNextThreadId(randomUUID());
       settings.update({ experimentalDirectResultDelivery: legacy }, settings.current.revision);
       const result = await task();
-      expect(result.structuredContent).toMatchObject({ completionDeliveryPolicy: "direct-wait" });
+      expect(result.structuredContent).toMatchObject({ completionDeliveryPolicy: "relay-card" });
       expect(JSON.stringify((result.structuredContent as any).nextActions)).not.toContain("codex_dashboard");
       const id = (result.structuredContent as any).jobId;
       await eventually(() => state.listJobs().some(job => job.jobId === id && job.status === "completed"));
       const retained = await client.callTool({ name: "codex_status", _meta: metadata, arguments: { query: { kind: "job", id } } });
-      expect(retained.structuredContent).toMatchObject({ items: [expect.objectContaining({ id, completionDeliveryPolicy: "direct-wait" })] });
+      expect(retained.structuredContent).toMatchObject({ items: [expect.objectContaining({ id, completionDeliveryPolicy: "relay-card" })] });
     }
   });
 
-  it("keeps a direct-wait Job pending at an unapproved Codex command boundary", async () => {
+  it("keeps an ordinary Job pending at an unapproved Codex command boundary", async () => {
     const enabled = await client.callTool({
       name: "codex_update_settings",
       arguments: {
@@ -1981,7 +1981,7 @@ describe("current bridge tool contracts", () => {
       _meta: metadata
     });
     expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
-    expect(admitted.structuredContent).toMatchObject({ completionDeliveryPolicy: "direct-wait" });
+    expect(admitted.structuredContent).toMatchObject({ completionDeliveryPolicy: "relay-card" });
     const jobId = (admitted.structuredContent as { jobId: string }).jobId;
     await hold.started;
     hold.assign(fixtureThreadId, fixtureTurnId);
@@ -2037,7 +2037,7 @@ describe("current bridge tool contracts", () => {
       items: [expect.objectContaining({
         id: jobId,
         state: "running",
-        completionDeliveryPolicy: "direct-wait",
+        completionDeliveryPolicy: "relay-card",
         wait: expect.objectContaining({ timedOut: true })
       })]
     });
@@ -2051,7 +2051,7 @@ describe("current bridge tool contracts", () => {
     ));
   });
 
-  it("recovers a direct-wait Job by exact identity after the host aborts a status read", async () => {
+  it("recovers an ordinary Job by exact identity after the host aborts a status read", async () => {
     const enabled = await client.callTool({
       name: "codex_update_settings",
       arguments: {
@@ -2082,7 +2082,7 @@ describe("current bridge tool contracts", () => {
       _meta: metadata
     });
     expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
-    expect(admitted.structuredContent).toMatchObject({ completionDeliveryPolicy: "direct-wait" });
+    expect(admitted.structuredContent).toMatchObject({ completionDeliveryPolicy: "relay-card" });
     const jobId = (admitted.structuredContent as { jobId: string }).jobId;
     await hold.started;
     try {
@@ -2118,7 +2118,7 @@ describe("current bridge tool contracts", () => {
         items: [expect.objectContaining({
           id: jobId,
           state: "running",
-          completionDeliveryPolicy: "direct-wait",
+          completionDeliveryPolicy: "relay-card",
           wait: expect.objectContaining({ timedOut: true })
         })]
       });
@@ -2138,7 +2138,7 @@ describe("current bridge tool contracts", () => {
     });
     expect(terminal.structuredContent).toMatchObject({
       kind: "job",
-      items: [expect.objectContaining({ id: jobId, state: "completed", completionDeliveryPolicy: "direct-wait" })]
+      items: [expect.objectContaining({ id: jobId, state: "completed", completionDeliveryPolicy: "relay-card" })]
     });
   });
 

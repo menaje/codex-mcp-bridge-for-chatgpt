@@ -13,6 +13,7 @@ integrity checks; it is not part of the file name or URI.
 | --- | --- | --- | --- |
 | Settings | `ui-resources/settings.html` | `dist/ui/settings.html` | `ui://codex-mcp-bridge/settings/v6.html` |
 | Dashboard | `ui-resources/dashboard.html` | `dist/ui/dashboard.html` | `ui://codex-mcp-bridge/dashboard/v5.html` |
+| Relay | `ui-resources/relay.html` | `dist/ui/relay.html` | `ui://codex-mcp-bridge/relay/v1.html` |
 
 Activity, Question, and Decision are retired presentation resources. Their
 historical state remains only where migration or current orchestration requires
@@ -54,8 +55,8 @@ contract generation in non-visible `data-card-resource-uri` and
 new script started. A current file on disk alone is not live-serving evidence.
 
 Product SemVer and card URI versions are independent. A product release does
-not change a card URI by itself, and the two cards can advance their URI
-versions separately.
+not change a card URI by itself, and each card can advance its URI
+version separately.
 
 Settings `v6` introduces confirmed project shutdown and physical removal of Bridge
 management records. Older cached deletion guidance incorrectly promises retained
@@ -64,6 +65,12 @@ Close older Settings mounts, refresh connector discovery, and reopen Settings
 before applying this contract. A new URI does not revoke an already open iframe;
 live-host teardown and refresh acceptance remain a deployment check. Dashboard
 stays at `v5`; there is still only one packaged file per card.
+
+Relay `v1` is a new independent resource and protocol generation, automatically
+associated only with ordinary task/answer descriptors and retained results. Its
+required tool list includes exact status, relay wait, mutation and stop contracts.
+Internal relay responses do not contain an output template. It does not restore
+the retired Dashboard sender; see [delivery and upgrade boundaries](relay-delivery.md).
 
 ## Release rules
 
@@ -77,7 +84,7 @@ stays at `v5`; there is still only one packaged file per card.
 
 Synchronization removes legacy digest-named files. Release validation rejects
 extra files under `ui-resources/`, a missing current file, mismatched HTML or
-metadata digests, URI drift, and package output other than the two current
+metadata digests, URI drift, and package output other than the three current
 files.
 
 ## ChatGPT cache behavior

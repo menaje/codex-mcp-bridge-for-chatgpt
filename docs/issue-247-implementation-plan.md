@@ -1,5 +1,9 @@
 # #247 구현 계획 — 최신 결정 반영
 
+> Historical decision/transition record. #261 supersedes ordinary direct-wait-only
+> delivery and the no-card constraint with the [automatic blank goal relay](relay-delivery.md).
+> Existing ownership, receipt, stop and historical-data protections remain.
+
 2026-10-13 최신 [#247 본문](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/247)과
 원래 W0~W5 첨부 `libfile_8c6be77f227081919b3cc07364012ad9`를 기준으로 한다.
 이 문서는 이전 계획의 실제 재개 시험을 선행 조건으로 둔 부분을 대체한다.

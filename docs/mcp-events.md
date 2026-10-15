@@ -1,6 +1,6 @@
 # Exact-Job MCP Events
 
-This is a separate disabled-by-default experiment. Startup requires `CODEX_MCP_BRIDGE_EXPERIMENTAL_PROFILE=events` and `CODEX_MCP_BRIDGE_EVENTS_ENABLED=1` in addition to the authentication configuration below. A legacy enable flag alone does not activate it. Ordinary direct-wait setup requires none of these services.
+This is a separate disabled-by-default experiment. Startup requires `CODEX_MCP_BRIDGE_EXPERIMENTAL_PROFILE=events` and `CODEX_MCP_BRIDGE_EVENTS_ENABLED=1` in addition to the authentication configuration below. A legacy enable flag alone does not activate it. Ordinary automatic-relay setup requires none of these services.
 
 The opt-in `codex.job.terminal` event implements the webhook portion of
 [OpenAI's MCP Events contract](https://developers.openai.com/plugins/build/mcp-events)
@@ -9,7 +9,9 @@ on the existing MCP `2026-07-28` endpoint. It signals a committed `completed`,
 `codex_status` query. It does not include the prompt, answer, callback, signing
 key, or instructions to execute work.
 
-Ordinary admission defaults to `direct-wait`; retained Jobs preserve their original policy. New OAuth Jobs can explicitly request `completionDelivery:
+The default server profile uses ordinary `relay-card` admission. This explicit
+Events profile retains card-free `direct-wait` when delivery is omitted;
+retained Jobs preserve their original policy. New OAuth Jobs can explicitly request `completionDelivery:
 "events"` for **card-free** completion. This stores Events intent, excludes
 automatic Dashboard mounting/watchers/ui/message and propagates the policy to
 preapproved B Jobs. Each exact Job needs its own native subscription. There is
@@ -270,7 +272,7 @@ The Job admission transaction creates B's waiting delivery record using the
 existing root consent, without creating a B grant or executing any work.
 Native subscriber arguments continue to identify the original root; never
 substitute B's ID into A's reference. Different Agents/Activities need their own
-original-scope consent. Ordinary direct-wait Jobs remain outside this receiver.
+original-scope consent. Ordinary relay-card and historical direct-wait Jobs remain outside this receiver.
 
 Current blocking input and committed terminal results produce stable event IDs.
 Input payloads contain an exact `codex_status kind=input` query, never question

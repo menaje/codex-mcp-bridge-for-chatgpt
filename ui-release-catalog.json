@@ -2,7 +2,8 @@
   "catalogVersion": 4,
   "activeResources": [
     "settings",
-    "dashboard"
+    "dashboard",
+    "relay"
   ],
   "compatibilityResources": [],
   "currentContracts": {
@@ -23,6 +24,18 @@
         "codex_ui_problem",
         "codex_ui_read",
         "codex_interaction_respond"
+      ]
+    },
+    "relay": {
+      "uriVersion": 1,
+      "presenterTool": "codex_task",
+      "requiredTools": [
+        "codex_task",
+        "codex_answer",
+        "codex_status",
+        "codex_relay",
+        "codex_relay_wait",
+        "codex_relay_control"
       ]
     }
   },

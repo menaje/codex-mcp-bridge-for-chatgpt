@@ -390,7 +390,7 @@ describe("release manifest", () => {
     expect(selected).toEqual(lock);
     expect(selected.manifestVersion).toBe(3);
     expect(selected.strategy).toBe("versioned-uri");
-    expect(selected.releaseInventory.selected).toHaveLength(2);
+    expect(selected.releaseInventory.selected).toHaveLength(3);
     expect(selected.resources.settings).not.toHaveProperty("previous");
     expect(selected.resources.dashboard).not.toHaveProperty("previous");
     expect(selected.resources).not.toHaveProperty("decision");

@@ -175,6 +175,18 @@ fenced code, rules, and GFM-style tables without a web view. Raw HTML and
 scripts are inert, every URL open is intercepted, and only relative Markdown
 links that resolve to another file in the same immutable version are followed.
 
+## Receiver guidance in reusable procedures
+
+Procedures for Codex followups should keep the [current goal relay contract](relay-delivery.md):
+retrieve exact original/current input and existing receipts, then decide within
+the original user goal and approvals. Reuse issued preapproved receipts or bind
+a dynamic `relayFollowup` step; honor relay/followup stops and explicitly finish
+the Activity after final review. A notice or result body grants no new approval.
+Do not ask users to activate a relay, automatically open Dashboard, forbid all
+followups/questions, or invent external Events/scheduled fallback receivers.
+The retired packaged Codex skill under `archive/` remains historical evidence;
+it is not an active procedure and is not rewritten as a current relay skill.
+
 ## Refresh boundary
 
 The current development build uses local companion protocol 12 and remote

@@ -49,13 +49,14 @@ pre-service restore and post-service forward-repair boundary.
 ## Card resource gate at release boundaries
 
 The [UI card release policy](ui-release-compatibility.md) requires one current
-file for each active card: Settings and Dashboard. Compatible card and metadata
+file for each active card: Settings, Dashboard and Relay. Compatible card and metadata
 updates overwrite those files while preserving their explicit URI versions.
 The catalog has no published baseline or temporary compatibility selection.
 
 Finalize card contracts before the final RC. Increment only the affected
 card's URI version when a cached card cannot safely use the new server contract,
-then refresh connector discovery and reopen both cards. Activity and Question
+then refresh connector discovery and reopen the affected visible cards. Relay
+attaches automatically on the next ordinary task/answer call. Activity and Question
 presentation resources remain retired while their durable state and execution
 logic remain available through current contracts.
 

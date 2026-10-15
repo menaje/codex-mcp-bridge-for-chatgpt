@@ -1,3 +1,6 @@
+import { RELAY_GUIDANCE } from "./relayDelivery.js";
+import { RELAY_TOOL_METADATA, registerRelayCardResource } from "./relayCard.js";
+import { registerRelayTools, relayToolResult, relayControlOutputSchema, relayMutationOutputSchema, relayWaitOutputSchema } from "./relayTools.js";
 import { ProjectLifecycleController } from "./projectLifecycle.js";
 import { withExecutionIdentity } from "./executionIdentity.js";
 import { dashboardHistoryActionInput, ISSUE_ATTENTION_DAYS, type HistoryRetentionDays, type DashboardHistoryActionInput } from "./workHistory.js";
@@ -28,7 +31,7 @@ import {
 } from "./completionDelivery.js";
 import { createHash, randomUUID } from "node:crypto";
 import { authenticatedMcpPrincipal } from "./mcpPrincipal.js";
-import { approvedFollowupDigests, issueApprovedFollowups, readFollowupReference, FOLLOWUP_ID_PATTERN, promptDigest, type ApprovedFollowup, type FollowupReference } from "./taskFollowups.js";
+import { approvedFollowupDigests, issueApprovedFollowups, readFollowupReference, FOLLOWUP_ID_PATTERN, promptDigest, type ApprovedFollowup, type FollowupReference, type DynamicFollowupReference } from "./taskFollowups.js";
 import { ThreadConnectionController, type ThreadConnectionRecord } from "./threadConnections.js";
 import { STATE_MAINTENANCE_SLICES, StateMaintenanceScheduler } from "./maintenanceScheduler.js";
 import {
@@ -493,15 +496,19 @@ const dashboardPresentationOutputSchema = z.strictObject({
   openTool: z.literal("codex_dashboard"),
   scope: z.literal("conversation"),
   automatic: z.literal(false),
-  reason: z.enum(["direct-wait", "events"]),
-  completionDeliveryRoute: z.enum(["direct-wait", "events"])
+  reason: z.enum(["direct-wait", "relay-card", "events"]),
+  completionDeliveryRoute: z.enum(["direct-wait", "relay-card", "events"])
 });
 
 const followupViewOutputSchema = z.strictObject({
   followupId: z.string().regex(FOLLOWUP_ID_PATTERN), requestId: z.string().uuid(),
   status: z.enum(["approved-pending", "admitted", "expired"])
 });
-const approvedFollowupsOutputSchema = z.array(followupViewOutputSchema).min(1).max(8).optional();
+const approvedFollowupsOutputSchema = z.array(followupViewOutputSchema).min(1).max(24).optional();
+const followupPageOutputSchema = z.strictObject({
+  kind: z.literal("followups"), jobId: z.string().uuid(),
+  receipts: z.array(followupViewOutputSchema).max(24), after: z.string().regex(FOLLOWUP_ID_PATTERN).nullable()
+});
 
 const codexTaskOutputBase = z.strictObject({
   contractVersion: z.literal("4"),
@@ -516,12 +523,12 @@ const codexTaskOutputBase = z.strictObject({
   threadId: z.string().nullable(),
   projectName: z.string().nullable(),
   requestId: z.string().nullable(),
-  approvedFollowups: z.array(followupViewOutputSchema).min(1).max(8).nullable(),
+  approvedFollowups: z.array(followupViewOutputSchema).min(1).max(24).nullable(),
   jobVersion: z.number().int().min(1).nullable(),
   activityVersion: z.number().int().min(1).nullable(),
   backend: z.enum(["mcp-server", "app-server", "codex-sdk"]).nullable(),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]).nullable(),
-  completionDeliveryPolicy: z.enum(["live-card", "direct-wait", "events"]).nullable(),
+  completionDeliveryPolicy: z.enum(["live-card", "direct-wait", "relay-card", "events"]).nullable(),
   eventSubscription: eventSubscriptionStateSchema.nullable().optional(),
   requestedModel: z.string().nullable(),
   requestedReasoningEffort: z.string().nullable(),
@@ -1077,7 +1084,7 @@ const jobSemanticOutputSchema = z.strictObject({
   operation: z.enum(["start", "continue"]),
   projectName: z.string().nullable(),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]),
-  completionDeliveryPolicy: z.enum(["live-card", "direct-wait", "events"]),
+  completionDeliveryPolicy: z.enum(["live-card", "direct-wait", "relay-card", "events"]),
   eventSubscription: eventSubscriptionStateSchema.optional(),
   executionAudit: compactExecutionAuditOutputSchema.nullable(),
   scopeId: z.string(),
@@ -1153,7 +1160,7 @@ const statusItemOutputSchema = z.strictObject({
   threadId: z.string().optional(),
   terminal: z.boolean().optional(),
   delivery: z.enum(["status", "primary-content", "omitted", "none"]).optional(),
-  completionDeliveryPolicy: z.enum(["live-card", "direct-wait", "events"]).optional(),
+  completionDeliveryPolicy: z.enum(["live-card", "direct-wait", "relay-card", "events"]).optional(),
   eventSubscription: eventSubscriptionStateSchema.optional(),
   completionEvidence: z.strictObject({
     jobRecord: z.enum(["active-last-known", "terminal-committed"]),
@@ -1738,6 +1745,7 @@ export const MODEL_VISIBLE_OUTPUT_SCHEMA_PER_TOOL_BYTE_BUDGET = 18_000;
 
 export const MODEL_VISIBLE_OUTPUT_SCHEMAS = Object.freeze({
   codex_answer: CODEX_INPUT_MODEL_OUTPUT_SCHEMAS.codex_answer,
+  codex_relay_control: relayControlOutputSchema,
   codex_activity_update: activityUpdateMutationOutputSchema,
   codex_agent: agentMutationOutputSchema,
   codex_cancel: z.union([cancelMutationOutputSchema, activityCancelMutationOutputSchema]),
@@ -1747,7 +1755,7 @@ export const MODEL_VISIBLE_OUTPUT_SCHEMAS = Object.freeze({
   bridge_skill: bridgeSkillOutputSchema,
   bridge_skill_manage: bridgeSkillManageOutputSchema,
   codex_settings: z.strictObject({ kind: z.literal("settings"), opened: z.literal(true) }),
-  codex_status: z.union([codexStatusOutputSchema, CODEX_INPUT_MODEL_OUTPUT_SCHEMAS.status_input, projectStatusOutputSchema]),
+  codex_status: z.union([codexStatusOutputSchema, CODEX_INPUT_MODEL_OUTPUT_SCHEMAS.status_input, projectStatusOutputSchema, followupPageOutputSchema]),
   codex_steer: codexSteerOutputSchema,
   codex_task: codexTaskOutputSchema
 });
@@ -1757,6 +1765,7 @@ export const OPERATOR_OUTPUT_SCHEMAS = Object.freeze({
   codex_agent_recovery_detach: mutationOutputSchema, codex_diagnostics: diagnosticsOutputSchema
 });
 export const APP_ONLY_OUTPUT_SCHEMAS = Object.freeze({
+  codex_relay: relayMutationOutputSchema, codex_relay_wait: relayWaitOutputSchema,
   codex_ui_read: z.union([dashboardViewOutputSchema, dashboardExecutionDetailOutputSchema, dashboardHistoryDetailOutputSchema, settingsViewOutputSchema, modelDescriptionHistoryPageOutputSchema, uiControlSummaryOutputSchema]),
   codex_ui_problem: problemActionResultSchema,
   codex_interaction_respond: mutationOutputSchema,
@@ -1774,6 +1783,7 @@ export function validateModelVisibleStructuredOutput(
   if (toolName === "codex_status") {
     if ((value as { kind?: unknown })?.kind === "codex-input") return CODEX_INPUT_MODEL_OUTPUT_SCHEMAS.status_input.parse(value);
     if ((value as { kind?: unknown })?.kind === "project") return projectStatusOutputSchema.parse(value);
+    if ((value as { kind?: unknown })?.kind === "followups") return followupPageOutputSchema.parse(value);
     return validateStatusOutput(value);
   }
   if (toolName === "codex_steer") return validateSteerOutput(value);
@@ -1907,6 +1917,7 @@ type CodexRouting = {
   completionDeliveryPolicy?: CompletionDeliveryPolicy;
   approvedFollowups?: ApprovedFollowup[];
   followup?: FollowupReference;
+  relayFollowup?: DynamicFollowupReference;
   scopeId: string;
   requestId: string;
   requestHash: string;
@@ -1944,12 +1955,13 @@ function mountedWidgetInstanceId(
   return args.widgetInstanceId || metadataString(meta, "openai/widgetSessionId");
 }
 
-type CompletionDeliveryPolicy = "live-card" | "direct-wait" | "events";
+type CompletionDeliveryPolicy = "live-card" | "direct-wait" | "relay-card" | "events";
 
 type CodexJob = {
   mcpPrincipal?: string;
   approvedFollowups?: ApprovedFollowup[];
   followup?: FollowupReference;
+  relayFollowup?: DynamicFollowupReference;
   executionReceipt?: boolean;
   /** Durable dispatch boundary; absence in legacy data means unknown. */
   executionDispatched?: boolean;
@@ -5798,7 +5810,9 @@ export function registerBridgeTools(
   // MCP 2026 list results must be deterministic. Register immutable card
   // resources in URI order; input tools do not add a resource.
   registerDashboardCardResource(server);
-  const codexInputs = registerCodexInputTools(server, jobs, scopeResolver);
+  registerRelayCardResource(server);
+  registerRelayTools(server, jobs.admissionStateStore, scopeResolver);
+  const codexInputs = registerCodexInputTools(server, jobs, scopeResolver, config.experimentalProfile !== "events");
   registerSettingsCardResource(server);
   const currentTaskAdmissionRef = (
     settings: BridgeUserSettings = userSettings.current,
@@ -6424,6 +6438,9 @@ export function registerBridgeTools(
     kind: z.literal("project"),
     name: projectNameInput().describe("Exact user-visible project name. Reads its current selector without executing Codex or opening a card.")
   });
+  const statusFollowupsQueryInput = z.strictObject({
+    kind: z.literal("followups"), jobId: z.string().uuid(), after: z.string().regex(FOLLOWUP_ID_PATTERN).optional()
+  }).describe("Page the existing followup receipts for this exact retained predecessor; pass the returned after cursor for more. Never admits work or creates a card.");
   const codexStatusQueryInput = z.union([
     statusJobQueryInput,
     statusRequestQueryInput,
@@ -6431,7 +6448,8 @@ export function registerBridgeTools(
     statusActivityQueryInput,
     statusThreadQueryInput,
     statusPageQueryInput,
-    statusProjectQueryInput
+    statusProjectQueryInput,
+    statusFollowupsQueryInput
   ]);
   const codexStatusInput = z.strictObject({
     query: codexStatusQueryInput.optional(),
@@ -6445,11 +6463,11 @@ export function registerBridgeTools(
     {
       title: `${PRODUCT_INFO.displayName} Status`,
       description:
-        "Read project selectors, exact Job state, current questions and original results in this conversation. Repeat bounded terminal waits on the same ordinary Job; timeout or host abort never cancels it or permits replacement. A terminal wait wakes only for terminal lifecycle state; inspect its exact input action after every non-terminal return. At a current question or approval, do not keep a parallel terminal wait. Review the original result before continuing within the original user goal and delegation; use the declared followup receipt or ordinary codex_task continue as appropriate. Keep the original scope and honor explicit stops and new user decision or approval boundaries. Summary reads contain no original answer; retrieve the supplied exact Job action. A response offer is not proof of GPT review. Status checks never require opening Dashboard.",
+        "Read project selectors, exact Job state, current questions, original results and followup receipts in this conversation. The default server profile attaches a blank relay automatically. Optional bounded terminal waits observe the same exact Job; timeout or host abort never cancels it or permits replacement. A terminal wait wakes only for terminal lifecycle state; inspect its exact input action after every non-terminal return. At a current question or approval, do not keep a parallel terminal wait. Review the original result before continuing within the original user goal and delegation; reuse a declared followup receipt or bind a dynamic step with relayFollowup. Query kind=followups pages all existing receipts for an exact retained predecessor. Keep the original scope and honor explicit stops and new user decision or approval boundaries. Summary reads contain no original answer; retrieve the supplied exact Job action. A response offer is not proof of GPT review. Status checks never require opening Dashboard.",
       inputSchema: codexStatusInput,
       outputSchema: config.experimentalProfile === "events" && config.eventsEnabled
         ? MODEL_VISIBLE_OUTPUT_SCHEMAS.codex_status
-        : z.union([ordinaryStatusOutputSchema, CODEX_INPUT_MODEL_OUTPUT_SCHEMAS.status_input, projectStatusOutputSchema]),
+        : z.union([ordinaryStatusOutputSchema, CODEX_INPUT_MODEL_OUTPUT_SCHEMAS.status_input, projectStatusOutputSchema, followupPageOutputSchema]),
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -6474,6 +6492,14 @@ export function registerBridgeTools(
       if (query?.kind === "project") {
         if (!scopeId) throw new Error("Project lookup requires conversation metadata or an explicit scopeId.");
         return projectStatusResult(query.name, userSettings);
+      }
+      if (query?.kind === "followups") {
+        if (!scopeId || scopeResolution?.source !== "host-metadata") throw new Error("RELAY_HOST_SCOPE_REQUIRED: Use the originating conversation.");
+        const job = jobs.admissionStateStore.getRelayJobSnapshot(query.jobId);
+        if (!job || job.scopeId !== scopeId || job.mcpPrincipal !== authenticatedMcpPrincipal(extra) || job.projectId && !jobs.admissionStateStore.isEventProjectAvailable(job.projectId)) throw scopedHandleUnavailable("job");
+        const structuredContent = followupPageOutputSchema.parse({ kind: "followups", jobId: job.jobId,
+          ...jobs.admissionStateStore.taskFollowups.page({ jobId: job.jobId, scopeId, mcpPrincipal: job.mcpPrincipal }, query.after) });
+        return { content: [{ type: "text" as const, text: JSON.stringify(structuredContent) }], structuredContent };
       }
       if (pageQuery && !scopeId) {
         throw new Error(
@@ -6523,6 +6549,8 @@ export function registerBridgeTools(
             { text: statusCompatibilityText(structured) }
           );
         }
+        if ((initial.completionDeliveryPolicy === "relay-card" || jobs.admissionStateStore.relay.registration(initial.jobId)) &&
+            (scopeResolution?.source !== "host-metadata" || initial.mcpPrincipal !== authenticatedMcpPrincipal(extra))) throw scopedHandleUnavailable("job");
         let wait: CodexJobWaitResult | undefined;
         if (jobQuery.waitFor) {
           let observedAbort = false;
@@ -8205,12 +8233,15 @@ export function registerBridgeTools(
     {
       title: "Run or Continue Codex Task",
       description:
-        "Durably admit one asynchronous Codex turn and return its exact Job identity immediately. Ordinary Jobs use direct-wait. Follow the returned Job nextActions: repeat bounded exact terminal waits, inspect input after each non-terminal return, review the original result, and continue within the original user goal and delegation. For B fixed before A use the optional approvedFollowups receipt; for B defined after reviewing A use ordinary codex_task with the original Activity and Agent context='continue', without a followup reference. Keep one requestId and identical execution payload for exact retries; query it after response loss. Different requestIds are distinct even for similar prompts or the same Activity. Honor explicit stops and new user decision or approval boundaries; B admission is not overall completion. Never replace a Job after timeout or host abort. Open Dashboard only when the user explicitly requests its display; it never sends results or starts followups. Historical admission policy remains in records without enabling retired delivery." + (config.experimentalProfile === "events" && config.eventsEnabled ? " Explicit experimental completionDelivery=events requires original OAuth scope. The returned lifecycle root monitoring action connects current input and later Events Jobs in this Activity/Agent/project; terminal-only consent needs separate exact Job subscriptions. Never fall back to another receiver." : ""),
+        "Durably admit one asynchronous Codex turn and return its exact Job identity immediately. In the default server profile, ordinary Jobs automatically attach a blank relay for current input and terminal events throughout this Activity. The relay sends references to the originating GPT; it makes no decisions. Retrieve exact original state/results and existing followup receipts before acting within the original user goal and approvals. Direct reads remain available; a host acceptance or result offer is not proof of review or goal completion. For B fixed before A use the optional approvedFollowups receipt; for a dynamic B decided after reviewing A use relayFollowup with the returned eventId, one stable logical step and reviewedVersion; retain the original Activity and choose an authorized Agent/context. Keep one requestId and identical execution payload for exact retries; query it after response loss. Different requestIds are distinct even for similar prompts or the same Activity. Honor explicit stops and new user decision or approval boundaries; B admission is not overall completion. Never replace a Job after timeout or host abort. Open Dashboard only when the user explicitly requests its display; it never sends results or starts followups. Honor relay/followup stops and explicitly finish the Activity only after the whole goal is reviewed. Historical admission policy remains interpretable without enabling retired delivery." + (config.experimentalProfile === "events" && config.eventsEnabled ? " Explicit experimental completionDelivery=events requires original OAuth scope. The returned lifecycle root monitoring action connects current input and later Events Jobs in this Activity/Agent/project; terminal-only consent needs separate exact Job subscriptions. Never fall back to another receiver." : ""),
       inputSchema: codexTaskInputSchema(config, taskExecutionEnvelopeRef()),
       outputSchema: config.experimentalProfile === "events" && config.eventsEnabled ? codexTaskOutputSchema : ordinaryTaskOutputSchema,
+      _meta: config.experimentalProfile === "events" ? {} : RELAY_TOOL_METADATA,
       annotations: codexTaskEnvelopeAnnotations(config)
     },
     async (args, extra) => {
+      const openingRequestId = args.requestId;
+      const output = await (async () => {
       let removeTaskAbortObserver: (() => void) | undefined;
       let releaseRuntimeAdmission: (() => void) | undefined;
       let admittedForCall = false;
@@ -8225,6 +8256,9 @@ export function registerBridgeTools(
         const signal = extra.mcpReq.signal;
         const preferences = userSettings.current;
         args = normalizeCodexTaskInput(args);
+        // The explicit Events experiment keeps its existing card-free ordinary
+        // fallback; it is not an implicit relay activation or dependency.
+        if (config.experimentalProfile === "events" && !args.completionDelivery && !args.followup && !args.relayFollowup) args.inheritedCompletionDeliveryPolicy = "direct-wait";
         const scope = scopeResolver.require(
           _meta as ToolCallMetadata,
           args.scopeId,
@@ -8240,9 +8274,30 @@ export function registerBridgeTools(
           );
           lifecycle.assertRequest("task", scope.scopeId, args.requestId);
         }
+        if (args.relayFollowup) {
+          if (scope.source !== "host-metadata") throw new Error("RELAY_HOST_SCOPE_REQUIRED: Dynamic relay steps require the originating host conversation.");
+          if (args.followup || args.completionDelivery === "events") throw new Error("FOLLOWUP_ADMISSION_CONFLICT: Choose one ordinary followup identity.");
+          const identity = jobs.admissionStateStore.taskFollowups.dynamicIdentity(scope.scopeId, args.relayFollowup);
+          args.requestId = identity.requestId;
+          if (args.agent?.mode === "new" && !args.agent.name) args.agentName = defaultTaskAgentName(args.requestId);
+          const receipt = jobs.admissionStateStore.taskFollowups.get(identity.followupId);
+          const envelope = taskRequestEnvelopeHash(args, scope.scopeId);
+          if (receipt && (receipt.scopeId !== scope.scopeId || receipt.mcpPrincipal !== args.mcpPrincipal ||
+              receipt.dynamic?.payloadSha256 !== envelope)) throw new Error("FOLLOWUP_ADMISSION_CONFLICT: This dynamic step is already bound to a different payload.");
+          if (receipt?.admittedJobId) {
+            const prior = retainedFollowupReplay(jobs, scope.scopeId, identity.requestId);
+            if (!prior) throw new Error("TASK_RESULT_EXPIRED: The step already ran; preserve its admission receipt.");
+            return resultForJob(prior, config.jobStaleAfterMs, preferences, jobs);
+          }
+          if (config.experimentalProfile === "events") throw new Error("RELAY_DELIVERY_UNAVAILABLE: New dynamic relay admission requires the ordinary server profile.");
+          const parent = jobs.admissionStateStore.relay.requireFollowup(args.relayFollowup.eventId,
+            { scopeId: scope.scopeId, mcpPrincipal: args.mcpPrincipal }, args.relayFollowup.reviewedVersion);
+          if (args.activity?.mode !== "existing" || args.activity.id !== parent.activityId) throw new Error("FOLLOWUP_OWNER_REQUIRED: Dynamic steps must retain the original Activity.");
+        }
         if (args.followup) {
           args = resolveApprovedFollowup(args, jobs, scope.scopeId);
-          const prior = jobs.peekRequest(scope.scopeId, args.requestId);
+          if (args.inheritedCompletionDeliveryPolicy === "relay-card" && scope.source !== "host-metadata") throw new Error("RELAY_HOST_SCOPE_REQUIRED: Relay followups require the originating host conversation.");
+          const prior = retainedFollowupReplay(jobs, scope.scopeId, args.requestId);
           if (prior) return resultForJob(prior, config.jobStaleAfterMs, preferences, jobs);
         }
         if (args.completionDelivery === "events") {
@@ -8277,6 +8332,8 @@ export function registerBridgeTools(
         signal?.addEventListener("abort", onAbort, { once: true });
         removeTaskAbortObserver = () => signal?.removeEventListener("abort", onAbort);
         const existingRequest = jobs.peekRequest(scope.scopeId, args.requestId);
+        if (existingRequest && (existingRequest.completionDeliveryPolicy === "relay-card" || jobs.admissionStateStore.relay.registration(existingRequest.jobId)) &&
+            (scope.source !== "host-metadata" || existingRequest.mcpPrincipal !== args.mcpPrincipal)) throw scopedHandleUnavailable("job");
         if (!existingRequest && jobs.admissionStateStore.getArchivedJobAdmissionReceipt(
           scope.scopeId,
           { kind: "request", requestId: args.requestId }
@@ -8642,6 +8699,8 @@ export function registerBridgeTools(
         releaseRuntimeAdmission?.();
         removeTaskAbortObserver?.();
       }
+      })();
+      return config.experimentalProfile === "events" ? output : relayToolResult(output, jobs.admissionStateStore, openingRequestId);
     }
   );
   server.registerTool("codex_ui_read", {
@@ -9018,6 +9077,7 @@ type CodexTaskArgs = {
   legacyFollowupIdentity?: { jobId: string; stepId: string };
   approvedFollowups?: Array<{ prompt: string }>;
   followup?: FollowupReference;
+  relayFollowup?: DynamicFollowupReference;
   scopeId?: string;
   requestId: string;
   taskContractVersion: typeof CODEX_TASK_INPUT_CONTRACT_VERSION;
@@ -9074,6 +9134,13 @@ function normalizeCodexTaskInput(
   return args;
 }
 
+function retainedFollowupReplay(jobs: CodexJobRegistry, scopeId: string, requestId: string): CodexJob | undefined {
+  const live = jobs.peekRequest(scopeId, requestId);
+  if (live) return live;
+  const retained = jobs.admissionStateStore.readRetainedJobDetail(scopeId, { kind: "request", requestId });
+  return retained ? { ...retained, promise: Promise.resolve() } as unknown as CodexJob : undefined;
+}
+
 function resolveApprovedFollowup(args: CodexTaskArgs, jobs: CodexJobRegistry, scopeId: string): CodexTaskArgs {
   const reference = args.followup!;
   const store = jobs.admissionStateStore;
@@ -9096,14 +9163,14 @@ function resolveApprovedFollowup(args: CodexTaskArgs, jobs: CodexJobRegistry, sc
     if (jobs.peekRequest(scopeId, receipt.requestId)) {
       throw new Error("FOLLOWUP_ADMISSION_CONFLICT: The approved step's canonical requestId is already occupied by different work.");
     }
-    const parent = jobs.get(receipt.parentJobId);
+    const parent = jobs.get(receipt.parentJobId) || store.readRetainedJobDetail(scopeId, { kind: "job", id: receipt.parentJobId });
     const offered = store.getJobCompletionDelivery(receipt.parentJobId, scopeId);
     if (receipt.expiresAt <= Date.now() || !parent || parent.scopeId !== scopeId ||
         parent.status !== "completed" || parent.version !== reference.reviewedVersion ||
         !offered?.directResultOfferedAt && !offered?.completionResultOfferedAt) {
       throw new Error("FOLLOWUP_REVIEW_REQUIRED: Retrieve and review the current exact completed predecessor before admitting its approved step.");
     }
-  } else if (!jobs.peekRequest(scopeId, receipt.requestId)) {
+  } else if (!retainedFollowupReplay(jobs, scopeId, receipt.requestId)) {
     throw new Error("TASK_RESULT_EXPIRED: The approved step already admitted a Job whose result is no longer retained. Its canonical requestId remains reserved.");
   }
   return normalizeCodexTaskInput({ ...args, requestId: receipt.requestId,
@@ -10407,6 +10474,7 @@ async function runCodex(input: {
         mcpPrincipal: input.routing.mcpPrincipal,
         approvedFollowups: input.routing.approvedFollowups,
         followup: input.routing.followup,
+        relayFollowup: input.routing.relayFollowup,
         completionDeliveryPolicy,
         sourceThreadId: input.sourceThreadId,
         selectionKey: activitySelectionKey(activity.activityId, input.selectionKey),
@@ -10910,7 +10978,15 @@ function formatJobStatus(
   if (deliveryFailed) warnings.push(deliveryFailed);
   const canIssueEventAccess = eventsAvailable && !monitoringStopped && !deliveryFailed &&
     (eventSubscription?.state === "pending" || eventSubscription?.reason === "expired");
-  const nextActions = eventSubscription
+  const relayRecord = registry?.admissionStateStore.relay.registration(job.jobId);
+  const relayNotice = relayRecord?.event;
+  const followupReferences = registry?.admissionStateStore.taskFollowups.references(job);
+  const nextActions = job.completionDeliveryPolicy === "relay-card"
+    ? [{ tool: "codex_status", arguments: { query: relayNotice?.kind === "input"
+        ? { kind: "input", jobId: job.jobId } : { kind: "job", id: job.jobId } },
+        userPrompt: RELAY_GUIDANCE + " A blank relay is attached automatically and remains connected across authorized followups. Dashboard opens only on explicit display request." +
+          (relayNotice ? ` Current eventId: ${relayNotice.eventId}; reviewedVersion: ${job.version}.` : "") }]
+    : eventSubscription
     ? !canIssueEventAccess ? [] : [{
         tool: "codex_event_access",
         arguments: { action: "issue", jobId: eventSubscription?.rootJobId || job.jobId,
@@ -10974,8 +11050,7 @@ function formatJobStatus(
     executionAudit: formatExecutionAudit(job),
     scopeId: job.scopeId,
     requestId: job.requestId,
-    ...(job.approvedFollowups?.length && registry
-      ? { approvedFollowups: registry.admissionStateStore.taskFollowups.references(job) } : {}),
+    ...(followupReferences?.length ? { approvedFollowups: followupReferences } : {}),
     bridgeSession: {
       ...job.sessionDecision,
       scopeId: job.scopeId,
@@ -11080,8 +11155,8 @@ function dashboardPresentationHint(
     openTool: "codex_dashboard",
     scope: "conversation",
     automatic: false as const,
-    reason: events ? "events" as const : "direct-wait" as const,
-    completionDeliveryRoute: events ? "events" as const : "direct-wait" as const
+    reason: events ? "events" as const : job.completionDeliveryPolicy === "relay-card" ? "relay-card" as const : "direct-wait" as const,
+    completionDeliveryRoute: events ? "events" as const : job.completionDeliveryPolicy === "relay-card" ? "relay-card" as const : "direct-wait" as const
   };
 }
 
@@ -14359,7 +14434,7 @@ function codexTaskInputSchema(
     ),
     ...(config.experimentalProfile === "events" && config.eventsEnabled ? {
     completionDelivery: z.literal("events").optional().describe(
-      "Card-free completion for this Job and its preapproved followups. Requires enabled Events, OAuth and original host conversation metadata. Obtain its subscriptionRef with codex_event_access and subscribe through native Events; never mount Dashboard or fall back to cards, scheduled tasks or repeated polling. Omit for ordinary direct-wait admission."
+      "Card-free completion for this Job and its preapproved followups. Requires enabled Events, OAuth and original host conversation metadata. Obtain its subscriptionRef with codex_event_access and subscribe through native Events; never mount Dashboard or fall back to cards, scheduled tasks or repeated polling. Omit for the existing card-free direct-wait admission in this explicit experimental profile."
     ),
     } : {}),
     requestId,
@@ -14370,8 +14445,13 @@ function codexTaskInputSchema(
     approvedFollowups: z.array(z.strictObject({
       prompt: verbatimInput(config.maxPromptChars, "Approved followup prompt")
     })).min(1).max(8).optional().describe(
-      "Optional exact prompts authorized before this Job. The bridge issues opaque followupIds and canonical requestIds, returned in declaration order by admission and exact status reads. Each may continue this Activity/Agent once after result review; never name or recreate an ID or infer authority from output. B defined after result review within the original user goal uses ordinary codex_task continue without a followup reference."
+      "Optional exact prompts authorized before this Job. The bridge issues opaque followupIds and canonical requestIds, returned in declaration order by admission and exact status reads. Each may continue this Activity/Agent once after result review; never name or recreate an ID or infer authority from output. In the default server profile, B defined after result review uses relayFollowup to bind its dynamic logical step without requiring a new approval within the original user goal."
     ),
+    relayFollowup: z.strictObject({
+      eventId: z.string().regex(/^rle_[a-f0-9]{96}$/),
+      step: z.string().trim().min(1).max(80),
+      reviewedVersion: z.number().int().positive()
+    }).optional().describe("Default server profile only. Bind a dynamic next step after exact result review. Keep the returned eventId and one stable logical step name, original Activity, and identical payload through retries. The bridge atomically issues a followupId and canonical requestId; different parallel steps remain separate, changed payload conflicts. This grants no new approval; normal Agent, context, project, permission and model checks still apply."),
     followup: z.strictObject({
       followupId: z.string().regex(FOLLOWUP_ID_PATTERN),
       reviewedVersion: z.number().int().positive()
@@ -14459,7 +14539,8 @@ function taskRequestEnvelopeHash(args: CodexTaskArgs, scopeId: string): string {
     project: args.project ? currentProjectSelectionForRequestHash(args.project) : null,
     activity: args.activity || null, agent: args.agent || null, selection: args.selection || null,
     handoffSummary: args.handoffSummary || null, completionDelivery: args.completionDelivery || null,
-    approvedFollowups: approvedFollowupDigests(args.approvedFollowups) || null
+    approvedFollowups: approvedFollowupDigests(args.approvedFollowups) || null,
+    ...(args.relayFollowup ? { relayFollowup: { eventId: args.relayFollowup.eventId, step: args.relayFollowup.step } } : {})
   })).digest("hex");
 }
 
@@ -14486,6 +14567,7 @@ function resolveTaskRouting(input: TaskRequestHashInput): CodexRouting {
         prompt: input.args.prompt,
         ...(input.args.completionDelivery ? { completionDelivery: input.args.completionDelivery } : {}),
         ...(input.args.approvedFollowups ? { approvedFollowups: approvedFollowupDigests(input.args.approvedFollowups) } : {}),
+        ...(input.args.relayFollowup ? { relayFollowup: input.args.relayFollowup } : {}),
         ...(input.args.followup ? { followup: input.args.legacyFollowupIdentity || { followupId: input.args.followup.followupId } } : {}),
         taskContractVersion: CODEX_TASK_INPUT_CONTRACT_VERSION,
         executionEnvelopeRef: input.args.executionEnvelopeRef,
@@ -14551,9 +14633,10 @@ function resolveTaskRouting(input: TaskRequestHashInput): CodexRouting {
     requestHashVersion: CURRENT_TASK_REQUEST_HASH_VERSION,
     mcpPrincipal: input.args.mcpPrincipal,
     completionDeliveryPolicy: input.args.inheritedCompletionDeliveryPolicy ||
-      (input.args.completionDelivery === "events" ? "events" : undefined),
+      (input.args.completionDelivery === "events" ? "events" : "relay-card"),
     approvedFollowups: approvedFollowupDigests(input.args.approvedFollowups),
-    followup: input.args.followup
+    followup: input.args.followup,
+    relayFollowup: input.args.relayFollowup
   };
 }
 
@@ -15429,7 +15512,7 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
   const completionDeliveryPolicy: CompletionDeliveryPolicy | undefined =
     value.completionDeliveryPolicy === undefined
       ? "live-card"
-      : value.completionDeliveryPolicy === "live-card" || value.completionDeliveryPolicy === "direct-wait" || value.completionDeliveryPolicy === "events"
+      : value.completionDeliveryPolicy === "live-card" || value.completionDeliveryPolicy === "direct-wait" || value.completionDeliveryPolicy === "relay-card" || value.completionDeliveryPolicy === "events"
         ? value.completionDeliveryPolicy
         : undefined;
   const activityId =
@@ -15630,6 +15713,7 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
     ...(typeof value.mcpPrincipal === "string" ? { mcpPrincipal: value.mcpPrincipal } : {}),
     ...(Array.isArray(value.approvedFollowups) ? { approvedFollowups: issueApprovedFollowups(jobId, value.approvedFollowups as ApprovedFollowup[]) } : {}),
     ...(value.followup ? { followup: readFollowupReference(value.followup as FollowupReference) } : {}),
+    ...(value.relayFollowup ? { relayFollowup: value.relayFollowup as DynamicFollowupReference } : {}),
     selectionKey: value.selectionKey,
     ...(executionDecision ? { executionDecision } : {}),
     ...(executionEvidence ? { executionEvidence } : {}),
@@ -16169,7 +16253,9 @@ function taskProjectionForJob(
       ...(semantic.terminal
         ? []
         : [guidance(
-            semantic.completionDeliveryPolicy !== "events"
+            semantic.completionDeliveryPolicy === "relay-card"
+              ? RELAY_GUIDANCE + " The blank relay is automatically attached; keep this Activity for authorized followups and explicitly finish it after the whole goal is reviewed. If its iframe is torn down, retained events recover on the next valid connection; automatic GPT resumption while the app is closed is not guaranteed."
+              : semantic.completionDeliveryPolicy !== "events"
               ? "Direct result delivery applies to this Job. After every non-terminal return, inspect the supplied exact-Job input action before repeating a bounded terminal wait on this same Job. Review the terminal result before continuing within the original user goal and delegation through its declared receipt or ordinary codex_task continue; honor explicit stops and new user decision or approval boundaries. After response loss, query the same requestId before an identical retry. If the GPT run ends without automatic continuation, recover the exact Job in the originating conversation; no UI-free host resumption contract is established here."
               : semantic.completionDeliveryPolicy === "events" && semantic.eventSubscription
                 ? eventMonitoringStopGuidance(semantic.eventSubscription) || eventDeliveryFailureGuidance(semantic.eventSubscription) ||
@@ -16415,7 +16501,7 @@ function statusItemProjection(
     ...(typeof input.threadId === "string" ? { threadId: input.threadId } : {}),
     ...(typeof input.terminal === "boolean" ? { terminal: input.terminal } : {}),
     ...(typeof input.delivery === "string" ? { delivery: input.delivery } : {}),
-    ...(input.completionDeliveryPolicy === "live-card" || input.completionDeliveryPolicy === "direct-wait" || input.completionDeliveryPolicy === "events"
+    ...(input.completionDeliveryPolicy === "live-card" || input.completionDeliveryPolicy === "direct-wait" || input.completionDeliveryPolicy === "relay-card" || input.completionDeliveryPolicy === "events"
       ? { completionDeliveryPolicy: input.completionDeliveryPolicy }
       : {}),
     ...(isRecord(input.eventSubscription) ? { eventSubscription: input.eventSubscription } : {}),

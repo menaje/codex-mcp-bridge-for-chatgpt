@@ -87,19 +87,22 @@
     "hashAlgorithm": "sha256",
     "minimumContractGeneration": {
       "settings": 9,
-      "dashboard": 6
+      "dashboard": 6,
+      "relay": 1
     },
     "resources": [
       "settings",
-      "dashboard"
+      "dashboard",
+      "relay"
     ],
     "activeResources": [
       "settings",
-      "dashboard"
+      "dashboard",
+      "relay"
     ],
     "compatibilityResources": [],
     "releaseCatalog": "ui-release-catalog.json",
-    "releaseCatalogSha256": "ba2c11ff02c15d5a5d9696fd419b08ae3f65dba384581f9da97682b0a6b7a92d"
+    "releaseCatalogSha256": "386b60ac8a1a9548c02b75259f4c66050289999c2cf2d7dac38adcc66d7f8498"
   },
   "stateCompatibility": {
     "currentSchema": 32,

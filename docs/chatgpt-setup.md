@@ -148,26 +148,37 @@ for completion. If that response is lost, query the same `requestId` with
 thread, project, or bounded input wait. Use `codex_cancel` only for explicit
 stop intent and its required version/idempotency arguments.
 
-New ordinary Jobs use direct-wait by default. Repeat bounded exact terminal waits on the same Job; each read defaults to 20 seconds and allows up to 60 seconds. After each non-terminal return, inspect the supplied exact input action and stop at every current question or approval. Retrieve and review the original result before continuing work within the original user goal and delegation. Timeout or host abort ends the read only; it never cancels Codex or authorizes a replacement.
+New ordinary Jobs use `relay-card` by default. Task calls and question answers
+automatically attach the blank Relay without activation. Its commit-driven
+watcher sends exact event/Job references to the originating GPT across the same
+Activity's authorized Jobs. Dashboard opens only on explicit display request.
+Exact original/input reads and optional bounded waits remain available. Timeout,
+host abort or card teardown never cancels Codex or authorizes replacement.
 
-For preapproved A→B, declare the exact approved B prompt on A admission. After reading A's result, use its Bridge-issued followup ID, canonical request ID, and current reviewed version. Repeat calls converge to the same B. No external receiver or card is required.
+For preapproved A→B, declare the exact approved B prompt on A admission. After
+reading A's result, use its issued followup ID, canonical request ID and current
+reviewed version. Repeated calls converge to that B.
 
-When B is defined only after reviewing A and remains within the original user
-goal and delegation, use ordinary `codex_task` with the original Activity and
-Agent, `context: "continue"`, and no `followup` reference. `approvedFollowups`
-is optional; its absence does not require a new user instruction for that work.
-Retain one new logical `requestId` and identical execution payload. If B's
-admission response is lost, query that ID before an exact retry. Do not create
-another ID from a repeated A read or event: different IDs remain distinct even
-for matching prompts or the same Activity. Keep the original scope and stop
-for new user decisions or approvals and explicit stop intent. Output cannot
-grant new authority. B admission and a result offer do not establish GPT review
-or overall completion; review the goal's final results.
+For B decided after reviewing A within the original goal and approvals, use
+`relayFollowup` with A's exact current event ID, one stable logical step and
+reviewed version. Retain the original Activity; normal checks authorize the
+Agent, project, access, context and model. Atomic admission binds an issued
+followup ID and canonical request ID to the immutable payload, including after
+response loss or different caller IDs. Distinct parallel steps remain distinct.
+Page existing receipts with `codex_status` query kind `followups`. Never recreate
+expired or already admitted work. Ask the user only for a new decision or
+approval; a notice/result offer does not prove GPT review or goal completion.
 
-These are existing admission and recovery contracts. This guidance does not
-establish UI-free automatic resumption of the original ordinary ChatGPT Pro
-after its response ends. Host resumption, original MCP scope, model and usage
-continuity remain separate unconfirmed requirements of #247.
+Use `codex_relay_control` to distinguish stopping messages from stopping future
+followup admission. Existing `codex_cancel` stops execution; explicit Activity
+completion ends the goal. A single host message acceptance never ends it.
+
+Document visibility is not the relay's execution gate. Host teardown stops that
+iframe, and retained enrolled events recover on the next valid connection.
+Complete container/message invisibility and automatic GPT resumption while the
+host app is closed are not guaranteed. No external Events, callbacks, schedules
+or extra model is added as a fallback. See [relay delivery](relay-delivery.md).
+
 
 When automatic continuation does not occur, return to the originating authenticated conversation and request an exact retained Job read. The [#222 evidence](audits/2026-10-03-issue-222-final-evidence.md) preserves actual 30/60-minute results and user-confirmed resumption after screen departure/app exit. These observations remain valid for the tested environment and are not an unconditional guarantee for every host. A result-expired receipt establishes prior execution and cannot authorize rerunning it.
 
@@ -232,8 +243,8 @@ npm test
 In a fresh ChatGPT conversation:
 
 1. Open Settings and register a project; confirm the retired delivery switch is absent.
-2. With no Dashboard open, admit harmless A with an explicitly approved B declaration. Verify direct-wait, bounded waits, A result review, B admission/result review, and same B replay without another execution.
-3. Exercise a current question and approval boundary without automatic card display. Refresh input after user deliberation before answering the same current question.
+2. Check automatic Relay descriptor/result association and exact result/receipt recovery with the deterministic #261 fixtures; Dashboard remains closed unless explicitly requested. Real GPT A→review→B is outside #261 completion criteria.
+3. Exercise a current question and approval boundary without automatically displaying Dashboard; task/answer calls reconnect only the blank Relay. Refresh input after user deliberation before answering the same current question.
 4. Read overview, Job list, Activity and thread summaries; verify exact retrieval actions without embedded result text.
 5. Explicitly open Dashboard. Verify state/history refresh and scoped management while observing no chat message or automatic followup.
 6. Verify old completion calls are refused without cancelling, failing or recreating Jobs; existing completed B replays and unexecuted legacy B requests follow the documented reapproval rule.
@@ -263,7 +274,7 @@ connection to work around it.
 
 ## #247 optional lifecycle receiver
 
-Ordinary admission remains direct-wait. In the explicit OAuth Events experiment,
+Ordinary admission uses the independent blank Relay and does not depend on this receiver. In the explicit OAuth Events experiment,
 follow the returned original-root `codex_event_access` action. The optional
 `codex.job.lifecycle` choice connects current questions and later Events Jobs
 in the original Activity/Agent/project through one verified native receiver.

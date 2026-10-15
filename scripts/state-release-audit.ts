@@ -147,7 +147,7 @@ function auditUiCompatibility(): Record<string, unknown> {
   assert.deepEqual(manifest.releaseInventory.activeResources, runtimeUiCatalog.activeResources);
   assert.deepEqual(manifest.releaseInventory.compatibilityResources, runtimeUiCatalog.compatibilityResources);
   assert.deepEqual(manifest.releaseInventory.retirement, runtimeUiCatalog.retirement);
-  assert.deepEqual(runtimeUiCatalog.activeResources, ["settings", "dashboard"]);
+  assert.deepEqual(runtimeUiCatalog.activeResources, ["settings", "dashboard", "relay"]);
   assert.deepEqual(runtimeUiCatalog.compatibilityResources, []);
   assert.equal(runtimeUiCatalog.retirement.activity.newPresentations, false);
   assert.equal(runtimeUiCatalog.retirement.question.newPresentations, false);

@@ -39,8 +39,9 @@ parent Job result is read again or its admission response is lost. First query
 that ID to recover an uncertain admission; do not create a replacement ID for
 the same logical turn. A new branch, revision, or expressly requested rerun is
 a new logical turn with its own ID. The bridge does not infer follow-up identity
-from matching prompts or the Agent's thread. If the follow-up ID itself is lost,
-the existing request contract cannot prove that two new IDs mean the same step.
+from matching prompts or the Agent's thread. For an unbound ordinary turn, two new request IDs cannot prove the same step.
+For dynamic event-driven B, use the persisted binding below instead of creating
+a new ordinary turn after a repeated event.
 Do not treat `HANDLE_UNAVAILABLE` as proof that an old request was never admitted.
 
 For an exact step approved before its predecessor starts, the optional
@@ -60,13 +61,30 @@ See the [delivery transition](issue-221-delivery-transition.md) for legacy follo
 Old caller `stepId` inputs are rejected. Retained v1 receipts keep their canonical
 IDs and admitted Jobs, exposed through current system-issued references.
 
+For a dynamic B defined after exact result review, `relayFollowup` supplies the
+current `eventId`, one stable logical `step` and `reviewedVersion`. Retain the
+original Activity and an authorized Agent. Atomic admission binds this reference
+to an issued `followupId`, canonical request ID and immutable execution envelope.
+Different caller IDs converge; changed payload conflicts; distinct parallel steps
+remain independent. Recover existing receipts with exact status or paged
+`codex_status` kind `followups`, using the returned `after` cursor. An admitted
+step replays without a new review assertion; unavailable originals never authorize
+recreation. This is within original approvals, not a requirement to predeclare
+every dynamic prompt. See [relay admission](relay-delivery.md).
+
 All new work uses one asynchronous admission path. The bridge persists the Job,
 request receipt, versions, and requery handles before returning. It does not wait
 for Codex completion in the task call, and losing the MCP or HTTP connection does
 not cancel the admitted Job. Read progress and the terminal result with
 `codex_status`; use `codex_cancel` only for explicit stop intent.
 
-Each ordinary admission snapshots `completionDeliveryPolicy="direct-wait"`. New and existing installations use it without opt-in. The retired setting is compatibility input only and is normalized to true; it never alters new admission policy. Historical Job policies remain immutable. Inspect the exact input action after every non-terminal wait and stop at a current question or approval. No task result automatically opens Dashboard.
+Each new ordinary admission snapshots `completionDeliveryPolicy="relay-card"` and
+automatically associates the blank Relay through task/answer UI metadata. It
+requires no activation or delivery setting. Historical Job policies, hashes and
+approvals remain immutable. Older running Jobs may be explicitly enrolled without
+rewriting them; historical terminal Jobs are not backfilled. Exact status and
+internal relay responses do not create UI. No task result automatically opens
+Dashboard. See [the relay protocol and host lifetime limits](relay-delivery.md).
 
 Events admission, tools, instructions, schemas, and controller startup require the explicit `CODEX_MCP_BRIDGE_EXPERIMENTAL_PROFILE=events` profile together with its enable flag and authentication configuration. Ordinary discovery has no Events inputs or output metadata. Historical Events policy remains readable, but gives no new ordinary execution permission. See the separate [experiment](mcp-events.md).
 
