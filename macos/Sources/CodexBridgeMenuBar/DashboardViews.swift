@@ -1344,59 +1344,50 @@ struct DashboardRowView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if presentation != .nestedJob {
-            HStack(alignment: .firstTextBaseline) {
-                Image(systemName: StatusPresentation.symbol(row.status))
-                    .foregroundStyle(StatusPresentation.color(row.status))
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(row.agentName)
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(2)
-                    if let secondaryTitle {
-                        Text(secondaryTitle)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+            if presentation == .nestedJob {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    currentExecutionLabel
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(spacing: 4) {
+                        Image(systemName: StatusPresentation.symbol(row.status))
+                            .foregroundStyle(StatusPresentation.color(row.status))
+                            .accessibilityHidden(true)
+                        Text(StatusPresentation.label(row.status, locale: model.interfaceLocale))
+                    }
+                    .font(.caption2.weight(.medium))
+                    .fixedSize()
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(.quaternary, in: Capsule())
+                }
+            } else {
+                HStack(alignment: .firstTextBaseline) {
+                    Image(systemName: StatusPresentation.symbol(row.status))
+                        .foregroundStyle(StatusPresentation.color(row.status))
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(row.agentName)
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(2)
+                        if let secondaryTitle {
+                            Text(secondaryTitle)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    Spacer()
+                    if row.status != "idle" || !presentation.suppressesRedundantIdleStatus {
+                        Text(StatusPresentation.label(row.status, locale: model.interfaceLocale))
+                            .font(.caption2.weight(.medium))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(.quaternary, in: Capsule())
                     }
                 }
-                Spacer()
-                if row.status != "idle" || !presentation.suppressesRedundantIdleStatus {
-                    Text(StatusPresentation.label(row.status, locale: model.interfaceLocale))
-                        .font(.caption2.weight(.medium))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(.quaternary, in: Capsule())
+                if row.latestTurn != nil {
+                    currentExecutionLabel
                 }
-            }
-            }
-            if presentation == .nestedJob {
-                HStack {
-                    Image(systemName: StatusPresentation.symbol(row.status))
-                        .foregroundStyle(StatusPresentation.color(row.status)).accessibilityHidden(true)
-                    Spacer()
-                    Text(StatusPresentation.label(row.status, locale: model.interfaceLocale))
-                        .font(.caption2.weight(.medium))
-                        .padding(.horizontal, 6).padding(.vertical, 3)
-                        .background(.quaternary, in: Capsule())
-                }
-            }
-            if row.latestTurn != nil {
-                DashboardExecutionLabel(text: BridgeAppLocalization.format(
-                    "macos.format.labelValue",
-                    locale: model.interfaceLocale,
-                    BridgeAppLocalization.string(
-                        row.bucket == "idle" ? "macos.latestrun" : "macos.run",
-                        locale: model.interfaceLocale
-                    ),
-                    DashboardExecutionPresentation.turnText(
-                        row.latestTurn?.execution,
-                        locale: model.interfaceLocale
-                    )
-                ), execution: row.latestTurn?.execution)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
             }
             if let next = nextExecution {
                 DashboardExecutionLabel(text: BridgeAppLocalization.format(
@@ -1590,6 +1581,23 @@ struct DashboardRowView: View {
                 StatusPresentation.label(row.status, locale: model.interfaceLocale)
             )
         )
+    }
+
+    private var currentExecutionLabel: some View {
+        DashboardExecutionLabel(text: BridgeAppLocalization.format(
+            "macos.format.labelValue",
+            locale: model.interfaceLocale,
+            BridgeAppLocalization.string(
+                row.bucket == "idle" ? "macos.latestrun" : "macos.run",
+                locale: model.interfaceLocale
+            ),
+            DashboardExecutionPresentation.turnText(
+                row.latestTurn?.execution,
+                locale: model.interfaceLocale
+            )
+        ), execution: row.latestTurn?.execution)
+            .font(.caption.monospaced())
+            .foregroundStyle(.secondary)
     }
 
     private var secondaryTitle: String? {
