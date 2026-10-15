@@ -85,5 +85,22 @@ try{
  await page.screenshot({path:'output/playwright/tabs-review/rebase-${change}.png'});
  }`));
  }
- writeFileSync(artifacts+'/report.json',JSON.stringify({passed:true,checks:['active Job with background process outside terminal status page','problem-only Job expiry hides error and preview despite failed refresh','twelve valid success summaries remain','background execution survives expiry','completed Job and current runtime process have one display owner','completed execution history and Job totals remain','independent owner visible beyond twenty-six progress Jobs','bounded Background page has a working more control','Background paging preserves Job totals and uses owner offsets','actual owner-change reload replaces the first page after busy release','actual policy-change reload replaces the first page and releases controls']},null,2));
+ for(const health of ['orphaned','liveness-unknown'])for(const timing of ['before','after']){
+ await cli('goto','http://127.0.0.1:'+(server.address() as {port:number}).port+'/runtime-health');
+ console.log(await cli('run-code',`async page=>{
+ await page.waitForFunction(()=>!document.querySelector('#dashboard-content').hidden);
+ await page.locator('#background-filter').click();
+ await page.evaluate(()=>{window.__detailReads=0;window.openai.callTool=async(_name,args)=>{if(args.view==='dashboard-execution'){__detailReads++;return {structuredContent:{kind:'dashboard-execution',jobId:args.jobId,scopeId:args.scopeId,executionRevision:args.expectedExecutionRevision,policyRevision:args.expectedPolicyRevision,nextExpiryAt:null,execution:{...response.activeRows[0].latestTurn,jobId:args.jobId,scopeId:args.scopeId,executionRevision:args.expectedExecutionRevision,status:'running',summary:'Durable cached content'}}}}return {structuredContent:response}}});
+ const load=async()=>{await page.locator('#active-list .execution-detail summary').click();await page.locator('#active-list [data-execution-load]').click();await page.waitForFunction(()=>document.querySelector('#active-list [data-execution-load]').disabled)};
+ if('${timing}'==='before')await load();
+ await page.evaluate(health=>{response.activeRows[0].status=health;response.activeRows[0].latestTurn.status=health},'${health}');
+ await page.locator('#refresh').click();await page.waitForFunction(()=>!document.querySelector('#refresh').disabled);
+ if('${timing}'==='after')await load();
+ const badge=page.locator('#active-list .execution-record .status');if(!(await badge.getAttribute('class')).includes('${health}'==='orphaned'?'failed':'attention'))throw Error('cached detail replaced current health');
+ if(!(await page.locator('#active-list .execution-detail').innerText()).includes('Durable cached content'))throw Error('valid detail content was lost');
+ if(await page.evaluate(()=>__detailReads)!==1)throw Error('health update invalidated durable detail cache');
+ await page.screenshot({path:'output/playwright/tabs-review/runtime-${health}-${timing}.png'});
+ }`));
+ }
+ writeFileSync(artifacts+'/report.json',JSON.stringify({passed:true,checks:['active Job with background process outside terminal status page','problem-only Job expiry hides error and preview despite failed refresh','twelve valid success summaries remain','background execution survives expiry','completed Job and current runtime process have one display owner','completed execution history and Job totals remain','independent owner visible beyond twenty-six progress Jobs','bounded Background page has a working more control','Background paging preserves Job totals and uses owner offsets','actual owner-change reload replaces the first page after busy release','actual policy-change reload replaces the first page and releases controls','cached detail preserves current orphaned and unknown health before and after observation without refetch']},null,2));
 }finally{await cli('close').catch(()=>{});await new Promise<void>(resolve=>server.close(()=>resolve()))}

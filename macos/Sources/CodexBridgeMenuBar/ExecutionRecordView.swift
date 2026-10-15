@@ -11,7 +11,19 @@ struct ExecutionRecordView: View {
     private var target: AppModel.ExecutionTarget? { model.executionTarget(row: row, problem: problem) }
     private var turn: DashboardTurn? { model.executionDetail(target)?.execution ?? row.latestTurn }
     private var jobId: String? { problem?.jobId ?? row.jobId ?? turn?.jobId }
-    private var status: String { turn?.status ?? (problem?.source == "execution" ? problem?.kind.rawValue : nil) ?? row.status }
+    private var status: String { presentationStatus(using: model) }
+
+    // Keep the badge path callable with the same model/cache in native regressions.
+    func presentationStatus(using model: AppModel) -> String {
+        let turn = model.executionDetail(model.executionTarget(row: row, problem: problem))?.execution ?? row.latestTurn
+        // Exact detail retains durable Job content; a live list row owns current
+        // runtime health and blocking status, even when that detail is cached.
+        if row.jobId != nil, row.latestTurn?.endedAt == nil,
+           ["running", "input-required", "approval-required", "terminating", "termination-failed", "orphaned", "liveness-unknown"].contains(row.status) {
+            return row.status
+        }
+        return turn?.status ?? (problem?.source == "execution" ? problem?.kind.rawValue : nil) ?? row.status
+    }
     private func localized(_ key: String) -> String { BridgeAppLocalization.string(key, locale: model.interfaceLocale) }
 
     @ViewBuilder var body: some View {

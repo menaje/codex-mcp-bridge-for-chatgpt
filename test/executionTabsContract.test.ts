@@ -47,7 +47,58 @@ function fixture(days=0) {
  return {writer,root,file,agent,activity,seed,service,async close(){await server?.close();reader?.close();writer.close();}};
 }
 const query={scopeId:scope,historyMode:'jobs' as const,statusFilter:'all' as const,inspectRuntime:false,includeHistory:true,limit:5};
+class ExecutionElement {
+ children:ExecutionElement[]=[];dataset:Record<string,string>={};textContent='';hidden=false;open=false;disabled=false;
+ constructor(readonly tag:string,readonly className='',text=''){this.textContent=text;}
+ append(...items:ExecutionElement[]){this.children.push(...items)}appendChild(item:ExecutionElement){this.append(item);return item}addEventListener(){}
+ texts():string[]{return [this.textContent,...this.children.flatMap(c=>c.texts())]}
+}
+function cachedExecutionRenderer(row:any,detail:any,historyPolicy:any){
+ const c=vm.createContext({Date,view:{historyModeApplied:'jobs',historyPolicy},widgetInstanceId:'health-widget',historySecurityGeneration:1,selectedScope:'conversation',
+  executionDetails:new Map(),executionRequests:new Map(),executionErrors:new Map(),expandedExecutions:new Set(),localeTag:'en',t:{},BUNDLES:{en:{}},reads:0,
+  callTool:async()=>{c.reads++;throw Error('valid cached detail must not be refetched');},
+  node:(tag:string,cls:string,text:string)=>new ExecutionElement(tag,cls,text),tone:()=>'',statusLabel:(status:string)=>status,scheduleSizeChanged:()=>{}});
+ for(const name of ['uiText','jobRowVisible','executionTarget','executionKey','executionFresh','executionCached'])
+  vm.runInContext(DASHBOARD_CARD_HTML.split('\n').find(line=>new RegExp('^\\s*function '+name+'\\(').test(line))!,c);
+ vm.runInContext(DASHBOARD_CARD_HTML.split('\n').find(line=>/^\s*async function loadExecutionDetail\(/.test(line))!,c);
+ const start=DASHBOARD_CARD_HTML.indexOf('    function appendExecutionRecord('),end=DASHBOARD_CARD_HTML.indexOf('    function historyKey(',start);
+ vm.runInContext(DASHBOARD_CARD_HTML.slice(start,end),c);c.row=row;c.detail=detail;
+ vm.runInContext('target=executionTarget(row);cacheKey=executionKey(target);executionDetails.set(cacheKey,{detail,expiresAt:target.expiresAt})',c);
+ return {async render(next:any){c.row=next;c.parent=new ExecutionElement('div');
+  vm.runInContext('nextTarget=executionTarget(row);sameKey=cacheKey===executionKey(nextTarget);sameDetail=executionCached(nextTarget)===detail;appendExecutionRecord(parent,row)',c);
+  await vm.runInContext('loadExecutionDetail(row)',c);
+  return {texts:c.parent.texts() as string[],sameKey:c.sameKey,sameDetail:c.sameDetail,reads:c.reads};
+ }};
+}
 describe('Job-unit execution tabs and read-only exact detail',()=>{
+ it.each(['orphaned','idle','not-loaded'])('keeps current %s badges with healthy cached detail and detail loaded after health loss',async state=>{
+  const f=fixture();try{
+   const job=f.seed('running',0,{threadId:'runtime-health-cache',executionName:'Cached exact name',summary:'Cached retained detail'});
+   const healthy=await f.service().dashboardSnapshot(query),healthyRow=healthy.activeRows.find(x=>x.jobId===job.jobId)!;
+   const cached=await f.service().dashboardExecutionDetail!({scopeId:scope,jobId:job.jobId,expectedExecutionRevision:healthyRow.executionRevision,expectedPolicyRevision:healthyRow.policyRevision});
+   const renderer=cachedExecutionRenderer(healthyRow,cached,healthy.historyPolicy);
+   expect((await renderer.render(healthyRow)).texts).toContain('running');
+   const unhealthy=await f.service().dashboardSnapshotWithEnrichment!(query,{runtimeByAgent:[[f.agent.agentId,{state,backgroundProcessState:'confirmed',backgroundProcessCount:1}]],runtimeProbeSkippedAgents:0,weeklyUsage:null,summary:{...healthy.enrichment,state:'enriched'}} as any);
+   const row=unhealthy.activeRows.find(x=>x.jobId===job.jobId)!,expected=state==='orphaned'?'orphaned':'liveness-unknown';
+   const after=await f.service().dashboardExecutionDetail!({scopeId:scope,jobId:job.jobId,expectedExecutionRevision:row.executionRevision,expectedPolicyRevision:row.policyRevision});
+   expect(row.executionRevision).toBe(healthyRow.executionRevision);expect(after.execution.status).toBe('running');
+   for(const result of [await renderer.render(row),await cachedExecutionRenderer(row,after,unhealthy.historyPolicy).render(row),await renderer.render(unhealthy.backgroundRows!.find(x=>x.jobId===job.jobId))]){
+    expect(result).toMatchObject({sameKey:true,sameDetail:true,reads:0});expect(result.texts).toContain(expected);expect(result.texts).not.toContain('running');expect(result.texts).toContain('Cached retained detail');
+   }
+  }finally{await f.close();}
+ });
+ it.each(['input-required','approval-required','terminating','termination-failed','completed','failed','interrupted','cancelled'])('preserves %s presentation and exact-detail cache content',async status=>{
+  const f=fixture();try{
+   const blocking=status==='approval-required'?'command-approval':status==='input-required'?'question':undefined;
+   const job=f.seed(blocking?'running':status,0,{summary:'Exact cached preview',...(blocking?{pendingInteractions:[{interactionId:'blocking',isBlocking:true,kind:blocking}]}:{})});
+   const view=await f.service().dashboardSnapshot(query),row=[...view.activeRows,...view.terminalRows].find(x=>x.jobId===job.jobId)!;
+   const detail=await f.service().dashboardExecutionDetail!({scopeId:scope,jobId:job.jobId,expectedExecutionRevision:row.executionRevision});
+   const result=await cachedExecutionRenderer(row,detail,view.historyPolicy).render(row);expect(result).toMatchObject({sameKey:true,sameDetail:true,reads:0});
+   expect(result.texts).toContain(status==='cancelled'?'Cancelled':status);expect(result.texts).toContain('Exact cached preview');
+   if(['completed','failed','interrupted','cancelled'].includes(status)){const stale=await cachedExecutionRenderer(row,detail,view.historyPolicy).render({...row,status:'orphaned'});expect(stale.texts).toContain(status==='cancelled'?'Cancelled':status);expect(stale.texts).not.toContain('orphaned');}
+  }finally{await f.close();}
+ });
+
  it('marks an omitted history body as omitted so first History selection fetches it',async()=>{
   const f=fixture();try{
    f.seed('completed',1);

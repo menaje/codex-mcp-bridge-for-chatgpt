@@ -698,6 +698,71 @@ final class DashboardPopoverTests: XCTestCase {
     }
 
     @MainActor
+    func testReviewLiveBadgeSurvivesHealthyExactDetailBeforeAndAfterHealthLoss() async throws {
+        for cacheBefore in [true, false] {
+            for (runtime, status) in [("orphaned", "orphaned"), ("idle", "liveness-unknown"), ("not-loaded", "liveness-unknown")] {
+                let f = try PopoverFixture(); defer { f.remove() }
+                f.state.jobsContract = true; f.state.rowCount = 1; f.state.exactDetailIsActive = true
+                f.model.dashboardHistoryNow = { ISO8601DateFormatter().date(from: "2026-09-11T00:00:00Z")! }
+                await f.model.refreshDashboard(enrich: false)
+                var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(try XCTUnwrap(f.model.dashboard))) as? [String: Any])
+                var row = (object["activeRows"] as! [[String: Any]])[0]
+                var turn = row["latestTurn"] as! [String: Any]
+                row["rowKey"] = "job-running"; row["jobId"] = "job-running"; row["status"] = "running"
+                turn["jobId"] = "job-running"; turn["status"] = "running"; turn["endedAt"] = NSNull(); row["latestTurn"] = turn
+                func publish(_ current: [String: Any]) async throws {
+                    object["activeRows"] = [current]; object["statusRows"] = [current]; object["terminalRows"] = []; object["problems"] = NSNull()
+                    f.state.dashboardJSON = String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+                    await f.model.refreshDashboard(enrich: false)
+                }
+                try await publish(row)
+                let healthy = try XCTUnwrap(f.model.dashboard?.activeRows.first)
+                let original = try XCTUnwrap(f.model.executionTarget(row: healthy))
+                if cacheBefore { await f.model.loadExecutionDetail(original) }
+                row["status"] = status; turn["status"] = status; row["latestTurn"] = turn
+                try await publish(row)
+                let unhealthy = try XCTUnwrap(f.model.dashboard?.activeRows.first)
+                let target = try XCTUnwrap(f.model.executionTarget(row: unhealthy))
+                XCTAssertEqual(target.revision, original.revision, "Runtime health does not mutate durable content identity")
+                await f.model.loadExecutionDetail(target)
+                XCTAssertEqual(f.state.exactDetailReads, 1, "Healthy cached detail must remain reusable")
+                XCTAssertEqual(f.model.executionDetail(target)?.execution.status, "running")
+                XCTAssertEqual(ExecutionRecordView(row: unhealthy).presentationStatus(using: f.model), status,
+                    "\(runtime), detail cached before health loss: \(cacheBefore)")
+                XCTAssertNotNil(f.model.executionDetail(original), "Badge correction must preserve the exact detail cache")
+                for currentStatus in ["running", "input-required", "approval-required", "terminating", "termination-failed"] {
+                    row["status"] = currentStatus; turn["status"] = currentStatus; row["latestTurn"] = turn
+                    row["backgroundProcessCount"] = currentStatus == "running" ? 1 : 0
+                    try await publish(row)
+                    let current = try XCTUnwrap(f.model.dashboard?.activeRows.first)
+                    XCTAssertEqual(ExecutionRecordView(row: current).presentationStatus(using: f.model), currentStatus)
+                    XCTAssertNotNil(f.model.executionDetail(f.model.executionTarget(row: current)))
+                }
+                XCTAssertEqual(f.state.exactDetailReads, 1)
+            }
+        }
+    }
+
+    @MainActor
+    func testReviewTerminalBadgeKeepsExactDetailPrecedence() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.jobsContract = true; f.state.rowCount = 1
+        f.model.dashboardHistoryNow = { ISO8601DateFormatter().date(from: "2026-09-11T00:00:00Z")! }
+        await f.model.refreshDashboard(enrich: false)
+        for row in try XCTUnwrap(f.model.dashboard?.terminalRows) {
+            let target = try XCTUnwrap(f.model.executionTarget(row: row))
+            await f.model.loadExecutionDetail(target)
+            XCTAssertEqual(ExecutionRecordView(row: row).presentationStatus(using: f.model), row.status)
+            var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(row)) as? [String: Any])
+            object["status"] = "orphaned"
+            let staleRow = try JSONDecoder().decode(DashboardRow.self, from: JSONSerialization.data(withJSONObject: object))
+            XCTAssertEqual(ExecutionRecordView(row: staleRow).presentationStatus(using: f.model), row.status,
+                "An ended Job retains exact terminal semantics")
+        }
+        XCTAssertEqual(f.state.exactDetailReads, 4)
+    }
+
+    @MainActor
     func testExactJobDetailCacheSurvivesRefreshAndRejectsExpiryAndLateReplies() async throws {
         let f = try PopoverFixture(); defer { f.remove() }
         f.state.jobsContract = true; f.state.rowCount = 1
@@ -1245,6 +1310,7 @@ private final class PopoverReplyState: @unchecked Sendable {
     var pagedDetail = false
     var jobsContract = false
     var rejectJobsMode = false
+    var exactDetailIsActive = false
     var exactDetailDelay: TimeInterval = 0
     private var exactReads = 0
     var exactDetailReads: Int { lock.withLock { exactReads } }
@@ -1433,8 +1499,10 @@ private final class PopoverReplyState: @unchecked Sendable {
             let job = params["jobId"] as? String ?? ""
             let status = job.replacingOccurrences(of: "job-", with: "")
             let row = executionFixture(status)
+            var execution = row["latestTurn"] as! [String: Any]
+            if exactDetailIsActive { execution["endedAt"] = NSNull() }
             result = ["kind": "dashboard-execution", "jobId": job, "scopeId": params["scopeId"]!,
-                "executionRevision": String(repeating: "e", count: 64), "policyRevision": String(repeating: "c", count: 64), "execution": row["latestTurn"]!]
+                "executionRevision": String(repeating: "e", count: 64), "policyRevision": String(repeating: "c", count: 64), "execution": execution]
             delay = exactDetailDelay
         case "dashboard.history-detail":
             lock.withLock { historyReads += 1 }
