@@ -1198,11 +1198,6 @@ private struct DashboardActivityGroupView: View {
             VStack(alignment: .leading, spacing: 7) {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 2) {
-                        if marksRecentActivity {
-                            Text("macos.recentactivity")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
                         Text(activityTitle)
                             .font(.subheadline.weight(.semibold))
                             .lineLimit(2)
