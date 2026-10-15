@@ -401,7 +401,7 @@ describe("MCP 2026-07-28 HTTP server", () => {
       expect(content[0]).toMatchObject({ uri: dashboard!.uri });
       const html = (content[0] as { text: string }).text;
       expect(html).toContain('dataset.cardResourceUri="ui://codex-mcp-bridge/dashboard/v5.html"');
-      expect(html).toContain('dataset.cardContractGeneration=38');
+      expect(html).toContain('dataset.cardContractGeneration=40');
       expect(html).not.toContain('function completionResultMessage');
       expect(html).not.toContain('Use only Codex MCP Bridge for ChatGPT.');
       await expect(client.readResource({ uri: "ui://codex-mcp-bridge/dashboard/v2.html" })).rejects.toThrow();

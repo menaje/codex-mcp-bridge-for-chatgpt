@@ -566,7 +566,7 @@ final class DashboardPopoverTests: XCTestCase {
     }
 
     @MainActor
-    func testReviewRetainedIncidentReasonSurvivesEarlierLinkedExecutionExpiry() async throws {
+    func testProblemHistoryHidesExpiredJobEvenWhenItsRecoveryIncidentIsRetained() async throws {
         let f = try PopoverFixture(); defer { f.remove() }
         f.state.jobsContract = true; f.state.rowCount = 1
         let start = ISO8601DateFormatter().date(from: "2026-09-11T00:00:00Z")!
@@ -587,9 +587,83 @@ final class DashboardPopoverTests: XCTestCase {
         var retainedObject = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(problems)) as? [String: Any])
         retainedObject["rows"] = [object]
         let retained = try JSONDecoder().decode(DashboardProblems.self, from: JSONSerialization.data(withJSONObject: retainedObject))
-        XCTAssertEqual(f.model.dashboardRetainedProblems(retained).count, 1)
+        XCTAssertEqual(f.model.dashboardRetainedProblems(retained).count, 0)
         XCTAssertEqual(section.contextReason(problem, using: f.model), "Retained incident failure",
             "An unavailable execution cannot consume the still-retained incident reason")
+    }
+
+    @MainActor
+    func testProblemHistoryAppendsJobsUnderOneAgentAndRejectsChangedPages() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.jobsContract = true
+        f.model.dashboardHistoryNow = { ISO8601DateFormatter().date(from: "2026-09-11T00:00:00Z")! }
+        await f.model.refreshDashboard(enrich: false)
+        var first = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(try XCTUnwrap(f.model.dashboard))) as? [String: Any])
+        let original = (first["problems"] as! [String: Any])["rows"] as! [[String: Any]]
+        func problem(_ index: Int) -> [String: Any] {
+            var value = original[0], row = value["row"] as! [String: Any]
+            let id = "problem-\(index)"
+            value["problemKey"] = id; value["jobId"] = id
+            row["jobId"] = id; row["rowKey"] = id
+            value["row"] = row
+            return value
+        }
+        func collection(_ rows: [[String: Any]], offset: Int, revision: String = "stable-jobs") -> [String: Any] {
+            ["query": ["review": "pending", "kind": "all", "offset": offset], "revision": revision, "affectedExecutionCount": 13,
+             "pendingCount": 0, "acknowledgedCount": 0, "reviewableCount": 0, "rows": rows,
+             "page": ["offset": offset, "limit": 12, "total": 13, "returned": rows.count, "hasPrevious": offset > 0, "hasNext": offset == 0]]
+        }
+        func encoded(_ object: [String: Any]) throws -> String { String(data: try JSONSerialization.data(withJSONObject: object), encoding: .utf8)! }
+        first["problems"] = collection((0..<12).map(problem), offset: 0)
+        var next = first; next["problems"] = collection([problem(12)], offset: 12)
+        f.state.dashboardJSON = try encoded(first); f.state.problemPageJSON = try encoded(next)
+        await f.model.refreshDashboard(enrich: false); await f.model.loadMoreProblems()
+        let merged = try XCTUnwrap(f.model.dashboard?.problems)
+        XCTAssertEqual(merged.rows.count, 13)
+        XCTAssertEqual(Set(merged.rows.compactMap(\.jobId)).count, 13)
+        XCTAssertFalse(merged.page.hasNext)
+        XCTAssertEqual(DashboardAgentGroup.group(merged.rows.map(\.row)).count, 1)
+        XCTAssertEqual(f.model.dashboardRetainedProblems(merged).count, 13)
+        XCTAssertEqual(f.state.problemPageOffsets, [12])
+        XCTAssertEqual(f.state.exactDetailReads, 0)
+
+        await f.model.refreshDashboard(enrich: false)
+        XCTAssertEqual(f.model.dashboard?.problems?.rows.count, 13, "An unchanged refresh keeps the expanded problem page")
+        first["problems"] = collection((0..<12).map(problem), offset: 0, revision: "reloaded-jobs")
+        f.state.dashboardJSON = try encoded(first)
+        await f.model.refreshDashboard(enrich: false)
+        var changed = next["problems"] as! [String: Any]; changed["revision"] = "changed-jobs"; next["problems"] = changed
+        f.state.problemPageJSON = try encoded(next)
+        let before = f.state.dashboardReadCount
+        await f.model.loadMoreProblems()
+        XCTAssertGreaterThanOrEqual(f.state.dashboardReadCount, before + 2)
+        XCTAssertEqual(f.model.dashboard?.problems?.rows.count, 12)
+        XCTAssertFalse(f.model.loadingMoreProblems)
+
+        next["problems"] = collection([problem(12)], offset: 12, revision: "reloaded-jobs")
+        f.state.problemPageJSON = try encoded(next); f.state.problemPageDelay = 0.1
+        let beforeLate = f.state.dashboardReadCount
+        let pending = Task { await f.model.loadMoreProblems() }
+        for _ in 0..<100 {
+            if f.state.dashboardReadCount > beforeLate { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertGreaterThan(f.state.dashboardReadCount, beforeLate)
+        await f.model.refreshDashboard(enrich: false); await pending.value
+        XCTAssertEqual(f.model.dashboard?.problems?.rows.count, 12)
+    }
+
+    @MainActor
+    func testProblemHistoryOmitsDuplicateSystemAndUnavailableRows() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.jobsContract = true
+        f.model.dashboardHistoryNow = { ISO8601DateFormatter().date(from: "2026-09-11T00:00:00Z")! }
+        await f.model.refreshDashboard(enrich: false)
+        let problems = try XCTUnwrap(f.model.dashboard?.problems)
+        let visible = f.model.dashboardRetainedProblems(problems)
+        XCTAssertEqual(visible.count, 2)
+        XCTAssertEqual(Set(visible.compactMap(\.jobId)).count, 2)
+        XCTAssertTrue(visible.allSatisfy { $0.source == "execution" && $0.executionAvailability == "retained" })
     }
 
     @MainActor
@@ -722,6 +796,43 @@ final class DashboardPopoverTests: XCTestCase {
         XCTAssertEqual(snapshot.problems?.incidentCount, 5)
         XCTAssertEqual(ExecutionRecordPresentation.statusKey("cancelled"), "execution.cancelled")
         XCTAssertEqual(snapshot.terminalRows.last?.reasonAvailability, "unrecorded")
+    }
+
+    @MainActor
+    func testHistoryPagesPreserveNewestEndOrderWhenStartOrderDiffers() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.jobsContract = true; f.state.rowCount = 1
+        let clock = ISO8601DateFormatter().date(from: "2026-09-11T00:00:00Z")!
+        f.model.dashboardHistoryNow = { clock }
+        await f.model.refreshDashboard(enrich: false)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(try XCTUnwrap(f.model.dashboard))) as? [String: Any])
+        var rows = object["terminalRows"] as! [[String: Any]]
+        for index in rows.indices {
+            var turn = rows[index]["latestTurn"] as! [String: Any]
+            let start = ISO8601DateFormatter().string(from: clock.addingTimeInterval(Double(-1000 + index * 100)))
+            turn["startedAt"] = start
+            turn["endedAt"] = ISO8601DateFormatter().string(from: clock.addingTimeInterval(Double(-10 - index * 10)))
+            rows[index]["createdAt"] = start; rows[index]["latestTurn"] = turn
+        }
+        let expected = rows.map { $0["jobId"] as! String }
+        func encoded(_ value: [String: Any]) throws -> String {
+            String(decoding: try JSONSerialization.data(withJSONObject: value), as: UTF8.self)
+        }
+        var pagination = object["pagination"] as! [String: Any]
+        var page: [String: Any] = ["offset": 0, "limit": 2, "returned": 2, "total": 4,
+            "returnedConversations": 1, "conversationTotal": 1, "hasPrevious": false, "hasNext": true]
+        object["terminalRows"] = Array(rows.prefix(2)); object["activeRows"] = []; object["statusRows"] = []
+        pagination["terminal"] = page; object["pagination"] = pagination; object["historyIncluded"] = true
+        f.state.dashboardJSON = try encoded(object)
+        await f.model.refreshDashboard(enrich: false)
+        XCTAssertEqual(DashboardPanel.history.rows(in: try XCTUnwrap(f.model.dashboard), now: clock).compactMap(\.jobId), Array(expected.prefix(2)))
+        page["offset"] = 2; page["hasPrevious"] = true; page["hasNext"] = false
+        object["terminalRows"] = Array(rows.suffix(2)); pagination["terminal"] = page; object["pagination"] = pagination
+        f.state.dashboardJSON = try encoded(object)
+        await f.model.loadMoreRecent()
+        let displayed = DashboardPanel.history.rows(in: try XCTUnwrap(f.model.dashboard), now: clock)
+        XCTAssertEqual(displayed.compactMap(\.jobId), expected)
+        XCTAssertEqual(DashboardAgentGroup.group(displayed).flatMap(\.rows).compactMap(\.jobId), expected)
     }
 
     @MainActor
@@ -1297,8 +1408,16 @@ private final class PopoverReplyState: @unchecked Sendable {
     var backgroundPageDelay: TimeInterval { get { lock.withLock { backgroundPageDelayValue } } set { lock.withLock { backgroundPageDelayValue = newValue } } }
     var backgroundPageOffsets: [Int] { lock.withLock { backgroundOffsets } }
     private var dashboardJSONValue: String?
+    private var dashboardAppendJSONValue: String?
+    private var runningPageJSONValue: String?
+    private var dashboardAppendDelayValue: TimeInterval = 0
+    private var dashboardEnrichmentJSONValue: String?
     private var failDashboardValue = false
     var dashboardJSON: String? { get { lock.withLock { dashboardJSONValue } } set { lock.withLock { dashboardJSONValue = newValue } } }
+    var dashboardAppendDelay: TimeInterval { get { lock.withLock { dashboardAppendDelayValue } } set { lock.withLock { dashboardAppendDelayValue = newValue } } }
+    var runningPageJSON: String? { get { lock.withLock { runningPageJSONValue } } set { lock.withLock { runningPageJSONValue = newValue } } }
+    var dashboardAppendJSON: String? { get { lock.withLock { dashboardAppendJSONValue } } set { lock.withLock { dashboardAppendJSONValue = newValue } } }
+    var dashboardEnrichmentJSON: String? { get { lock.withLock { dashboardEnrichmentJSONValue } } set { lock.withLock { dashboardEnrichmentJSONValue = newValue } } }
     var failDashboard: Bool { get { lock.withLock { failDashboardValue } } set { lock.withLock { failDashboardValue = newValue } } }
     private var slowHistory = false
     private var pagedHistoryValue = false
@@ -1335,6 +1454,10 @@ private final class PopoverReplyState: @unchecked Sendable {
     var delayHistory: Bool { get { lock.withLock { slowHistory } } set { lock.withLock { slowHistory = newValue } } }
     var pagedHistory: Bool { get { lock.withLock { pagedHistoryValue } } set { lock.withLock { pagedHistoryValue = newValue } } }
     var pagedDetail = false
+    var problemPageJSON: String?
+    var problemPageDelay: TimeInterval = 0
+    private var problemOffsets: [Int] = []
+    var problemPageOffsets: [Int] { lock.withLock { problemOffsets } }
     var jobsContract = false
     var rejectJobsMode = false
     var exactDetailIsActive = false
@@ -1420,6 +1543,21 @@ private final class PopoverReplyState: @unchecked Sendable {
             if let offset = params["backgroundOffset"] as? Int, let body = backgroundPageJSON {
                 lock.withLock { backgroundOffsets.append(offset) }
                 return NativeFixtureReply(body: "{\"result\":\(body)}", delay: backgroundPageDelay)
+            }
+            if let query = params["problems"] as? [String: Any], let offset = query["offset"] as? Int,
+               offset > 0, let body = problemPageJSON {
+                lock.withLock { problemOffsets.append(offset) }
+                return NativeFixtureReply(body: "{\"result\":\(body)}", delay: problemPageDelay)
+            }
+            if (params["statusOffset"] as? Int ?? 0) > 0, let body = runningPageJSON {
+                return NativeFixtureReply(body: "{\"result\":\(body)}", delay: dashboardAppendDelay)
+            }
+            if params["enrich"] as? Bool == true, let body = dashboardEnrichmentJSON {
+                lock.withLock { enrichmentReads += 1 }
+                return NativeFixtureReply(body: "{\"result\":\(body)}", delay: 0.1)
+            }
+            if ((params["statusOffset"] as? Int ?? 0) > 0 || (params["terminalOffset"] as? Int ?? 0) > 0), let body = dashboardAppendJSON {
+                return NativeFixtureReply(body: "{\"result\":\(body)}", delay: dashboardAppendDelay)
             }
             if let dashboardJSON { return NativeFixtureReply(body: "{\"result\":\(dashboardJSON)}") }
             if rejectJobsMode && params["historyMode"] != nil { return NativeFixtureReply(body: #"{"error":{"code":-32602,"message":"Unrecognized key: historyMode"}}"#) }
@@ -1571,5 +1709,184 @@ private final class PopoverReplyState: @unchecked Sendable {
         }
         let data = try! JSONSerialization.data(withJSONObject: ["result": result])
         return NativeFixtureReply(body: String(decoding: data, as: UTF8.self), delay: delay)
+    }
+}
+
+extension DashboardPopoverTests {
+    private func tabJSON(_ object: [String: Any]) throws -> String {
+        String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+    }
+
+    @MainActor
+    private func tabBase(_ f: PopoverFixture) async throws -> [String: Any] {
+        f.state.jobsContract = true
+        f.model.dashboardHistoryNow = { ISO8601DateFormatter().date(from: "2026-09-11T00:00:00Z")! }
+        await f.model.refreshDashboard(enrich: false)
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(try XCTUnwrap(f.model.dashboard))) as? [String: Any])
+    }
+
+    private func tabSnapshot(_ base: [String: Any], running: [Int] = Array((1...24).reversed()), history: [Int] = Array((1...24).reversed()), activeOffset: Int = 0, historyOffset: Int = 0, problemOffset: Int = 0, progressRevision: String = "progress-a", historyRevision: String = "history-a") -> [String: Any] {
+        var result = base
+        let template = (base["terminalRows"] as! [[String: Any]])[0]
+        func row(_ n: Int, active: Bool) -> [String: Any] {
+            var value = template, turn = template["latestTurn"] as! [String: Any]
+            let id = "\(active ? "R" : "H")\(n)"
+            value["rowKey"] = id; value["jobId"] = id; value["status"] = active ? "running" : "failed"; value["bucket"] = active ? "active" : "recent"
+            turn["jobId"] = id; turn["status"] = value["status"]
+            if active { turn["endedAt"] = NSNull(); turn["durationMs"] = NSNull() }
+            value["latestTurn"] = turn
+            return value
+        }
+        func page(_ offset: Int) -> [String: Any] {
+            ["offset": offset, "limit": 12, "returned": 12, "total": 24, "returnedConversations": 1, "conversationTotal": 1, "hasPrevious": offset > 0, "hasNext": offset == 0]
+        }
+        var counts = result["counts"] as! [String: Any]
+        counts["progressJobCount"] = 24; counts["executionCount"] = 24; result["counts"] = counts
+        result["progressRevision"] = progressRevision; result["executionHistoryRevision"] = historyRevision; result["historyIncluded"] = true
+        result["activeRows"] = running.dropFirst(activeOffset).prefix(12).map { row($0, active: true) }; result["statusRows"] = result["activeRows"]
+        result["terminalRows"] = history.dropFirst(historyOffset).prefix(12).map { row($0, active: false) }
+        var pagination = result["pagination"] as! [String: Any]
+        pagination["active"] = page(activeOffset); pagination["terminal"] = page(historyOffset); result["pagination"] = pagination
+        if var problems = result["problems"] as? [String: Any], let problemTemplate = (problems["rows"] as? [[String: Any]])?.first {
+            problems["revision"] = "problems-a"
+            problems["rows"] = history.dropFirst(problemOffset).prefix(12).map { n -> [String: Any] in
+                var problem = problemTemplate
+                problem["problemKey"] = "problem-H\(n)"; problem["jobId"] = "H\(n)"; problem["row"] = row(n, active: false)
+                return problem
+            }
+            problems["affectedExecutionCount"] = 24; problems["page"] = page(problemOffset); result["problems"] = problems
+        }
+        return result
+    }
+
+    @MainActor
+    func testRunningPagesRebaseOnSameCountMembershipChange() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        let base = try await tabBase(f)
+        for retired in [24, 1] {
+            f.state.dashboardJSON = try tabJSON(tabSnapshot(base))
+            await f.model.refreshDashboard(enrich: false)
+            let changed = [25] + (1...24).reversed().filter { $0 != retired }
+            f.state.dashboardJSON = try tabJSON(tabSnapshot(base, running: changed, progressRevision: "progress-b"))
+            f.state.dashboardAppendJSON = try tabJSON(tabSnapshot(base, running: changed, activeOffset: 12, progressRevision: "progress-b"))
+            await f.model.loadMoreRunning()
+            XCTAssertEqual(f.model.dashboard?.activeRows.compactMap(\.jobId), changed.prefix(12).map { "R\($0)" })
+            XCTAssertTrue(try XCTUnwrap(f.model.dashboard).hasMoreRunning)
+            await f.model.loadMoreRunning()
+            XCTAssertEqual(f.model.dashboard?.activeRows.compactMap(\.jobId), changed.map { "R\($0)" })
+            XCTAssertFalse(try XCTUnwrap(f.model.dashboard).hasMoreRunning)
+            let reads = f.state.dashboardReadCount
+            await f.model.loadMoreRunning()
+            XCTAssertEqual(f.state.dashboardReadCount, reads)
+        }
+    }
+
+    @MainActor
+    func testHistoryPagesRebaseOnSameCountMembershipChange() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        let base = try await tabBase(f)
+        f.state.dashboardJSON = try tabJSON(tabSnapshot(base)); await f.model.refreshDashboard(enrich: false)
+        let changed = Array((2...25).reversed())
+        f.state.dashboardJSON = try tabJSON(tabSnapshot(base, history: changed, historyRevision: "history-b"))
+        f.state.dashboardAppendJSON = try tabJSON(tabSnapshot(base, history: changed, historyOffset: 12, historyRevision: "history-b"))
+        await f.model.loadMoreRecent()
+        XCTAssertEqual(f.model.dashboard?.terminalRows.compactMap(\.jobId), changed.prefix(12).map { "H\($0)" })
+        await f.model.loadMoreRecent()
+        XCTAssertEqual(f.model.dashboard?.terminalRows.compactMap(\.jobId), changed.map { "H\($0)" })
+        XCTAssertFalse(try XCTUnwrap(f.model.dashboard).pagination.terminal.hasNext)
+    }
+
+    @MainActor
+    func testExpandedRunningRefreshUpdatesBlockingStateWithoutCollapsing() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        let base = try await tabBase(f)
+        f.state.dashboardJSON = try tabJSON(tabSnapshot(base))
+        await f.model.refreshDashboard(enrich: false)
+        var tail = tabSnapshot(base, activeOffset: 12)
+        f.state.runningPageJSON = try tabJSON(tail)
+        await f.model.loadMoreRunning()
+        var rows = tail["activeRows"] as! [[String: Any]]
+        rows[11]["status"] = "approval-required"
+        rows[11]["summary"] = "Updated progress outside the first page"
+        tail["activeRows"] = rows
+        f.state.runningPageJSON = try tabJSON(tail)
+        await f.model.refreshDashboard(enrich: false)
+        XCTAssertEqual(f.model.dashboard?.activeRows.count, 24)
+        XCTAssertEqual(f.model.dashboard?.activeRows.last?.status, "approval-required")
+        XCTAssertEqual(f.model.dashboard?.activeRows.last?.summary, "Updated progress outside the first page")
+        XCTAssertEqual(f.model.dashboard?.pagination.active.offset, 12)
+        XCTAssertFalse(try XCTUnwrap(f.model.dashboard).hasMoreRunning)
+        // Enrichment and history paging also refresh the expanded running rows.
+        rows[11]["status"] = "input-required"; tail["activeRows"] = rows
+        f.state.runningPageJSON = try tabJSON(tail)
+        f.state.dashboardAppendJSON = try tabJSON(tabSnapshot(base, historyOffset: 12))
+        await f.model.loadMoreRecent()
+        XCTAssertEqual(f.model.dashboard?.activeRows.last?.status, "input-required")
+        XCTAssertEqual(f.model.dashboard?.activeRows.count, 24)
+    }
+
+    @MainActor
+    func testPendingEnrichmentSurvivesMoreBeforeAndAfterPageCompletion() async throws {
+        for panel in ["problems", "running", "history"] {
+            for inspectionFinishesFirst in [false, true] {
+                let f = try PopoverFixture(); defer { f.remove() }
+                let base = try await tabBase(f), first = tabSnapshot(base)
+                var observed = first, counts = first["counts"] as! [String: Any]
+                counts["backgroundProcesses"] = 2; observed["counts"] = counts
+                f.state.dashboardJSON = try tabJSON(first)
+                f.state.dashboardEnrichmentJSON = try tabJSON(observed)
+                f.state.problemPageJSON = try tabJSON(tabSnapshot(base, problemOffset: 12))
+                f.state.problemPageDelay = inspectionFinishesFirst ? 0.3 : 0
+                f.state.dashboardAppendDelay = inspectionFinishesFirst ? 0.3 : 0
+                f.state.runningPageJSON = try tabJSON(tabSnapshot(base, activeOffset: 12))
+                f.state.dashboardAppendJSON = try tabJSON(tabSnapshot(base, historyOffset: 12))
+                await f.model.refreshDashboard(enrich: true)
+                for _ in 0..<100 {
+                    if f.state.enrichmentReadCount > 0 { break }
+                    try await Task.sleep(for: .milliseconds(5))
+                }
+                // The completed inspection's observations are available to cached reads.
+                f.state.dashboardJSON = try tabJSON(observed)
+                if panel == "problems" { await f.model.loadMoreProblems() }
+                else if panel == "running" { await f.model.loadMoreRunning() }
+                else { await f.model.loadMoreRecent() }
+                for _ in 0..<100 {
+                    if f.model.dashboard?.counts.backgroundProcesses == 2 { break }
+                    try await Task.sleep(for: .milliseconds(10))
+                }
+                XCTAssertEqual(f.model.dashboard?.counts.backgroundProcesses, 2, panel)
+                XCTAssertEqual(f.state.enrichmentReadCount, 1, panel)
+                if panel == "problems" { XCTAssertEqual(f.model.dashboard?.problems?.rows.count, 24) }
+                else if panel == "running" { XCTAssertEqual(f.model.dashboard?.activeRows.count, 24) }
+                else { XCTAssertEqual(f.model.dashboard?.terminalRows.count, 24) }
+            }
+        }
+    }
+
+    @MainActor
+    func testUnchangedRefreshAndEnrichmentPreserveAllExpandedTabs() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        let base = try await tabBase(f), first = tabSnapshot(base)
+        f.state.dashboardJSON = try tabJSON(first); await f.model.refreshDashboard(enrich: false)
+        f.state.runningPageJSON = try tabJSON(tabSnapshot(base, activeOffset: 12)); await f.model.loadMoreRunning()
+        f.state.dashboardAppendJSON = try tabJSON(tabSnapshot(base, historyOffset: 12)); await f.model.loadMoreRecent()
+        f.state.problemPageJSON = try tabJSON(tabSnapshot(base, problemOffset: 12)); await f.model.loadMoreProblems()
+        XCTAssertEqual(f.model.dashboard?.activeRows.count, 24); XCTAssertEqual(f.model.dashboard?.terminalRows.count, 24); XCTAssertEqual(f.model.dashboard?.problems?.rows.count, 24)
+        f.state.dashboardEnrichmentJSON = try tabJSON(first)
+        await f.model.refreshDashboard(enrich: true)
+        for _ in 0..<100 {
+            if f.state.enrichmentReadCount > 0 && !f.model.dashboardEnrichmentPending { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let refreshed = try XCTUnwrap(f.model.dashboard)
+        XCTAssertEqual(f.state.enrichmentReadCount, 1)
+        XCTAssertEqual(refreshed.activeRows.compactMap(\.jobId), (1...24).reversed().map { "R\($0)" })
+        XCTAssertEqual(refreshed.terminalRows.compactMap(\.jobId), (1...24).reversed().map { "H\($0)" })
+        XCTAssertEqual(refreshed.problems?.rows.count, 24)
+        XCTAssertEqual(refreshed.pagination.active.offset, 12); XCTAssertEqual(refreshed.pagination.terminal.offset, 12); XCTAssertEqual(refreshed.problems?.page.offset, 12)
+        XCTAssertFalse(refreshed.hasMoreRunning)
+        f.state.dashboardJSON = try tabJSON(tabSnapshot(base, progressRevision: "progress-b"))
+        await f.model.refreshDashboard(enrich: false)
+        XCTAssertEqual(f.model.dashboard?.activeRows.count, 12); XCTAssertEqual(f.model.dashboard?.terminalRows.count, 24)
     }
 }

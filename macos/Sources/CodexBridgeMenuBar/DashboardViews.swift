@@ -489,11 +489,12 @@ struct DashboardPopoverView: View {
                 Button("macos.showmore") { Task { await model.loadMoreBackground() } }
                     .disabled(model.loadingMoreBackground)
             }
-            if panel == .running, dashboard.historyModeApplied == "jobs" ? currentRows.count < (dashboard.counts.progressJobCount ?? 0) : dashboard.statusPagination?.hasNext == true {
+            if panel == .running, dashboard.hasMoreRunning {
                 Button("macos.showmore") { Task { await model.loadMoreRunning() } }
-                    .disabled(model.loadingMoreRunning)
+                    .buttonStyle(.link)
+                    .disabled(model.loadingMoreRunning || model.isBusy)
             }
-            if panel == .history, dashboard.pagination.active.hasNext {
+            if panel == .history, dashboard.historyModeApplied != "jobs", dashboard.pagination.active.hasNext {
                 Label(BridgeAppLocalization.format(
                     "macos.onlyactiveitemsareshown",
                     locale: model.interfaceLocale,
@@ -514,7 +515,12 @@ struct DashboardPopoverView: View {
 
     @ViewBuilder
     private func dashboardBackgroundStatus(_ dashboard: DashboardSnapshot) -> some View {
-        if dashboard.counts.backgroundProcesses > 0 {
+        let unknown = (dashboard.counts.backgroundProcessUnknownAgents ?? dashboard.counts.runtimeUnknownAgents) > 0 ||
+            dashboard.counts.runtimeProbeSkippedAgents > 0 ||
+            dashboard.enrichment?.backgroundInventoryUnavailable == true ||
+            dashboard.counts.backgroundProcessUnknownAgents == nil &&
+            ((dashboard.enrichment?.timeouts ?? 0) > 0 || (dashboard.enrichment?.runtimeUnavailable ?? 0) > 0)
+        if dashboard.counts.backgroundProcesses > 0 || !unknown {
             Button {
                 Task { await model.toggleDashboardPanel(.background) }
             } label: {
@@ -525,11 +531,12 @@ struct DashboardPopoverView: View {
                 ), systemImage: "terminal.fill")
             }
             .buttonStyle(.link)
+            .disabled(dashboard.counts.backgroundProcesses == 0)
             .font(.caption)
             .foregroundStyle(model.dashboardPanel == .background ? Color.accentColor : Color.primary)
             .accessibilityAddTraits(model.dashboardPanel == .background ? [.isSelected] : [])
             .accessibilityIdentifier("dashboard-background")
-        } else if dashboard.counts.runtimeUnknownAgents > 0 || dashboard.counts.runtimeProbeSkippedAgents > 0 {
+        } else if unknown {
             Label("dashboard.backgroundUnknown", systemImage: "questionmark.circle")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -1037,7 +1044,7 @@ private struct DashboardSummary: View {
     var body: some View {
         LazyVGrid(columns: columns, spacing: 8) {
             summaryButton("macos.running", value: counts.progressJobCount ?? (counts.running + counts.inputRequired + counts.approvalRequired + counts.terminating), symbol: "play.fill", panel: .running)
-            summaryButton(model.dashboard?.historyModeApplied == "jobs" ? "macos.workrunhistory" : "execution.historyGrouped", value: model.dashboard?.historyModeApplied == "jobs" ? counts.executionCount ?? model.dashboard?.pagination.terminal.total ?? 0 : model.dashboard?.pagination.terminal.total ?? 0, symbol: "clock", panel: .history)
+            summaryButton("macos.workrunhistory", value: model.dashboard?.historyModeApplied == "jobs" ? counts.executionCount ?? model.dashboard?.pagination.terminal.total ?? 0 : model.dashboard?.pagination.terminal.total ?? 0, symbol: "clock", panel: .history)
             summaryButton("dashboard.problems", value: model.dashboard?.problems?.affectedExecutionCount ?? counts.problemCount, symbol: "exclamationmark.triangle.fill", panel: .problems)
         }
         .disabled(model.changingProblems)
@@ -1059,11 +1066,7 @@ private struct DashboardSummary: View {
                 .minimumScaleFactor(0.8)
                 Text(value, format: .number)
                     .font(.title3.bold().monospacedDigit())
-                if panel == .problems, let system = model.dashboard?.problems?.systemIncidentCount {
-                    Text(BridgeAppLocalization.format("execution.systemAndUnavailable", locale: model.interfaceLocale,
-                        system, model.dashboard?.problems?.unavailableExecutionCount ?? 0))
-                        .font(.caption2).foregroundStyle(.secondary)
-                }
+
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 8)
@@ -1076,7 +1079,7 @@ private struct DashboardSummary: View {
     }
 }
 
-private struct DashboardSection: View {
+struct DashboardSection: View {
     @Environment(\.locale) private var locale
     @EnvironmentObject private var model: AppModel
     let title: String
@@ -1198,11 +1201,6 @@ private struct DashboardActivityGroupView: View {
             VStack(alignment: .leading, spacing: 7) {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 2) {
-                        if marksRecentActivity {
-                            Text("macos.recentactivity")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
                         Text(activityTitle)
                             .font(.subheadline.weight(.semibold))
                             .lineLimit(2)
@@ -1219,27 +1217,38 @@ private struct DashboardActivityGroupView: View {
                     }
                 }
                 Text(BridgeAppLocalization.format(
-                    group.rows.allSatisfy { $0.jobId != nil } ? "execution.count" : "macos.agents",
+                    "macos.agents",
                     locale: locale,
-                    group.rows.count
+                    agentGroups.count
                 ))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                if let cancellation = activityCancellation {
+                if !group.rows.allSatisfy({ $0.jobId != nil }), let cancellation = activityCancellation {
                     CancellationReason(cancellation: cancellation)
                 }
-                ForEach(group.rows) { row in
-                    DashboardRowView(
-                        row: row,
-                        presentation: marksRecentActivity ? .nestedIdleAgent : .nestedAgent,
-                        enclosingActivityTitle: activityTitle
-                    )
+                ForEach(agentGroups) { agent in
+                    if agent.rows.allSatisfy({ $0.jobId != nil }) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(agent.rows[0].agentName)
+                                .font(.subheadline.weight(.semibold))
+                            ForEach(agent.rows) { row in
+                                DashboardRowView(row: row, presentation: .nestedJob, enclosingActivityTitle: activityTitle)
+                            }
+                        }
+                    } else {
+                        ForEach(agent.rows) { row in
+                            DashboardRowView(row: row, presentation: marksRecentActivity ? .nestedIdleAgent : .nestedAgent,
+                                enclosingActivityTitle: activityTitle)
+                        }
+                    }
                 }
             }
             .padding(10)
             .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 11))
         }
     }
+
+    private var agentGroups: [DashboardAgentGroup] { DashboardAgentGroup.group(group.rows) }
 
     private var activityCancellation: CancellationDisplay? {
         group.rows.compactMap(\.latestTurn?.cancellation).first {
@@ -1262,14 +1271,30 @@ private struct DashboardActivityGroupView: View {
     }
 }
 
+struct DashboardAgentGroup: Identifiable {
+    let id: String
+    var rows: [DashboardRow]
+
+    static func group(_ rows: [DashboardRow]) -> [DashboardAgentGroup] {
+        var groups: [DashboardAgentGroup] = [], positions: [String: Int] = [:]
+        for row in rows {
+            let key = row.conversationKey + ":" + (row.agentId ?? row.rowKey)
+            if let position = positions[key] { groups[position].rows.append(row) }
+            else { positions[key] = groups.count; groups.append(DashboardAgentGroup(id: key, rows: [row])) }
+        }
+        return groups
+    }
+}
+
 enum DashboardRowPresentation {
     case nestedAgent
+    case nestedJob
     case nestedIdleAgent
     case idle
 
     var suppressesRedundantIdleStatus: Bool {
         switch self {
-        case .nestedAgent:
+        case .nestedAgent, .nestedJob:
             return false
         case .nestedIdleAgent, .idle:
             return true
@@ -1282,22 +1307,24 @@ private struct CancellationReason: View {
     let cancellation: CancellationDisplay
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text("macos.cancellationreason")
-                .font(.caption.weight(.semibold))
-            Text(cancellation.reason)
-                .textSelection(.enabled)
-            Text(BridgeAppLocalization.format(
-                "macos.format.dotSeparatedTriple",
-                locale: locale,
-                cancellationTargetLabel(cancellation.targetKind, locale: locale),
-                cancellationStatusLabel(cancellation.status, locale: locale),
-                DisplayFormat.dateTime(cancellation.requestedAt, locale: locale)
-            ))
-                .foregroundStyle(.secondary)
+        if !cancellation.reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("macos.cancellationreason")
+                    .font(.caption.weight(.semibold))
+                Text(cancellation.reason)
+                    .textSelection(.enabled)
+                Text(BridgeAppLocalization.format(
+                    "macos.format.dotSeparatedTriple",
+                    locale: locale,
+                    CancellationPresentation.targetLabel(cancellation.targetKind, locale: locale),
+                    CancellationPresentation.statusLabel(cancellation.status, locale: locale),
+                    DisplayFormat.dateTime(cancellation.requestedAt, locale: locale)
+                ))
+                    .foregroundStyle(.secondary)
+            }
+            .font(.caption)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .font(.caption)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -1323,49 +1350,50 @@ struct DashboardRowView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if row.jobId != nil { ExecutionRecordView(row: row) }
-            if row.jobId == nil {
-            HStack(alignment: .firstTextBaseline) {
-                Image(systemName: StatusPresentation.symbol(row.status))
-                    .foregroundStyle(StatusPresentation.color(row.status))
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(row.agentName)
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(2)
-                    if let secondaryTitle {
-                        Text(secondaryTitle)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+            if presentation == .nestedJob {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    currentExecutionLabel
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(spacing: 4) {
+                        Image(systemName: StatusPresentation.symbol(row.status))
+                            .foregroundStyle(StatusPresentation.color(row.status))
+                            .accessibilityHidden(true)
+                        Text(StatusPresentation.label(row.status, locale: model.interfaceLocale))
+                    }
+                    .font(.caption2.weight(.medium))
+                    .fixedSize()
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(.quaternary, in: Capsule())
+                }
+            } else {
+                HStack(alignment: .firstTextBaseline) {
+                    Image(systemName: StatusPresentation.symbol(row.status))
+                        .foregroundStyle(StatusPresentation.color(row.status))
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(row.agentName)
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(2)
+                        if let secondaryTitle {
+                            Text(secondaryTitle)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    Spacer()
+                    if row.status != "idle" || !presentation.suppressesRedundantIdleStatus {
+                        Text(StatusPresentation.label(row.status, locale: model.interfaceLocale))
+                            .font(.caption2.weight(.medium))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(.quaternary, in: Capsule())
                     }
                 }
-                Spacer()
-                if row.status != "idle" || !presentation.suppressesRedundantIdleStatus {
-                    Text(StatusPresentation.label(row.status, locale: model.interfaceLocale))
-                        .font(.caption2.weight(.medium))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(.quaternary, in: Capsule())
+                if row.latestTurn != nil {
+                    currentExecutionLabel
                 }
-            }
-            }
-            if row.latestTurn != nil {
-                DashboardExecutionLabel(text: BridgeAppLocalization.format(
-                    "macos.format.labelValue",
-                    locale: model.interfaceLocale,
-                    BridgeAppLocalization.string(
-                        row.bucket == "idle" ? "macos.latestrun" : "macos.run",
-                        locale: model.interfaceLocale
-                    ),
-                    DashboardExecutionPresentation.turnText(
-                        row.latestTurn?.execution,
-                        locale: model.interfaceLocale
-                    )
-                ), execution: row.latestTurn?.execution)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
             }
             if let next = nextExecution {
                 DashboardExecutionLabel(text: BridgeAppLocalization.format(
@@ -1378,8 +1406,10 @@ struct DashboardRowView: View {
                     .lineLimit(2)
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text(rowTimeText)
-                    .lineLimit(2)
+                if !rowTimeText.isEmpty {
+                    Text(rowTimeText)
+                        .lineLimit(2)
+                }
                 HStack(spacing: 10) {
                     if row.backgroundProcessCount > 0 {
                         Label(BridgeAppLocalization.format(
@@ -1429,9 +1459,16 @@ struct DashboardRowView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             }
-            if row.jobId == nil, let cancellation = row.latestTurn?.cancellation,
-               presentation == .idle || cancellation.targetKind != "activity" {
+            if let cancellation = row.latestTurn?.cancellation,
+               presentation != .nestedJob || row.status == "cancelled",
+               presentation == .idle || presentation == .nestedJob || cancellation.targetKind != "activity" {
                 CancellationReason(cancellation: cancellation)
+            }
+            if ["failed", "interrupted", "termination-failed"].contains(row.status),
+               let error = [row.latestTurn?.error, row.error].compactMap({ $0 }).first(where: {
+                   !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+               }) {
+                Text(error).font(.caption).textSelection(.enabled)
             }
             if historyTotal > 0 {
                 Button {
@@ -1468,7 +1505,7 @@ struct DashboardRowView: View {
                 if historyExpanded {
                     VStack(alignment: .leading, spacing: 6) {
                         if displayedHistory.count < historyTotal {
-                            Button("macos.next") { Task { await model.loadDashboardHistory(row, more: true) } }
+                            Button("macos.showmore") { Task { await model.loadDashboardHistory(row, more: true) } }
                                 .disabled(model.dashboardHistoryLoading.contains(row.rowKey))
                         }
                         if displayedHistory.isEmpty {
@@ -1552,6 +1589,23 @@ struct DashboardRowView: View {
                 StatusPresentation.label(row.status, locale: model.interfaceLocale)
             )
         )
+    }
+
+    private var currentExecutionLabel: some View {
+        DashboardExecutionLabel(text: BridgeAppLocalization.format(
+            "macos.format.labelValue",
+            locale: model.interfaceLocale,
+            BridgeAppLocalization.string(
+                row.bucket == "idle" ? "macos.latestrun" : "macos.run",
+                locale: model.interfaceLocale
+            ),
+            DashboardExecutionPresentation.turnText(
+                row.latestTurn?.execution,
+                locale: model.interfaceLocale
+            )
+        ), execution: row.latestTurn?.execution)
+            .font(.caption.monospaced())
+            .foregroundStyle(.secondary)
     }
 
     private var secondaryTitle: String? {
@@ -1821,18 +1875,18 @@ enum DashboardExecutionPresentation {
         normalizedServiceTier(execution?.serviceTier) == "fast"
     }
 
-    static func speedBadge(_ execution: DashboardExecution?) -> String {
+    static func speedBadge(_ execution: DashboardExecution?, includeLabel: Bool = false) -> String {
         guard let execution else { return "" }
         let mode = normalized(execution.processingSpeed ?? "")
         guard mode.isEmpty || ["legacy", "fast", "ultrafast"].contains(mode) else { return "" }
         let tier = normalized(execution.serviceTier ?? "")
-        if tier == "ultrafast" || mode == "ultrafast" { return "🚀 Ultrafast" }
-        if ["fast", "priority"].contains(tier) || mode == "fast" { return "⚡ Fast" }
+        if tier == "ultrafast" || mode == "ultrafast" { return "🚀" + (includeLabel ? " Ultrafast" : "") }
+        if ["fast", "priority"].contains(tier) || mode == "fast" { return "⚡" + (includeLabel ? " Fast" : "") }
         return ""
     }
 
     static func speedBadgeHelp(_ execution: DashboardExecution?, locale: Locale) -> String {
-        let speed = speedBadge(execution)
+        let speed = speedBadge(execution, includeLabel: true)
         return speed.isEmpty ? "" : BridgeAppLocalization.string(
             "dashboard.execution.speedBadgeHint", locale: locale)
             .replacingOccurrences(of: "{speed}", with: speed)
@@ -1873,23 +1927,25 @@ enum DashboardExecutionPresentation {
     }
 }
 
-private func cancellationTargetLabel(_ value: String, locale: Locale) -> String {
-    let key: String
-    switch value {
-    case "activity": key = "Activity"
-    case "job": key = "macos.task"
-    default: return value
+enum CancellationPresentation {
+    static func targetLabel(_ value: String, locale: Locale) -> String {
+        let key: String
+        switch value {
+        case "activity": key = "cancellation.target.activity"
+        case "job": key = "cancellation.target.job"
+        default: key = "macos.localization.unavailable"
+        }
+        return BridgeAppLocalization.string(key, locale: locale)
     }
-    return BridgeAppLocalization.string(key, locale: locale)
-}
 
-private func cancellationStatusLabel(_ value: String, locale: Locale) -> String {
-    let key: String
-    switch value {
-    case "requested": key = "macos.requested"
-    case "succeeded": key = "macos.processed"
-    case "failed": key = "macos.failed"
-    default: return value
+    static func statusLabel(_ value: String, locale: Locale) -> String {
+        let key: String
+        switch value {
+        case "requested": key = "macos.requested"
+        case "succeeded": key = "macos.processed"
+        case "failed": key = "macos.failed"
+        default: key = "macos.localization.unavailable"
+        }
+        return BridgeAppLocalization.string(key, locale: locale)
     }
-    return BridgeAppLocalization.string(key, locale: locale)
 }

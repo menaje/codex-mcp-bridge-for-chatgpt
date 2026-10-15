@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { decodeUtf8Strict, parseJsonUtf8Strict } from "./text-integrity.mjs";
+import { swiftLocalizationReferences } from "./swift-localization-keys.mjs";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
 const catalogPath = path.join(
@@ -191,7 +192,6 @@ if (compiledDirectoryFlag >= 0) {
   }
 }
 
-const helperPattern = /BridgeAppLocalization\.(?:string|format)\(\s*"((?:\\.|[^"\\])*)"/gs;
 const allowedUncataloguedKoreanLiterals = new Set([
   " 이전 helper 복구에도 실패했습니다: ",
   "[가-힣]",
@@ -199,21 +199,20 @@ const allowedUncataloguedKoreanLiterals = new Set([
   "한국어"
 ]);
 for (const swiftFile of walkSwiftFiles(swiftSourcesPath)) {
+  // Generated fallback translations are checked against the authored catalog
+  // by localization:check; they are not uncatalogued source literals.
+  if (path.basename(swiftFile) === "GeneratedLocalization.swift") continue;
   const source = decodeUtf8Strict(
     fs.readFileSync(swiftFile),
     `Swift source ${path.relative(repositoryRoot, swiftFile)}`
   );
-  for (const match of source.matchAll(helperPattern)) {
-    let key;
-    try {
-      key = JSON.parse(`"${match[1]}"`);
-    } catch {
-      errors.push(`Could not parse localization key in ${path.relative(repositoryRoot, swiftFile)}.`);
-      continue;
-    }
+  const localFunctions = path.basename(swiftFile) === "AppLocalization.swift"
+    ? ["string", "format"] : ["localized"];
+  for (const { key, offset } of swiftLocalizationReferences(source, localFunctions)) {
     if (!catalog.strings[key]) {
+      const line = source.slice(0, offset).split("\n").length;
       errors.push(
-        `${path.relative(repositoryRoot, swiftFile)} references a missing localization key: ${JSON.stringify(key)}.`
+        `${path.relative(repositoryRoot, swiftFile)}:${line} references a missing localization key: ${JSON.stringify(key)}.`
       );
     }
   }

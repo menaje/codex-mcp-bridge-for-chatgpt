@@ -211,6 +211,10 @@ export class CodexBackendRouter implements CodexUpstream {
       : [];
   }
 
+  async listLoadedThreadIds(): Promise<string[] | null> {
+    return this.backend(this.defaultBackend).listLoadedThreadIds?.() ?? null;
+  }
+
   async listLoadedBackgroundTerminals(
     threadId: string,
     backendKind?: CodexBackendKind

@@ -526,6 +526,13 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     }
   }
 
+  async listLoadedThreadIds(): Promise<string[]> {
+    return [...new Set(this.workers.flatMap(worker => {
+      const connection = worker.connection && !worker.connection.exited ? worker.connection : worker.startingConnection;
+      return connection && !connection.exited ? connection.loadedThreadIds() : [];
+    }))];
+  }
+
   async listLoadedBackgroundTerminals(
     threadId: string
   ): Promise<CodexBackgroundTerminal[] | null> {
@@ -1000,6 +1007,7 @@ class AppServerConnection {
   private readonly activeTurns = new Map<string, TurnContext>();
   private readonly threadTurns = new Map<string, string>();
   private readonly loadedThreads = new Set<string>();
+
   private readonly subscribedThreads = new Set<string>();
   private readonly threadPersistence = new Map<string, ThreadPersistence>();
   private readonly threadAccess = new Map<string, VerifiedExecutionAccess>();
@@ -1289,6 +1297,8 @@ class AppServerConnection {
     await this.ensureThreadLoaded(threadId);
     return this.listMaterializedBackgroundTerminals(threadId);
   }
+
+  loadedThreadIds(): string[] { return [...this.loadedThreads]; }
 
   async listLoadedBackgroundTerminals(
     threadId: string

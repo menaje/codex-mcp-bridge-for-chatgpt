@@ -8,7 +8,7 @@ function fixture(){
  const requests:any[]=[],errors:any[]=[],pending:Array<{resolve:(value:any)=>void;reject:(error:any)=>void}>=[];
  let paints=0,inFlight=0,maximum=0,releaseHook:(()=>void)|undefined;
  const c=vm.createContext({busy:false,mounted:true,view:old,hydrationEpoch:1,selectedStatus:'background',selectedScope:'all',widgetInstanceId:'widget',PAGE_LIMIT:12,appendRequest:null,automaticRefreshDisabled:false,refreshFailed:false,historyLoadQueued:false,lastRefreshAt:0,problemQuery:()=>({kind:'all',offset:0}),queueEnrichment:()=>{},elements:{message:{textContent:'',classList:{remove:()=>{}}}},t:{'common.error':'error','common.loading':'loading'},setBusy:(value:boolean)=>{c.busy=value;if(!value&&releaseHook){const hook=releaseHook;releaseHook=undefined;hook()}},unwrap:(x:any)=>x,paint:()=>{paints++},render:(next:any)=>{c.view=next;paints++},showError:(error:any)=>{errors.push(error)},dashboardRead:async(args:any)=>{requests.push(args);maximum=Math.max(maximum,++inFlight);try{return await new Promise((resolve,reject)=>pending.push({resolve,reject}))}finally{inFlight--}}});
- for(const name of ['rowIdentity','mergeRows','reload','loadMoreBackground'])load(name,c);
+ for(const name of ['rowIdentity','mergeRows','refreshExpandedRunning','reload','loadMoreBackground'])load(name,c);
  const next=(change:string)=>({backgroundRows:[{rowKey:'mismatching-page'}],backgroundRevision:change==='owners'?'owners-v2':'owners-v1',historyPolicy:{policyRevision:change==='policy'?'policy-v2':'policy-v1'},backgroundPagination:{offset:12,returned:1,total:13,hasNext:false}});
  return {c,old,fresh,requests,errors,pending,next,paintCount:()=>paints,maximum:()=>maximum,onRelease:(hook:()=>void)=>{releaseHook=hook}};
 }

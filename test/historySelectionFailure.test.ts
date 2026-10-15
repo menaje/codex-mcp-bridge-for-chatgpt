@@ -4,9 +4,9 @@ import {DASHBOARD_CARD_HTML,reconcileDashboardPageCaches} from '../src/dashboard
 function load(name:string,c:vm.Context){const line=DASHBOARD_CARD_HTML.split('\n').find(x=>new RegExp('^\\s*(async )?function '+name+'\\(').test(x));expect(line).toBeDefined();vm.runInContext(line!,c)}
 function fixture(initial='running',busy=false){
  const el=()=>({hidden:false,textContent:'',classList:{remove(){},add(){}},setAttribute(){}}),elements:any=new Proxy({}, {get(t:any,k:string){return t[k]??=el()}}),requests:any[]=[],visible:any={active:['old-current'],terminal:['old-all']},pending:any[]=[];
- const view={historyIncluded:false,historyModeApplied:'jobs',generatedAt:'2026-10-15T00:00:00Z',historyPolicy:{},counts:{running:1,inputRequired:0,approvalRequired:0,terminating:0,backgroundProcesses:0},backgroundRevision:'owners',backgroundRows:[{rowKey:'owner'}],backgroundPagination:{offset:0,returned:1,total:2,hasNext:true},pagination:{active:{},terminal:{offset:0,returned:1,total:2,hasNext:true},idle:{offset:0,total:0}},activeRows:[{jobId:'live',bucket:'active'}],terminalRows:[]};
- const c=vm.createContext({view,selectedStatus:initial,busy,mounted:true,problemMutationInFlight:false,historyLoadQueued:false,hydrationEpoch:1,historySecurityGeneration:0,historyDetails:new Map(),executionDetails:new Map(),executionRequests:new Map(),executionErrors:new Map(),expandedExecutions:new Set(),historyRequestTokens:new Map(),historyLoading:new Set(),enrichmentTarget:null,cancelPending(){},standardBridgeInitialized:true,selectedScope:'all',widgetInstanceId:'widget',PAGE_LIMIT:12,automaticRefreshDisabled:false,refreshFailed:false,appendRequest:null,historyActiveRows:[{jobId:'cached-active'}],historyTerminalRows:[{jobId:'cached-previous-history'}],activeRows:[],terminalRows:[],terminalPagination:{offset:0,returned:1,total:2,hasNext:true},idleRows:[],idlePagination:null,lastRenderedAt:0,scopeReady:false,conversationAvailable:false,reconcileDashboardPageCaches,effectiveLocaleTag:()=> 'en',setLocale(){},enrichmentFailed:false,localeTag:'en',elements,document:{getElementById:el,querySelectorAll:()=>[]},t:new Proxy({}, {get:(_t,k)=>String(k)}),uiText:(_k:string,f:string)=>f,formatNumber:String,agentCountText:String,problemQuery:()=>({}),closeWorkDetails(){},syncStatusFilter(){},syncProblemControls(){},syncLoadMoreControls(){},scheduleHistoryExpiry(){},syncScope(){},renderProblems(){},renderHistoryPolicy(){},prepareWorkControlPaint(){},renderWeeklyUsage(){},finishWorkControlPaint(){},runtimeDetailsIncomplete:()=>false,detailsIncomplete:()=>false,scheduleSizeChanged(){},jobRowVisible:()=>true,renderActivityRows:(list:any,rows:any[])=>{if(list===elements.activeList)visible.active=rows.slice();else visible.terminal=rows.slice()},dashboardRead:async(args:any)=>{requests.push(args);return new Promise((resolve,reject)=>pending.push({resolve,reject}))},queueEnrichment(){},unwrap:(x:any)=>x});
- for(const name of ['rowIdentity','mergeRows','applyLocalStatus','paint','render','setBusy','showError','reload','selectStatus','loadMoreRunning','loadMoreBackground','loadMore','supersedeRequests'])load(name,c);
+ const view={historyIncluded:false,historyModeApplied:'jobs',generatedAt:'2026-10-15T00:00:00Z',historyPolicy:{},counts:{progressJobCount:2,running:1,inputRequired:0,approvalRequired:0,terminating:0,backgroundProcesses:0},backgroundRevision:'owners',backgroundRows:[{rowKey:'owner'}],backgroundPagination:{offset:0,returned:1,total:2,hasNext:true},pagination:{active:{offset:0,returned:1,total:2,hasNext:true},terminal:{offset:0,returned:1,total:2,hasNext:true},idle:{offset:0,total:0}},activeRows:[{jobId:'live',bucket:'active'}],terminalRows:[]};
+ const c=vm.createContext({view,selectedStatus:initial,busy,mounted:true,problemMutationInFlight:false,historyLoadQueued:false,hydrationEpoch:1,historySecurityGeneration:0,historyDetails:new Map(),executionDetails:new Map(),executionRequests:new Map(),executionErrors:new Map(),expandedExecutions:new Set(),historyRequestTokens:new Map(),historyLoading:new Set(),enrichmentTarget:null,cancelPending(){},standardBridgeInitialized:true,selectedScope:'all',widgetInstanceId:'widget',PAGE_LIMIT:12,automaticRefreshDisabled:false,refreshFailed:false,appendRequest:null,historyActiveRows:[{jobId:'cached-active'}],historyTerminalRows:[{jobId:'cached-previous-history'}],activeRows:[],terminalRows:[],terminalPagination:{offset:0,returned:1,total:2,hasNext:true},idleRows:[],idlePagination:null,lastRenderedAt:0,scopeReady:false,conversationAvailable:false,reconcileDashboardPageCaches,effectiveLocaleTag:()=> 'en',setLocale(){},enrichmentFailed:false,enrichmentRunning:false,localeTag:'en',elements,document:{getElementById:el,querySelectorAll:()=>[]},t:new Proxy({}, {get:(_t,k)=>String(k)}),uiText:(_k:string,f:string)=>f,formatNumber:String,agentCountText:String,problemQuery:()=>({}),closeWorkDetails(){},syncStatusFilter(){},syncProblemControls(){},syncLoadMoreControls(){},scheduleHistoryExpiry(){},syncScope(){},renderProblems(){},renderHistoryPolicy(){},prepareWorkControlPaint(){},renderWeeklyUsage(){},finishWorkControlPaint(){},runtimeDetailsIncomplete:()=>false,detailsIncomplete:()=>false,scheduleSizeChanged(){},jobRowVisible:()=>true,renderActivityRows:(list:any,rows:any[])=>{if(list===elements.activeList)visible.active=rows.slice();else visible.terminal=rows.slice()},dashboardRead:async(args:any)=>{requests.push(args);return new Promise((resolve,reject)=>pending.push({resolve,reject}))},queueEnrichment(){},unwrap:(x:any)=>x});
+ for(const name of ['rowIdentity','mergeRows','hasMoreRunning','retainExpandedPages','applyLocalStatus','backgroundStatusUnknown','paint','render','setBusy','showError','refreshExpandedRunning','reload','selectStatus','loadMoreRunning','loadMoreBackground','loadMore','supersedeRequests'])load(name,c);
  return {c,visible,requests,pending,elements};
 }
 describe('actual History selection, paint and failed reload composition',()=>{
@@ -27,7 +27,7 @@ describe('queued History drains through actual busy controllers',()=>{
  for(const owner of ['Running','Background'])for(const fail of [false,true])it(`${owner} ${fail?'failure':'success'} drains exactly one History read`,async()=>{
   const f=fixture(owner.toLowerCase()),append=vm.runInContext(`loadMore${owner}()`,f.c);
   await vm.runInContext('selectStatus("history")',f.c);expect(f.c.historyLoadQueued).toBe(true);
-  if(fail)f.pending[0].reject(Error('append failed'));else f.pending[0].resolve({...f.c.view,activeRows:[],backgroundRows:[],backgroundPagination:{hasNext:false}});
+  if(fail)f.pending[0].reject(Error('append failed'));else f.pending[0].resolve({...f.c.view,activeRows:[],pagination:{...f.c.view.pagination,active:{offset:1}},backgroundRows:[],backgroundPagination:{hasNext:false}});
   await append;await until(()=>f.requests.length===2);
   expect(f.requests[1].includeHistory).toBe(true);expect(f.requests[1].terminalOffset).toBe(0);expect(f.c.busy).toBe(true);
   f.pending[1].resolve(firstPage(f));await until(()=>!f.c.busy);
@@ -40,8 +40,17 @@ describe('queued History drains through actual busy controllers',()=>{
   if(cancel==='unmount')f.c.mounted=false;
   if(cancel==='scope'){f.c.selectedScope='conversation';f.c.hydrationEpoch++;f.c.busy=true}
   if(cancel==='epoch'){f.c.hydrationEpoch++;f.c.busy=true}
-  f.pending[0].resolve({...f.c.view,backgroundRows:[],backgroundPagination:{hasNext:false}});await append;await Promise.resolve();await Promise.resolve();
+  f.pending[0].resolve({...f.c.view,pagination:{...f.c.view.pagination,active:{offset:1}},backgroundRows:[],backgroundPagination:{hasNext:false}});await append;await Promise.resolve();await Promise.resolve();
   expect(f.requests).toHaveLength(1);if(cancel==='scope'||cancel==='epoch')expect(f.c.busy).toBe(true);
+ });
+ for(const change of ['count','policy'])it(`Running ${change} change yields its rebase to queued History`,async()=>{
+  const f=fixture('running'),append=vm.runInContext('loadMoreRunning()',f.c);
+  await vm.runInContext('selectStatus("history")',f.c);
+  f.pending[0].resolve({...f.c.view,counts:{...f.c.view.counts,...(change==='count'?{progressJobCount:2}:{})},historyPolicy:change==='policy'?{policyRevision:'changed'}:f.c.view.historyPolicy,pagination:{...f.c.view.pagination,active:{offset:1}},activeRows:[]});
+  await append;await until(()=>f.requests.length===2);
+  expect(f.requests[1].includeHistory).toBe(true);expect(f.requests[1].terminalOffset).toBe(0);
+  f.pending[1].resolve(firstPage(f));await until(()=>!f.c.busy);
+  expect(f.requests).toHaveLength(2);expect(f.c.historyLoadQueued).toBe(false);
  });
  it('lets reload finish an already queued History read without duplication',async()=>{
   const f=fixture('running'),p=vm.runInContext('reload(true,false)',f.c);await vm.runInContext('selectStatus("history")',f.c);
@@ -59,7 +68,7 @@ describe('shared busy release ownership fences',()=>{
   const f=fixture('background'),append=vm.runInContext('loadMoreBackground()',f.c);await vm.runInContext('selectStatus("history")',f.c);
   let replacement:Promise<any>|undefined,fired=false;
   f.elements.card.setAttribute=()=>{if(!f.c.busy&&!fired){fired=true;replacement=vm.runInContext('reload(true,false)',f.c)}};
-  f.pending[0].resolve({...f.c.view,backgroundRows:[],backgroundPagination:{hasNext:false}});await append;await until(()=>f.requests.length===2);
+  f.pending[0].resolve({...f.c.view,pagination:{...f.c.view.pagination,active:{offset:1}},backgroundRows:[],backgroundPagination:{hasNext:false}});await append;await until(()=>f.requests.length===2);
   expect(f.c.busy).toBe(true);expect(f.requests[1].includeHistory).toBe(true);
   f.pending[1].resolve(firstPage(f));await replacement;await Promise.resolve();expect(f.requests).toHaveLength(2);expect(f.c.busy).toBe(false);expect(f.c.historyLoadQueued).toBe(false);
  });

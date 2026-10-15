@@ -7,6 +7,8 @@ public struct EmptyParameters: Codable, Sendable {
 public struct DashboardSnapshot: Codable, Sendable {
     public var executionContractVersion: Int? = nil
     public var historyModeApplied: String? = nil
+    public var progressRevision: String? = nil
+    public var executionHistoryRevision: String? = nil
     public var problems: DashboardProblems? = nil
     public let kind: String
     public let generatedAt: String
@@ -76,16 +78,17 @@ public struct CardEnrichment: Codable, Sendable {
     public let pendingReads: Int?
     public let usageUnavailable: Bool?
     public let oldestObservationAt: String?
+    public var backgroundInventoryUnavailable: Bool? = nil
 
     public var isUpdating: Bool { (pendingReads ?? 0) > 0 }
 
     public var hasFailures: Bool {
-        if pendingReads != nil { return (runtimeUnavailable ?? 0) > 0 || usageUnavailable == true }
+        if pendingReads != nil { return (runtimeUnavailable ?? 0) > 0 || usageUnavailable == true || backgroundInventoryUnavailable == true }
         return isIncomplete
     }
 
     public var isIncomplete: Bool {
-        usageTimedOut || timeouts > 0 || (runtimeUnavailable ?? 0) > 0 || usageUnavailable == true
+        usageTimedOut || timeouts > 0 || (runtimeUnavailable ?? 0) > 0 || usageUnavailable == true || backgroundInventoryUnavailable == true
     }
 }
 
@@ -95,6 +98,44 @@ public enum DashboardAppendBucket: Sendable {
 }
 
 public extension DashboardSnapshot {
+    var hasMoreRunning: Bool {
+        if historyModeApplied == "jobs" {
+            return pagination.active.hasNext && activeRows.filter { $0.bucket == "active" && $0.jobId != nil }.count < (counts.progressJobCount ?? 0)
+        }
+        return statusPagination?.hasNext == true
+    }
+
+    /// Retain immutable history pages when membership is unchanged. Expanded
+    /// running observations are refreshed through the client before merging.
+    func retainingExpandedPages(from previous: DashboardSnapshot?) -> DashboardSnapshot {
+        guard let previous, historyModeApplied == "jobs", previous.historyModeApplied == "jobs",
+              scope == previous.scope, historyPolicy?.policyRevision == previous.historyPolicy?.policyRevision,
+              historyPolicy?.totalRemoved == previous.historyPolicy?.totalRemoved else { return self }
+        var result = self
+        if historyIncluded != false, let executionHistoryRevision, executionHistoryRevision == previous.executionHistoryRevision,
+           pagination.terminal.offset == 0, previous.pagination.terminal.offset > 0,
+           previous.terminalRows.count > terminalRows.count,
+           counts.executionCount == previous.counts.executionCount {
+            result.terminalRows = Self.mergeRows(previous.terminalRows, terminalRows)
+            result.pagination.terminal = previous.pagination.terminal
+        }
+        if var incoming = problems, let old = previous.problems, incoming.revision == old.revision,
+           incoming.query.kind == old.query.kind, incoming.query.review == old.query.review, incoming.query.view == old.query.view,
+           incoming.page.total == old.page.total, old.page.offset > 0, incoming.page.offset <= old.page.offset,
+           old.rows.count > incoming.rows.count {
+            var indices = Dictionary(uniqueKeysWithValues: old.rows.enumerated().map { ($0.element.problemKey, $0.offset) })
+            var rows = old.rows
+            for row in incoming.rows {
+                if let index = indices[row.problemKey] { rows[index] = row }
+                else { indices[row.problemKey] = rows.count; rows.append(row) }
+            }
+            incoming.rows = rows
+            incoming.page = old.page
+            result.problems = incoming
+        }
+        return result
+    }
+
     /// A missing usage field is an incomplete observation only while the
     /// server proves the same account and applied CLI context.
     func retainingUsage(from previous: DashboardSnapshot?) -> DashboardSnapshot {
@@ -170,7 +211,7 @@ public extension DashboardSnapshot {
         if result.idleRows.count > result.pagination.idle.total {
             result.idleRows = Array(next.idleRows.prefix(result.pagination.idle.total))
         }
-        return result
+        return result.retainingExpandedPages(from: self)
     }
 
     private static func mergeRows(
@@ -212,6 +253,7 @@ public enum DashboardStatusFilter: String, Codable, Sendable {
 public struct DashboardCounts: Codable, Sendable {
     public var progressJobCount: Int? = nil
     public var executionCount: Int? = nil
+    public var backgroundProcessUnknownAgents: Int? = nil
     public let trackedProjects: Int
     public let trackedConversations: Int
     public let retainedJobs: Int

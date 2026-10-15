@@ -29,6 +29,19 @@ afterEach(async () => {
 });
 
 describe("isolated Codex execution process", () => {
+  it("reports only live materialized threads across IPC without starting historical workers", async () => {
+    const service=await createService();
+    try {
+      await expect(service.listLoadedThreadIds()).resolves.toEqual([]);
+      const result=await service.callTool("codex",task("leave background terminal"));
+      const threadId=(result.structuredContent as {threadId:string}).threadId;
+      await expect(service.listLoadedThreadIds()).resolves.toEqual([threadId]);
+      await expect(service.listLoadedBackgroundTerminals(threadId)).resolves.toHaveLength(1);
+      await service.terminateBackgroundTerminal(threadId,"background-process-1");
+      await service.archiveThread(threadId);
+      await expect(service.listLoadedThreadIds()).resolves.toEqual([]);
+    } finally {await service.close();}
+  },15000);
   it("passes the dedicated thread initialization deadline to the isolated executor", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "execution-thread-timeout-"));
     roots.push(home);

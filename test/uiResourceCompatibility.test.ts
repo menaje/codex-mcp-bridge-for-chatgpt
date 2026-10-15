@@ -49,8 +49,10 @@ describe("serialized card runtime compatibility", () => {
     runInNewContext(outputText, { exports: compiled });
     expect(serializeUiFunction(compiled.executionSpeedBadge!)).toBe(serializeUiFunction(executionSpeedBadge));
     const badge = runInNewContext(`(${serializeUiFunction(compiled.executionSpeedBadge!)})`);
-    expect(badge({ processingSpeed: "fast" })).toBe("⚡ Fast");
-    expect(badge({ processingSpeed: "ultrafast" })).toBe("🚀 Ultrafast");
+    expect(badge({ processingSpeed: "fast" })).toBe("⚡");
+    expect(badge({ processingSpeed: "ultrafast" })).toBe("🚀");
+    expect(badge({ processingSpeed: "fast" }, true)).toBe("⚡ Fast");
+    expect(badge({ processingSpeed: "ultrafast" }, true)).toBe("🚀 Ultrafast");
   });
 
   it("keeps the speed picker projection identical in source and compiled cards", () => {

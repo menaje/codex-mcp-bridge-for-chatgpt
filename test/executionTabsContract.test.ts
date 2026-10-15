@@ -57,8 +57,8 @@ function cachedExecutionRenderer(row:any,detail:any,historyPolicy:any){
  const c=vm.createContext({Date,view:{historyModeApplied:'jobs',historyPolicy},widgetInstanceId:'health-widget',historySecurityGeneration:1,selectedScope:'conversation',
   executionDetails:new Map(),executionRequests:new Map(),executionErrors:new Map(),expandedExecutions:new Set(),localeTag:'en',t:{},BUNDLES:{en:{}},reads:0,
   callTool:async()=>{c.reads++;throw Error('valid cached detail must not be refetched');},
-  node:(tag:string,cls:string,text:string)=>new ExecutionElement(tag,cls,text),tone:()=>'',statusLabel:(status:string)=>status,scheduleSizeChanged:()=>{}});
- for(const name of ['uiText','jobRowVisible','executionTarget','executionKey','executionFresh','executionCached'])
+  node:(tag:string,cls:string,text:string)=>new ExecutionElement(tag,cls,text),tone:()=>'',statusLabel:(status:string)=>status,scheduleSizeChanged:()=>{},appendExecution:()=>{},timeMeta:()=>"Recorded time",rowMeta:()=>""});
+ for(const name of ['uiText','jobRowVisible','executionTarget','executionKey','executionFresh','executionCached','cancellationHeading','appendCancellation'])
   vm.runInContext(DASHBOARD_CARD_HTML.split('\n').find(line=>new RegExp('^\\s*function '+name+'\\(').test(line))!,c);
  vm.runInContext(DASHBOARD_CARD_HTML.split('\n').find(line=>/^\s*async function loadExecutionDetail\(/.test(line))!,c);
  const start=DASHBOARD_CARD_HTML.indexOf('    function appendExecutionRecord('),end=DASHBOARD_CARD_HTML.indexOf('    function historyKey(',start);
@@ -71,6 +71,80 @@ function cachedExecutionRenderer(row:any,detail:any,historyPolicy:any){
  }};
 }
 describe('Job-unit execution tabs and read-only exact detail',()=>{
+ it('uses page-independent list revisions and detects a same-count running replacement',async()=>{
+  const f=fixture();try{
+   const oldest=f.seed('running',3),newest=f.seed('running',1);f.seed('completed',2);
+   const first=await f.service().dashboardSnapshot({...query,limit:1});
+   const second=await f.service().dashboardSnapshot({...query,limit:1,statusFilter:'running',statusOffset:1});
+   expect(first.progressRevision).toMatch(/^[a-f0-9]{64}$/);expect(second.progressRevision).toBe(first.progressRevision);
+   const later=await f.service().dashboardSnapshotWithEnrichment!({...query,limit:1},{runtimeByAgent:[],runtimeProbeSkippedAgents:0,weeklyUsage:null,summary:{...first.enrichment,state:'enriched'}} as any);
+   expect(later.progressRevision).toBe(first.progressRevision);expect(later.executionHistoryRevision).toBe(first.executionHistoryRevision);
+   f.writer.upsertJob({...oldest,status:'completed',updatedAt:now});f.writer.deleteJob(oldest.jobId);const replacement=f.seed('running',0);
+   const changed=await f.service().dashboardSnapshot({...query,limit:1,statusFilter:'running',statusOffset:1});
+   expect(changed.counts.progressJobCount).toBe(first.counts.progressJobCount);expect(changed.progressRevision).not.toBe(first.progressRevision);
+   expect(changed.executionHistoryRevision).not.toBe(first.executionHistoryRevision);
+   const fresh=await f.service().dashboardSnapshot(query);expect(fresh.activeRows.map(x=>x.jobId)).toEqual([replacement.jobId,newest.jobId]);
+  }finally{await f.close();}
+ });
+ it('detects unseen history expiry plus a new completion without cleanup or a count change',async()=>{
+  const f=fixture(7);try{
+   f.seed('completed',7-500/day);f.seed('completed',1);const running=f.seed('running',0);
+   const first=await f.service().dashboardSnapshot({...query,limit:1});
+   expect((await f.service().dashboardSnapshot({...query,limit:1,terminalOffset:1})).executionHistoryRevision).toBe(first.executionHistoryRevision);
+   vi.spyOn(Date,'now').mockReturnValue(now+1000);
+   f.writer.upsertJob({...running,status:'completed',updatedAt:now+1000});f.writer.deleteJob(running.jobId);
+   const changed=await f.service().dashboardSnapshot({...query,limit:1,terminalOffset:1});
+   expect(changed.counts.executionCount).toBe(first.counts.executionCount);expect(changed.historyPolicy?.totalRemoved).toBe(first.historyPolicy?.totalRemoved);
+   expect(changed.historyPolicy?.policyRevision).toBe(first.historyPolicy?.policyRevision);expect(changed.executionHistoryRevision).not.toBe(first.executionHistoryRevision);
+   expect((await f.service().dashboardSnapshot({...query,limit:1})).terminalRows[0].jobId).toBe(running.jobId);
+  }finally{await f.close();}
+ });
+ it('does not invalidate a scoped list for unrelated-scope work',async()=>{
+  const f=fixture();try{
+   f.seed('running',1);f.seed('completed',1);const first=await f.service().dashboardSnapshot(query);
+   const activity=f.writer.createActivity({scopeId:other,title:'Other'}),agent=f.writer.createAgent({scopeId:other,agentName:'Other'});
+   f.seed('running',0,{scopeId:other,agentId:agent.agentId,activityId:activity.activityId});f.seed('completed',0,{scopeId:other,agentId:agent.agentId,activityId:activity.activityId});
+   const next=await f.service().dashboardSnapshot(query);expect(next.progressRevision).toBe(first.progressRevision);expect(next.executionHistoryRevision).toBe(first.executionHistoryRevision);
+   const global=await f.service().dashboardSnapshot({...query,scopeId:undefined});expect(global.progressRevision).not.toBe(first.progressRevision);
+  }finally{await f.close();}
+ });
+ it('refreshes blocking interactions and progress outside the first expanded running page',async()=>{
+  const f=fixture();try {
+   const seeded=Array.from({length:24},(_,i)=>f.seed('running',0,{createdAt:now-i*1000}));
+   const args={...query,limit:12},first=await f.service().dashboardSnapshot(args),tail=await f.service().dashboardSnapshot({...args,statusFilter:'running',statusOffset:12});
+   const previous={...first,activeRows:[...first.activeRows,...tail.activeRows],pagination:{...first.pagination,active:tail.pagination.active}};
+   const target=seeded.find(job=>job.jobId===tail.activeRows.at(-1)!.jobId)!;
+   f.writer.upsertJob({...target,version:2,updatedAt:now+1,summary:'Updated progress after expansion',pendingInteractions:[{interactionId:'new-question',isBlocking:true,kind:'user-input'}]});
+   const fresh=await f.service().dashboardSnapshot(args);expect(fresh.progressRevision).toBe(first.progressRevision);
+   const c=vm.createContext({mounted:true,hydrationEpoch:1,PAGE_LIMIT:12,previous,fresh,unwrap:(x:any)=>x,mergeRows:(a:any[],b:any[])=>[...new Map([...a,...b].map(r=>[r.rowKey,r])).values()],
+    dashboardRead:(request:any)=>f.service().dashboardSnapshot({...args,statusFilter:request.statusFilter,statusOffset:request.statusOffset,includeHistory:request.includeHistory})});
+   const source=DASHBOARD_CARD_HTML.split('\n').find(line=>/^\s*async function refreshExpandedRunning\(/.test(line));expect(source).toBeDefined();vm.runInContext(source!,c);
+   const refreshed=await vm.runInContext('refreshExpandedRunning(fresh,previous,{},1)',c);
+   expect(refreshed.activeRows).toHaveLength(24);expect(refreshed.pagination.active.offset).toBe(12);
+   expect(refreshed.activeRows.find((row:any)=>row.jobId===target.jobId)).toMatchObject({status:'input-required',summary:'Updated progress after expansion'});
+  }finally{await f.close();}
+ });
+ it('orders history by immutable end time across pages while progress keeps newest starts first',async()=>{
+  const f=fixture();try {
+   const minute=60000;
+   const long=f.seed('completed',0,{createdAt:now-120*minute,updatedAt:now-5*minute});
+   const short=f.seed('completed',0,{createdAt:now-30*minute,updatedAt:now-10*minute});
+   const failed=f.seed('failed',0,{createdAt:now-60*minute,updatedAt:now-minute});
+   const interrupted=f.seed('interrupted',0,{createdAt:now-10*minute,updatedAt:now-8*minute});
+   const early=f.seed('running',0,{createdAt:now-20*minute,updatedAt:now});
+   const late=f.seed('running',0,{createdAt:now-10*minute,updatedAt:now-minute});
+   const first=await f.service().dashboardSnapshot({...query,limit:2,problems:{view:'history',review:'pending',kind:'all',offset:0}});
+   const second=await f.service().dashboardSnapshot({...query,limit:2,terminalOffset:2});
+   expect(first.activeRows.map(row=>row.jobId)).toEqual([late.jobId,early.jobId]);
+   expect(first.terminalRows.map(row=>row.jobId)).toEqual([failed.jobId,long.jobId]);
+   expect(second.terminalRows.map(row=>row.jobId)).toEqual([interrupted.jobId,short.jobId]);
+   expect(first.problems!.rows.map(problem=>problem.jobId)).toEqual([failed.jobId,interrupted.jobId]);
+   // A later diagnostic/metadata update must not move a finished run.
+   f.writer.upsertJob({...short,updatedAt:now+minute});
+   const refreshed=await f.service().dashboardSnapshot({...query,limit:2});
+   expect(refreshed.terminalRows.map(row=>row.jobId)).toEqual([failed.jobId,long.jobId]);
+  }finally{await f.close();}
+ });
  it.each(['orphaned','idle','not-loaded'])('keeps current %s badges with healthy cached detail and detail loaded after health loss',async state=>{
   const f=fixture();try{
    const job=f.seed('running',0,{threadId:'runtime-health-cache',executionName:'Cached exact name',summary:'Cached retained detail'});
@@ -83,7 +157,7 @@ describe('Job-unit execution tabs and read-only exact detail',()=>{
    const after=await f.service().dashboardExecutionDetail!({scopeId:scope,jobId:job.jobId,expectedExecutionRevision:row.executionRevision,expectedPolicyRevision:row.policyRevision});
    expect(row.executionRevision).toBe(healthyRow.executionRevision);expect(after.execution.status).toBe('running');
    for(const result of [await renderer.render(row),await cachedExecutionRenderer(row,after,unhealthy.historyPolicy).render(row),await renderer.render(unhealthy.backgroundRows!.find(x=>x.jobId===job.jobId))]){
-    expect(result).toMatchObject({sameKey:true,sameDetail:true,reads:0});expect(result.texts).toContain(expected);expect(result.texts).not.toContain('running');expect(result.texts).toContain('Cached retained detail');
+    expect(result).toMatchObject({sameKey:true,sameDetail:true,reads:0});expect(result.texts).toContain(expected);expect(result.texts).not.toContain('running');expect(result.texts).not.toContain(job.jobId);expect(result.texts).not.toContain('Execution details');
    }
   }finally{await f.close();}
  });
@@ -94,8 +168,8 @@ describe('Job-unit execution tabs and read-only exact detail',()=>{
    const view=await f.service().dashboardSnapshot(query),row=[...view.activeRows,...view.terminalRows].find(x=>x.jobId===job.jobId)!;
    const detail=await f.service().dashboardExecutionDetail!({scopeId:scope,jobId:job.jobId,expectedExecutionRevision:row.executionRevision});
    const result=await cachedExecutionRenderer(row,detail,view.historyPolicy).render(row);expect(result).toMatchObject({sameKey:true,sameDetail:true,reads:0});
-   expect(result.texts).toContain(status==='cancelled'?'Cancelled':status);expect(result.texts).toContain('Exact cached preview');
-   if(['completed','failed','interrupted','cancelled'].includes(status)){const stale=await cachedExecutionRenderer(row,detail,view.historyPolicy).render({...row,status:'orphaned'});expect(stale.texts).toContain(status==='cancelled'?'Cancelled':status);expect(stale.texts).not.toContain('orphaned');}
+   expect(result.texts).toContain(status);expect(result.texts).not.toContain(job.jobId);
+   if(['completed','failed','interrupted','cancelled'].includes(status)){const stale=await cachedExecutionRenderer(row,detail,view.historyPolicy).render({...row,status:'orphaned'});expect(stale.texts).toContain(status);expect(stale.texts).not.toContain('orphaned');}
   }finally{await f.close();}
  });
 
@@ -243,6 +317,19 @@ describe('Job-unit execution tabs and read-only exact detail',()=>{
    const legacy=await f.service().dashboardSnapshot({...query,historyMode:undefined});expect(legacy.historyModeApplied).toBe('agents');expect(legacy.counts.executionCount).toBe(13);
   } finally {await f.close();}
  });
+ it('preserves each older Job model and reasoning effort in every history and problem page',async()=>{
+  const f=fixture();try {
+   const expected=new Map<string,string>();
+   for(let i=0;i<13;i++){const j=f.seed(i%2?'failed':'completed',1+i/10,{error:i%2?'Recorded error':undefined,executionDecision:{effectiveSelection:{model:'model-'+i,reasoningEffort:i%2?'high':'low'},processingSpeed:'standard'}});expected.set(j.jobId,'model-'+i);}
+   const problemIds:string[]=[];
+   for(const offset of [0,5,10]) { const v=await f.service().dashboardSnapshot({...query,terminalOffset:offset,problems:{kind:'all',review:'pending',offset:offset===10?5:offset}});
+    for(const row of v.terminalRows)expect(row.latestTurn?.execution?.model).toBe(expected.get(row.jobId!));
+    for(const problem of v.problems!.rows){expect(problem.row.latestTurn?.execution?.model).toBe(expected.get(problem.jobId!));expect(problem.row.latestTurn?.execution?.reasoningEffort).toBe('high');if(offset!==10)problemIds.push(problem.jobId!);}
+    expect(v.problems?.affectedExecutionCount).toBe(6);expect(v.problems?.page.total).toBe(6);
+   }
+   expect(new Set(problemIds).size).toBe(6);
+  }finally{await f.close();}
+ });
  it('makes exact scoped details agree with rows and rejects changed policy/content, wrong scope and unavailable Jobs',async()=>{
   const f=fixture(30);try {
    const j=f.seed('failed',1,{executionName:'Actual named Job',summary:'Stored content preview',error:'secret=abcdef0123456789 failed',result:{content:[{type:'text',text:'original retained result'}]}});
@@ -265,16 +352,16 @@ describe('Job-unit execution tabs and read-only exact detail',()=>{
    for(let n=0;n<input.length;n++){const result=f.service().dashboardExecutionDetail!({scopeId:scope,jobId:input[n].jobId});if(days===0||[6,20,40,100][n]<days)await expect(result).resolves.toMatchObject({jobId:input[n].jobId});else await expect(result).rejects.toThrow(/UNAVAILABLE/);}
   } finally {await f.close();}
  });
- it('reports interruption and cancellation separately, deduplicates linked Job events, and labels Jobless system events',async()=>{
+ it('shows only failed, interrupted and cancelled Jobs once, excluding normal Jobs and recovery/system events',async()=>{
   const f=fixture(30);try {
    const failed=f.seed('failed',1),interrupted=f.seed('interrupted',1),cancelled=f.seed('cancelled',1);
    const c={key:automaticRecoveryKey('recheck',[failed.jobId,'later-distinct']),scopeId:scope,agentId:f.agent.agentId,jobId:failed.jobId,kind:'recheck' as const};
    f.writer.automaticRecovery.observeRecheck(c,true,now);f.writer.automaticRecovery.observeRecheck({...c,key:automaticRecoveryKey('recheck',['jobless']),jobId:undefined},true,now);
    const v=await f.service().dashboardSnapshot({...query,limit:12,problems:{view:'history',review:'pending',kind:'all',offset:0}});const p=v.problems!;
-   expect(p.affectedExecutionCount).toBe(3);expect(p.systemIncidentCount).toBe(1);
+   expect(p.affectedExecutionCount).toBe(3);expect(p.page.total).toBe(3);expect(p.rows).toHaveLength(3);expect(p.rows.filter(x=>x.jobId===failed.jobId)).toHaveLength(1);
    expect(p.rows.find(x=>x.jobId===interrupted.jobId)?.kind).toBe('interrupted');expect(p.rows.find(x=>x.jobId===cancelled.jobId)?.kind).toBe('cancelled');
    expect(p.rows.filter(x=>x.source==='execution').every(x=>x.reason===null&&x.reasonAvailability==='unrecorded')).toBe(true);
-   expect(p.rows.find(x=>!x.jobId)?.executionAvailability).toBe('not-linked');
+   expect(p.rows.every(x=>x.source==='execution'&&x.executionAvailability==='retained')).toBe(true);
    expect(p.rows.every(x=>!x.canAcknowledge&&!x.canRecheck&&!x.canRetryStop)).toBe(true);
   } finally {await f.close();}
  });
@@ -282,8 +369,7 @@ describe('Job-unit execution tabs and read-only exact detail',()=>{
   const f=fixture(7);try {
    const old=f.seed('failed',40),current=f.seed('completed',1,{executionName:'Different current Job'});
    f.writer.automaticRecovery.observeRecheck({key:automaticRecoveryKey('recheck',['old-ref']),scopeId:scope,agentId:f.agent.agentId,jobId:old.jobId,kind:'recheck'},true,now);
-   const v=await f.service().dashboardSnapshot({...query,problems:{view:'history',review:'pending',kind:'all',offset:0}});expect(v.problems?.unavailableExecutionCount).toBe(1);
-   const event=v.problems!.rows.find(x=>x.jobId===old.jobId)!;expect(event.executionAvailability).toBe('unavailable');expect(event.executionName).toBeNull();expect(event.row.latestTurn?.jobId).not.toBe(current.jobId);
+   const v=await f.service().dashboardSnapshot({...query,problems:{view:'history',review:'pending',kind:'all',offset:0}});expect(v.problems?.affectedExecutionCount).toBe(0);expect(v.problems?.page.total).toBe(0);expect(v.problems?.rows).toEqual([]);expect(v.terminalRows[0]?.jobId).toBe(current.jobId);
   } finally {await f.close();}
  });
  it('keeps history detail revisions stable through unrelated runtime/progress updates and preserves archived error text',async()=>{

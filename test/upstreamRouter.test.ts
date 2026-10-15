@@ -4,6 +4,12 @@ import type { CodexUpstream, ToolResult, UpstreamWorkerAssignment } from "../src
 import { backendRoutingArgument, CodexBackendRouter } from "../src/upstreamRouter.js";
 
 describe("CodexBackendRouter", () => {
+  it("forwards the live thread inventory without resuming historical threads", async () => {
+    const app=fakeBackend("app-server");app.backend.listLoadedThreadIds=async()=>["live-thread"];
+    const router=new CodexBackendRouter("app-server",app.backend);
+    await expect(router.listLoadedThreadIds()).resolves.toEqual(["live-thread"]);
+    expect(app.calls).toEqual([]);await router.close();
+  });
   it("forwards ephemeral only for App Server thread starts", async () => {
     const app = fakeBackend("app-server");
     const router = new CodexBackendRouter("app-server", app.backend);
