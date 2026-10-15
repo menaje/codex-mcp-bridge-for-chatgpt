@@ -1,0 +1,19 @@
+import CodexBridgeKit
+import Foundation
+@main struct InstalledDetailProbe {
+ static func main() async throws {
+  let data=try Data(contentsOf:URL(fileURLWithPath:CommandLine.arguments[1]))
+  let target=try JSONDecoder().decode(DashboardExecutionDetailParameters.self,from:data)
+  let socket=FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/codex-mcp-bridge/run/bridge.sock").path
+  let client=BridgeCompanionClient(socketPath:socket)
+  for i in 0..<10 {
+   let at=ContinuousClock.now
+   var row:[String:Any]=["method":"detail","index":i,"selection":"private query-only snapshot terminal row"]
+   do {let result=try await client.dashboardExecutionDetail(target);row["ok"]=result.jobId==target.jobId && result.scopeId==target.scopeId && result.executionRevision==target.expectedExecutionRevision}
+   catch {row["ok"]=false;row["error"]=String(describing:type(of:error))}
+   let d=at.duration(to:ContinuousClock.now);row["ms"]=Double(d.components.seconds)*1000+Double(d.components.attoseconds)/1e15
+   let output=try JSONSerialization.data(withJSONObject:row,options:.sortedKeys)
+   print(String(data:output,encoding:.utf8)!);fflush(stdout)
+  }
+ }
+}

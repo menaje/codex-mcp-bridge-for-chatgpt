@@ -1,0 +1,18 @@
+{
+  "strictConcurrency": true,
+  "warningsAsErrors": true,
+  "runs": [
+    {
+      "log": "native-focused.log",
+      "tests": 32,
+      "failures": 0,
+      "commandsFilter": "CompletionNotificationWakeTests|CompletionNotificationOrderingTests|ConnectionRecoveryWindowTests|SettingsConnectionPresentationTests|UnixSocketRPCClientTests"
+    },
+    {
+      "log": "native-observation.log",
+      "tests": 8,
+      "failures": 0,
+      "commandsFilter": "AppPresentationTests.testIssue242|AppPresentationTests.testTimedOutBridgeObservationRetainsLastDashboardAsUnconfirmed|AppPresentationTests.testOlderDashboardFailureCannotReplaceANewerSuccessfulRead"
+    }
+  ]
+}

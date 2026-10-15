@@ -1,0 +1,42 @@
+{
+  "repositoryBase": "f8395a5fe643394397d82d050e6e91ddb4873db8",
+  "command": "npm run validate:affected -- --base origin/dev",
+  "finalResult": "passed",
+  "finalExitCode": 0,
+  "selection": {
+    "changedPaths": 19,
+    "node": false,
+    "macOS": false,
+    "reason": "audit documentation only; separate focused Node/Swift results recorded"
+  },
+  "schema": {
+    "cliVersion": "0.153.3",
+    "jsonFiles": 416,
+    "typeScriptFiles": 827,
+    "operationalCLIReplaced": false
+  },
+  "attempts": [
+    {
+      "log": "audit-validation.log",
+      "result": "failed",
+      "reason": "Ambient CLI 0.162.0-alpha.17.2 did not match the repository pin 0.153.3."
+    },
+    {
+      "log": "audit-validation-pinned.log",
+      "result": "failed",
+      "reason": "The private CLI pin could not be verified within the existing 5000 ms version-check budget."
+    },
+    {
+      "log": "audit-validation-pinned-retry.log",
+      "result": "passed",
+      "changedPaths": 18,
+      "setup": "Created the private CODEX_HOME directory, verified the same pin, and retried with unchanged check budgets."
+    },
+    {
+      "log": "audit-validation-final.log",
+      "result": "passed",
+      "changedPaths": 19
+    }
+  ],
+  "boundary": "CLI pin and HOME/CODEX_HOME used only for this audit validation. Existing version-check and schema-generation deadlines were unchanged. No runtime source or operational configuration changed."
+}

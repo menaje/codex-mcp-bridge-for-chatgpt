@@ -1,0 +1,92 @@
+[
+  {
+    "name": "InstalledDetailProbe.swift.txt",
+    "bytes": 1178,
+    "sha256": "74e1e348e80316a76a0d748e5da703dfa842879ced01e52a5e7586b817355b59"
+  },
+  {
+    "name": "InstalledReadProbe.swift.txt",
+    "bytes": 2470,
+    "sha256": "b67614ca584f8dbfc1172a255cb2ce815b71d347ed174a8bba0d185601746713"
+  },
+  {
+    "name": "README.md",
+    "bytes": 9583,
+    "sha256": "6c4c08e0e1b86cb0c02144426798dc99621780e629dcfdbbf6ec4c642d5f584c"
+  },
+  {
+    "name": "completion-counts.json",
+    "bytes": 2719,
+    "sha256": "bcd7b197176266de39d4ad01cd9d4ef3e3ca6229e530236a1b89140bc05b779b"
+  },
+  {
+    "name": "focused-test-summary.json",
+    "bytes": 11772,
+    "sha256": "f2201d25e800ad9bbca47180d05c94d790d2f2356de1ffbaa26e25e2530a3eeb"
+  },
+  {
+    "name": "identity.json",
+    "bytes": 982,
+    "sha256": "efd2984b05d1ba5894b94b6286c7ca2b3aca2302fd889c44147c659c974a99eb"
+  },
+  {
+    "name": "installed-detail.jsonl",
+    "bytes": 1137,
+    "sha256": "a4fabdc054284a0ed28ab6172b22f527a246055a02f2bb5b77d27d036953c603"
+  },
+  {
+    "name": "installed-read-summary.json",
+    "bytes": 883,
+    "sha256": "dd18235ce29fe1a80ade4b13d7d2938efbda8f37884b7ce1ee9dcbe9f94cfc87"
+  },
+  {
+    "name": "installed-reads.jsonl",
+    "bytes": 2994,
+    "sha256": "3d638561c0de6ab010a054b362ac4fd0a13f01e43ffef8b93fad0c31115fb82e"
+  },
+  {
+    "name": "native-test-summary.json",
+    "bytes": 664,
+    "sha256": "ac9a9fa0660452ab39c496c66b7667735f5ba62b40db60ae6c202f99a745ce85"
+  },
+  {
+    "name": "operational-observations.json",
+    "bytes": 1370,
+    "sha256": "c2f16487d8f8b71efc6bc5819d31e9d04cef6562fc8dcb462ad3d954c88f2097"
+  },
+  {
+    "name": "population.json",
+    "bytes": 692,
+    "sha256": "04161dbbf8c57a669f14481043793d24d57be26728bbe26973d34b52449b70fb"
+  },
+  {
+    "name": "private-evidence-receipt.json",
+    "bytes": 3363,
+    "sha256": "c8e30513c3146b220aa141e47b0844d831a6d70a11e2dcde63d6a666bd4cbdf9"
+  },
+  {
+    "name": "read-profile-installed-environment.json",
+    "bytes": 633,
+    "sha256": "e7224b8d73f4b74345af889c2d341b1dca5f91b647eab4af2b6461a858dd0755"
+  },
+  {
+    "name": "read-profile-inventory-control.json",
+    "bytes": 1280,
+    "sha256": "54718da1cd46ee5897c9ebd04e616e1ee09d3cc661d9a795fce892bec673aa39"
+  },
+  {
+    "name": "read-profile-live-query-only.json",
+    "bytes": 1293,
+    "sha256": "4492ae08ff54d5481408b0bd2ba30e3b6d6bdc3c92637b74595f1e44867952d9"
+  },
+  {
+    "name": "read-profile-snapshot.json",
+    "bytes": 1297,
+    "sha256": "6e7ee5ad8e2aa227606a915603a8a12efee53db33559a331ded1015641cd671f"
+  },
+  {
+    "name": "validation.json",
+    "bytes": 1420,
+    "sha256": "5b606cf3851dd8c1a93837b1e3f7ee1fb28c619f0a9cdc3c722c457838b0fe88"
+  }
+]

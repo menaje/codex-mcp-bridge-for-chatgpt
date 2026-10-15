@@ -1,0 +1,300 @@
+{
+  "sourceCommit": "f8395a5fe643394397d82d050e6e91ddb4873db8",
+  "success": true,
+  "total": 59,
+  "passed": 59,
+  "failed": 0,
+  "pending": 0,
+  "files": [
+    {
+      "name": "httpDiagnostics.test.ts",
+      "status": "passed",
+      "tests": [
+        {
+          "name": "bounded private HTTP evidence bounds requests and merged ingress/child records over the entire runtime lifetime",
+          "status": "passed"
+        },
+        {
+          "name": "bounded private HTTP evidence rejects unknown/invalid child IDs and reconstructs only allowlisted fields",
+          "status": "passed"
+        },
+        {
+          "name": "bounded private HTTP evidence makes observer failure inert and rejects duplicate trusted IDs",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "name": "issue242Characterization.test.ts",
+      "status": "passed",
+      "tests": [
+        {
+          "name": "issue 242 latest-dev characterization measures fresh query-only projections without changing results or writer ownership",
+          "status": "passed"
+        },
+        {
+          "name": "issue 242 latest-dev characterization separates general progress notices and empty claims from actual changed rows",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "name": "issue242Completion.test.ts",
+      "status": "passed",
+      "tests": [
+        {
+          "name": "issue 242 W3 durable native completions emits readiness only after the outer durable commit; excludes progress, verify, duplicates and rollback",
+          "status": "passed"
+        },
+        {
+          "name": "issue 242 W3 durable native completions has zero empty writer transactions and distinguishes a concurrent consumer winning after preflight",
+          "status": "passed"
+        },
+        {
+          "name": "issue 242 W3 durable native completions drains 25 durable completions in batches of at most ten with stable IDs and no Job execution",
+          "status": "passed"
+        },
+        {
+          "name": "issue 242 W3 durable native completions persists bounded delivery backoff, ignores wrong owners and recovers ack loss, lease expiry and restart",
+          "status": "passed"
+        },
+        {
+          "name": "issue 242 W3 durable native completions carries epoch and per-topic revision for lost/coalesced events and ignores unknown cursors",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "name": "issue242ProxyCharacterization.test.ts",
+      "status": "passed",
+      "tests": [
+        {
+          "name": "issue 242 internal proxy termination boundaries returns a structured unavailable result for reset before headers",
+          "status": "passed"
+        },
+        {
+          "name": "issue 242 internal proxy termination boundaries destroys a partial response after headers without turning it into a complete error",
+          "status": "passed"
+        },
+        {
+          "name": "issue 242 internal proxy termination boundaries distinguishes internal idle expiry",
+          "status": "passed"
+        },
+        {
+          "name": "issue 242 internal proxy termination boundaries records caller-first disconnect after a complete request body",
+          "status": "passed"
+        },
+        {
+          "name": "issue 242 internal proxy termination boundaries recovers after faults and accepts a valid delayed response",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "name": "issue242R502.test.ts",
+      "status": "passed",
+      "tests": [
+        {
+          "name": "R502 deterministic lifecycle races preserves queued response framing after late-error follows upstream end",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races preserves queued response framing after late-response-error follows upstream end",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races preserves queued response framing after late-timeout follows upstream end",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races returns structured unavailable before headers, then recovers",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races leaves partial responses incomplete, then recovers",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races expires an upstream that never responds before headers exactly once",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races preserves a complete application-owned timeout response before headers",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races releases a caller disconnected during its incomplete body",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races detaches a complete-body caller while its application action continues once",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races preserves a completed response through normal socket close and connection reuse",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races returns capacity exactly once after an idle expiry delayed by a high event-loop stall",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races correlates admitted/queued/dispatch and strips a caller-supplied trace id",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races joins public ingress with the real supervised child and application response",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races returns structured unavailable for a real child response exceeding the idle budget before headers",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races observes the real child's later response after its complete-body caller disconnects",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "name": "issue242R502Tunnel.test.ts",
+      "status": "passed",
+      "tests": [
+        {
+          "name": "compares direct resets and bridge responses with the pinned local Go tunnel classification",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "name": "issue242ReadTransport.test.ts",
+      "status": "passed",
+      "tests": [
+        {
+          "name": "issue 242 read transport forwards local deadlines and cancellation through supervisor IPC without cancelling work",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "name": "issue242Reads.test.ts",
+      "status": "passed",
+      "tests": [
+        {
+          "name": "issue 242 shared read contract hydrates only the requested scope and omits Session payloads from Settings and detail",
+          "status": "passed"
+        },
+        {
+          "name": "issue 242 shared read contract preserves paged ordering, counts and detail revisions with bounded SQL",
+          "status": "passed"
+        },
+        {
+          "name": "issue 242 shared read contract coalesces equal queries, cancelling A without cancelling B",
+          "status": "passed"
+        },
+        {
+          "name": "issue 242 shared read contract keeps the physical slot after the last waiter leaves, skips queued work and permits a fresh retry",
+          "status": "passed"
+        },
+        {
+          "name": "issue 242 shared read contract does not join a pending query after a committed write and includes queue wait in the caller deadline",
+          "status": "passed"
+        },
+        {
+          "name": "issue 242 shared read contract rejects A's completed late read after archive/delete and same-cwd B registration",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "name": "tunnelHealth.test.ts",
+      "status": "passed",
+      "tests": [
+        {
+          "name": "owned tunnel observation accepts 700ms endpoint latency with a complete first snapshot and never exposes bodies",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation retains recent external success after a multi-second API timeout without inventing endpoint success",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation does not establish startup readiness from a timestamp and missing first endpoints, including restart",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation expires cached success after 75 seconds of failed observations",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation immediately rejects explicit ready failure despite recent success",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation immediately rejects explicit health failure despite recent success",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation immediately rejects explicit external failure despite recent success",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation bounds an external control-plane outage with a frozen last-success metric while local APIs remain healthy",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation rejects a stale or implausibly future metric despite HTTP 200",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation shares physical probes and releases singleflight after timeout and cancellation",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation does not treat terminating a health command subprocess as daemon death",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation overrides cached success on actual daemon exit, including exit during a probe",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation fences PID mismatch and locator replacement before and after requests",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation rejects unexpected locator https://127.0.0.1:1 without sending requests",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation rejects unexpected locator http://example.test:1 without sending requests",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation rejects unexpected locator http://user:secret@127.0.0.1:1 without sending requests",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation rejects unexpected locator http://127.0.0.1:1/other without sending requests",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation rejects symlink locator and redirect rather than following them",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation does not hide a known HTTP failure behind a stalled body and fresh external success",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation bounds a stalled body and a too-large metric line and parses labelled metrics",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation rejects success delivered after an absolute deadline under event-loop delay",
+          "status": "passed"
+        }
+      ]
+    }
+  ]
+}

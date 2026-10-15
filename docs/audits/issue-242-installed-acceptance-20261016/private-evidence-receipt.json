@@ -1,0 +1,105 @@
+{
+  "boundary": "Raw data snapshot and process samples remain in the owner-only local evidence directory; never committed or uploaded. Other raw logs retained there. Paths and user data omitted here.",
+  "files": [
+    {
+      "name": "audit-validation-final.log",
+      "sha256": "8d4c855c16547dee13d46451aef31259802aed1974e024240bc222fe740c2dd4",
+      "bytes": 921
+    },
+    {
+      "name": "audit-validation-pinned-retry.log",
+      "sha256": "7af15113ae9c46e3fde4d1b2cf2f42dfac971816aa541b83f21dd36378e63011",
+      "bytes": 921
+    },
+    {
+      "name": "audit-validation-pinned.log",
+      "sha256": "aa356b23de90723844771028b8f5bde7d95d917bc985e97f6dff91f0743b1417",
+      "bytes": 1234
+    },
+    {
+      "name": "audit-validation.log",
+      "sha256": "4fd9caee088742e4dadb99eee7c5ceb847ef03ce7b689a6a22ef27b860d05281",
+      "bytes": 934
+    },
+    {
+      "name": "detail-selection-profile.json",
+      "sha256": "e2b14cd606864ea4669ac5651c1c4cc501ec4f0324f3193cc567b03979ac0281",
+      "bytes": 1292
+    },
+    {
+      "name": "detail-selection.mjs",
+      "sha256": "ad19dd41ca9fff606774f4ebf954d1089f2f18d73622e5ea633716d5ad039dd3",
+      "bytes": 2240
+    },
+    {
+      "name": "detail-target.json",
+      "sha256": "2e3aaacd6403f3fed656b0d09f9b83f8a6c97f54ab15cf478fb20dc001a60c30",
+      "bytes": 284
+    },
+    {
+      "name": "focused-tests.json",
+      "sha256": "3ef9baf430af06e08a78d3a6b0582a6b082812fb11d18610ccbefabd78bc1ace",
+      "bytes": 22937
+    },
+    {
+      "name": "focused-tests.log",
+      "sha256": "6e660a2be30cf9947a87760cfb4d3ac27ef6328ec67cc42bec72eb9da41dd84d",
+      "bytes": 66
+    },
+    {
+      "name": "InstalledDetailProbe",
+      "sha256": "c548f0c9cd74e6eb2ccdda0386d9689e0d5f05306519f0883b650d8e070f9d44",
+      "bytes": 6727144
+    },
+    {
+      "name": "InstalledReadProbe",
+      "sha256": "6c3b86b99829fb77c328237815235729a6a228ce7a84dc9bfc7de3c765851cd1",
+      "bytes": 6748432
+    },
+    {
+      "name": "native-focused.log",
+      "sha256": "3d4a35a12a2a86ba9a6ea2d3b26c997212a92e3f321e1ba6e5492877895cff1e",
+      "bytes": 11014
+    },
+    {
+      "name": "native-observation.log",
+      "sha256": "82454d8138d07f01d48c8f9335dc0c2d5aafd7e82643315adac65d9f8e29d97c",
+      "bytes": 3049
+    },
+    {
+      "name": "operational-snapshot.sqlite",
+      "sha256": "8ad0b2d7018bcd32cf1cfd230b4c18970165f9cd07173e99ae1d9d7023276fbb",
+      "bytes": 31219712
+    },
+    {
+      "name": "profile-installed-env.mjs",
+      "sha256": "7c5f372ec86630f9d0f36e0e83a1e0ee16a7a7b87e31a1bf647c2c179374239d",
+      "bytes": 1848
+    },
+    {
+      "name": "profile.mjs",
+      "sha256": "22ad3d94351c310585b04656519732224e7e31db89176f79bc2b189e555f79af",
+      "bytes": 2080
+    },
+    {
+      "name": "read-process.sample.txt",
+      "sha256": "3de30120f526ea983d6aa7a22f83d8807c84abbe5618c456884ed34274757c62",
+      "bytes": 386076
+    },
+    {
+      "name": "schema-cli-install.log",
+      "sha256": "907eb6007c7824329836f774fe9fd400ff4604c58f9e69b5e04eac935c651ae9",
+      "bytes": 236
+    },
+    {
+      "name": "state-owner.sample.txt",
+      "sha256": "f2040f6ca26f40065dd67539e3e5b772be01123c6e7d8e9c7c220fa555581d1f",
+      "bytes": 607338
+    },
+    {
+      "name": "swift-kit-build.log",
+      "sha256": "b65dc1f18fbaab1830791ab68897a533b0e788d510e3c49101eb00f28cf8a7f3",
+      "bytes": 147
+    }
+  ]
+}
