@@ -4,6 +4,8 @@
 > delivery and the no-card constraint with the [automatic blank goal relay](relay-delivery.md).
 > Existing ownership, receipt, stop and historical-data protections remain.
 
+> **현행 해석(2026-10-16):** 아래에 남은 “일반 Chat Pro 재개 API가 없다/제공되지 않는다”는 당시의 미확인 판단이지 공식 API 부재에 대한 검증된 단정이 아니다. 일반 Chat의 호스트 재개·권한·모델/문맥/사용량 연속성은 입증되지 않았으며, 현재 기본 중계 설계와 구현은 [#261](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/261)의 비표시 Relay를 따른다. 이 #247 계획의 W0~W5·과거 상태는 역사적 기록으로 보존한다.
+
 2026-10-13 최신 [#247 본문](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/247)과
 원래 W0~W5 첨부 `libfile_8c6be77f227081919b3cc07364012ad9`를 기준으로 한다.
 이 문서는 이전 계획의 실제 재개 시험을 선행 조건으로 둔 부분을 대체한다.
