@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Correct execution history loading, live status, thread handoff, duplicate reasons and appended-page expiry.",
+  "breaking": false,
+  "migration": null
+}

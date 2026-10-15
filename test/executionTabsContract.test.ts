@@ -47,7 +47,191 @@ function fixture(days=0) {
  return {writer,root,file,agent,activity,seed,service,async close(){await server?.close();reader?.close();writer.close();}};
 }
 const query={scopeId:scope,historyMode:'jobs' as const,statusFilter:'all' as const,inspectRuntime:false,includeHistory:true,limit:5};
+class ExecutionElement {
+ children:ExecutionElement[]=[];dataset:Record<string,string>={};textContent='';hidden=false;open=false;disabled=false;
+ constructor(readonly tag:string,readonly className='',text=''){this.textContent=text;}
+ append(...items:ExecutionElement[]){this.children.push(...items)}appendChild(item:ExecutionElement){this.append(item);return item}addEventListener(){}
+ texts():string[]{return [this.textContent,...this.children.flatMap(c=>c.texts())]}
+}
+function cachedExecutionRenderer(row:any,detail:any,historyPolicy:any){
+ const c=vm.createContext({Date,view:{historyModeApplied:'jobs',historyPolicy},widgetInstanceId:'health-widget',historySecurityGeneration:1,selectedScope:'conversation',
+  executionDetails:new Map(),executionRequests:new Map(),executionErrors:new Map(),expandedExecutions:new Set(),localeTag:'en',t:{},BUNDLES:{en:{}},reads:0,
+  callTool:async()=>{c.reads++;throw Error('valid cached detail must not be refetched');},
+  node:(tag:string,cls:string,text:string)=>new ExecutionElement(tag,cls,text),tone:()=>'',statusLabel:(status:string)=>status,scheduleSizeChanged:()=>{}});
+ for(const name of ['uiText','jobRowVisible','executionTarget','executionKey','executionFresh','executionCached'])
+  vm.runInContext(DASHBOARD_CARD_HTML.split('\n').find(line=>new RegExp('^\\s*function '+name+'\\(').test(line))!,c);
+ vm.runInContext(DASHBOARD_CARD_HTML.split('\n').find(line=>/^\s*async function loadExecutionDetail\(/.test(line))!,c);
+ const start=DASHBOARD_CARD_HTML.indexOf('    function appendExecutionRecord('),end=DASHBOARD_CARD_HTML.indexOf('    function historyKey(',start);
+ vm.runInContext(DASHBOARD_CARD_HTML.slice(start,end),c);c.row=row;c.detail=detail;
+ vm.runInContext('target=executionTarget(row);cacheKey=executionKey(target);executionDetails.set(cacheKey,{detail,expiresAt:target.expiresAt})',c);
+ return {async render(next:any){c.row=next;c.parent=new ExecutionElement('div');
+  vm.runInContext('nextTarget=executionTarget(row);sameKey=cacheKey===executionKey(nextTarget);sameDetail=executionCached(nextTarget)===detail;appendExecutionRecord(parent,row)',c);
+  await vm.runInContext('loadExecutionDetail(row)',c);
+  return {texts:c.parent.texts() as string[],sameKey:c.sameKey,sameDetail:c.sameDetail,reads:c.reads};
+ }};
+}
 describe('Job-unit execution tabs and read-only exact detail',()=>{
+ it.each(['orphaned','idle','not-loaded'])('keeps current %s badges with healthy cached detail and detail loaded after health loss',async state=>{
+  const f=fixture();try{
+   const job=f.seed('running',0,{threadId:'runtime-health-cache',executionName:'Cached exact name',summary:'Cached retained detail'});
+   const healthy=await f.service().dashboardSnapshot(query),healthyRow=healthy.activeRows.find(x=>x.jobId===job.jobId)!;
+   const cached=await f.service().dashboardExecutionDetail!({scopeId:scope,jobId:job.jobId,expectedExecutionRevision:healthyRow.executionRevision,expectedPolicyRevision:healthyRow.policyRevision});
+   const renderer=cachedExecutionRenderer(healthyRow,cached,healthy.historyPolicy);
+   expect((await renderer.render(healthyRow)).texts).toContain('running');
+   const unhealthy=await f.service().dashboardSnapshotWithEnrichment!(query,{runtimeByAgent:[[f.agent.agentId,{state,backgroundProcessState:'confirmed',backgroundProcessCount:1}]],runtimeProbeSkippedAgents:0,weeklyUsage:null,summary:{...healthy.enrichment,state:'enriched'}} as any);
+   const row=unhealthy.activeRows.find(x=>x.jobId===job.jobId)!,expected=state==='orphaned'?'orphaned':'liveness-unknown';
+   const after=await f.service().dashboardExecutionDetail!({scopeId:scope,jobId:job.jobId,expectedExecutionRevision:row.executionRevision,expectedPolicyRevision:row.policyRevision});
+   expect(row.executionRevision).toBe(healthyRow.executionRevision);expect(after.execution.status).toBe('running');
+   for(const result of [await renderer.render(row),await cachedExecutionRenderer(row,after,unhealthy.historyPolicy).render(row),await renderer.render(unhealthy.backgroundRows!.find(x=>x.jobId===job.jobId))]){
+    expect(result).toMatchObject({sameKey:true,sameDetail:true,reads:0});expect(result.texts).toContain(expected);expect(result.texts).not.toContain('running');expect(result.texts).toContain('Cached retained detail');
+   }
+  }finally{await f.close();}
+ });
+ it.each(['input-required','approval-required','terminating','termination-failed','completed','failed','interrupted','cancelled'])('preserves %s presentation and exact-detail cache content',async status=>{
+  const f=fixture();try{
+   const blocking=status==='approval-required'?'command-approval':status==='input-required'?'question':undefined;
+   const job=f.seed(blocking?'running':status,0,{summary:'Exact cached preview',...(blocking?{pendingInteractions:[{interactionId:'blocking',isBlocking:true,kind:blocking}]}:{})});
+   const view=await f.service().dashboardSnapshot(query),row=[...view.activeRows,...view.terminalRows].find(x=>x.jobId===job.jobId)!;
+   const detail=await f.service().dashboardExecutionDetail!({scopeId:scope,jobId:job.jobId,expectedExecutionRevision:row.executionRevision});
+   const result=await cachedExecutionRenderer(row,detail,view.historyPolicy).render(row);expect(result).toMatchObject({sameKey:true,sameDetail:true,reads:0});
+   expect(result.texts).toContain(status==='cancelled'?'Cancelled':status);expect(result.texts).toContain('Exact cached preview');
+   if(['completed','failed','interrupted','cancelled'].includes(status)){const stale=await cachedExecutionRenderer(row,detail,view.historyPolicy).render({...row,status:'orphaned'});expect(stale.texts).toContain(status==='cancelled'?'Cancelled':status);expect(stale.texts).not.toContain('orphaned');}
+  }finally{await f.close();}
+ });
+
+ it('marks an omitted history body as omitted so first History selection fetches it',async()=>{
+  const f=fixture();try{
+   f.seed('completed',1);
+   const first=await f.service().dashboardSnapshot({...query,includeHistory:false});
+   expect(first.historyIncluded).toBe(false);expect(first.terminalRows).toEqual([]);expect(first.counts.executionCount).toBe(1);
+   const fetched=await f.service().dashboardSnapshot({...query,includeHistory:true});expect(fetched.historyIncluded).toBe(true);expect(fetched.terminalRows).toHaveLength(1);
+   const c=vm.createContext({view:first,selectedStatus:'all',problemMutationInFlight:false,mounted:true,historyLoadQueued:false,busy:false,requests:0,
+    closeWorkDetails:()=>{},syncStatusFilter:()=>{},reload:async()=>{c.requests++;c.view=fetched;},paint:()=>{}});
+   vm.runInContext(DASHBOARD_CARD_HTML.split('\n').find(x=>/^\s*async function selectStatus\(/.test(x))!,c);
+   await vm.runInContext('selectStatus("history")',c);expect(c.requests).toBe(1);expect(c.view.terminalRows).toHaveLength(1);
+  }finally{await f.close();}
+ });
+ it.each(['orphaned','idle','not-loaded'])('preserves %s runtime health on exact active Job rows and background owners',async state=>{
+  const f=fixture();try{
+   const live=f.seed('running',0,{threadId:'runtime-health-thread'});f.seed('completed',1);
+   const first=await f.service().dashboardSnapshot(query);
+   const view=await f.service().dashboardSnapshotWithEnrichment!(query,{runtimeByAgent:[[f.agent.agentId,{state,backgroundProcessState:'confirmed',backgroundProcessCount:1}]],runtimeProbeSkippedAgents:0,weeklyUsage:null,summary:{...first.enrichment,state:'enriched'}} as any);
+   const expected=state==='orphaned'?'orphaned':'liveness-unknown',row=view.activeRows.find(x=>x.jobId===live.jobId)!;
+   expect(row.status).toBe(expected);expect(row.latestTurn?.status).toBe(expected);
+   expect(view.backgroundRows?.find(x=>x.jobId===live.jobId)?.status).toBe(expected);
+   expect(view.terminalRows[0].status).toBe('completed');
+   await expect(f.service().dashboardExecutionDetail!({scopeId:scope,jobId:live.jobId,expectedExecutionRevision:row.executionRevision})).resolves.toMatchObject({jobId:live.jobId});
+  }finally{await f.close();}
+ });
+ it.each(['running','completed'])('routes an exact %s Job handoff to its current owning Agent thread and rejects stale or unrelated targets',async status=>{
+  const f=fixture();try{
+   f.writer.linkAgentThread({agentId:f.agent.agentId,threadId:'33333333-3333-4333-8333-333333333333',backendKind:'app-server',cwd:f.root,sandbox:'read-only',contextMode:'fresh',now});
+   const job=f.seed(status,0,{threadId:'33333333-3333-4333-8333-333333333333'});
+   f.writer.upsertSession({threadId:'33333333-3333-4333-8333-333333333333',scopeId:scope,cwd:f.root,lastUsedAt:now,backendKind:'app-server',visibleInCodexApp:true});
+   const handoff=vi.spyOn(CodexJobRegistry.prototype,'threadHandoff').mockReturnValue({phase:'released',handoffRequested:true,evidence:'thread-unloaded'} as any);
+   const v=await f.service().dashboardSnapshot(query),row=[...v.activeRows,...v.terminalRows].find(x=>x.jobId===job.jobId)!;
+   expect(row.codexThreadUrl).toBe('codex://threads/33333333-3333-4333-8333-333333333333');
+   await expect(f.service().threadHandoff({rowKey:row.rowKey,codexThreadUrl:row.codexThreadUrl!,action:'request'})).resolves.toMatchObject({phase:'released',canOpen:true});
+   expect(handoff).toHaveBeenCalledWith('33333333-3333-4333-8333-333333333333','request');
+   await expect(f.service().threadHandoff({rowKey:row.rowKey,codexThreadUrl:'codex://threads/foreign-thread',action:'request'})).rejects.toThrow(/TARGET_CHANGED/);
+   f.writer.linkAgentThread({agentId:f.agent.agentId,threadId:'44444444-4444-4444-8444-444444444444',backendKind:'app-server',cwd:f.root,sandbox:'read-only',contextMode:'fresh',now:now+1});
+   await expect(f.service().threadHandoff({rowKey:row.rowKey,codexThreadUrl:row.codexThreadUrl!,action:'request'})).rejects.toThrow(/TARGET_CHANGED/);
+   expect(handoff).toHaveBeenCalledTimes(1);
+  }finally{await f.close();}
+ });
+
+ it.each(['running','completed'])('keeps canonical links and exact handoff for an uppercase-thread %s Job',async status=>{
+  const f=fixture();try{
+   const threadId='AABBCCDD-ABCD-4ABC-8ABC-AABBCCDDEEFF',url='codex://threads/'+threadId.toLowerCase();
+   f.writer.linkAgentThread({agentId:f.agent.agentId,threadId,backendKind:'app-server',cwd:f.root,sandbox:'read-only',contextMode:'fresh',now});
+   f.writer.upsertSession({threadId,scopeId:scope,cwd:f.root,lastUsedAt:now,backendKind:'app-server',visibleInCodexApp:true});
+   const job=f.seed(status,0,{threadId});const handoff=vi.spyOn(CodexJobRegistry.prototype,'threadHandoff').mockReturnValue({phase:'released',handoffRequested:true,evidence:'thread-unloaded'} as any);
+   const view=await f.service().dashboardSnapshot(query),row=[...view.activeRows,...view.terminalRows].find(x=>x.jobId===job.jobId)!;
+   expect(row.codexThreadUrl).toBe(url);
+   await expect(f.service().threadHandoff({rowKey:row.rowKey,codexThreadUrl:url,action:'request'})).resolves.toMatchObject({canOpen:true});
+   expect(handoff).toHaveBeenCalledWith(threadId,'request');
+  }finally{await f.close();}
+ });
+ it('resolves a retained older terminal Job when the newer Job has expired, with foreign and policy fences',async()=>{
+  const f=fixture(7);try{
+   const threadId='abcdefab-abcd-4abc-8abc-abcdefabcdef',url='codex://threads/'+threadId;
+   f.writer.linkAgentThread({agentId:f.agent.agentId,threadId,backendKind:'app-server',cwd:f.root,sandbox:'read-only',contextMode:'fresh',now});
+   f.writer.upsertSession({threadId,scopeId:scope,cwd:f.root,lastUsedAt:now,backendKind:'app-server',visibleInCodexApp:true});
+   const retained=f.seed('completed',6,{threadId,createdAt:now-10*day}),expired=f.seed('completed',8,{threadId,createdAt:now-9*day});
+   expect(f.writer.latestControlJobs([f.agent.agentId]).get(f.agent.agentId)?.jobId).toBe(expired.jobId);
+   const handoff=vi.spyOn(CodexJobRegistry.prototype,'threadHandoff').mockReturnValue({phase:'released',handoffRequested:true,evidence:'thread-unloaded'} as any);
+   const view=await f.service().dashboardSnapshot(query),row=view.terminalRows.find(x=>x.jobId===retained.jobId)!;
+   expect(view.counts.executionCount).toBe(1);expect(row.codexThreadUrl).toBe(url);
+   await expect(f.service().threadHandoff({rowKey:row.rowKey,codexThreadUrl:url,action:'request'})).resolves.toMatchObject({canOpen:true});
+   await expect(f.service().threadHandoff({rowKey:row.rowKey,codexThreadUrl:'codex://threads/ffffffff-ffff-4fff-8fff-ffffffffffff',action:'request'})).rejects.toThrow(/TARGET_CHANGED/);
+   f.writer.writeSettings({historyRetentionDays:0},1,now);
+   const all=await f.service().dashboardSnapshot(query),expiredRow=all.terminalRows.find(x=>x.jobId===expired.jobId)!;
+   f.writer.writeSettings({historyRetentionDays:7},2,now);
+   await expect(f.service().threadHandoff({rowKey:expiredRow.rowKey,codexThreadUrl:url,action:'request'})).rejects.toThrow(/TARGET_CHANGED/);
+   expect(handoff).toHaveBeenCalledTimes(1);
+   f.writer.maintainRetention(now);expect(f.writer.workHistory.expired(expired.jobId)).toBe(true);
+   await expect(f.service().threadHandoff({rowKey:row.rowKey,codexThreadUrl:url,action:'request'})).resolves.toMatchObject({canOpen:true});
+   f.writer.writeSettings({historyRetentionDays:0},3,now);
+   await expect(f.service().threadHandoff({rowKey:expiredRow.rowKey,codexThreadUrl:url,action:'request'})).rejects.toThrow(/TARGET_CHANGED/);
+   expect(handoff).toHaveBeenCalledTimes(2);
+  }finally{await f.close();}
+ });
+ it.each(['running','completed'])('preserves exact non-UUID %s thread links through their UUID session route',async status=>{
+  const f=fixture();try{
+   const threadId='opaque-app-thread',sessionId='ABCDEFAB-ABCD-4ABC-8ABC-ABCDEFABCDEF',url='codex://threads/'+sessionId.toLowerCase();
+   f.writer.linkAgentThread({agentId:f.agent.agentId,threadId,sessionId,backendKind:'app-server',cwd:f.root,sandbox:'read-only',contextMode:'fresh',now});
+   f.writer.upsertSession({threadId,sessionId,scopeId:scope,cwd:f.root,lastUsedAt:now,backendKind:'app-server',visibleInCodexApp:true});
+   const job=f.seed(status,0,{threadId});const handoff=vi.spyOn(CodexJobRegistry.prototype,'threadHandoff').mockReturnValue({phase:'released',handoffRequested:true,evidence:'thread-unloaded'} as any);
+   const view=await f.service().dashboardSnapshot(query),row=[...view.activeRows,...view.terminalRows].find(x=>x.jobId===job.jobId)!;
+   expect(row.codexThreadUrl).toBe(url);
+   for(const action of ['request','status','cancel'] as const){await expect(f.service().threadHandoff({rowKey:row.rowKey,codexThreadUrl:url,action})).resolves.toMatchObject({canOpen:true});expect(handoff).toHaveBeenLastCalledWith(threadId,action);}
+   const legacy=await f.service().dashboardSnapshot({...query,historyMode:undefined}),agentRow=[...legacy.activeRows,...legacy.terminalRows].find(x=>x.codexThreadUrl===url)!;
+   await expect(f.service().threadHandoff({rowKey:agentRow.rowKey,codexThreadUrl:url,action:'request'})).resolves.toMatchObject({canOpen:true});expect(handoff).toHaveBeenLastCalledWith(threadId,'request');
+   f.writer.linkAgentThread({agentId:f.agent.agentId,threadId:'different-opaque-thread',sessionId,backendKind:'app-server',cwd:f.root,sandbox:'read-only',contextMode:'fresh',now:now+1});
+   await expect(f.service().threadHandoff({rowKey:row.rowKey,codexThreadUrl:url,action:'request'})).rejects.toThrow(/TARGET_CHANGED/);
+   await expect(f.service().threadHandoff({rowKey:row.rowKey,codexThreadUrl:url,action:'status'})).resolves.toMatchObject({canOpen:true});expect(handoff).toHaveBeenLastCalledWith(threadId,'status');
+   await expect(f.service().threadHandoff({rowKey:agentRow.rowKey,codexThreadUrl:url,action:'status'})).rejects.toThrow(/TARGET_CHANGED/);
+  }finally{await f.close();}
+ });
+ it('prefers an exact UUID thread over a different UUID session alias',async()=>{
+  const f=fixture();try{
+   const threadId='abcdefab-abcd-4abc-8abc-abcdefabcdef',sessionId='12345678-1234-4234-8234-123456789012';
+   f.writer.linkAgentThread({agentId:f.agent.agentId,threadId,sessionId,backendKind:'app-server',cwd:f.root,sandbox:'read-only',contextMode:'fresh',now});
+   f.writer.upsertSession({threadId,sessionId,scopeId:scope,cwd:f.root,lastUsedAt:now,backendKind:'app-server',visibleInCodexApp:true});
+   const job=f.seed('completed',0,{threadId}),handoff=vi.spyOn(CodexJobRegistry.prototype,'threadHandoff').mockReturnValue({phase:'released',handoffRequested:true,evidence:'thread-unloaded'} as any);
+   const row=(await f.service().dashboardSnapshot(query)).terminalRows.find(x=>x.jobId===job.jobId)!;expect(row.codexThreadUrl).toBe('codex://threads/'+threadId);
+   await expect(f.service().threadHandoff({rowKey:row.rowKey,codexThreadUrl:'codex://threads/'+sessionId,action:'request'})).rejects.toThrow(/TARGET_CHANGED/);expect(handoff).not.toHaveBeenCalled();
+  }finally{await f.close();}
+ });
+ it.each([['running','AABBCCDD-ABCD-4ABC-8ABC-AABBCCDDEEFF',undefined],['completed','AABBCCDD-ABCD-4ABC-8ABC-AABBCCDDEEFF',undefined],['running','durable-opaque-thread','abcdefab-abcd-4abc-8abc-abcdefabcdef'],['completed','durable-opaque-thread','abcdefab-abcd-4abc-8abc-abcdefabcdef']])('restores durable %s handoff state from stored thread %s rather than its URL route',async(status,threadId,sessionId)=>{
+  const f=fixture();try{
+   f.writer.linkAgentThread({agentId:f.agent.agentId,threadId:threadId!,sessionId,backendKind:'app-server',cwd:f.root,sandbox:'read-only',contextMode:'fresh',now});
+   f.writer.upsertSession({threadId:threadId!,sessionId,scopeId:scope,cwd:f.root,lastUsedAt:now,backendKind:'app-server',visibleInCodexApp:true});
+   const job=f.seed(status,0,{threadId,backendKind:'app-server'});
+   expect(f.writer.threadConnections.update(threadId!,{phase:'waiting',handoffRequested:true,reason:'active-work'},now)).toBeDefined();
+   // Construct the read service only after durable intent exists: no client or
+   // service-local handoff cache can supply the restored waiting/cancel state.
+   const first=await f.service().dashboardSnapshot(query),row=[...first.activeRows,...first.terminalRows].find(x=>x.jobId===job.jobId)!;
+   expect(row.handoff).toMatchObject({phase:'waiting',requested:true,canOpen:false,reason:'active-work'});
+   const enriched=await f.service().dashboardSnapshotWithEnrichment!(query,{runtimeByAgent:[[f.agent.agentId,{state:status==='running'?'busy':'idle',backgroundProcessState:'confirmed',backgroundProcessCount:1}]],runtimeProbeSkippedAgents:0,weeklyUsage:null,summary:{...first.enrichment,state:'enriched'}} as any);
+   expect(enriched.backgroundRows).toHaveLength(1);expect(enriched.backgroundRows![0].handoff).toMatchObject({phase:'waiting',requested:true,canOpen:false});
+   const legacy=await f.service().dashboardSnapshot({...query,historyMode:undefined}),legacyRows=[...legacy.activeRows,...legacy.terminalRows,...legacy.idleRows].filter(x=>x.codexThreadUrl===row.codexThreadUrl);
+   expect(legacyRows.length).toBeGreaterThan(0);expect(legacyRows.every(x=>x.handoff?.requested===true)).toBe(true);
+   f.writer.threadConnections.update(threadId!,{phase:'released',handoffRequested:true,evidence:'worker-exited'},now+1);
+   const released=await f.service().dashboardSnapshot(query);expect([...released.activeRows,...released.terminalRows].find(x=>x.jobId===job.jobId)?.handoff).toMatchObject({phase:'released',requested:true,canOpen:true});
+  }finally{await f.close();}
+ });
+ it('projects the stored Agent thread handoff when its Job uses different UUID case',async()=>{
+  const f=fixture();try{
+   const threadId='aabbccdd-abcd-4abc-8abc-aabbccddeeff';
+   f.writer.linkAgentThread({agentId:f.agent.agentId,threadId,backendKind:'app-server',cwd:f.root,sandbox:'read-only',contextMode:'fresh',now});
+   f.writer.upsertSession({threadId,scopeId:scope,cwd:f.root,lastUsedAt:now,backendKind:'app-server',visibleInCodexApp:true});
+   const job=f.seed('running',0,{threadId:threadId.toUpperCase(),backendKind:'app-server'});
+   f.writer.threadConnections.update(threadId,{phase:'waiting',handoffRequested:true,reason:'active-work'},now);
+   const view=await f.service().dashboardSnapshot(query),row=view.activeRows.find(x=>x.jobId===job.jobId)!;
+   expect(row.handoff).toMatchObject({phase:'waiting',requested:true,reason:'active-work'});
+  }finally{await f.close();}
+ });
  it('paginates every terminal Job independently of a single Agent/Activity and excludes active Jobs from executionCount',async()=>{
   const f=fixture();try {
    const jobs=Array.from({length:13},(_,n)=>f.seed(['completed','failed','interrupted','cancelled'][n%4],n+1,{error:n%4===1?'recorded failure':undefined}));

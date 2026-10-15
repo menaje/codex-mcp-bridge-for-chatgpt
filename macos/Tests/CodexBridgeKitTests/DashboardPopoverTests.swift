@@ -566,6 +566,106 @@ final class DashboardPopoverTests: XCTestCase {
     }
 
     @MainActor
+    func testReviewRetainedIncidentReasonSurvivesEarlierLinkedExecutionExpiry() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.jobsContract = true; f.state.rowCount = 1
+        let start = ISO8601DateFormatter().date(from: "2026-09-11T00:00:00Z")!
+        var clock = start
+        f.model.dashboardHistoryNow = { clock }
+        await f.model.refreshDashboard(enrich: false)
+        let problems = try XCTUnwrap(f.model.dashboard?.problems)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(try XCTUnwrap(problems.rows.first))) as? [String: Any])
+        var row = object["row"] as! [String: Any], turn = row["latestTurn"] as! [String: Any]
+        turn["endedAt"] = ISO8601DateFormatter().string(from: start.addingTimeInterval(-30 * 86400 + 1)); turn["error"] = "Retained incident failure"
+        row["latestTurn"] = turn; object["row"] = row; object["reason"] = "Retained incident failure"
+        object["occurredAt"] = ISO8601DateFormatter().string(from: start)
+        let problem = try JSONDecoder().decode(DashboardProblem.self, from: JSONSerialization.data(withJSONObject: object))
+        let section = DashboardProblemsSection(problems: problems)
+        XCTAssertNil(section.contextReason(problem, using: f.model), "Valid linked execution renders the reason once")
+        clock = start.addingTimeInterval(1)
+        XCTAssertFalse(ExecutionRecordPresentation.retained(problem.row, days: 30, now: clock))
+        var retainedObject = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(problems)) as? [String: Any])
+        retainedObject["rows"] = [object]
+        let retained = try JSONDecoder().decode(DashboardProblems.self, from: JSONSerialization.data(withJSONObject: retainedObject))
+        XCTAssertEqual(f.model.dashboardRetainedProblems(retained).count, 1)
+        XCTAssertEqual(section.contextReason(problem, using: f.model), "Retained incident failure",
+            "An unavailable execution cannot consume the still-retained incident reason")
+    }
+
+    @MainActor
+    func testReviewProblemReasonKeepsOnlyDistinctIncidentContext() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.jobsContract = true; f.state.rowCount = 1
+        await f.model.refreshDashboard(enrich: false)
+        let original = try XCTUnwrap(f.model.dashboard?.problems?.rows.first)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(original)) as? [String: Any])
+        var row = object["row"] as! [String: Any], turn = row["latestTurn"] as! [String: Any]
+        turn["error"] = "Exact failure"; object["reason"] = "Exact failure"
+        row["latestTurn"] = turn; object["row"] = row
+        func decoded() throws -> DashboardProblem { try JSONDecoder().decode(DashboardProblem.self, from: JSONSerialization.data(withJSONObject: object)) }
+        var problem = try decoded()
+        XCTAssertNil(ProblemReasonPresentation.contextReason(problem, turn: problem.row.latestTurn))
+        object["reason"] = "Worker recovery pending"; problem = try decoded()
+        XCTAssertEqual(ProblemReasonPresentation.contextReason(problem, turn: problem.row.latestTurn), "Worker recovery pending")
+        object["reason"] = "Exact failure"; object["jobId"] = NSNull(); object["source"] = "runtime"; object["executionAvailability"] = "not-linked"
+        problem = try decoded()
+        XCTAssertEqual(ProblemReasonPresentation.contextReason(problem, turn: problem.row.latestTurn), "Exact failure")
+    }
+
+    @MainActor
+    func testReviewMergedPagesScheduleEarlierLocalExpiryEvenIfRefreshFails() async throws {
+        for background in [false, true] {
+            let f = try PopoverFixture(); defer { f.remove() }
+            f.state.jobsContract = true; f.state.rowCount = 1
+            let start = ISO8601DateFormatter().date(from: "2026-09-11T00:00:00Z")!
+            var clock = start
+            f.model.dashboardHistoryNow = { clock }
+            await f.model.refreshDashboard(enrich: false)
+            var first = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(try XCTUnwrap(f.model.dashboard))) as? [String: Any])
+            let row = (first["terminalRows"] as! [[String: Any]])[0]
+            let page: [String: Any] = ["offset": 0, "limit": 12, "returned": 1, "total": 2, "returnedConversations": 1, "conversationTotal": 2, "hasNext": true, "hasPrevious": false]
+            first["activeRows"] = []; first["statusRows"] = []; first["problems"] = NSNull()
+            first["terminalRows"] = [row]
+            var pagination = first["pagination"] as! [String: Any]; pagination["terminal"] = page; first["pagination"] = pagination
+            first["backgroundRows"] = background ? [row] : []
+            first["backgroundPagination"] = page; first["backgroundRevision"] = "stable-owners"
+            func encoded(_ object: [String: Any]) throws -> String { String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self) }
+            f.state.dashboardJSON = try encoded(first)
+            await f.model.refreshDashboard(enrich: false)
+            var expiring = row, turn = row["latestTurn"] as! [String: Any]
+            turn["endedAt"] = ISO8601DateFormatter().string(from: start.addingTimeInterval(-30 * 86400 + 1))
+            turn["summary"] = "Expiring appended detail"
+            expiring["latestTurn"] = turn; expiring["rowKey"] = "appended-row"; expiring["jobId"] = "appended-job"
+            var next = first, nextPage = page
+            nextPage["offset"] = 1; nextPage["returned"] = 1; nextPage["hasNext"] = false; nextPage["hasPrevious"] = true
+            if background {
+                next["backgroundRows"] = [expiring]; next["backgroundPagination"] = nextPage
+                f.state.backgroundPageJSON = try encoded(next)
+                await f.model.loadMoreBackground()
+            } else {
+                next["terminalRows"] = [expiring]; pagination["terminal"] = nextPage; next["pagination"] = pagination
+                f.state.dashboardJSON = try encoded(next)
+                await f.model.loadMoreRecent()
+            }
+            let rows = background ? f.model.dashboard?.backgroundRows : f.model.dashboard?.terminalRows
+            XCTAssertEqual(rows?.count, 2)
+            let appended = try XCTUnwrap(rows?.last)
+            let target = try XCTUnwrap(f.model.executionTarget(row: appended))
+            XCTAssertGreaterThan(try XCTUnwrap(target.expiresAt), clock)
+            let before = f.state.dashboardReadCount
+            var invalidations = 0
+            let subscription = f.model.objectWillChange.sink { invalidations += 1 }
+            f.state.failDashboard = true; clock = start.addingTimeInterval(1)
+            try await Task.sleep(for: .milliseconds(1200))
+            XCTAssertGreaterThan(f.state.dashboardReadCount, before, "Merged \(background ? "Background" : "History") must reschedule the earlier boundary")
+            XCTAssertGreaterThan(invalidations, 0, "Local expiry must repaint even if refresh fails")
+            XCTAssertFalse(ExecutionRecordPresentation.retained(appended, days: 30, now: clock), "The repainted record must hide its expired summary and detail")
+            XCTAssertNotNil(f.model.dashboardErrorMessage)
+            subscription.cancel()
+        }
+    }
+
+    @MainActor
     func testReviewProblemOnlyExpiryRepaintsWithoutSuccessfulRefresh() async throws {
         let f = try PopoverFixture(); defer { f.remove() }
         f.state.jobsContract = true; f.state.rowCount = 1
@@ -622,6 +722,71 @@ final class DashboardPopoverTests: XCTestCase {
         XCTAssertEqual(snapshot.problems?.incidentCount, 5)
         XCTAssertEqual(ExecutionRecordPresentation.statusKey("cancelled"), "execution.cancelled")
         XCTAssertEqual(snapshot.terminalRows.last?.reasonAvailability, "unrecorded")
+    }
+
+    @MainActor
+    func testReviewLiveBadgeSurvivesHealthyExactDetailBeforeAndAfterHealthLoss() async throws {
+        for cacheBefore in [true, false] {
+            for (runtime, status) in [("orphaned", "orphaned"), ("idle", "liveness-unknown"), ("not-loaded", "liveness-unknown")] {
+                let f = try PopoverFixture(); defer { f.remove() }
+                f.state.jobsContract = true; f.state.rowCount = 1; f.state.exactDetailIsActive = true
+                f.model.dashboardHistoryNow = { ISO8601DateFormatter().date(from: "2026-09-11T00:00:00Z")! }
+                await f.model.refreshDashboard(enrich: false)
+                var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(try XCTUnwrap(f.model.dashboard))) as? [String: Any])
+                var row = (object["activeRows"] as! [[String: Any]])[0]
+                var turn = row["latestTurn"] as! [String: Any]
+                row["rowKey"] = "job-running"; row["jobId"] = "job-running"; row["status"] = "running"
+                turn["jobId"] = "job-running"; turn["status"] = "running"; turn["endedAt"] = NSNull(); row["latestTurn"] = turn
+                func publish(_ current: [String: Any]) async throws {
+                    object["activeRows"] = [current]; object["statusRows"] = [current]; object["terminalRows"] = []; object["problems"] = NSNull()
+                    f.state.dashboardJSON = String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+                    await f.model.refreshDashboard(enrich: false)
+                }
+                try await publish(row)
+                let healthy = try XCTUnwrap(f.model.dashboard?.activeRows.first)
+                let original = try XCTUnwrap(f.model.executionTarget(row: healthy))
+                if cacheBefore { await f.model.loadExecutionDetail(original) }
+                row["status"] = status; turn["status"] = status; row["latestTurn"] = turn
+                try await publish(row)
+                let unhealthy = try XCTUnwrap(f.model.dashboard?.activeRows.first)
+                let target = try XCTUnwrap(f.model.executionTarget(row: unhealthy))
+                XCTAssertEqual(target.revision, original.revision, "Runtime health does not mutate durable content identity")
+                await f.model.loadExecutionDetail(target)
+                XCTAssertEqual(f.state.exactDetailReads, 1, "Healthy cached detail must remain reusable")
+                XCTAssertEqual(f.model.executionDetail(target)?.execution.status, "running")
+                XCTAssertEqual(ExecutionRecordView(row: unhealthy).presentationStatus(using: f.model), status,
+                    "\(runtime), detail cached before health loss: \(cacheBefore)")
+                XCTAssertNotNil(f.model.executionDetail(original), "Badge correction must preserve the exact detail cache")
+                for currentStatus in ["running", "input-required", "approval-required", "terminating", "termination-failed"] {
+                    row["status"] = currentStatus; turn["status"] = currentStatus; row["latestTurn"] = turn
+                    row["backgroundProcessCount"] = currentStatus == "running" ? 1 : 0
+                    try await publish(row)
+                    let current = try XCTUnwrap(f.model.dashboard?.activeRows.first)
+                    XCTAssertEqual(ExecutionRecordView(row: current).presentationStatus(using: f.model), currentStatus)
+                    XCTAssertNotNil(f.model.executionDetail(f.model.executionTarget(row: current)))
+                }
+                XCTAssertEqual(f.state.exactDetailReads, 1)
+            }
+        }
+    }
+
+    @MainActor
+    func testReviewTerminalBadgeKeepsExactDetailPrecedence() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.jobsContract = true; f.state.rowCount = 1
+        f.model.dashboardHistoryNow = { ISO8601DateFormatter().date(from: "2026-09-11T00:00:00Z")! }
+        await f.model.refreshDashboard(enrich: false)
+        for row in try XCTUnwrap(f.model.dashboard?.terminalRows) {
+            let target = try XCTUnwrap(f.model.executionTarget(row: row))
+            await f.model.loadExecutionDetail(target)
+            XCTAssertEqual(ExecutionRecordView(row: row).presentationStatus(using: f.model), row.status)
+            var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(row)) as? [String: Any])
+            object["status"] = "orphaned"
+            let staleRow = try JSONDecoder().decode(DashboardRow.self, from: JSONSerialization.data(withJSONObject: object))
+            XCTAssertEqual(ExecutionRecordView(row: staleRow).presentationStatus(using: f.model), row.status,
+                "An ended Job retains exact terminal semantics")
+        }
+        XCTAssertEqual(f.state.exactDetailReads, 4)
     }
 
     @MainActor
@@ -1172,6 +1337,7 @@ private final class PopoverReplyState: @unchecked Sendable {
     var pagedDetail = false
     var jobsContract = false
     var rejectJobsMode = false
+    var exactDetailIsActive = false
     var exactDetailDelay: TimeInterval = 0
     private var exactReads = 0
     var exactDetailReads: Int { lock.withLock { exactReads } }
@@ -1360,8 +1526,10 @@ private final class PopoverReplyState: @unchecked Sendable {
             let job = params["jobId"] as? String ?? ""
             let status = job.replacingOccurrences(of: "job-", with: "")
             let row = executionFixture(status)
+            var execution = row["latestTurn"] as! [String: Any]
+            if exactDetailIsActive { execution["endedAt"] = NSNull() }
             result = ["kind": "dashboard-execution", "jobId": job, "scopeId": params["scopeId"]!,
-                "executionRevision": String(repeating: "e", count: 64), "policyRevision": String(repeating: "c", count: 64), "execution": row["latestTurn"]!]
+                "executionRevision": String(repeating: "e", count: 64), "policyRevision": String(repeating: "c", count: 64), "execution": execution]
             delay = exactDetailDelay
         case "dashboard.history-detail":
             lock.withLock { historyReads += 1 }

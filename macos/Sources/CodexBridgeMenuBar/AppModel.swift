@@ -381,7 +381,7 @@ final class AppModel: ObservableObject {
         dashboardHistoryExpiryTask?.cancel()
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let rows = (snapshot.statusRows ?? []) + snapshot.activeRows + snapshot.terminalRows + (snapshot.backgroundRows ?? []) + (snapshot.problems?.rows.map { $0.row } ?? [])
+        let rows = (snapshot.statusRows ?? []) + snapshot.activeRows + snapshot.terminalRows + snapshot.idleRows + (snapshot.backgroundRows ?? []) + (snapshot.problems?.rows.map { $0.row } ?? [])
         let dates = rows.compactMap { row -> Date? in
             if let raw = row.nextExpiryAt { return formatter.date(from: raw) ?? ISO8601DateFormatter().date(from: raw) }
             guard snapshot.historyModeApplied == "jobs", let raw = row.latestTurn?.endedAt,
@@ -3190,6 +3190,7 @@ final class AppModel: ObservableObject {
             merged.backgroundRows = ((merged.backgroundRows ?? []) + rows).filter { seen.insert($0.rowKey).inserted }
             merged.backgroundPagination = nextPage
             dashboard = merged
+            scheduleDashboardHistoryExpiry(merged)
         } catch {
             guard connection == connectionGeneration, generation == dashboardRequestGeneration else { return }
             dashboardErrorMessage = localizedErrorDescription(error)
@@ -3218,6 +3219,7 @@ final class AppModel: ObservableObject {
             merged.statusPagination = next.statusPagination
             merged.statusRowsComplete = next.statusPagination?.hasNext == false
             dashboard = merged
+            scheduleDashboardHistoryExpiry(merged)
         } catch { dashboardErrorMessage = localizedErrorDescription(error) }
     }
 
@@ -3251,7 +3253,9 @@ final class AppModel: ObservableObject {
                 bucket: .terminal,
                 requestedOffset: nextOffset
             )
-            self.dashboard = self.dashboardWithCurrentUsage(merged, previous: current)
+            let next = self.dashboardWithCurrentUsage(merged, previous: current)
+            self.dashboard = next
+            self.scheduleDashboardHistoryExpiry(next)
             self.lastDashboardRefresh = Date()
         }
     }
@@ -3280,7 +3284,9 @@ final class AppModel: ObservableObject {
                 bucket: .idle,
                 requestedOffset: nextOffset
             )
-            self.dashboard = self.dashboardWithCurrentUsage(merged, previous: current)
+            let next = self.dashboardWithCurrentUsage(merged, previous: current)
+            self.dashboard = next
+            self.scheduleDashboardHistoryExpiry(next)
             self.lastDashboardRefresh = Date()
         }
     }
