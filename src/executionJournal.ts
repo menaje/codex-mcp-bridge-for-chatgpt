@@ -30,7 +30,7 @@ export type ExecutionJournalStatus = {
 export function executionLane(operation: string, control: boolean): ExecutionLane {
   if (control) return "control";
   if (["callTool", "startThread", "continueThread", "forkThread"].includes(operation)) return "execution";
-  if (["probeThread", "listBackgroundTerminals", "listLoadedBackgroundTerminals"].includes(operation)) return "inspection";
+  if (["probeThread", "listBackgroundTerminals", "listLoadedBackgroundTerminals", "listLoadedThreadIds"].includes(operation)) return "inspection";
   return "metadata";
 }
 

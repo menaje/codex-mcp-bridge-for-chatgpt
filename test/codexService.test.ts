@@ -767,6 +767,15 @@ trust_level = "trusted"
     await expect(upstream.callTool("codex", {})).resolves.toEqual({ content: [] });
     await upstream.close();
   });
+  it("does not initialize a lazy backend to enumerate live threads", async () => {
+    const factory=vi.fn(async()=>({listTools:async()=>({}),close:async()=>{},callTool:async()=>({content:[]}),listLoadedThreadIds:async()=>["loaded"]}));
+    const upstream=new LazyCodexUpstream("app-server",APP_SERVER_CAPABILITIES,factory);
+    try {
+      await expect(upstream.listLoadedThreadIds()).resolves.toEqual([]);expect(factory).not.toHaveBeenCalled();
+      await upstream.callTool("codex",{});
+      await expect(upstream.listLoadedThreadIds()).resolves.toEqual(["loaded"]);expect(factory).toHaveBeenCalledOnce();
+    } finally {await upstream.close();}
+  });
   it("does not make model authentication or quota queries depend on optional billing access", async () => {
     const f = await fixture();
     vi.spyOn(f.service, "readCliAccount").mockResolvedValue(projectCodexAccount({ account: { type: "apiKey" } }, null));

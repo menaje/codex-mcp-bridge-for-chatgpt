@@ -2,6 +2,18 @@ import XCTest
 @testable import CodexBridgeKit
 
 final class BridgeModelsTests: XCTestCase {
+    func testBackgroundInventoryFailureRemainsUnknownAndOlderSnapshotsStillDecode() throws {
+        var object: [String: Any] = ["state": "enriched", "runtimeRequests": 0, "cacheHits": 0,
+            "timeouts": 0, "durationMs": 0, "usageTimedOut": false, "pendingReads": 0]
+        func decoded() throws -> CardEnrichment {
+            try JSONDecoder().decode(CardEnrichment.self, from: JSONSerialization.data(withJSONObject: object))
+        }
+        XCTAssertFalse(try decoded().hasFailures)
+        object["backgroundInventoryUnavailable"] = true
+        XCTAssertTrue(try decoded().hasFailures)
+        XCTAssertTrue(try decoded().isIncomplete)
+    }
+
     func testProjectRecoveryCapabilitiesPreserveIdentityAndAcceptOlderServers() throws {
         var capabilities: [String: Any] = [
             "availableAccessStrategies": ["read-only"],

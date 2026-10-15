@@ -251,6 +251,8 @@ export type CodexUpstream = {
     threadId: string,
     backendKind?: CodexBackendKind
   ): Promise<CodexBackgroundTerminal[] | null>;
+  /** Snapshot of already materialized threads in live workers; never starts or resumes a worker/thread. */
+  listLoadedThreadIds?(): Promise<string[] | null>;
   terminateBackgroundTerminal?(
     threadId: string,
     processId: string,

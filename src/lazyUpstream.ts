@@ -44,6 +44,7 @@ export class LazyCodexUpstream implements CodexUpstream {
   }
   async listBackgroundTerminals(...args: Args<"listBackgroundTerminals">) { return (await this.method("listBackgroundTerminals"))(...args); }
   async listLoadedBackgroundTerminals(...args: Args<"listLoadedBackgroundTerminals">) { return this.instance?.listLoadedBackgroundTerminals?.(...args) ?? null; }
+  async listLoadedThreadIds() { return this.instance ? this.instance.listLoadedThreadIds?.() ?? null : this.starting ? null : []; }
   async terminateBackgroundTerminal(...args: Args<"terminateBackgroundTerminal">) { return (await this.method("terminateBackgroundTerminal"))(...args); }
   async forceTerminateWorker(...args: Args<"forceTerminateWorker">) { return (await this.method("forceTerminateWorker"))(...args); }
   async respondToInteraction(...args: Args<"respondToInteraction">) { return (await this.method("respondToInteraction"))(...args); }

@@ -791,6 +791,43 @@ final class DashboardPopoverTests: XCTestCase {
     }
 
     @MainActor
+    func testHistoryPagesPreserveNewestEndOrderWhenStartOrderDiffers() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.jobsContract = true; f.state.rowCount = 1
+        let clock = ISO8601DateFormatter().date(from: "2026-09-11T00:00:00Z")!
+        f.model.dashboardHistoryNow = { clock }
+        await f.model.refreshDashboard(enrich: false)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(try XCTUnwrap(f.model.dashboard))) as? [String: Any])
+        var rows = object["terminalRows"] as! [[String: Any]]
+        for index in rows.indices {
+            var turn = rows[index]["latestTurn"] as! [String: Any]
+            let start = ISO8601DateFormatter().string(from: clock.addingTimeInterval(Double(-1000 + index * 100)))
+            turn["startedAt"] = start
+            turn["endedAt"] = ISO8601DateFormatter().string(from: clock.addingTimeInterval(Double(-10 - index * 10)))
+            rows[index]["createdAt"] = start; rows[index]["latestTurn"] = turn
+        }
+        let expected = rows.map { $0["jobId"] as! String }
+        func encoded(_ value: [String: Any]) throws -> String {
+            String(decoding: try JSONSerialization.data(withJSONObject: value), as: UTF8.self)
+        }
+        var pagination = object["pagination"] as! [String: Any]
+        var page: [String: Any] = ["offset": 0, "limit": 2, "returned": 2, "total": 4,
+            "returnedConversations": 1, "conversationTotal": 1, "hasPrevious": false, "hasNext": true]
+        object["terminalRows"] = Array(rows.prefix(2)); object["activeRows"] = []; object["statusRows"] = []
+        pagination["terminal"] = page; object["pagination"] = pagination; object["historyIncluded"] = true
+        f.state.dashboardJSON = try encoded(object)
+        await f.model.refreshDashboard(enrich: false)
+        XCTAssertEqual(DashboardPanel.history.rows(in: try XCTUnwrap(f.model.dashboard), now: clock).compactMap(\.jobId), Array(expected.prefix(2)))
+        page["offset"] = 2; page["hasPrevious"] = true; page["hasNext"] = false
+        object["terminalRows"] = Array(rows.suffix(2)); pagination["terminal"] = page; object["pagination"] = pagination
+        f.state.dashboardJSON = try encoded(object)
+        await f.model.loadMoreRecent()
+        let displayed = DashboardPanel.history.rows(in: try XCTUnwrap(f.model.dashboard), now: clock)
+        XCTAssertEqual(displayed.compactMap(\.jobId), expected)
+        XCTAssertEqual(DashboardAgentGroup.group(displayed).flatMap(\.rows).compactMap(\.jobId), expected)
+    }
+
+    @MainActor
     func testReviewLiveBadgeSurvivesHealthyExactDetailBeforeAndAfterHealthLoss() async throws {
         for cacheBefore in [true, false] {
             for (runtime, status) in [("orphaned", "orphaned"), ("idle", "liveness-unknown"), ("not-loaded", "liveness-unknown")] {

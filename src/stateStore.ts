@@ -1541,9 +1541,11 @@ export class BridgeStateStore {
     const args=[...statuses,...(scopeId ? [scopeId] : [])];
     const total=(this.database.prepare(`SELECT COUNT(*) n FROM jobs j WHERE ${predicate}`).get(...args) as {n:number}).n;
     const bounded=Math.max(1,Math.min(50,limit)),at=Math.min(Math.max(0,offset),total ? Math.floor((total-1)/bounded)*bounded : 0);
-    const ids=this.database.prepare(`SELECT job_id FROM jobs j WHERE ${predicate} ORDER BY created_at DESC,job_id DESC LIMIT ? OFFSET ?`).all(...args,bounded,at) as Array<{job_id:string}>;
+    const orderColumn=statuses.every(status=>["completed","failed","interrupted","cancelled"].includes(status)) ? "ended_at" : "created_at";
+    const ids=this.database.prepare(`SELECT job_id FROM jobs j WHERE ${predicate} ORDER BY ${orderColumn} DESC,job_id DESC LIMIT ? OFFSET ?`).all(...args,bounded,at) as Array<{job_id:string}>;
     const scopes=this.database.prepare(`SELECT DISTINCT j.scope_id FROM jobs j WHERE ${predicate}`).all(...args) as Array<{scope_id:string}>;
-    return {jobs:this.dashboardExecutionRecords(ids.map(x=>x.job_id),scopeId,now),total,offset:at,scopeIds:scopes.map(x=>x.scope_id)};
+    const records=new Map(this.dashboardExecutionRecords(ids.map(x=>x.job_id),scopeId,now).map(record=>[record.jobId,record]));
+    return {jobs:ids.flatMap(({job_id})=>{const record=records.get(job_id);return record ? [record] : [];}),total,offset:at,scopeIds:scopes.map(x=>x.scope_id)};
   }
 
   dashboardExecutionRecords(jobIds:readonly string[],scopeId?:string,now=Date.now()):DashboardExecutionRecord[] {

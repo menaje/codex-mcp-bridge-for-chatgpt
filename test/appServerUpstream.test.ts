@@ -198,6 +198,7 @@ describe("CodexAppServerUpstreamPool", () => {
   it("does not start or assign a worker for a loaded-only historical thread lookup", async () => {
     const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
     try {
+      await expect(pool.listLoadedThreadIds()).resolves.toEqual([]);
       await expect(
         pool.listLoadedBackgroundTerminals!("historical-thread", "app-server")
       ).resolves.toBeNull();
@@ -785,6 +786,7 @@ describe("CodexAppServerUpstreamPool", () => {
         selection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
       });
       const threadId = (result.structuredContent as { threadId: string }).threadId;
+      await expect(pool.listLoadedThreadIds()).resolves.toContain(threadId);
       await expect(
         pool.listLoadedBackgroundTerminals!(threadId, "app-server")
       ).resolves.toEqual([
@@ -804,6 +806,8 @@ describe("CodexAppServerUpstreamPool", () => {
       await expect(
         pool.terminateBackgroundTerminal!(threadId, "background-process-1", "app-server")
       ).resolves.toEqual({ terminated: false });
+      await pool.archiveThread(threadId);
+      await expect(pool.listLoadedThreadIds()).resolves.not.toContain(threadId);
     } finally {
       await pool.close();
     }

@@ -15,7 +15,7 @@ import {UserSettingsStore} from '../src/userSettings.js';
 const scope='11111111-1111-4111-8111-111111111111',other='22222222-2222-4222-8222-222222222222';
 afterEach(()=>vi.restoreAllMocks());
 
-async function fixture(count=3) {
+async function fixture(count=3,withInventory=false) {
   const root=await mkdtemp(path.join(tmpdir(),'dashboard-runtime-cache-')),file=path.join(root,'state.sqlite');
   const environment={...process.env,CODEX_MCP_BRIDGE_NO_AUTH:'1',CODEX_MCP_BRIDGE_CODEX:'/usr/bin/false',
     CODEX_MCP_BRIDGE_STATE_DATABASE_FILE:file,CODEX_MCP_BRIDGE_RUNTIME_HOME:path.join(root,'runtime'),
@@ -41,8 +41,9 @@ async function fixture(count=3) {
     return index===0||index===1 ? Array.from({length:index+2},(_,i)=>({processId:'process-'+i,itemId:'item-'+i,command:'fixture task',cwd:root})) : null;
   });
   const probe=vi.fn(async()=>({state:'resumable' as const,runtimeStatus:'idle' as const}));
+  const inventory=vi.fn(async()=>owners.slice(0,2).map(owner=>owner.threadId));
   const upstream={listTools:async()=>({tools:[]}),callTool:async()=>({content:[]}),close:async()=>{},
-    listLoadedBackgroundTerminals:list,probeThread:probe};
+    listLoadedBackgroundTerminals:list,probeThread:probe,...(withInventory?{listLoadedThreadIds:inventory}:{})};
   const server=createBridgeMcpServer(config,upstream,new SessionRegistry({stateStore:reader,projectionOnly:true}),jobs,undefined,
     new UserSettingsStore(config,{stateStore:reader,projectionOnly:true}),new ScopeResolver({stateStore:reader}),undefined,undefined,undefined,worker);
   const read=(enrich:boolean,scopeId?:string)=>server.applicationService.dashboardSnapshot({historyMode:'jobs',statusFilter:'all',includeHistory:true,limit:12,inspectRuntime:enrich,scopeId});
@@ -53,10 +54,93 @@ async function fixture(count=3) {
       status:'running',createdAt:now,updatedAt:now,version:1,threadId:owner.threadId});
     writer.setAgentExecutionState(owner.agentId,'active',{currentJobId:jobId,now});
   }
-  return {writer,reader,owners,list,probe,read,activateFirstOwner,async close(){await server.close();await worker.close();reader.close();writer.close();await rm(root,{recursive:true,force:true});}};
+  return {writer,reader,owners,list,probe,inventory,read,activateFirstOwner,async close(){await server.close();await worker.close();reader.close();writer.close();await rm(root,{recursive:true,force:true});}};
 }
 
 describe('background observations across isolated dashboard reads',()=>{
+  it('inspects only live materialized owners among hundreds of historical threads, including completed Jobs with live processes',async()=>{
+    const f=await fixture(800,true);try {
+      const next=await f.read(true);
+      expect(f.list.mock.calls.map(([id])=>id).sort()).toEqual(f.owners.slice(0,2).map(owner=>owner.threadId).sort());
+      expect(f.probe).not.toHaveBeenCalled();expect(next.counts.backgroundProcesses).toBe(5);
+      expect(next.backgroundRows).toHaveLength(2);expect(next.counts.runtimeProbeSkippedAgents).toBe(0);
+      expect(next.counts.backgroundProcessUnknownAgents).toBe(0);expect(next.enrichment.backgroundInventoryUnavailable).not.toBe(true);
+      const cached=await f.read(false);expect(cached.counts.backgroundProcesses).toBe(5);
+      expect(cached.counts.runtimeProbeSkippedAgents).toBe(0);expect(cached.enrichment.cacheHits).toBe(2);
+      expect(f.inventory).toHaveBeenCalledOnce();expect(f.list).toHaveBeenCalledTimes(2);
+      for(const [scopeId,count] of [[scope,2],[other,3]] as const) {
+        const scoped=await f.read(false,scopeId);expect(scoped.counts.backgroundProcesses).toBe(count);
+        expect(scoped.counts.runtimeProbeSkippedAgents).toBe(0);
+      }
+    }finally{await f.close();}
+  },20000);
+
+  it('drops cached processes as soon as their owner is no longer loaded and discovers newly loaded owners',async()=>{
+    const f=await fixture(20,true);try {
+      expect((await f.read(true)).counts.backgroundProcesses).toBe(5);
+      f.inventory.mockResolvedValue([]);
+      const unloaded=await f.read(true);expect(unloaded.counts.backgroundProcesses).toBe(0);
+      expect(unloaded.backgroundRows).toEqual([]);expect(unloaded.counts.runtimeProbeSkippedAgents).toBe(0);
+      expect(f.list).toHaveBeenCalledTimes(2);expect((await f.read(false)).counts.backgroundProcesses).toBe(0);
+      f.inventory.mockResolvedValue(f.owners.slice(0,2).map(owner=>owner.threadId));
+      const loaded=await f.read(true);expect(loaded.counts.backgroundProcesses).toBe(5);expect(loaded.backgroundRows).toHaveLength(2);
+      expect(f.list).toHaveBeenCalledTimes(4);
+    }finally{await f.close();}
+  },15000);
+
+  it('keeps an inventory failure explicit without inspecting the historical thread list',async()=>{
+    const f=await fixture(50,true);try {
+      f.inventory.mockRejectedValue(new Error('Worker inventory unavailable'));
+      const next=await f.read(true);expect(next.enrichment.backgroundInventoryUnavailable).toBe(true);
+      expect(f.list).not.toHaveBeenCalled();expect(f.probe).not.toHaveBeenCalled();
+      const cached=await f.read(false);expect(cached.enrichment.backgroundInventoryUnavailable).toBe(true);
+      expect(cached.backgroundRows).toEqual([]);expect(f.inventory).toHaveBeenCalledOnce();
+      f.inventory.mockResolvedValue(f.owners.slice(0,2).map(owner=>owner.threadId));
+      const recovered=await f.read(true);expect(recovered.enrichment.backgroundInventoryUnavailable).not.toBe(true);
+      expect(recovered.counts.backgroundProcesses).toBe(5);expect(f.list).toHaveBeenCalledTimes(2);
+    }finally{await f.close();}
+  },15000);
+
+  it('retains the last confirmed live owners while inventory is temporarily unavailable',async()=>{
+    const f=await fixture(20,true);try {
+      expect((await f.read(true)).counts.backgroundProcesses).toBe(5);
+      f.inventory.mockRejectedValue(new Error('Temporary inventory failure'));
+      const partial=await f.read(true);expect(partial.counts.backgroundProcesses).toBe(5);
+      expect(partial.enrichment.backgroundInventoryUnavailable).toBe(true);
+      const cached=await f.read(false);expect(cached.counts.backgroundProcesses).toBe(5);
+      expect(cached.enrichment.backgroundInventoryUnavailable).toBe(true);expect(f.list).toHaveBeenCalledTimes(2);
+    }finally{await f.close();}
+  },15000);
+
+  it('does not use an older unloaded inventory as proof about newly started work',async()=>{
+    const f=await fixture(3,true);try {
+      f.inventory.mockResolvedValue([]);await f.read(true);
+      f.activateFirstOwner();
+      const cached=await f.read(false,scope);expect(cached.counts.runtimeProbeSkippedAgents).toBe(1);
+      expect(f.list).not.toHaveBeenCalled();
+      f.inventory.mockResolvedValue([f.owners[0].threadId]);
+      expect((await f.read(true,scope)).counts.backgroundProcesses).toBe(2);
+    }finally{await f.close();}
+  },15000);
+
+  it('bounds and coalesces slow inventory reads, then publishes late completion to structural refreshes',async()=>{
+    const f=await fixture(10,true);let release:((ids:string[])=>void)|undefined;
+    try {
+      f.inventory.mockImplementation(()=>new Promise(resolve=>{release=resolve;}));
+      const first=await f.read(true);expect(first.enrichment.backgroundInventoryUnavailable).toBe(true);
+      expect(first.enrichment.pendingReads).toBe(1);expect(f.list).not.toHaveBeenCalled();
+      const pending=await f.read(false);expect(pending.enrichment.pendingReads).toBe(1);
+      await f.read(true);expect(f.inventory).toHaveBeenCalledOnce();
+      release!(f.owners.slice(0,2).map(owner=>owner.threadId));
+      await new Promise(resolve=>setTimeout(resolve,30));
+      const next=await f.read(false);expect(next.enrichment.backgroundInventoryUnavailable).not.toBe(true);
+      expect(next.counts.runtimeProbeSkippedAgents).toBe(2);
+      f.inventory.mockResolvedValue(f.owners.slice(0,2).map(owner=>owner.threadId));
+      const observed=await f.read(true);expect(observed.counts.backgroundProcesses).toBe(5);
+      expect(f.list).toHaveBeenCalledTimes(2);
+    }finally{release?.([]);await f.close();}
+  },15000);
+
   it.each(['unknown','error','orphaned'])('still observes loaded background processes when the liveness probe is %s',async state=>{
     const f=await fixture();try {
       f.activateFirstOwner();

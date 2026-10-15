@@ -71,6 +71,27 @@ function cachedExecutionRenderer(row:any,detail:any,historyPolicy:any){
  }};
 }
 describe('Job-unit execution tabs and read-only exact detail',()=>{
+ it('orders history by immutable end time across pages while progress keeps newest starts first',async()=>{
+  const f=fixture();try {
+   const minute=60000;
+   const long=f.seed('completed',0,{createdAt:now-120*minute,updatedAt:now-5*minute});
+   const short=f.seed('completed',0,{createdAt:now-30*minute,updatedAt:now-10*minute});
+   const failed=f.seed('failed',0,{createdAt:now-60*minute,updatedAt:now-minute});
+   const interrupted=f.seed('interrupted',0,{createdAt:now-10*minute,updatedAt:now-8*minute});
+   const early=f.seed('running',0,{createdAt:now-20*minute,updatedAt:now});
+   const late=f.seed('running',0,{createdAt:now-10*minute,updatedAt:now-minute});
+   const first=await f.service().dashboardSnapshot({...query,limit:2,problems:{view:'history',review:'pending',kind:'all',offset:0}});
+   const second=await f.service().dashboardSnapshot({...query,limit:2,terminalOffset:2});
+   expect(first.activeRows.map(row=>row.jobId)).toEqual([late.jobId,early.jobId]);
+   expect(first.terminalRows.map(row=>row.jobId)).toEqual([failed.jobId,long.jobId]);
+   expect(second.terminalRows.map(row=>row.jobId)).toEqual([interrupted.jobId,short.jobId]);
+   expect(first.problems!.rows.map(problem=>problem.jobId)).toEqual([failed.jobId,interrupted.jobId]);
+   // A later diagnostic/metadata update must not move a finished run.
+   f.writer.upsertJob({...short,updatedAt:now+minute});
+   const refreshed=await f.service().dashboardSnapshot({...query,limit:2});
+   expect(refreshed.terminalRows.map(row=>row.jobId)).toEqual([failed.jobId,long.jobId]);
+  }finally{await f.close();}
+ });
  it.each(['orphaned','idle','not-loaded'])('keeps current %s badges with healthy cached detail and detail loaded after health loss',async state=>{
   const f=fixture();try{
    const job=f.seed('running',0,{threadId:'runtime-health-cache',executionName:'Cached exact name',summary:'Cached retained detail'});

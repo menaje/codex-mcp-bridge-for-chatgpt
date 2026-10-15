@@ -79,6 +79,7 @@ const EXECUTION_OPERATIONS = [
   "releaseThreadConnection",
   "listBackgroundTerminals",
   "listLoadedBackgroundTerminals",
+  "listLoadedThreadIds",
   "terminateBackgroundTerminal",
   "callTool",
   "forceTerminateWorker",
@@ -527,6 +528,10 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
     backendKind?: "app-server"
   ): Promise<CodexBackgroundTerminal[]> {
     return this.request("listBackgroundTerminals", [threadId, backendKind]);
+  }
+
+  listLoadedThreadIds(): Promise<string[] | null> {
+    return this.request("listLoadedThreadIds", []);
   }
 
   listLoadedBackgroundTerminals(
@@ -1439,6 +1444,9 @@ async function executeChildRequest(
       break;
     case "listLoadedBackgroundTerminals":
       result = await pool.listLoadedBackgroundTerminals?.(String(request.args[0]));
+      break;
+    case "listLoadedThreadIds":
+      result = await pool.listLoadedThreadIds?.();
       break;
     case "terminateBackgroundTerminal":
       result = await pool.terminateBackgroundTerminal?.(
