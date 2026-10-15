@@ -5536,7 +5536,10 @@ export function registerBridgeTools(
     },
     async threadHandoff(input) {
       const agents = listAllDashboardAgents(jobs);
-      const canonicalUrl = (threadId: string) => dashboardCodexThreadUrl(true, { threadId, backendKind: "app-server" });
+      const canonicalUrl = (thread: {threadId:string;sessionId?:string|null}) => dashboardCodexThreadUrl(true, {
+        threadId:thread.threadId,...(thread.sessionId ? {sessionId:thread.sessionId} : {}),backendKind:"app-server"
+      });
+      const sameThread = (left:string,right:string) => left===right || (SCOPE_ID_PATTERN.test(left.trim()) && SCOPE_ID_PATTERN.test(right.trim()) && left.trim().toLowerCase()===right.trim().toLowerCase());
       // Resolve the submitted Job against retained identities on this exact
       // thread, rather than an unfiltered latest Job that may have expired.
       const legacyAgent = agents.find(candidate => dashboardRowKey(candidate.agentId) === input.rowKey);
@@ -5544,10 +5547,12 @@ export function registerBridgeTools(
         input.codexThreadUrl.replace("codex://threads/", "")
       ).find(candidate => dashboardRowKey(undefined, candidate.jobId) === input.rowKey);
       const agent = legacyAgent || (recordTarget && agents.find(candidate => candidate.agentId === recordTarget.agentId && candidate.scopeId === recordTarget.scopeId));
-      const exactJobTarget = !recordTarget || Boolean(recordTarget.threadId && input.codexThreadUrl === canonicalUrl(recordTarget.threadId));
-      const thread = exactJobTarget && agent && jobs.listAgentThreads(agent.agentId).find(candidate => input.codexThreadUrl === canonicalUrl(candidate.threadId) &&
-        (input.action !== "request" || candidate.isCurrent));
-      if (!agent || !thread || thread.backendKind !== "app-server" || input.codexThreadUrl !== canonicalUrl(thread.threadId)) {
+      const exactJobTarget = !recordTarget || Boolean(recordTarget.threadId && input.codexThreadUrl === canonicalUrl({threadId:recordTarget.threadId,sessionId:recordTarget.sessionId}));
+      const matches = exactJobTarget && agent ? jobs.listAgentThreads(agent.agentId).filter(candidate => input.codexThreadUrl === canonicalUrl(candidate) &&
+        (!recordTarget || Boolean(recordTarget.threadId && sameThread(candidate.threadId,recordTarget.threadId))) &&
+        (input.action !== "request" || candidate.isCurrent)) : [];
+      const thread = matches.length===1 ? matches[0] : undefined;
+      if (!agent || !thread || thread.backendKind !== "app-server" || input.codexThreadUrl !== canonicalUrl(thread)) {
         throw new Error("THREAD_HANDOFF_TARGET_CHANGED: Refresh this Agent before continuing in Codex.");
       }
       const record = jobs.threadHandoff(thread.threadId, input.action);
@@ -11897,7 +11902,7 @@ function applyExecutionContract(view:DashboardView,store:BridgeStateStore,option
     const runtimeStatus=snapshotActiveStatuses.get(view)?.get(record.jobId);
     const status=runtimeStatus==="orphaned" || runtimeStatus==="liveness-unknown" ? runtimeStatus : turn.status;
     return {rowKey:turn.executionKey!,activityKey:turn.activityKey!,conversationKey:dashboardConversationKey(record.scopeId),sessionAlias:dashboardSessionAlias(record.scopeId),
-      ...(template?.conversationUrl ? {conversationUrl:template.conversationUrl} : {}),...(template?.codexThreadUrl && record.threadId && template.codexThreadUrl===dashboardCodexThreadUrl(true,{threadId:record.threadId,backendKind:"app-server"}) ? {codexThreadUrl:template.codexThreadUrl} : {}),
+      ...(template?.conversationUrl ? {conversationUrl:template.conversationUrl} : {}),...(template?.codexThreadUrl && record.threadId && template.codexThreadUrl===dashboardCodexThreadUrl(true,{threadId:record.threadId,...(record.sessionId ? {sessionId:record.sessionId} : {}),backendKind:"app-server"}) ? {codexThreadUrl:template.codexThreadUrl} : {}),
       bucket:isActiveActivityJobStatus(record.status) ? "active" : "recent",...dashboardProjectIdentity({projectId:record.projectId || undefined,projectName:record.projectName || undefined}),
       agentName:dashboardAgentName(record.agentName || undefined),activityTitle:record.activityTitle,status,createdAt:turn.startedAt!,updatedAt:turn.updatedAt,
       elapsedMs:turn.durationMs ?? Math.max(0,now-record.createdAt),backgroundProcessCount:isActiveActivityJobStatus(record.status) ? template?.backgroundProcessCount || 0 : 0,controlKind:template?.controlKind || null,latestTurn:{...turn,status,

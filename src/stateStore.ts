@@ -304,7 +304,7 @@ export type DashboardRetainedJobSummary = {
 };
 
 export type DashboardExecutionRecord = {
-  jobId:string;scopeId:string;activityId:string;agentId:string|null;threadId:string|null;status:string;createdAt:number;updatedAt:number;
+  jobId:string;scopeId:string;activityId:string;agentId:string|null;threadId:string|null;sessionId:string|null;status:string;createdAt:number;updatedAt:number;
   endedAt:number|null;endedAtSource:string|null;detailAvailability:string;activityTitle:string;agentName:string|null;
   projectId:string|null;projectName:string|null;executionName:string|null;summary:string|null;error:string|null;
   cancellationReason:string|null;cancellationSource:string|null;cancellationRequestedAt:number|null;
@@ -1550,7 +1550,7 @@ export class BridgeStateStore {
     const result:DashboardExecutionRecord[]=[],ids=[...new Set(jobIds)];
     for(let offset=0;offset<ids.length;offset+=500) {
       const part=ids.slice(offset,offset+500);
-      result.push(...this.database.prepare(`SELECT j.job_id jobId,j.scope_id scopeId,j.activity_id activityId,j.agent_id agentId,j.thread_id threadId,j.status,
+      result.push(...this.database.prepare(`SELECT j.job_id jobId,j.scope_id scopeId,j.activity_id activityId,j.agent_id agentId,j.thread_id threadId,thread_session.session_id sessionId,j.status,
         j.created_at createdAt,j.updated_at updatedAt,j.ended_at endedAt,j.ended_at_source endedAtSource,j.detail_availability detailAvailability,
         a.title activityTitle,agent.agent_name agentName,a.project_id projectId,p.name projectName,
         CASE WHEN json_type(j.payload,'$.executionName')='text' THEN json_extract(j.payload,'$.executionName') END executionName,
@@ -1562,6 +1562,7 @@ export class BridgeStateStore {
            AND i.created_at<=COALESCE(j.ended_at,j.updated_at) ORDER BY i.created_at DESC,i.intent_id DESC LIMIT 1),c.status) cancellationStatus,
         (SELECT COALESCE(json_extract(i.payload,'$.kind'),'unknown-input') FROM job_interactions i WHERE i.job_id=j.job_id AND i.is_blocking=1 ORDER BY position LIMIT 1) blockingKind
         FROM jobs j JOIN activities a ON a.activity_id=j.activity_id LEFT JOIN agents agent ON agent.agent_id=j.agent_id LEFT JOIN projects p ON p.project_id=a.project_id
+        LEFT JOIN sessions thread_session ON thread_session.thread_id=j.thread_id
         LEFT JOIN cancellation_intents ci ON ci.intent_id=j.cancellation_intent_id
         LEFT JOIN cancellation_operations c ON c.scope_id=j.scope_id AND c.request_id=COALESCE(ci.request_id,
           (SELECT i.request_id FROM cancellation_intents i WHERE i.scope_id=j.scope_id AND i.target_job_id=j.job_id
@@ -1572,11 +1573,13 @@ export class BridgeStateStore {
     return result;
   }
 
-  /** Only scalar identities for this exact thread; history bodies are not loaded. */
-  dashboardExecutionIdentitiesForThread(threadId:string,now=Date.now()):Array<Pick<DashboardExecutionRecord,"jobId"|"scopeId"|"agentId"|"threadId">> {
-    return this.database.prepare(`SELECT j.job_id jobId,j.scope_id scopeId,j.agent_id agentId,j.thread_id threadId
-      FROM jobs j WHERE LOWER(TRIM(j.thread_id))=? AND ${retainedJobSql(this.appliedHistoryPolicy(now),"j")}`)
-      .all(threadId.trim().toLowerCase()) as Array<Pick<DashboardExecutionRecord,"jobId"|"scopeId"|"agentId"|"threadId">>;
+  /** Scalar candidates for the thread/session route; history bodies are not loaded. */
+  dashboardExecutionIdentitiesForThread(routeId:string,now=Date.now()):Array<Pick<DashboardExecutionRecord,"jobId"|"scopeId"|"agentId"|"threadId"|"sessionId">> {
+    const normalized=routeId.trim().toLowerCase();
+    return this.database.prepare(`SELECT j.job_id jobId,j.scope_id scopeId,j.agent_id agentId,j.thread_id threadId,thread_session.session_id sessionId
+      FROM jobs j LEFT JOIN sessions thread_session ON thread_session.thread_id=j.thread_id
+      WHERE (LOWER(TRIM(j.thread_id))=? OR LOWER(TRIM(thread_session.session_id))=?) AND ${retainedJobSql(this.appliedHistoryPolicy(now),"j")}`)
+      .all(normalized,normalized) as Array<Pick<DashboardExecutionRecord,"jobId"|"scopeId"|"agentId"|"threadId"|"sessionId">>;
   }
 
   dashboardExecutionScopes(jobIds:readonly string[],scopeId?:string,now=Date.now()):Map<string,string> {

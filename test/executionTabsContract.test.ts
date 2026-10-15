@@ -176,6 +176,33 @@ describe('Job-unit execution tabs and read-only exact detail',()=>{
    expect(handoff).toHaveBeenCalledTimes(2);
   }finally{await f.close();}
  });
+ it.each(['running','completed'])('preserves exact non-UUID %s thread links through their UUID session route',async status=>{
+  const f=fixture();try{
+   const threadId='opaque-app-thread',sessionId='ABCDEFAB-ABCD-4ABC-8ABC-ABCDEFABCDEF',url='codex://threads/'+sessionId.toLowerCase();
+   f.writer.linkAgentThread({agentId:f.agent.agentId,threadId,sessionId,backendKind:'app-server',cwd:f.root,sandbox:'read-only',contextMode:'fresh',now});
+   f.writer.upsertSession({threadId,sessionId,scopeId:scope,cwd:f.root,lastUsedAt:now,backendKind:'app-server',visibleInCodexApp:true});
+   const job=f.seed(status,0,{threadId});const handoff=vi.spyOn(CodexJobRegistry.prototype,'threadHandoff').mockReturnValue({phase:'released',handoffRequested:true,evidence:'thread-unloaded'} as any);
+   const view=await f.service().dashboardSnapshot(query),row=[...view.activeRows,...view.terminalRows].find(x=>x.jobId===job.jobId)!;
+   expect(row.codexThreadUrl).toBe(url);
+   for(const action of ['request','status','cancel'] as const){await expect(f.service().threadHandoff({rowKey:row.rowKey,codexThreadUrl:url,action})).resolves.toMatchObject({canOpen:true});expect(handoff).toHaveBeenLastCalledWith(threadId,action);}
+   const legacy=await f.service().dashboardSnapshot({...query,historyMode:undefined}),agentRow=[...legacy.activeRows,...legacy.terminalRows].find(x=>x.codexThreadUrl===url)!;
+   await expect(f.service().threadHandoff({rowKey:agentRow.rowKey,codexThreadUrl:url,action:'request'})).resolves.toMatchObject({canOpen:true});expect(handoff).toHaveBeenLastCalledWith(threadId,'request');
+   f.writer.linkAgentThread({agentId:f.agent.agentId,threadId:'different-opaque-thread',sessionId,backendKind:'app-server',cwd:f.root,sandbox:'read-only',contextMode:'fresh',now:now+1});
+   await expect(f.service().threadHandoff({rowKey:row.rowKey,codexThreadUrl:url,action:'request'})).rejects.toThrow(/TARGET_CHANGED/);
+   await expect(f.service().threadHandoff({rowKey:row.rowKey,codexThreadUrl:url,action:'status'})).resolves.toMatchObject({canOpen:true});expect(handoff).toHaveBeenLastCalledWith(threadId,'status');
+   await expect(f.service().threadHandoff({rowKey:agentRow.rowKey,codexThreadUrl:url,action:'status'})).rejects.toThrow(/TARGET_CHANGED/);
+  }finally{await f.close();}
+ });
+ it('prefers an exact UUID thread over a different UUID session alias',async()=>{
+  const f=fixture();try{
+   const threadId='abcdefab-abcd-4abc-8abc-abcdefabcdef',sessionId='12345678-1234-4234-8234-123456789012';
+   f.writer.linkAgentThread({agentId:f.agent.agentId,threadId,sessionId,backendKind:'app-server',cwd:f.root,sandbox:'read-only',contextMode:'fresh',now});
+   f.writer.upsertSession({threadId,sessionId,scopeId:scope,cwd:f.root,lastUsedAt:now,backendKind:'app-server',visibleInCodexApp:true});
+   const job=f.seed('completed',0,{threadId}),handoff=vi.spyOn(CodexJobRegistry.prototype,'threadHandoff').mockReturnValue({phase:'released',handoffRequested:true,evidence:'thread-unloaded'} as any);
+   const row=(await f.service().dashboardSnapshot(query)).terminalRows.find(x=>x.jobId===job.jobId)!;expect(row.codexThreadUrl).toBe('codex://threads/'+threadId);
+   await expect(f.service().threadHandoff({rowKey:row.rowKey,codexThreadUrl:'codex://threads/'+sessionId,action:'request'})).rejects.toThrow(/TARGET_CHANGED/);expect(handoff).not.toHaveBeenCalled();
+  }finally{await f.close();}
+ });
  it('paginates every terminal Job independently of a single Agent/Activity and excludes active Jobs from executionCount',async()=>{
   const f=fixture();try {
    const jobs=Array.from({length:13},(_,n)=>f.seed(['completed','failed','interrupted','cancelled'][n%4],n+1,{error:n%4===1?'recorded failure':undefined}));
