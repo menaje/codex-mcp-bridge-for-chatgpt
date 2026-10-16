@@ -16,7 +16,7 @@ and does not assert whole-artifact identity with the current checkout.
 | Loaded helper delayed by a real 90 seconds | PASS, 90.067 s. Production native bootstrap with fake launchctl/RPC; no extra service replacement. |
 | Native application entry point, actual helper delayed by 90 seconds | PASS, final run 94.717 s to automatic readiness (earlier valid run 91.748 s). Real native application/helper, synthetic launcher/Tunnel/CLI; no menu input. Duplicate launch caused no second runtime; shutdown/relaunch and explicit stop passed. |
 | Startup/lifecycle Node checks | 161 passing cases in seven files across separate invocations, including the final 24 supervisor and 10 lifecycle-recovery cases after all fixture corrections. The 55 helper cases also passed with the corrected launcher. Original 61-second reservation case was included without changing its duration. |
-| Acceptance observer | Eight fixture tests passed: old boot, manual start, budget/attempt bounds, unknown/protected work, stale preflight, changed artifact, and missing network transition cannot establish acceptance. These are validator tests, not an OS reboot. |
+| Acceptance observer | Fourteen fixture tests passed after the PR #271 review corrections, including shortened budgets, runtime replacement with unchanged build metadata, and prior-boot terminal records. These are validator tests, not an OS reboot. |
 | Fast gate | PASS with the existing CLI 0.153.3; 416 JSON and 827 TypeScript schema files. The user's selected CLI was not changed. |
 | Installed login configuration | System Settings showed the application under Open at Login. Existing helper LaunchAgent has RunAtLoad and KeepAlive enabled. Settings were read, not changed. |
 | Actual installed reboot/network acceptance | NOT RUN. The current OS boot predates the fix. Live Jobs and a background process were observed; the no-work preflight refused to arm the test. |
@@ -64,6 +64,37 @@ OS reboot was performed by these isolated checks. The observed installed warm
 restart is not counted as reboot acceptance. Historical incident evidence does
 not establish a particular CPU, disk, database, or module-loading root cause.
 
+## PR #271 review corrections
+
+Four review findings arrived after PR #271 was merged. The inherited current
+and legacy state-database environment variables could override the private
+`.env` entry. The native fixture now overrides both variables in its spawned
+environment; the in-process supervisor fixture uses temporary environment
+overrides and restores them after teardown. Two regression cases reproduced
+external database access before the fix and now pass with untouched canary files.
+
+The observer now requires `deadlineAt - startedAt == 300000`, so a 30-second
+budget cannot pass by becoming ready in 20 seconds. It hashes the complete
+installed `Contents/Resources/Runtime` file tree, including JavaScript, scripts,
+dependencies and metadata, before and after observation. Paths, entry types,
+file bytes and internal file-symlink targets contribute to the digest; external
+or directory symlinks are rejected. Build metadata alone cannot establish runtime
+identity. A failed/cancelled lifecycle ends observation only when its startup
+timestamp belongs to the current OS boot; older or unidentifiable records leave
+time for the login application's fresh automatic intent.
+
+The review follow-up passed 14 observer tests and 36 supervisor/recovery tests,
+including both environment-variable regressions. `npm run build` also passed.
+The native application/helper scenario passed again with both inherited database
+paths set to external canaries: the real 90-second helper delay reached readiness
+in 94.330 seconds, both canaries stayed unchanged with no sidecar files, and the
+existing duplicate-launch, shutdown/relaunch and stop checks passed. Its launcher,
+Tunnel, workload and CLI remain synthetic. `review-followup.json` records the
+review mapping and verification receipts.
+The previously recorded full-suite failure remains a failure; these targeted
+checks do not relabel that gate. The actual installed reboot/network check is
+still deferred at the user's request, and #246 remains open.
+
 ## Final installed check
 
 The one-shot `observe-next-boot.py` is a read-only test observer. It never
@@ -91,7 +122,7 @@ After the human has saved unrelated work, perform the actual installed test:
 
 Success requires a changed OS boot session, the same installed artifact, a fresh
 no-work preflight, a completed automatic initial-start receipt within its
-original 300-second budget and three-attempt limit, connected Bridge/Tunnel and
+original, exactly 300-second budget and three-attempt limit, connected Bridge/Tunnel and
 ready read service, and an observed absent-then-restored default route. Default
 route presence alone is not Internet reachability; actual Tunnel connection is
 also required. The observer stops at readiness/failure or after the existing
