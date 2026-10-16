@@ -3,7 +3,7 @@ import { execFileSync, spawn, type ChildProcess, type SpawnOptions } from "node:
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { createConnection } from "node:net";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -14,7 +14,10 @@ import { updateRuntimeEnvFile } from "../scripts/runtime-env.mjs";
 import { writeFakeLauncher } from "./fixtures/macosHelperLauncher.js";
 
 const cleanups: (() => Promise<void>)[] = [];
-afterEach(async () => { for (const close of cleanups.splice(0)) await close(); });
+afterEach(async () => {
+  try { for (const close of cleanups.splice(0)) await close(); }
+  finally { vi.unstubAllEnvs(); }
+});
 const coordinator = (s: MacOSBridgeSupervisor) => (s as unknown as { lifecycle(): RuntimeLifecycleCoordinator }).lifecycle();
 function fixture(failures = 1, failureCode = "STARTUP_HTTP_TIMEOUT", causeCode?: string, descendant = false, protectWork = false,
   orphanState: "idle" | "protected" | "unknown" | "unreachable" | "missing-owner" | "changed-owner" |
@@ -87,7 +90,11 @@ function fixture(failures = 1, failureCode = "STARTUP_HTTP_TIMEOUT", causeCode?:
   updateRuntimeEnvFile(envFile, { apiKey: "sk-startup-fixture-1234567890123456", tunnelId: "tunnel_oooooooooooooooooooooooooooooooo" });
   // A developer's default profile may need migration. That intentionally takes
   // the protected legacy path and must not select this startup fixture's path.
-  appendFileSync(envFile, `CODEX_MCP_BRIDGE_STATE_DATABASE_FILE=${path.join(root, "state.sqlite")}\n`);
+  const stateDatabaseFile = path.join(root, "state.sqlite");
+  appendFileSync(envFile, `CODEX_MCP_BRIDGE_STATE_DATABASE_FILE=${stateDatabaseFile}\n`);
+  // Both supervisor reads and child launchers prefer process.env to .env.
+  vi.stubEnv("CODEX_MCP_BRIDGE_STATE_DATABASE_FILE", stateDatabaseFile);
+  vi.stubEnv("CODEX_GPT_BRIDGE_STATE_DATABASE_FILE", stateDatabaseFile);
   const options = { bridgeRoot, envFile, launcherPath, bridgeSocketPath: path.join(runDirectory, "bridge.sock"),
     runtimeLockDirectory: path.join(runDirectory, "launcher.lock"),
     codexRuntimeManager: new CodexRuntimeManager({ root: path.join(root, "cli"), discoverExternal: false }),
@@ -123,6 +130,27 @@ function expectTargetedDrain(f: ReturnType<typeof fixture>, method: "runtime.beg
     params: expect.objectContaining({ expectedRuntime: expect.objectContaining({ launcherPid: first.pid,
       token: first.token, requestId: first.requestId, attempt: first.attempt }) }) })]));
 }
+
+it.each(["CODEX_MCP_BRIDGE_STATE_DATABASE_FILE", "CODEX_GPT_BRIDGE_STATE_DATABASE_FILE"])(
+  "isolates startup from an inherited %s database path", async variable => {
+    const externalRoot = mkdtempSync(path.join(tmpdir(), "startup-external-state-"));
+    const externalFile = path.join(externalRoot, "external.sqlite");
+    const sentinel = "external developer state must not be read as a fixture database\n";
+    writeFileSync(externalFile, sentinel);
+    vi.stubEnv("CODEX_MCP_BRIDGE_STATE_DATABASE_FILE", undefined);
+    vi.stubEnv("CODEX_GPT_BRIDGE_STATE_DATABASE_FILE", undefined);
+    vi.stubEnv(variable, externalFile);
+    try {
+      const f = fixture(0);
+      await f.supervisor.startOnLaunch();
+      expect(f.supervisor.lifecycleStatus()).toMatchObject({ phase: "completed", startup: { attempts: 1 } });
+      expect(readFileSync(externalFile, "utf8")).toBe(sentinel);
+      expect(readdirSync(externalRoot)).toEqual(["external.sqlite"]);
+    } finally {
+      cleanups.push(async () => { rmSync(externalRoot, { recursive: true, force: true }); });
+    }
+  }
+);
 
 it("retries the same initial intent only after its owned launcher/group/lock is cleared", async () => {
   const f = fixture(1, "STARTUP_HTTP_TIMEOUT", undefined, true); await f.supervisor.startOnLaunch();

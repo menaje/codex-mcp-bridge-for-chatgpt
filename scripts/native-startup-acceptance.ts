@@ -19,6 +19,7 @@ const configuration = path.join(root, "codex-mcp-bridge");
 const run = path.join(configuration, "run");
 const socket = path.join(run, "helper.sock");
 const environmentFile = path.join(configuration, ".env");
+const stateDatabaseFile = path.join(root, "state.sqlite");
 const startsFile = path.join(root, "starts.jsonl");
 await mkdir(path.join(root, "tmp"), { recursive: true });
 await mkdir(path.join(runtime, "scripts"), { recursive: true });
@@ -37,7 +38,7 @@ updateRuntimeEnvFile(environmentFile, {
   apiKey: "sk-native-acceptance-1234567890123456", tunnelId: "tunnel_oooooooooooooooooooooooooooooooo"
 });
 await writeFile(environmentFile, (await readFile(environmentFile, "utf8")) +
-  `CODEX_MCP_BRIDGE_STATE_DATABASE_FILE=${path.join(root, "state.sqlite")}\n`);
+  `CODEX_MCP_BRIDGE_STATE_DATABASE_FILE=${stateDatabaseFile}\n`);
 const codex = path.join(root, "fixture-codex");
 await writeFile(codex, '#!/bin/sh\nprintf "codex-cli 0.153.3\\n"\n', { mode: 0o700 });
 // Delay the first real helper process, not a substituted readiness response.
@@ -86,6 +87,9 @@ const launch = () => {
     CODEX_MCP_BRIDGE_ROOT: runtime, CODEX_MCP_BRIDGE_NODE: nodeExecutable,
     CODEX_MCP_BRIDGE_ENV_FILE: environmentFile, CODEX_MCP_BRIDGE_DISABLE_LAUNCH_AGENT: "1",
     CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "cli"), CODEX_MCP_BRIDGE_CODEX: codex,
+    // The helper checks inherited process values before its .env file.
+    CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: stateDatabaseFile,
+    CODEX_GPT_BRIDGE_STATE_DATABASE_FILE: stateDatabaseFile,
   } });
   child.stdout?.on("data", data => process.stdout.write(data));
   child.stderr?.on("data", data => process.stderr.write(data));
