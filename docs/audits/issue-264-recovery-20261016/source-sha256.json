@@ -1,0 +1,7 @@
+{
+  "macos/Sources/CodexBridgeKit/UnixSocketRPCClient.swift": "73827abadfd9cfa91e51a33eabcc79e7791c1c6cd0395fbe87a9b224602634e9",
+  "macos/Sources/CodexBridgeMenuBar/AppModel.swift": "a1af090f9dd2935958c830a02bebe51de1be6b2a89ad2f23f2996f1a6c6b8b5a",
+  "macos/Sources/CodexBridgeMenuBar/DashboardViews.swift": "23ad77034afca877424595afc9200e0bdb4906db8a86086ca9b6bb191bfc667a",
+  "macos/Sources/CodexBridgeMenuBar/DashboardReadFailureNotice.swift": "7b6116a23166ac6171071008608089007236210af3ea11773c1b6717ea149757",
+  "macos/Sources/CodexBridgeMenuBar/ConnectionObservationNotice.swift": "d50f71b534417c42fd53743d58bb936695b58e92e1d9f40c16b81c07560a959f"
+}

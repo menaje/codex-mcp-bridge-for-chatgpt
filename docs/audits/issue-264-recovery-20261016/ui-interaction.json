@@ -1,0 +1,12 @@
+{
+  "authCalls" : 0,
+  "bootstrapCalls" : 0,
+  "failureCleared" : true,
+  "helperHealthCalls" : 0,
+  "installedOperationalAcceptance" : false,
+  "lastSuccessfulReadRecorded" : true,
+  "scenario" : "isolated production AppModel + DashboardPopoverView in localized app bundle",
+  "settingsCalls" : 0,
+  "snapshotCalls" : 2,
+  "success" : true
+}

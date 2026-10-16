@@ -7,8 +7,10 @@ struct ConnectionObservationNotice: View {
     var body: some View {
         if model.hasRetainedBridgeObservation {
             VStack(alignment: .leading, spacing: 3) {
-                Label("macos.thebridgeserverdidnotrespondpleasetry", systemImage: "clock.badge.exclamationmark")
-                if let checked = model.lastConfirmedHelperCheck {
+                Label(BridgeAppLocalization.string(model.isBridgeConnectionChecking
+                    ? "macos.checkingthebridgeconnection" : "macos.cannotconnecttothebridgeserver", locale: model.interfaceLocale),
+                      systemImage: "clock.badge.exclamationmark")
+                if let checked = model.lastConfirmedConnectionCheck {
                     HStack {
                         Text("macos.lastchecked")
                         Text(checked, style: .time)

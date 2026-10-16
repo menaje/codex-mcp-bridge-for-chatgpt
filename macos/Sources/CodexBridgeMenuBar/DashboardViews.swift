@@ -241,7 +241,10 @@ struct DashboardPopoverView: View {
 
     @ViewBuilder
     private var loadingView: some View {
-        if let error = model.connectionErrorMessage ?? model.startupErrorMessage ??
+        if model.dashboardReadFailure != nil {
+            DashboardReadFailureNotice(onOpenConnectionSettings: presentConnectionRepairWindow)
+                .padding(14)
+        } else if let error = model.connectionErrorMessage ?? model.startupErrorMessage ??
             model.statusErrorMessage ?? model.dashboardErrorMessage {
             VStack(spacing: 10) {
                 Text(error)
@@ -394,6 +397,9 @@ struct DashboardPopoverView: View {
                     }
                 }
                 DashboardSummary(counts: dashboard.counts)
+                if model.dashboardReadFailure != nil {
+                    DashboardReadFailureNotice(onOpenConnectionSettings: presentConnectionRepairWindow)
+                }
                 dashboardBackgroundStatus(dashboard)
                 dashboardFreshness(dashboard)
             }
@@ -406,7 +412,8 @@ struct DashboardPopoverView: View {
                         if model.dashboardDetailLoading {
                             if let error = model.dashboardErrorMessage {
                                 Text(error).font(.caption).foregroundStyle(.secondary)
-                                Button("macos.common.refreshAction") { Task { await model.refreshDashboard() } }
+                                Button("macos.dashboard.reload") { Task { await model.recoverDashboardRead() } }
+                                    .disabled(model.isDashboardRefreshing || model.isBusy)
                             } else {
                                 ProgressView("macos.loadingoverview")
                                     .frame(maxWidth: .infinity)
