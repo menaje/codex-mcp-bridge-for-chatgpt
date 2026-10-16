@@ -176,6 +176,49 @@ const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const CANCELLATION_REASON_CODE_PATTERN = /^[a-z0-9][a-z0-9._-]{0,79}$/;
 const TRANSPORT_OBSERVATION_LIMIT = 1_000;
 
+// Match the ordinary 200-event window, but export only the newest correlated
+// acceptance and reroute proofs used by Dashboard execution labels. Progress
+// text and unrelated model/turn notifications never cross this read boundary.
+const DASHBOARD_EXECUTION_EVENTS_SQL = `CASE
+  WHEN json_type(j.payload,'$.executionDecision') = 'object' THEN COALESCE((
+    SELECT json_group_array(json(proof)) FROM (
+      SELECT event_id, json_object(
+        'eventId',json_extract(payload,'$.eventId'),
+        'type',json_extract(payload,'$.type'),
+        'phase',json_extract(payload,'$.phase'),
+        'createdAt',json_extract(payload,'$.createdAt'),
+        'summary','',
+        'details',json_object(
+          'threadId',json_extract(payload,'$.details.threadId'),
+          'turnId',json_extract(payload,'$.details.turnId'),
+          'evidence',json_extract(payload,'$.details.evidence'),
+          'kind',json_extract(payload,'$.details.kind'),
+          'serverCorrelation',json_extract(payload,'$.details.serverCorrelation'),
+          'toModel',json_extract(payload,'$.details.toModel')
+        )
+      ) AS proof FROM (
+        SELECT event_id,payload,
+               ROW_NUMBER() OVER (PARTITION BY json_extract(payload,'$.type') ORDER BY event_id DESC) AS evidence_rank
+          FROM (
+            SELECT event_id,event_type,payload FROM job_events
+             WHERE job_id=j.job_id AND event_type LIKE 'app-%'
+             ORDER BY event_id DESC LIMIT 200
+          )
+         WHERE (event_type LIKE 'app-turn%' OR event_type LIKE 'app-model%')
+           AND json_extract(payload,'$.details.threadId') = COALESCE(NULLIF(j.thread_id,''),json_extract(j.payload,'$.sessionDecision.threadId'))
+           AND json_extract(payload,'$.details.turnId') = j.upstream_request_id
+           AND json_type(payload,'$.eventId') = 'text' AND json_extract(payload,'$.eventId') != ''
+           AND json_type(payload,'$.createdAt') IN ('integer','real') AND json_extract(payload,'$.createdAt') >= 0
+           AND json_type(payload,'$.summary') = 'text'
+           AND json_extract(payload,'$.phase') IN ('started','updated','completed','waiting')
+           AND ((json_extract(payload,'$.type') = 'turn' AND json_extract(payload,'$.phase') = 'started'
+                 AND json_extract(payload,'$.details.evidence') = 'turn/start-accepted')
+             OR (json_extract(payload,'$.type') = 'model' AND json_extract(payload,'$.details.kind') = 'rerouted'
+                 AND json_extract(payload,'$.details.serverCorrelation') = 'explicit' AND json_type(payload,'$.details.toModel') = 'text'))
+      ) WHERE evidence_rank = 1 ORDER BY event_id
+    )
+  ),'[]') ELSE '[]' END`;
+
 type SessionRowInput = {
   threadId: string;
   authBoundary?: string;
@@ -1422,7 +1465,7 @@ export class BridgeStateStore {
     return this.readJobs(agentId, scopeId, true);
   }
 
-  /** Dashboard registries need current state and pending inputs, not event bodies. */
+  /** Current state, pending inputs and small execution proofs, without progress bodies. */
   listJobsForDashboard(agentId?: string, scopeId?: string): StoredJobRecord[] {
     if (!this.options.readOnly) {
       throw new Error("Dashboard Job hydration requires a query-only projection.");
@@ -1443,7 +1486,7 @@ export class BridgeStateStore {
                  SELECT payload FROM (SELECT event_id,payload FROM job_events
                   WHERE job_id=j.job_id AND event_type LIKE 'app-%' ORDER BY event_id DESC LIMIT 200)
                   ORDER BY event_id
-               ) event),'[]')` : "'[]'"} AS public_events,
+               ) event),'[]')` : DASHBOARD_EXECUTION_EVENTS_SQL} AS public_events,
                COALESCE((SELECT json_group_array(json(interaction.payload)) FROM (
                  SELECT json_patch(payload,json_object(
                    'interactionId',interaction_id,
