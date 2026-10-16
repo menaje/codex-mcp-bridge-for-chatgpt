@@ -1,0 +1,197 @@
+{
+  "baseCommit": "009d0bde81e3fbedf8454c34562f57ae26f7aae0",
+  "sourceSHA256": {
+    "src/stateStore.ts": "3867bbfa924ec4ebefeb4baa5365560b9a4b74bc8775c7a62762c4f40adecab9",
+    "src/tools.ts": "d8c15f6c33a51967b439f0b9342d6c52d2a3dab07ab81f23b631e51182d53471",
+    "macos/Sources/CodexBridgeKit/HelperBootstrap.swift": "adfe0137c25fd6812457f3a0ce4a035fae17593ba2e4c2af570df17d04542f1c",
+    "scripts/check-launchd-lifecycle.ts": "47b0066db3c59dbef66114e5146a975f631d0105569bffec1201b3178744604a",
+    "test/issue242Reads.test.ts": "922b5b4b2dc4002435c9e60f5d59f42c0749fd0a3b8909d152bbf3e75e832985",
+    ".changes/issue-242-dashboard-event-hydration.json": "0af9e2106d656ff13fac59942d7965fd9a97accacd492aba3bc4a2bb766caf5e"
+  },
+  "fast": {
+    "command": "npm run validate:fast",
+    "exit": 0,
+    "schemaCLI": "0.153.3",
+    "pinOnlyInFastSubprocess": true
+  },
+  "nodeBuild": {
+    "command": "npm run build (via npm run check)",
+    "exit": 0
+  },
+  "affectedGate": {
+    "command": "npm run validate:affected -- --base origin/dev",
+    "exit": 1,
+    "passedGate": false,
+    "nodeFullSuite": {
+      "filesPassed": 162,
+      "filesFailed": 9,
+      "filesSkipped": 1,
+      "testsPassed": 2037,
+      "testsFailed": 17,
+      "testsSkipped": 1,
+      "durationSeconds": 303.08
+    },
+    "initialHarnessLimit": "Private HOME and explicit global CODEX_HOME; four helper-context failures depended on that global override. Five further failures did not repeat in either nine-file comparison. No expectations or product timeouts were changed."
+  },
+  "native": {
+    "command": "npm run macos:check",
+    "exit": 0,
+    "strictConcurrency": true,
+    "warningsAsErrors": true,
+    "executed": 343,
+    "skipped": 3,
+    "failed": 0
+  },
+  "nineFileComparison": {
+    "baselineCommit": "955769b588db283fe37b9cc1c3dae179fc84abdf",
+    "baselineContext": "Shared local dev had received an unrelated relative-time presentation commit before comparison. The exact-base comparison below is authoritative.",
+    "baseline": {
+      "passed": 146,
+      "failed": 12
+    },
+    "candidate": {
+      "passed": 146,
+      "failed": 12
+    },
+    "sameFailedTestNamesAndFailureClasses": true
+  },
+  "correctedHarnessExactBaseComparison": {
+    "commands": "vitest run <nine failing files> -t <all seventeen originally failing case names> --maxWorkers=4 --reporter=json",
+    "privateHOME": true,
+    "globalCODEX_HOME": "unset; fixture-selected profiles control their own context",
+    "baseline": {
+      "totalInFiles": 158,
+      "passed": 9,
+      "failed": 8,
+      "notSelected": 141,
+      "failures": [
+        {
+          "file": "test/currentSelectorReplay.test.ts",
+          "test": "current task selector contract preserves the admitted v6 record but rejects a stale project selector after restart",
+          "category": "existing assertion mismatch"
+        },
+        {
+          "file": "test/dashboardReadQueries.test.ts",
+          "test": "Dashboard query cost batches titles and handoffs with 20 retained Agents and recovery records",
+          "category": "existing assertion mismatch"
+        },
+        {
+          "file": "test/dashboardReadQueries.test.ts",
+          "test": "Dashboard query cost batches titles and handoffs with 120 retained Agents and recovery records",
+          "category": "existing assertion mismatch"
+        },
+        {
+          "file": "test/issue162Context.test.ts",
+          "test": "issue 162 product context marks a changed file environment pending while the old launcher still runs",
+          "category": "private-env fixture permissions"
+        },
+        {
+          "file": "test/mcpOAuth.test.ts",
+          "test": "MCP OAuth configuration and HTTP discovery publishes resource metadata and both tool security declarations without granting execution",
+          "category": "existing assertion mismatch"
+        },
+        {
+          "file": "test/server.test.ts",
+          "test": "MCP 2026-07-28 HTTP server discovers and serves only the current tools and resources",
+          "category": "existing assertion mismatch"
+        },
+        {
+          "file": "test/server.test.ts",
+          "test": "MCP 2026-07-28 HTTP server uses the current request envelope and rejects protocol/header mismatches",
+          "category": "existing assertion mismatch"
+        },
+        {
+          "file": "test/server.test.ts",
+          "test": "MCP 2026-07-28 HTTP server keeps discovery lists stable across conversation scopes",
+          "category": "existing assertion mismatch"
+        }
+      ]
+    },
+    "candidate": {
+      "totalInFiles": 158,
+      "passed": 9,
+      "failed": 8,
+      "notSelected": 141,
+      "failures": [
+        {
+          "file": "test/currentSelectorReplay.test.ts",
+          "test": "current task selector contract preserves the admitted v6 record but rejects a stale project selector after restart",
+          "category": "existing assertion mismatch"
+        },
+        {
+          "file": "test/dashboardReadQueries.test.ts",
+          "test": "Dashboard query cost batches titles and handoffs with 20 retained Agents and recovery records",
+          "category": "existing assertion mismatch"
+        },
+        {
+          "file": "test/dashboardReadQueries.test.ts",
+          "test": "Dashboard query cost batches titles and handoffs with 120 retained Agents and recovery records",
+          "category": "existing assertion mismatch"
+        },
+        {
+          "file": "test/issue162Context.test.ts",
+          "test": "issue 162 product context marks a changed file environment pending while the old launcher still runs",
+          "category": "private-env fixture permissions"
+        },
+        {
+          "file": "test/mcpOAuth.test.ts",
+          "test": "MCP OAuth configuration and HTTP discovery publishes resource metadata and both tool security declarations without granting execution",
+          "category": "existing assertion mismatch"
+        },
+        {
+          "file": "test/server.test.ts",
+          "test": "MCP 2026-07-28 HTTP server discovers and serves only the current tools and resources",
+          "category": "existing assertion mismatch"
+        },
+        {
+          "file": "test/server.test.ts",
+          "test": "MCP 2026-07-28 HTTP server uses the current request envelope and rejects protocol/header mismatches",
+          "category": "existing assertion mismatch"
+        },
+        {
+          "file": "test/server.test.ts",
+          "test": "MCP 2026-07-28 HTTP server keeps discovery lists stable across conversation scopes",
+          "category": "existing assertion mismatch"
+        }
+      ]
+    },
+    "sameFailures": true,
+    "newFailuresObserved": 0,
+    "fullGateStillNotGreen": true
+  },
+  "issue242InFullSuite": {
+    "issue242Reads": {
+      "passed": 7,
+      "failed": 0
+    },
+    "httpDiagnosticsAndOtherIssue242Fixtures": {
+      "passed": 31,
+      "failed": 0
+    },
+    "pinnedGoTunnelFixture": "Not enabled in this full run; its one opt-in test was skipped. Prior same-day installed audit contains the pinned binary result."
+  },
+  "installedAfterSourceCorrection": {
+    "appAndRuntimeReplaced": false,
+    "activeJobsAtFinalHealth": 3,
+    "finalHelperHealth": {
+      "elapsedMs": 2.1937500000000014,
+      "phase": "running",
+      "connected": true,
+      "observation": "fresh",
+      "activeJobs": 3,
+      "readServiceStatus": "ready",
+      "stateServiceStatus": "ready"
+    },
+    "pending": "Actual installed post-upgrade lists, UI retention/recovery and completion delivery."
+  },
+  "longDurationTestAdded": false,
+  "rawLogSHA256": {
+    "validate-affected.log": "8ccb89f0fba892dff216d0675676ec23cfc2ed5ef30516ae6633125f1cccf6de",
+    "macos-check.log": "2fc2e03ecfd54fa980e8f3e06298c2331d83f3221381c759ea2f3c256a3785ad",
+    "baseline-failure-comparison.json": "37a221c8c27826313236d7bac48264d099ecc8b59ebf86aaf910ebe5d8b93ac4",
+    "candidate-failure-comparison.json": "0c2785d29bfc5c3243bee70809505544764e8441b53e22051ba08a542124d7ba",
+    "exact-baseline-tests.json": "04295d579a9b327b07a9f6a5dcd59411d7adda5a6aea481e2d7fcdc4c688d96e",
+    "candidate-clean-env-tests.json": "caf9185932ab809ecd89a2195c0265ad5815e133b63a1bc86a3dc525ad8e6f5c",
+    "launchd-controls.log": "7c1c8378cea6a88305718a98bad6836af44aab4b12a828fde922f3a5cf45aa54"
+  }
+}

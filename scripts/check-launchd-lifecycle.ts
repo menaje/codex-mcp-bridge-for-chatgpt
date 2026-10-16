@@ -90,7 +90,7 @@ const plist = {
   Label: label,
   ProgramArguments: [process.execPath, previousHelper, "--bridge-root", runtime, "--env-file", envFile,
     "--socket", helperSocket, "--bridge-socket", bridgeSocket, "--runtime-lock-directory", lock],
-  WorkingDirectory: runtime, RunAtLoad: true, KeepAlive: true, ProcessType: "Background",
+  WorkingDirectory: runtime, RunAtLoad: true, KeepAlive: true, ProcessType: "Interactive",
   ThrottleInterval: 10, ExitTimeOut: 45,
   StandardOutPath: path.join(root, "stdout.log"), StandardErrorPath: path.join(root, "stderr.log"),
   EnvironmentVariables: environment
