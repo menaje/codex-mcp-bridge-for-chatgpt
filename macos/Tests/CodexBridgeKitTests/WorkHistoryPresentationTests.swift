@@ -13,11 +13,11 @@ final class WorkHistoryPresentationTests: XCTestCase {
         }
         let live = try turn(#"{"status":"running","startedAt":"2026-09-09T01:00:00Z","updatedAt":"2026-09-09T01:09:59Z","durationMs":599000}"#)
         let liveText = DashboardTimePresentation.text(turn: live, fallbackUpdatedAt: live.updatedAt, locale: locale, now: now)
-        XCTAssertEqual(liveText, BridgeAppLocalization.string("dashboard.time.started", locale: locale)
-            .replacingOccurrences(of: "{time}", with: DisplayFormat.dateTime(live.startedAt!, locale: locale)))
+        XCTAssertEqual(liveText, BridgeAppLocalization.string("history.started", locale: locale)
+            .replacingOccurrences(of: "{relative}", with: DisplayFormat.relative(live.startedAt!, relativeTo: now, locale: locale)))
         XCTAssertFalse(liveText.contains(DisplayFormat.duration(599_000, locale: locale)))
         XCTAssertFalse(liveText.contains(" · "))
-        XCTAssertFalse(liveText.contains(DisplayFormat.relative(live.startedAt!, relativeTo: now, locale: locale)))
+        XCTAssertFalse(liveText.contains(DisplayFormat.dateTime(live.startedAt!, locale: locale)))
         let ended = try turn(#"{"status":"failed","updatedAt":"2026-09-09T01:09:59Z","endedAt":"2026-09-09T01:02:00Z","durationMs":120000}"#)
         let endedText = DashboardTimePresentation.text(turn: ended, fallbackUpdatedAt: ended.updatedAt, locale: locale, now: now)
         XCTAssertTrue(endedText.contains(DisplayFormat.duration(120_000, locale: locale)))
@@ -40,15 +40,19 @@ final class WorkHistoryPresentationTests: XCTestCase {
         XCTAssertEqual(fallbackRunning, "")
     }
 
-    func testEveryOngoingStatusUsesRecordedStartTimeAcrossLocales() throws {
+    func testEveryOngoingStatusUsesRelativeRecordedStartAcrossLocales() throws {
         let turn = try JSONDecoder().decode(DashboardTurn.self, from: Data(#"{"status":"running","startedAt":"2026-09-09T01:00:00Z","updatedAt":"2026-09-09T01:09:59Z","durationMs":599000}"#.utf8))
+        let now = try XCTUnwrap(DisplayFormat.parseDate("2026-09-09T03:00:00Z"))
         for language in ["en", "ko", "ja", "zh-Hans", "zh-Hant", "es", "fr", "de", "pt"] {
             let locale = Locale(identifier: language)
-            let expected = BridgeAppLocalization.string("dashboard.time.started", locale: locale)
-                .replacingOccurrences(of: "{time}", with: DisplayFormat.dateTime(turn.startedAt!, locale: locale))
+            let expected = BridgeAppLocalization.string("history.started", locale: locale)
+                .replacingOccurrences(of: "{relative}", with: DisplayFormat.relative(turn.startedAt!, relativeTo: now, locale: locale))
             for status in ["running", "input-required", "approval-required", "terminating", "termination-failed", "liveness-unknown", "orphaned", "background-process-running"] {
-                XCTAssertEqual(DashboardTimePresentation.text(turn: turn, fallbackUpdatedAt: turn.updatedAt, fallbackStatus: status, locale: locale), expected)
+                XCTAssertEqual(DashboardTimePresentation.text(turn: turn, fallbackUpdatedAt: turn.updatedAt, fallbackStatus: status, locale: locale, now: now), expected)
             }
+            let later = DashboardTimePresentation.text(turn: turn, fallbackUpdatedAt: turn.updatedAt, locale: locale, now: now.addingTimeInterval(3_600))
+            XCTAssertNotEqual(later, expected)
+            XCTAssertTrue(later.contains(DisplayFormat.relative(turn.startedAt!, relativeTo: now.addingTimeInterval(3_600), locale: locale)))
         }
     }
 
@@ -62,6 +66,7 @@ final class WorkHistoryPresentationTests: XCTestCase {
         let ended = try JSONDecoder().decode(DashboardTurn.self, from: Data(#"{"status":"completed","startedAt":"2026-09-09T01:00:00Z","endedAt":"2026-09-09T01:02:00Z","updatedAt":"2026-09-09T01:09:59Z","durationMs":120000}"#.utf8))
         let text = DashboardTimePresentation.text(turn: ended, fallbackUpdatedAt: ended.updatedAt, fallbackStatus: "running", locale: locale)
         XCTAssertTrue(text.contains(DisplayFormat.duration(120_000, locale: locale)))
-        XCTAssertFalse(text.contains(BridgeAppLocalization.string("dashboard.time.started", locale: locale).components(separatedBy: "{time}")[0]))
+        XCTAssertFalse(text.contains("시작"))
+        XCTAssertEqual(ExecutionRecordPresentation.statusKey("completed"), "dashboard.status.completed")
     }
 }

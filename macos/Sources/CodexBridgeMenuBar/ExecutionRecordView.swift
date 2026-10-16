@@ -40,7 +40,7 @@ enum ExecutionRecordPresentation {
         case "cancelled": return "execution.cancelled"
         case "failed": return "macos.failed"
         case "interrupted": return "macos.interrupted"
-        case "completed": return "macos.completed"
+        case "completed": return "dashboard.status.completed"
         case "input-required": return "macos.inputrequired"
         case "approval-required": return "macos.approvalrequired"
         case "terminating": return "macos.terminating"

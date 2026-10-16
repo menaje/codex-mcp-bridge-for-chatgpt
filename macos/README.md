@@ -44,6 +44,12 @@ when they differ from the latest recorded execution. See
 values stay as canonical lowercase catalog text in the menu, card, and both
 Settings surfaces; labels and descriptions remain localized.
 
+Ongoing work shows the relative age of its recorded start, using the shared
+start label and each surface's existing relative-time formatter. Time labels
+refresh locally once a minute while visible without querying the server or
+replacing open controls. Finished runs keep their duration and relative finish
+time. Both surfaces use the shared, concise completion label.
+
 ## Development
 
 Requirements for local-server development:

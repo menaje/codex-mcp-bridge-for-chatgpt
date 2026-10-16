@@ -1406,10 +1406,14 @@ struct DashboardRowView: View {
                     .lineLimit(2)
             }
             VStack(alignment: .leading, spacing: 2) {
-                if !rowTimeText.isEmpty {
-                    Text(rowTimeText)
-                        .lineLimit(2)
-                }
+                DashboardTimeView(
+                    turn: row.latestTurn,
+                    fallbackUpdatedAt: row.updatedAt,
+                    fallbackStatus: row.status,
+                    fallbackDurationMs: row.elapsedMs,
+                    locale: model.interfaceLocale
+                )
+                .lineLimit(2)
                 HStack(spacing: 10) {
                     if row.backgroundProcessCount > 0 {
                         Label(BridgeAppLocalization.format(
@@ -1548,7 +1552,12 @@ struct DashboardRowView: View {
                                             Text(title)
                                                 .fontWeight(.semibold)
                                         }
-                                        Text(turnTimeText(item.turn))
+                                        DashboardTimeView(
+                                            turn: item.turn,
+                                            fallbackUpdatedAt: item.turn.updatedAt,
+                                            statusLabel: StatusPresentation.label(item.turn.status, locale: model.interfaceLocale),
+                                            locale: model.interfaceLocale
+                                        )
                                             .foregroundStyle(.secondary)
                                         DashboardExecutionLabel(text: DashboardExecutionPresentation.turnText(
                                             item.turn.execution,
@@ -1656,23 +1665,6 @@ struct DashboardRowView: View {
         DashboardExecutionPresentation.text(execution, locale: model.interfaceLocale)
     }
 
-    private var rowTimeText: String {
-        DashboardTimePresentation.text(
-            turn: row.latestTurn,
-            fallbackUpdatedAt: row.updatedAt,
-            fallbackStatus: row.status,
-            fallbackDurationMs: row.elapsedMs,
-            locale: model.interfaceLocale
-        )
-    }
-
-    private func turnTimeText(_ turn: DashboardTurn) -> String {
-        StatusPresentation.label(turn.status, locale: model.interfaceLocale) + " · " +
-            DashboardTimePresentation.text(turn: turn, fallbackUpdatedAt: turn.updatedAt, locale: model.interfaceLocale)
-    }
-
-
-
 }
 
 private enum StatusPresentation {
@@ -1686,7 +1678,7 @@ private enum StatusPresentation {
         case "terminating": key = "macos.terminating"
         case "termination-failed": key = "macos.terminationfailed"
         case "liveness-unknown": key = "problem.kind.unknown"
-        case "completed": key = "macos.completed"
+        case "completed": key = "dashboard.status.completed"
         case "failed": key = "macos.failed"
         case "interrupted": key = "macos.interrupted"
         case "cancelled": key = "common.cancel"

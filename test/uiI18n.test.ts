@@ -175,7 +175,7 @@ describe("human-facing UI localization", () => {
     expect(UI_TRANSLATIONS.ko["dashboard.scope.conversation"]).toBe("이 대화");
     expect(UI_TRANSLATIONS.ko["dashboard.scope.all"]).toBe("전체 현황");
     expect(UI_TRANSLATIONS.ko["dashboard.restoreFailed"]).toContain("새로고침");
-    expect(UI_TRANSLATIONS.ko["dashboard.status.completed"]).toBe("Codex turn 완료");
+    expect(UI_TRANSLATIONS.ko["dashboard.status.completed"]).toBe("완료");
     expect(UI_TRANSLATIONS.ko["dashboard.status.background-process-running"])
       .toBe("백그라운드 프로세스 실행 중");
     expect(UI_TRANSLATIONS.ko["dashboard.history.show"]).toBe("이력 {count}건 펼치기");

@@ -58,7 +58,7 @@ function cachedExecutionRenderer(row:any,detail:any,historyPolicy:any){
   executionDetails:new Map(),executionRequests:new Map(),executionErrors:new Map(),expandedExecutions:new Set(),localeTag:'en',t:{},BUNDLES:{en:{}},reads:0,
   callTool:async()=>{c.reads++;throw Error('valid cached detail must not be refetched');},
   node:(tag:string,cls:string,text:string)=>new ExecutionElement(tag,cls,text),tone:()=>'',statusLabel:(status:string)=>status,scheduleSizeChanged:()=>{},appendExecution:()=>{},timeMeta:()=>"Recorded time",rowMeta:()=>""});
- for(const name of ['uiText','jobRowVisible','executionTarget','executionKey','executionFresh','executionCached','cancellationHeading','appendCancellation'])
+ for(const name of ['uiText','jobRowVisible','executionTarget','executionKey','executionFresh','executionCached','cancellationHeading','appendCancellation','timeNode'])
   vm.runInContext(DASHBOARD_CARD_HTML.split('\n').find(line=>new RegExp('^\\s*function '+name+'\\(').test(line))!,c);
  vm.runInContext(DASHBOARD_CARD_HTML.split('\n').find(line=>/^\s*async function loadExecutionDetail\(/.test(line))!,c);
  const start=DASHBOARD_CARD_HTML.indexOf('    function appendExecutionRecord('),end=DASHBOARD_CARD_HTML.indexOf('    function historyKey(',start);

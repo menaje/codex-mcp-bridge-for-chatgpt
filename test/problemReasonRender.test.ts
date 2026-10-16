@@ -16,7 +16,7 @@ function render(problems: any[], retentionDays = 0) {
   const elements={section:element(),list:element(),empty:element(),page:element(),count:element()};
   const next={problems:{rows:problems,page:{offset:0,returned:problems.length,total:problems.length}},historyPolicy:{retentionDays}};
   const c=vm.createContext({Date,selectedStatus:'problems',problemElements:elements,node:(tag:string,cls:string,text:string)=>new Element(tag,cls,text),view:next,localeTag:'en',t:{'dashboard.agentCount':'{count} Agents','cancellation.reason':'Cancellation reason'},uiText:(_key:string,fallback:string)=>fallback,formatNumber:String,syncProblemControls(){},tone:()=>'',statusLabel:(status:string)=>status,groupDashboardRowsByActivity,groupDashboardRowsByAgent,appendRowContext(){},appendWorkControl(){},appendExecution:(parent:Element)=>parent.appendChild(new Element('div','','Model · high')),timeMeta:()=> 'Recorded time',rowMeta:()=>'',latestTurn:(row:any)=>row.latestTurn});
-  for(const name of ['jobRowVisible','cancellationHeading','appendCancellation','appendExecutionRecord','renderActivityGroup','renderActivityRows','retainedProblemRows','renderProblems']) {
+  for(const name of ['jobRowVisible','cancellationHeading','appendCancellation','timeNode','appendExecutionRecord','renderActivityGroup','renderActivityRows','retainedProblemRows','renderProblems']) {
     const line=DASHBOARD_CARD_HTML.split('\n').find(line=>line.trimStart().startsWith(`function ${name}(`));expect(line).toBeDefined();vm.runInContext(line!,c);
   }
   vm.runInContext('renderProblems(view)',c);

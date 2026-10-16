@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Show the recorded start date and time for ongoing work in the menu bar and dashboard card instead of its duration.",
-  "breaking": false,
-  "migration": null
-}

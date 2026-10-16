@@ -15,8 +15,8 @@ enum DashboardTimePresentation {
         let live = turn?.endedAt == nil && ["running", "input-required", "approval-required", "terminating", "termination-failed", "liveness-unknown", "orphaned", "background-process-running"].contains(status ?? "")
         if live {
             guard let startedAt = turn?.startedAt, DisplayFormat.parseDate(startedAt) != nil else { return "" }
-            return BridgeAppLocalization.string("dashboard.time.started", locale: locale)
-                .replacingOccurrences(of: "{time}", with: DisplayFormat.dateTime(startedAt, locale: locale))
+            return BridgeAppLocalization.string("history.started", locale: locale)
+                .replacingOccurrences(of: "{relative}", with: DisplayFormat.relative(startedAt, relativeTo: now, locale: locale))
         }
         let duration = turn?.durationMs ?? fallbackDurationMs
         let workTime = duration.map {
@@ -30,6 +30,34 @@ enum DashboardTimePresentation {
             workTime,
             relative
         )
+    }
+}
+
+/// Refresh only the displayed age; the recorded turn and server snapshot stay intact.
+struct DashboardTimeView: View {
+    let turn: DashboardTurn?
+    let fallbackUpdatedAt: String
+    var fallbackStatus: String? = nil
+    var fallbackDurationMs: Int? = nil
+    var statusLabel: String? = nil
+    let locale: Locale
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            let time = DashboardTimePresentation.text(
+                turn: turn,
+                fallbackUpdatedAt: fallbackUpdatedAt,
+                fallbackStatus: fallbackStatus,
+                fallbackDurationMs: fallbackDurationMs,
+                locale: locale,
+                now: context.date
+            )
+            if !time.isEmpty {
+                Text(statusLabel.map {
+                    BridgeAppLocalization.format("macos.format.dotSeparatedPair", locale: locale, $0, time)
+                } ?? time)
+            }
+        }
     }
 }
 

@@ -3376,7 +3376,7 @@
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "시작 {relative}"
+            "value": "{relative} 시작"
           }
         },
         "ja": {
@@ -26101,64 +26101,6 @@
         }
       }
     },
-    "dashboard.time.started": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Started {time}"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "시작 {time}"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "開始 {time}"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "开始于{time}"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "開始於{time}"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Iniciado {time}"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Démarré {time}"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Gestartet {time}"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Iniciado {time}"
-          }
-        }
-      }
-    },
     "dashboard.time.active": {
       "localizations": {
         "en": {
@@ -26918,55 +26860,55 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codex turn completed"
+            "value": "Completed"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codex turn 완료"
+            "value": "완료"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codex ターン完了"
+            "value": "完了"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codex 轮次已完成"
+            "value": "已完成"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codex 輪次已完成"
+            "value": "已完成"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Turno de Codex completado"
+            "value": "Completada"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Tour Codex terminé"
+            "value": "Terminée"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codex-Turn abgeschlossen"
+            "value": "Abgeschlossen"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Turno do Codex concluído"
+            "value": "Concluída"
           }
         }
       }
@@ -66909,65 +66851,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "無法完成預約的操作。請檢查目前狀態後再試。"
-          }
-        }
-      }
-    },
-    "macos.completed": {
-      "extractionState": "manual",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Abgeschlossen"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Completed"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Completada"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Terminée"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "完了"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Concluída"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已完成"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已完成"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "완료"
           }
         }
       }
