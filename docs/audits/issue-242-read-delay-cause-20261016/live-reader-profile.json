@@ -1,0 +1,250 @@
+{
+  "request": {
+    "ms": 2516.893208,
+    "ok": false,
+    "error": {
+      "code": -32602,
+      "message": "STATE_READ_STALE: Observation deadline expired; retain the last confirmed view."
+    }
+  },
+  "durationMs": 2921.709,
+  "samples": 101,
+  "self": [
+    {
+      "function": "",
+      "file": "",
+      "line": 0,
+      "ms": 2087.292
+    },
+    {
+      "function": "(program)",
+      "file": "",
+      "line": 0,
+      "ms": 390.417
+    },
+    {
+      "function": "assertWellFormedUnicode",
+      "file": "dist/textIntegrity.js",
+      "line": 42,
+      "ms": 121.207
+    },
+    {
+      "function": "parseStoredJson",
+      "file": "dist/stateStore.js",
+      "line": 6527,
+      "ms": 95.375
+    },
+    {
+      "function": "listJobs",
+      "file": "dist/stateStore.js",
+      "line": 721,
+      "ms": 71.875
+    },
+    {
+      "function": "assertJsonTextIntegrity",
+      "file": "dist/textIntegrity.js",
+      "line": 66,
+      "ms": 51.001000000000005
+    },
+    {
+      "function": "",
+      "file": "dist/stateStore.js",
+      "line": 625,
+      "ms": 31.167
+    },
+    {
+      "function": "assertTextConstraints",
+      "file": "dist/textIntegrity.js",
+      "line": 177,
+      "ms": 19.666
+    },
+    {
+      "function": "assertJsonTextIntegrity",
+      "file": "dist/textIntegrity.js",
+      "line": 66,
+      "ms": 10.459
+    },
+    {
+      "function": "load",
+      "file": "dist/sessionRegistry.js",
+      "line": 206,
+      "ms": 9.125
+    },
+    {
+      "function": "(idle)",
+      "file": "",
+      "line": 0,
+      "ms": 7.792
+    },
+    {
+      "function": "",
+      "file": "",
+      "line": 0,
+      "ms": 6.333
+    },
+    {
+      "function": "readSelection",
+      "file": "dist/modelPolicy.js",
+      "line": 284,
+      "ms": 5.125
+    },
+    {
+      "function": "assertJsonTextIntegrity",
+      "file": "dist/textIntegrity.js",
+      "line": 66,
+      "ms": 4
+    }
+  ],
+  "inclusive": [
+    {
+      "function": "(root)",
+      "file": "",
+      "line": 0,
+      "ms": 2910.834
+    },
+    {
+      "function": "executeProjection",
+      "file": "dist/stateReadProcess.js",
+      "line": 535,
+      "ms": 2512.6250000000005
+    },
+    {
+      "function": "",
+      "file": "dist/stateReadProcess.js",
+      "line": 473,
+      "ms": 2512.6250000000005
+    },
+    {
+      "function": "listJobs",
+      "file": "dist/stateStore.js",
+      "line": 721,
+      "ms": 2441.209
+    },
+    {
+      "function": "load",
+      "file": "dist/tools.js",
+      "line": 3536,
+      "ms": 2441.209
+    },
+    {
+      "function": "CodexJobRegistry",
+      "file": "dist/tools.js",
+      "line": 1714,
+      "ms": 2441.209
+    },
+    {
+      "function": "",
+      "file": "",
+      "line": 0,
+      "ms": 2087.292
+    },
+    {
+      "function": "(program)",
+      "file": "",
+      "line": 0,
+      "ms": 390.417
+    },
+    {
+      "function": "hydrateJobPayload",
+      "file": "dist/stateStore.js",
+      "line": 6032,
+      "ms": 282.04200000000003
+    },
+    {
+      "function": "",
+      "file": "dist/stateStore.js",
+      "line": 751,
+      "ms": 282.04200000000003
+    },
+    {
+      "function": "parseStoredJson",
+      "file": "dist/stateStore.js",
+      "line": 6527,
+      "ms": 278.04200000000003
+    },
+    {
+      "function": "assertWellFormedUnicode",
+      "file": "dist/textIntegrity.js",
+      "line": 42,
+      "ms": 121.207
+    },
+    {
+      "function": "load",
+      "file": "dist/sessionRegistry.js",
+      "line": 206,
+      "ms": 71.416
+    },
+    {
+      "function": "SessionRegistry",
+      "file": "dist/sessionRegistry.js",
+      "line": 17,
+      "ms": 71.416
+    },
+    {
+      "function": "assertJsonTextIntegrity",
+      "file": "dist/textIntegrity.js",
+      "line": 66,
+      "ms": 61.46
+    },
+    {
+      "function": "assertJsonTextIntegrity",
+      "file": "dist/textIntegrity.js",
+      "line": 66,
+      "ms": 61.46
+    },
+    {
+      "function": "",
+      "file": "dist/textIntegrity.js",
+      "line": 72,
+      "ms": 61.46
+    },
+    {
+      "function": "assertJsonTextIntegrity",
+      "file": "dist/textIntegrity.js",
+      "line": 66,
+      "ms": 61.46
+    },
+    {
+      "function": "assertJsonTextIntegrity",
+      "file": "dist/textIntegrity.js",
+      "line": 66,
+      "ms": 51.001000000000005
+    },
+    {
+      "function": "listSessions",
+      "file": "dist/stateStore.js",
+      "line": 618,
+      "ms": 37.5
+    },
+    {
+      "function": "",
+      "file": "dist/stateStore.js",
+      "line": 625,
+      "ms": 31.167
+    },
+    {
+      "function": "readPersistedSession",
+      "file": "dist/sessionRegistry.js",
+      "line": 297,
+      "ms": 24.791
+    },
+    {
+      "function": "assertTextConstraints",
+      "file": "dist/textIntegrity.js",
+      "line": 177,
+      "ms": 19.666
+    },
+    {
+      "function": "canonicalHumanText",
+      "file": "dist/textIntegrity.js",
+      "line": 122,
+      "ms": 19.666
+    },
+    {
+      "function": "normalizeProjectName",
+      "file": "dist/projectRegistry.js",
+      "line": 48,
+      "ms": 19.666
+    }
+  ]
+}

@@ -1419,6 +1419,18 @@ export class BridgeStateStore {
   }
 
   listJobs(agentId?: string, scopeId?: string): StoredJobRecord[] {
+    return this.readJobs(agentId, scopeId, true);
+  }
+
+  /** Dashboard registries need current state and pending inputs, not event bodies. */
+  listJobsForDashboard(agentId?: string, scopeId?: string): StoredJobRecord[] {
+    if (!this.options.readOnly) {
+      throw new Error("Dashboard Job hydration requires a query-only projection.");
+    }
+    return this.readJobs(agentId, scopeId, false);
+  }
+
+  private readJobs(agentId: string | undefined, scopeId: string | undefined, includePublicEvents: boolean): StoredJobRecord[] {
     return this.database
       .prepare(`
         SELECT j.payload,j.job_id,j.scope_id,j.request_id,j.activity_id,j.thread_id,
@@ -1427,11 +1439,11 @@ export class BridgeStateStore {
                terminal_version,agent_id,context_mode,a.project_id,p.name AS project_name,
                j.cwd,j.sandbox,j.created_at,j.updated_at,j.job_version,j.last_progress_at,
                j.last_progress,j.terminal_origin,j.cancellation_intent_id,j.ended_at,j.ended_at_source,j.detail_availability,
-               COALESCE((SELECT json_group_array(json(event.payload)) FROM (
+               ${includePublicEvents ? `COALESCE((SELECT json_group_array(json(event.payload)) FROM (
                  SELECT payload FROM (SELECT event_id,payload FROM job_events
                   WHERE job_id=j.job_id AND event_type LIKE 'app-%' ORDER BY event_id DESC LIMIT 200)
                   ORDER BY event_id
-               ) event),'[]') AS public_events,
+               ) event),'[]')` : "'[]'"} AS public_events,
                COALESCE((SELECT json_group_array(json(interaction.payload)) FROM (
                  SELECT json_patch(payload,json_object(
                    'interactionId',interaction_id,

@@ -4568,7 +4568,9 @@ export class CodexJobRegistry {
 
   private load(filter?: { agentId?: string; scopeId?: string } | false): void {
     if (!this.stateStore || filter === false) return;
-    const stored = this.stateStore.listJobs(filter?.agentId, filter?.scopeId);
+    const stored = filter
+      ? this.stateStore.listJobsForDashboard(filter.agentId, filter.scopeId)
+      : this.stateStore.listJobs();
     const changed = this.loadJobs(stored);
     for (const job of this.jobs.values()) {
       this.progressPersisted.set(job.jobId, {
