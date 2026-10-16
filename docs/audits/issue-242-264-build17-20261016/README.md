@@ -48,20 +48,49 @@ the controlled causal comparison remains the [four-variant frozen-data matrix](.
 The sample took 2.144 seconds overall. It is a finite functional read protocol,
 with no duration-based soak or shortened replacement for a long test.
 
-## Remaining acceptance boundaries
+## Installed menu acceptance
 
-The updated accessory app could not be selected by the automation interface
-(timeout). Finder accessibility worked; the screenshot interface separately
-reported a capture failure. Installed menu interaction, retained-screen recovery
-through an actual observation failure, and operating completion-notification
-delivery remain unverified. The independently clicked fixture app and local/
-remote recovery tests remain documented in the [#264 audit](../issue-264-recovery-20261016/README.md).
+At 14:08–14:11 KST, after the user opened the installed app's menu, native
+accessibility and screenshot capture worked. The menu showed a healthy local bridge
+and 733 retained executions.
+A normal refresh advanced the last-confirmed minute from 14:08 to 14:09 while
+preserving the selected History panel. Loading one more page expanded the displayed
+execution cards from 12 to 24.
 
-Installed timer/topic request rates, SQL lock waiting and physical I/O costs were
-not measured by this RPC sample. The earlier complete Node gate still has its
-eight independently reproduced baseline failures; its receipt is preserved in
-#266. This audit changes documentation only and does not reclassify that gate.
+To isolate a list-read failure, the installed read-only projection child was paused
+with `SIGSTOP`, guarded by zero active Jobs and zero pending admissions. Its runtime
+ownership and process identity were checked first. A separate watchdog would resume
+it within 30 seconds; explicit release resumed the same reader after 16.832 seconds.
+This was one functional fault injection using the existing read deadlines, not a
+duration-based stability test. No app/helper/runtime restart, Job cancellation or
+re-execution, authentication/configuration edit, or test-data mutation was used to
+create or recover from the fault.
 
-Keep #242 and #264 open for their remaining acceptance evidence. Historical
-operating HTTP 502 causation remains unconfirmed in #262. The test-fixture SIGPIPE
-finding is scoped to the native test harness.
+A menu refresh during that pause showed the generic list-read notice and **Reload
+list** (`다시 불러오기`), with no helper-reconnect button. All 24 displayed execution
+cards, the selected panel and last-confirmed minute (14:09) survived. The menu
+correctly needed attention while the projection was stale. After resuming the
+reader, the service indicator became healthy while the list failure notice remained.
+Clicking **Reload list** cleared that notice and advanced the minute to 14:11,
+preserving the same 24 cards and selected panel. Before/after health checks confirmed
+the same runtime and reader, bridge/tunnel connected, reader ready and no Jobs or
+pending admissions. [Sanitized observation receipt](installed-ui.json).
+
+This installed check covers local retained-screen recovery. First-load failure,
+remote failure/recovery, exact-detail retention, bounded requests and late responses
+remain separately evidenced by the production-model fixtures in the
+[#264 audit](../issue-264-recovery-20261016/README.md). It does not claim an installed
+remote-mode fault test or establish the cause of the user's uncaptured earlier
+screen. Together these records complete #264's scoped UI acceptance.
+
+## Remaining #242 acceptance boundaries
+
+Operating completion-notification delivery remains unverified. Installed timer/topic
+request rates, SQL lock waiting and physical I/O costs were not measured by these
+RPC/UI checks. The earlier complete Node gate still has its eight independently
+reproduced baseline failures; its receipt is preserved in #266. This audit changes
+documentation only and does not reclassify that gate.
+
+Keep #242 open for its remaining acceptance evidence. Historical operating HTTP
+502 causation remains unconfirmed in #262. The test-fixture SIGPIPE finding is
+scoped to the native test harness.

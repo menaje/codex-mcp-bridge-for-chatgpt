@@ -20,12 +20,22 @@
   "readProtocolOnly": true,
   "originalRequestDeadlinesUnchanged": true,
   "nodeFullGate": "Previous #266 run: 2046 passed, 8 failed, 1 skipped; identical 8 failures reproduced on prior dev. No Node product changes after that run.",
-  "issuesClosed": false,
   "historicalOperating502CauseEstablished": false,
   "documentationAffectedGate": {
     "exit": 0,
-    "paths": 7,
+    "paths": 5,
     "nodeRequired": false,
-    "macOSRequired": false
+    "macOSRequired": false,
+    "command": "npm run validate:affected -- --base origin/dev",
+    "schemaCLI": "0.153.3",
+    "status": "passed after installed UI receipt; original strict native/bundle/Node baseline evidence retained"
+  },
+  "installedUI": {
+    "receipt": "installed-ui.json",
+    "localMenuRefreshAndPagination": true,
+    "localRetainedListRecovery": true,
+    "scopedIssue264AcceptanceComplete": true,
+    "issue242AcceptanceComplete": false,
+    "historicalOperating502CauseEstablished": false
   }
 }
