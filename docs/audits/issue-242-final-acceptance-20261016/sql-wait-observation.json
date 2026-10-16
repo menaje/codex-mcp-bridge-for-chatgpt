@@ -1,0 +1,54 @@
+{
+  "sampler": "/usr/bin/sample, 1ms requested interval",
+  "operationalIdle": {
+    "durationSeconds": 3,
+    "mainThreadSamples": 2342,
+    "inclusiveFunctionSampleCounts": {
+      "sqlite3_step": 0,
+      "sqlite3LockAndPrepare": 0,
+      "pread": 0,
+      "sqliteDefaultBusyCallback": 0,
+      "sqlite3InvokeBusyHandler": 0,
+      "unixSleep": 0,
+      "nanosleep": 0,
+      "__semwait_signal": 0
+    }
+  },
+  "operationalReadChild": {
+    "durationSeconds": 3,
+    "mainThreadSamples": 2480,
+    "inclusiveFunctionSampleCounts": {
+      "sqlite3_step": 294,
+      "sqlite3LockAndPrepare": 28,
+      "pread": 41,
+      "sqliteDefaultBusyCallback": 0,
+      "sqlite3InvokeBusyHandler": 0,
+      "unixSleep": 0,
+      "nanosleep": 0,
+      "__semwait_signal": 0
+    }
+  },
+  "privateLockPositiveControl": {
+    "database": "private throwaway fixture, DELETE journal, writer EXCLUSIVE transaction; never the operational database",
+    "durationSeconds": 1,
+    "success": true,
+    "elapsedMs": 1392.996083,
+    "mainThreadSamples": 852,
+    "inclusiveFunctionSampleCounts": {
+      "sqlite3_step": 0,
+      "sqlite3LockAndPrepare": 852,
+      "pread": 0,
+      "sqliteDefaultBusyCallback": 849,
+      "sqlite3InvokeBusyHandler": 0,
+      "unixSleep": 849,
+      "nanosleep": 849,
+      "__semwait_signal": 849
+    }
+  },
+  "limits": [
+    "Inclusive function samples can overlap and are not independent statement counts or exact milliseconds.",
+    "The control demonstrates that this sampler detects a real SQLite busy sleep in the same installed better-sqlite3 module.",
+    "No busy sleep stack was captured in the operating read-child sample. Sub-sampling waits or other processes are not ruled out.",
+    "Exact lock-wait duration is not independently available; the separate read-only SQL observer measures prepare and execution elapsed including any waiting."
+  ]
+}

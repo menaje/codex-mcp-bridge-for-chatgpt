@@ -1,0 +1,13 @@
+#include <libproc.h>
+#include <sys/resource.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
+int main(int argc,char **argv){
+ if(argc<2)return 2;
+ for(int i=1;i<argc;i++){
+  int pid=atoi(argv[i]);struct rusage_info_v4 r={0};
+  if(proc_pid_rusage(pid,RUSAGE_INFO_V4,(rusage_info_t*)&r)!=0){fprintf(stderr,"rusage failed %d %d\n",pid,errno);return 1;}
+  printf("{\"pid\":%d,\"diskBytesRead\":%llu,\"diskBytesWritten\":%llu,\"logicalWriteBytes\":%llu,\"pageIns\":%llu}\n",pid,(unsigned long long)r.ri_diskio_bytesread,(unsigned long long)r.ri_diskio_byteswritten,(unsigned long long)r.ri_logical_writes,(unsigned long long)r.ri_pageins);
+ }return 0;
+}

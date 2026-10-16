@@ -1,0 +1,277 @@
+{
+  "api": "macOS proc_pid_rusage RUSAGE_INFO_V4",
+  "counters": "OS-accounted disk IO bytes and logical write bytes; cumulative counters differenced within the same PID",
+  "windows": [
+    {
+      "name": "quiet",
+      "durationSeconds": 51.785,
+      "processes": {
+        "native-app": {
+          "diskBytesRead": 0,
+          "diskBytesWritten": 0,
+          "logicalWriteBytes": 0,
+          "pageIns": 0
+        },
+        "helper": {
+          "diskBytesRead": 65536,
+          "diskBytesWritten": 0,
+          "logicalWriteBytes": 0,
+          "pageIns": 0
+        },
+        "launcher": {
+          "diskBytesRead": 0,
+          "diskBytesWritten": 40960,
+          "logicalWriteBytes": 692224,
+          "pageIns": 0
+        },
+        "server-supervisor": {
+          "diskBytesRead": 0,
+          "diskBytesWritten": 0,
+          "logicalWriteBytes": 0,
+          "pageIns": 0
+        },
+        "state-owner": {
+          "diskBytesRead": 86016,
+          "diskBytesWritten": 2752512,
+          "logicalWriteBytes": 1746496,
+          "pageIns": 0
+        },
+        "telemetry-child": {
+          "diskBytesRead": 81920,
+          "diskBytesWritten": 24576,
+          "logicalWriteBytes": 407648,
+          "pageIns": 0
+        },
+        "read-child": {
+          "diskBytesRead": 0,
+          "diskBytesWritten": 0,
+          "logicalWriteBytes": 0,
+          "pageIns": 0
+        },
+        "tunnel-client": {
+          "diskBytesRead": 0,
+          "diskBytesWritten": 0,
+          "logicalWriteBytes": 0,
+          "pageIns": 0
+        },
+        "execution-worker": {
+          "diskBytesRead": 0,
+          "diskBytesWritten": 0,
+          "logicalWriteBytes": 0,
+          "pageIns": 0
+        }
+      },
+      "sum": {
+        "diskBytesRead": 233472,
+        "diskBytesWritten": 2818048,
+        "logicalWriteBytes": 2846368,
+        "pageIns": 0
+      }
+    },
+    {
+      "name": "completion-and-model-catalog",
+      "durationSeconds": 49.309,
+      "processes": {
+        "native-app": {
+          "diskBytesRead": 20480,
+          "diskBytesWritten": 0,
+          "logicalWriteBytes": 0,
+          "pageIns": 1
+        },
+        "helper": {
+          "diskBytesRead": 217088,
+          "diskBytesWritten": 24576,
+          "logicalWriteBytes": 131072,
+          "pageIns": 0
+        },
+        "launcher": {
+          "diskBytesRead": 0,
+          "diskBytesWritten": 40960,
+          "logicalWriteBytes": 667648,
+          "pageIns": 0
+        },
+        "server-supervisor": {
+          "diskBytesRead": 0,
+          "diskBytesWritten": 0,
+          "logicalWriteBytes": 0,
+          "pageIns": 0
+        },
+        "state-owner": {
+          "diskBytesRead": 4538368,
+          "diskBytesWritten": 3424256,
+          "logicalWriteBytes": 2486144,
+          "pageIns": 0
+        },
+        "telemetry-child": {
+          "diskBytesRead": 802816,
+          "diskBytesWritten": 1789952,
+          "logicalWriteBytes": 1820304,
+          "pageIns": 0
+        },
+        "read-child": {
+          "diskBytesRead": 0,
+          "diskBytesWritten": 0,
+          "logicalWriteBytes": 0,
+          "pageIns": 0
+        },
+        "tunnel-client": {
+          "diskBytesRead": 65536,
+          "diskBytesWritten": 0,
+          "logicalWriteBytes": 0,
+          "pageIns": 3
+        },
+        "execution-worker": {
+          "diskBytesRead": 0,
+          "diskBytesWritten": 8192,
+          "logicalWriteBytes": 49152,
+          "pageIns": 0
+        }
+      },
+      "sum": {
+        "diskBytesRead": 5644288,
+        "diskBytesWritten": 5287936,
+        "logicalWriteBytes": 5154320,
+        "pageIns": 4
+      }
+    },
+    {
+      "name": "sampled-reads",
+      "durationSeconds": 42.492,
+      "processes": {
+        "native-app": {
+          "diskBytesRead": 0,
+          "diskBytesWritten": 0,
+          "logicalWriteBytes": 0,
+          "pageIns": 0
+        },
+        "helper": {
+          "diskBytesRead": 176128,
+          "diskBytesWritten": 0,
+          "logicalWriteBytes": 0,
+          "pageIns": 0
+        },
+        "launcher": {
+          "diskBytesRead": 0,
+          "diskBytesWritten": 32768,
+          "logicalWriteBytes": 581632,
+          "pageIns": 0
+        },
+        "server-supervisor": {
+          "diskBytesRead": 32768,
+          "diskBytesWritten": 0,
+          "logicalWriteBytes": 0,
+          "pageIns": 3
+        },
+        "state-owner": {
+          "diskBytesRead": 1654784,
+          "diskBytesWritten": 2637824,
+          "logicalWriteBytes": 3021632,
+          "pageIns": 0
+        },
+        "telemetry-child": {
+          "diskBytesRead": 507904,
+          "diskBytesWritten": 778240,
+          "logicalWriteBytes": 871080,
+          "pageIns": 0
+        },
+        "read-child": {
+          "diskBytesRead": 12664832,
+          "diskBytesWritten": 0,
+          "logicalWriteBytes": 0,
+          "pageIns": 2
+        },
+        "tunnel-client": {
+          "diskBytesRead": 49152,
+          "diskBytesWritten": 0,
+          "logicalWriteBytes": 0,
+          "pageIns": 2
+        },
+        "execution-worker": {
+          "diskBytesRead": 0,
+          "diskBytesWritten": 0,
+          "logicalWriteBytes": 0,
+          "pageIns": 0
+        }
+      },
+      "sum": {
+        "diskBytesRead": 15085568,
+        "diskBytesWritten": 3448832,
+        "logicalWriteBytes": 4474344,
+        "pageIns": 7
+      }
+    },
+    {
+      "name": "post-read-and-restoration",
+      "durationSeconds": 34.785,
+      "processes": {
+        "native-app": {
+          "diskBytesRead": 0,
+          "diskBytesWritten": 0,
+          "logicalWriteBytes": 0,
+          "pageIns": 0
+        },
+        "helper": {
+          "diskBytesRead": 0,
+          "diskBytesWritten": 0,
+          "logicalWriteBytes": 0,
+          "pageIns": 0
+        },
+        "launcher": {
+          "diskBytesRead": 0,
+          "diskBytesWritten": 28672,
+          "logicalWriteBytes": 471040,
+          "pageIns": 0
+        },
+        "server-supervisor": {
+          "diskBytesRead": 0,
+          "diskBytesWritten": 0,
+          "logicalWriteBytes": 0,
+          "pageIns": 0
+        },
+        "state-owner": {
+          "diskBytesRead": 823296,
+          "diskBytesWritten": 1327104,
+          "logicalWriteBytes": 1510544,
+          "pageIns": 0
+        },
+        "telemetry-child": {
+          "diskBytesRead": 65536,
+          "diskBytesWritten": 4096,
+          "logicalWriteBytes": 251200,
+          "pageIns": 0
+        },
+        "read-child": {
+          "diskBytesRead": 0,
+          "diskBytesWritten": 0,
+          "logicalWriteBytes": 0,
+          "pageIns": 0
+        },
+        "tunnel-client": {
+          "diskBytesRead": 65536,
+          "diskBytesWritten": 0,
+          "logicalWriteBytes": 0,
+          "pageIns": 1
+        },
+        "execution-worker": {
+          "diskBytesRead": 81920,
+          "diskBytesWritten": 0,
+          "logicalWriteBytes": 0,
+          "pageIns": 2
+        }
+      },
+      "sum": {
+        "diskBytesRead": 1036288,
+        "diskBytesWritten": 1359872,
+        "logicalWriteBytes": 2232784,
+        "pageIns": 3
+      }
+    }
+  ],
+  "limits": [
+    "Nine fixed existing owned processes were measured; separately spawned CLI/model processes and the observer are excluded.",
+    "Windows include normal runtime/telemetry/status activity, the functional probe, and OS cache/scheduling effects. They are not per-SQL or per-notification IO attribution.",
+    "The last counter snapshot is about eight seconds after socket restoration; it is not coterminous with the RPC observer.",
+    "No WAL file size is used as a physical IO estimate. Logical writes and OS-accounted disk writes differ.",
+    "Native read child may write its isolated CLI/config/cache artifacts while opening the main state database query-only. IO counts do not imply main-database mutation."
+  ]
+}
