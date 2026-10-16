@@ -12,6 +12,31 @@ public struct RPCObservationFailure: Equatable, Sendable {
 
     public init(_ error: Error) {
         if error is CancellationError { kind = .cancelled; phase = nil; posixCode = nil; return }
+        if let error = error as? URLError {
+            phase = nil; posixCode = nil
+            switch error.code {
+            case .cancelled: kind = .cancelled
+            case .timedOut: kind = .timeout
+            case .cannotConnectToHost, .cannotFindHost: kind = .refused
+            case .networkConnectionLost: kind = .peerClosed
+            case .serverCertificateUntrusted, .serverCertificateHasBadDate,
+                 .serverCertificateHasUnknownRoot, .serverCertificateNotYetValid,
+                 .clientCertificateRejected, .clientCertificateRequired: kind = .permissionDenied
+            default: kind = .transport
+            }
+            return
+        }
+        if let error = error as? RemoteCompanionError {
+            phase = nil; posixCode = nil
+            switch error {
+            case .credentialMissing, .unauthorized, .forbidden, .certificateMismatch,
+                 .serverIdentityMismatch, .invalidCertificatePin: kind = .permissionDenied
+            case .incompatibleProtocol, .invalidResponse, .responseTooLarge: kind = .contractMismatch
+            case .server(let status, _): kind = [408, 504].contains(status) ? .timeout : .remote
+            default: kind = .transport
+            }
+            return
+        }
         guard let error = error as? LocalRPCError else { kind = .transport; phase = nil; posixCode = nil; return }
         switch error {
         case .deadlineExceeded(let at): kind = .timeout; phase = at; posixCode = nil
