@@ -1,0 +1,15 @@
+import pathlib,json,os,time
+root=pathlib.Path(os.environ['ISSUE242_EVIDENCE_DIR']);deadline=time.monotonic()+190
+while time.monotonic()<deadline:
+ if (root/'observer-restored.json').exists():raise SystemExit(0)
+ time.sleep(.25)
+(root/'stop-observer').touch()
+time.sleep(2)
+if not (root/'observer-restored.json').exists():
+ d=json.loads((root/'observer-ready.json').read_text());result=[]
+ for s in d['sockets']:
+  p=pathlib.Path(s['path']);b=pathlib.Path(s['backend'])
+  if b.exists():
+   assert p.lstat().st_ino==s['proxyInode'] and b.lstat().st_ino==s['originalInode']
+   os.replace(b,p);result.append(p.lstat().st_ino==s['originalInode'])
+ (root/'watchdog-recovery.json').write_text(json.dumps({'restored':result})+'\n')

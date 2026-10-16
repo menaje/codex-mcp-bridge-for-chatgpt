@@ -1,0 +1,88 @@
+"""Temporary same-UID byte-forwarding observer. Never stores request/response payloads."""
+import asyncio,collections,datetime,json,os,pathlib,socket,stat,subprocess,sys,time
+ROOT=pathlib.Path(os.environ['ISSUE242_EVIDENCE_DIR'])
+TOPICS={'dashboard','settings','enrichment','completion-outbox-ready'}
+class Proxy:
+ def __init__(self,path,lane,emit):
+  self.path=path;self.lane=lane;self.emit=emit;self.backend=path.with_name(path.name+'.242backend');self.temp=path.with_name(path.name+'.242probe');self.original=None;self.inode=None;self.server=None;self.tasks=set()
+ async def install(self):
+  st=self.path.lstat();assert stat.S_ISSOCK(st.st_mode) and st.st_uid==os.getuid() and stat.S_IMODE(st.st_mode)==0o600
+  assert not self.backend.exists() and not self.temp.exists()
+  self.original=st.st_ino
+  self.server=await asyncio.start_unix_server(self.handle,path=str(self.temp),limit=16*1024*1024)
+  os.chmod(self.temp,0o600);self.inode=self.temp.lstat().st_ino
+  os.rename(self.path,self.backend)
+  try:os.rename(self.temp,self.path)
+  except BaseException:os.rename(self.backend,self.path);raise
+ def restore(self):
+  if self.backend.exists():
+   assert self.backend.lstat().st_ino==self.original and self.path.lstat().st_ino==self.inode,'Socket identity changed; stop for operator recovery'
+   os.replace(self.backend,self.path)
+   assert self.path.lstat().st_ino==self.original
+  if self.server:self.server.close()
+ async def handle(self,reader,writer):
+  task=asyncio.current_task();self.tasks.add(task);upwriter=None;method='unparsed';started=time.monotonic()
+  try:
+   upstream,upwriter=await asyncio.open_unix_connection(str(self.backend),limit=16*1024*1024)
+   # Native protocol sends one newline-framed request, then one response.
+   line=await reader.readline();req=json.loads(line);method=req.get('method','invalid')
+   if not isinstance(method,str) or len(method)>100:method='invalid'
+   self.emit({'kind':'request','lane':self.lane,'method':method})
+   upwriter.write(line);await upwriter.drain()
+   line=await upstream.readline()
+   # Forward exactly once and never retry. Save only approved aggregate fields.
+   writer.write(line);await writer.drain();reply=json.loads(line);result=reply.get('result')
+   event={'kind':'response','lane':self.lane,'method':method,'elapsedMs':round((time.monotonic()-started)*1000,3),'ok':'error' not in reply}
+   if method=='changes.wait' and isinstance(result,dict):
+    event['topics']=[t for t in result.get('topics',[]) if t in TOPICS]
+    event['completionTopicSupported']='completion-outbox-ready' in result.get('supportedTopics',[])
+   if method=='completion.availability' and isinstance(result,dict):event['available']=result.get('available')
+   if method=='completion.claim' and isinstance(result,dict):event['eventCount']=len(result.get('events',[]))
+   self.emit(event)
+  except (Exception,asyncio.CancelledError) as e:self.emit({'kind':'transport-error','lane':self.lane,'method':method,'type':type(e).__name__})
+  finally:
+   for w in [upwriter,writer]:
+    if w:
+     w.close()
+     try:await w.wait_closed()
+     except Exception:pass
+   self.tasks.discard(task)
+async def fixture():
+ import tempfile
+ with tempfile.TemporaryDirectory(prefix='bridge242-proxy-') as tmp:
+  path=pathlib.Path(tmp)/'fixture.sock';events=[];received=[]
+  async def backend(r,w):
+   q=await r.readline();received.append(q);v=json.loads(q);out=json.dumps({'jsonrpc':'2.0','id':v['id'],'result':{'events':[{'opaque':'never logged'}]}}).encode()+b'\n'
+   for b in [out[:3],out[3:]]:w.write(b);await w.drain()
+   w.close();await w.wait_closed()
+  server=await asyncio.start_unix_server(backend,path=str(path));os.chmod(path,0o600);inode=path.lstat().st_ino
+  p=Proxy(path,'fixture',events.append);await p.install()
+  r,w=await asyncio.open_unix_connection(str(path));payload=b'{"jsonrpc":"2.0","id":"request-not-logged","method":"completion.claim","params":{"secret":"never logged"}}\n';w.write(payload);await w.drain();v=json.loads(await r.readline());w.close();await w.wait_closed();await asyncio.sleep(0)
+  assert v['id']=='request-not-logged' and len(v['result']['events'])==1
+  assert received==[payload] and not any(s in json.dumps(events) for s in ['never logged','request-not-logged'])
+  p.restore();assert path.lstat().st_ino==inode and not p.backend.exists()
+  await p.server.wait_closed();server.close();await server.wait_closed()
+  print(json.dumps({'fragmentedReplyPreserved':True,'singleForward':True,'payloadNotLogged':True,'originalInodeRestored':True,'permissions':'0600'}))
+async def live():
+ phase=lambda:(ROOT/'phase').read_text().strip() if (ROOT/'phase').exists() else 'quiet'
+ start=time.monotonic();out=open(ROOT/'native-rpc.jsonl','x',buffering=1);os.chmod(ROOT/'native-rpc.jsonl',0o600)
+ def emit(e):out.write(json.dumps({'t':round(time.monotonic()-start,3),'phase':phase(),**e})+'\n')
+ base=pathlib.Path.home()/'.config/codex-mcp-bridge/run';proxies=[]
+ try:
+  for name,lane in [('helper.sock','helper'),('bridge.sock','bridge')]:
+   p=Proxy(base/name,lane,emit);await p.install();proxies.append(p)
+  manifest={'pid':os.getpid(),'startedAt':datetime.datetime.now(datetime.timezone.utc).isoformat(),'sockets':[{'path':str(p.path),'backend':str(p.backend),'originalInode':p.original,'proxyInode':p.inode} for p in proxies]}
+  (ROOT/'observer-ready.json').write_text(json.dumps(manifest,indent=2)+'\n');print('observer ready',flush=True)
+  deadline=start+180
+  while time.monotonic()<deadline and not (ROOT/'stop-observer').exists():await asyncio.sleep(.1)
+ finally:
+  for p in reversed(proxies):p.restore()
+  emit({'kind':'restored','sameOriginalInodes':True})
+  for p in proxies:await p.server.wait_closed()
+  pending=[t for p in proxies for t in p.tasks]
+  if pending:
+   done,remaining=await asyncio.wait(pending,timeout=30)
+   for t in remaining:t.cancel()
+   if remaining:await asyncio.gather(*remaining,return_exceptions=True)
+  out.close();(ROOT/'observer-restored.json').write_text(json.dumps({'sameOriginalInodes':True,'allConnectionsSettled':all(not p.tasks for p in proxies),'elapsedSeconds':round(time.monotonic()-start,3)})+'\n');print('observer restored',flush=True)
+if __name__=='__main__':asyncio.run(fixture() if sys.argv[1]=='fixture' else live())

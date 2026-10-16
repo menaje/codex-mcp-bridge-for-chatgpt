@@ -1,0 +1,30 @@
+{
+  "purpose": "40 functional reads while the read child was sampled; descriptive times under instrumentation, not a new before/after benchmark",
+  "groups": {
+    "detail": {
+      "samples": 10,
+      "allSuccessful": true,
+      "minMs": 1.734958,
+      "maxMs": 4.920541
+    },
+    "helper.health": {
+      "samples": 10,
+      "allSuccessful": true,
+      "minMs": 1.077375,
+      "maxMs": 2.985
+    },
+    "history": {
+      "samples": 10,
+      "allSuccessful": true,
+      "minMs": 72.450416,
+      "maxMs": 86.131083
+    },
+    "summary": {
+      "samples": 10,
+      "allSuccessful": true,
+      "minMs": 62.194459,
+      "maxMs": 270.484458
+    }
+  },
+  "retainedJobs": 734
+}
