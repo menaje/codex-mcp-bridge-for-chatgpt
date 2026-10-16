@@ -11,6 +11,7 @@ final class NativeRPCFixture: @unchecked Sendable {
     private let listener: Int32
     private let path: String
     private let reply: @Sendable (String, String) -> NativeFixtureReply
+    private let beforeServe: @Sendable (Int32) -> Void
     private let lock = NSLock()
     private var stopped = false
     private var clients = Set<Int32>()
@@ -20,9 +21,11 @@ final class NativeRPCFixture: @unchecked Sendable {
         try self.init(path: path, requestReply: { method, _ in reply(method) })
     }
 
-    init(path: String, requestReply: @escaping @Sendable (String, String) -> NativeFixtureReply) throws {
+    init(path: String, beforeServe: @escaping @Sendable (Int32) -> Void = { _ in },
+         requestReply: @escaping @Sendable (String, String) -> NativeFixtureReply) throws {
         self.path = path
         self.reply = requestReply
+        self.beforeServe = beforeServe
         listener = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
         guard listener >= 0 else { throw POSIXError(.EIO) }
         var address = sockaddr_un()
@@ -44,11 +47,20 @@ final class NativeRPCFixture: @unchecked Sendable {
                 guard client >= 0 else { return }
                 let active = lock.withLock { () -> Bool in
                     if stopped { Darwin.close(client); return false }
+                    // stop() may shut down clients before their serving thread
+                    // starts. macOS rejects SO_NOSIGPIPE after shutdown (EINVAL),
+                    // so configure it before publishing the accepted descriptor.
+                    var noSignal: Int32 = 1
+                    guard setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSignal,
+                                     socklen_t(MemoryLayout<Int32>.size)) == 0 else {
+                        Darwin.close(client)
+                        return false
+                    }
                     clients.insert(client)
                     return true
                 }
                 guard active else { return }
-                Thread.detachNewThread { [self] in serve(client) }
+                Thread.detachNewThread { [self] in beforeServe(client); serve(client) }
             }
         }
     }
@@ -68,8 +80,6 @@ final class NativeRPCFixture: @unchecked Sendable {
 
     private func serve(_ client: Int32) {
         defer { lock.withLock { clients.remove(client); Darwin.close(client) } }
-        var noSignal: Int32 = 1
-        _ = setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout<Int32>.size))
         var input = Data()
         var buffer = [UInt8](repeating: 0, count: 4096)
         while !input.contains(0x0A) {
