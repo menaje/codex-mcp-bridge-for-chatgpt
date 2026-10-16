@@ -1,0 +1,84 @@
+{
+  "hydrateMs": 323.94212500000003,
+  "hydratedJobs": 44,
+  "onlyEventColumnDiffers": true,
+  "observations": [
+    {
+      "iteration": 0,
+      "variant": "original",
+      "ms": 41.97145900000004,
+      "rows": 44,
+      "publicEventBytes": 8275748,
+      "jobPayloadBytes": 322184,
+      "interactionBytes": 88
+    },
+    {
+      "iteration": 0,
+      "variant": "without-public-events",
+      "ms": 1.8866670000000454,
+      "rows": 44,
+      "publicEventBytes": 88,
+      "jobPayloadBytes": 322184,
+      "interactionBytes": 88
+    },
+    {
+      "iteration": 1,
+      "variant": "original",
+      "ms": 38.56508400000001,
+      "rows": 44,
+      "publicEventBytes": 8275748,
+      "jobPayloadBytes": 322184,
+      "interactionBytes": 88
+    },
+    {
+      "iteration": 1,
+      "variant": "without-public-events",
+      "ms": 3.1878749999999627,
+      "rows": 44,
+      "publicEventBytes": 88,
+      "jobPayloadBytes": 322184,
+      "interactionBytes": 88
+    },
+    {
+      "iteration": 2,
+      "variant": "original",
+      "ms": 40.01862500000004,
+      "rows": 44,
+      "publicEventBytes": 8275748,
+      "jobPayloadBytes": 322184,
+      "interactionBytes": 88
+    },
+    {
+      "iteration": 2,
+      "variant": "without-public-events",
+      "ms": 1.7577499999999873,
+      "rows": 44,
+      "publicEventBytes": 88,
+      "jobPayloadBytes": 322184,
+      "interactionBytes": 88
+    }
+  ],
+  "plan": [
+    "MULTI-INDEX OR",
+    "INDEX 1",
+    "SEARCH j USING INDEX jobs_policy_clock (ended_at=?)",
+    "INDEX 2",
+    "SEARCH j USING INDEX jobs_policy_clock (ended_at>?)",
+    "CORRELATED SCALAR SUBQUERY 6",
+    "SEARCH h USING INDEX sqlite_autoindex_work_history_state_1 (job_id=?)",
+    "SEARCH a USING INDEX sqlite_autoindex_activities_1 (activity_id=?)",
+    "SEARCH p USING INDEX sqlite_autoindex_projects_1 (project_id=?) LEFT-JOIN",
+    "CORRELATED SCALAR SUBQUERY 3",
+    "CO-ROUTINE event",
+    "CO-ROUTINE (subquery-1)",
+    "SEARCH job_events USING INDEX job_events_job_cursor (job_id=?)",
+    "SCAN (subquery-1)",
+    "USE TEMP B-TREE FOR ORDER BY",
+    "SCAN event",
+    "CORRELATED SCALAR SUBQUERY 5",
+    "CO-ROUTINE interaction",
+    "SEARCH job_interactions USING INDEX sqlite_autoindex_job_interactions_1 (job_id=?)",
+    "SCAN interaction",
+    "USE TEMP B-TREE FOR ORDER BY"
+  ]
+}

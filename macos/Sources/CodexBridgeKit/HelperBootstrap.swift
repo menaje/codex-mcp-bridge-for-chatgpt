@@ -639,7 +639,9 @@ public actor HelperBootstrap: HelperBootstrapping {
             "WorkingDirectory": workingDirectory.standardizedFileURL.path,
             "RunAtLoad": true,
             "KeepAlive": true,
-            "ProcessType": "Background",
+            // UI and MCP requests depend on this service and its children.
+            // Socket IPC does not provide Adaptive's XPC activity boosts.
+            "ProcessType": "Interactive",
             "ThrottleInterval": 10,
             "ExitTimeOut": 45,
             "StandardOutPath": "/dev/null",

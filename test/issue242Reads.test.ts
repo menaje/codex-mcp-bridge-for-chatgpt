@@ -1,9 +1,14 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { issue242Fixture, fixtureScope } from "../scripts/issue-242-fixture.js";
 import { ChildProcessStateReadService, type StateReadObservation } from "../src/stateReadProcess.js";
 import { SessionRegistry } from "../src/sessionRegistry.js";
-import { CodexJobRegistry } from "../src/tools.js";
+import { CodexJobRegistry, createBridgeReadProjectionService } from "../src/tools.js";
+import { createModelCatalog } from "../src/server.js";
+import { ScopeResolver } from "../src/scopeResolver.js";
+import { BridgeStateStore } from "../src/stateStore.js";
+import { UserSettingsStore } from "../src/userSettings.js";
+import type { CodexUpstream } from "../src/upstream.js";
 
 async function drained(service: ChildProcessStateReadService) {
   const until = Date.now() + 5_000;
@@ -12,6 +17,73 @@ async function drained(service: ChildProcessStateReadService) {
 }
 
 describe("issue 242 shared read contract", () => {
+  it("keeps Dashboard state and pending inputs independent of retained event bodies", async () => {
+    const f = await issue242Fixture(20);
+    const retained = f.jobs.list(20, 0);
+    const seeded = [retained[0]!, retained[10]!, retained[1]!].map((job, index) => index < 2
+      ? { ...job, jobId: randomUUID(), requestId: `pending-job-${index}`, activityId: randomUUID(), status: "running" as const,
+        terminalOrigin: undefined, terminalVersion: undefined, endedAt: undefined, endedAtSource: undefined,
+        result: undefined, error: undefined }
+      : job);
+    f.store.transaction(() => {
+      for (const [index, job] of seeded.entries()) {
+        const { promise: _promise, ...persisted } = job;
+        if (index < 2) {
+          f.store.upsertJob({ ...persisted, trackingState: "connected",
+            pendingInteractions: [{ interactionId: `pending-${index}`, origin: index === 0 ? "codex-question" : "app-approval",
+              kind: index === 0 ? "user-input" : "command-approval", threadId: job.threadId || "fixture-input",
+              turnId: "fixture-turn", itemId: "fixture-item", summary: "Pending fixture input", isBlocking: true }] });
+          f.store.setAgentExecutionState(job.agentId!, "waiting-input", { currentJobId: job.jobId });
+        }
+        for (let event = 0; event < 200; event++) f.store.recordJobTelemetryEvent(job.jobId, "app-agent-message", {
+          eventId: `${index}-${event}`, type: "agent-message", phase: "updated", createdAt: Date.now(),
+          summary: "Retained fixture event", details: { text: "한글 fixture text ".repeat(250) }
+        });
+      }
+    });
+    const readOnly = new BridgeStateStore({ file: f.file, readOnly: true });
+    const full = new CodexJobRegistry({ stateStore: readOnly, allowedRoots: [f.root], projectionOnly: true });
+    const upstream: CodexUpstream = { async listTools() { return { tools: [] }; },
+      async callTool() { throw new Error("No execution in read fixture."); }, async close() {} };
+    const inline = createBridgeReadProjectionService(f.config, upstream,
+      new SessionRegistry({ stateStore: readOnly, allowedRoots: [f.root], projectionOnly: true }), full,
+      createModelCatalog(f.config, upstream), new UserSettingsStore(f.config, { stateStore: readOnly, projectionOnly: true }),
+      new ScopeResolver({ stateStore: readOnly }));
+    const query = { scopeId: fixtureScope, limit: 2, includeHistory: true,
+      inspectRuntime: false, historyMode: "jobs" as const, statusFilter: "all" as const,
+      problems: { review: "pending" as const, kind: "all" as const, offset: 0 } };
+    const baseline = await inline.dashboardSnapshot(query);
+    const digest = () => createHash("sha256").update(JSON.stringify(f.store.listJobEvents(seeded[0]!.jobId))).digest("hex");
+    const eventsBefore = digest();
+    const service = await ChildProcessStateReadService.start(f.file, f.environment);
+    const states = (view: typeof baseline) => view.activeRows.map(row => ({
+      jobId: row.jobId, rowKey: row.rowKey, scopeId: row.scopeId, status: row.status,
+      executionRevision: row.executionRevision, policyRevision: row.policyRevision
+    }));
+    try {
+      const observed = await f.measure(() => service.dashboardSnapshot(query));
+      expect(observed.changedRows).toBe(0);
+      expect(observed.result.counts).toEqual(baseline.counts);
+      expect(observed.result.terminalRows).toEqual(baseline.terminalRows);
+      expect(states(observed.result)).toEqual(states(baseline));
+      expect(observed.result.activeRows.map(row => row.status)).toEqual(expect.arrayContaining(["input-required", "approval-required"]));
+      expect(digest()).toBe(eventsBefore);
+      expect(() => f.store.listJobsForDashboard()).toThrow("query-only projection");
+
+      // A valid SQLite JSON value with invalid text cannot affect a list that
+      // does not use that event. Exact event reads retain their strict parser.
+      const unreadable = JSON.stringify({ text: String.fromCharCode(0xd800) });
+      f.database.prepare("UPDATE job_events SET payload=? WHERE event_id=(SELECT MAX(event_id) FROM job_events WHERE job_id=? AND event_type='app-agent-message')")
+        .run(unreadable, seeded[0]!.jobId);
+      expect(() => f.store.listJobs()).toThrow("Invalid job public events");
+      expect(() => f.store.listJobEvents(seeded[0]!.jobId)).toThrow("Invalid job event payload");
+      const after = await service.dashboardSnapshot(query);
+      expect(after.counts).toEqual(baseline.counts);
+      expect(after.terminalRows).toEqual(baseline.terminalRows);
+      expect(states(after)).toEqual(states(baseline));
+    } finally { await service.close(); await full.closeThreadConnections(); readOnly.close(); await f.close(); }
+  }, 15_000);
+
   it("hydrates only the requested scope and omits Session payloads from Settings and detail", async () => {
     const f = await issue242Fixture(20);
     const service = await ChildProcessStateReadService.start(f.file, f.environment);

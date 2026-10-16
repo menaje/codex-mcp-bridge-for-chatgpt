@@ -1,0 +1,63 @@
+{
+  "source": "Retained 2026-10-07 installed diagnosis (original five observations, not a new trace)",
+  "records": [
+    {
+      "atKST": "2026-10-07T00:51:05.459000+09:00",
+      "component": "dispatcher",
+      "status_code": 502,
+      "rpc_method": "tools/call",
+      "failure_source": "transport_closed",
+      "transport_error_kind": "connection_reset",
+      "upstream_response_received": false
+    },
+    {
+      "atKST": "2026-10-07T00:58:40.476000+09:00",
+      "component": "dispatcher",
+      "status_code": 502,
+      "rpc_method": "tools/call",
+      "failure_source": "transport_closed",
+      "transport_error_kind": "closed_pipe",
+      "upstream_response_received": false
+    },
+    {
+      "atKST": "2026-10-07T07:54:22.325000+09:00",
+      "component": "dispatcher",
+      "status_code": 502,
+      "rpc_method": "tools/call",
+      "failure_source": "transport_closed",
+      "transport_error_kind": "connection_reset",
+      "upstream_response_received": false
+    },
+    {
+      "atKST": "2026-10-07T11:17:50.452000+09:00",
+      "component": "dispatcher",
+      "status_code": 502,
+      "rpc_method": "tools/call",
+      "failure_source": "transport_closed",
+      "transport_error_kind": "connection_reset",
+      "upstream_response_received": false
+    },
+    {
+      "atKST": "2026-10-07T16:42:38.653000+09:00",
+      "component": "dispatcher",
+      "status_code": 502,
+      "rpc_method": "tools/call",
+      "failure_source": "transport_closed",
+      "transport_error_kind": "connection_reset",
+      "upstream_response_received": false
+    }
+  ],
+  "joinableRequestIdentifierRecorded": false,
+  "currentInvestigationNewCorrelated502": 0,
+  "limits": [
+    "Original observation omits request correlation identifiers and first-termination phases.",
+    "Separate diagnostic-connection-reset entry in additional-tunnel.log is a synthetic local control, not a sixth production incident.",
+    "Current loopback tunnel UI probe during validation exceeded 5 seconds; no HTTP response classification or new 502 was obtained."
+  ],
+  "installedBuild": {
+    "version": "0.4.1",
+    "commit": "9be3bb6c70b8673137fb8663c9137c07d1d7c90d",
+    "dirty": false,
+    "sourceHash": "2dd00dba8f3decaa5427bb94563fe67a59b385e68f83c0e465675f261e9a032d"
+  }
+}
