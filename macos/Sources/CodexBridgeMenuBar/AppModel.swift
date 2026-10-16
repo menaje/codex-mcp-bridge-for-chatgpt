@@ -323,6 +323,8 @@ final class AppModel: ObservableObject {
     @Published var helperStatus: HelperStatus? { didSet { scheduleOperationalObservation() } }
     @Published private(set) var lastConfirmedHelperStatus: HelperStatus?
     @Published private(set) var lastConfirmedHelperCheck: Date?
+    @Published private(set) var lastConfirmedRemoteCheck: Date?
+    @Published private(set) var remoteConnectionRecovery = ConnectionRecoveryWindow()
     @Published private(set) var helperObservationFailure: RPCObservationFailure?
     @Published private(set) var helperObservationFailedAt: Date?
     private var confirmedHelperGeneration: Int?
@@ -440,6 +442,13 @@ final class AppModel: ObservableObject {
     @Published var startupErrorMessage: String? { didSet { scheduleOperationalObservation() } }
     @Published var statusErrorMessage: String? { didSet { scheduleOperationalObservation() } }
     @Published var dashboardErrorMessage: String?
+    @Published private(set) var dashboardReadFailure: RPCObservationFailure?
+    @Published private(set) var dashboardReadFailureCount = 0
+    @Published private(set) var isDashboardRefreshing = false
+    @Published private(set) var dashboardConnectionCheckPending = false
+    private var dashboardReadTask: Task<Void, Never>?
+    private var dashboardReadTaskID: UUID?
+    private var pendingDashboardRead: (enrich: Bool, applyCachedEnrichment: Bool)?
     @Published var dashboardEnrichmentFailed = false
     @Published var dashboardEnrichmentPending = false
     @Published var dashboardObservationDate: Date?
@@ -597,7 +606,7 @@ final class AppModel: ObservableObject {
     var operationalObservation: OperationalObservation {
         guard !isBusy, !applicationShutdownInProgress, !systemObservationPending else { return .unknown }
         if !isRemoteClient, (lifecycleOperation?.isExecuting == true || initialStartupPending) { return .unknown }
-        if !isRemoteClient, localConnectionRecovery.isChecking { return .unknown }
+        if isRemoteClient ? remoteConnectionRecovery.isChecking : localConnectionRecovery.isChecking { return .unknown }
         if isRemoteClient {
             guard activeRemoteProfile != nil else { return .unknown }
             if let remoteOperationalProblem { return .problem(remoteOperationalProblem) }
@@ -856,8 +865,39 @@ final class AppModel: ObservableObject {
     }
 
     var hasRetainedBridgeObservation: Bool {
-        retainedHelperObservation || ((bridgeResponseUnconfirmed || bridgeStateStorageError != nil) &&
+        if isRemoteClient { return remoteHello == nil && lastConfirmedRemoteCheck != nil }
+        return retainedHelperObservation || ((bridgeResponseUnconfirmed || bridgeStateStorageError != nil) &&
             helperStatus?.bridge.lastSuccessfulAt != nil)
+    }
+
+    var lastConfirmedConnectionCheck: Date? {
+        isRemoteClient ? lastConfirmedRemoteCheck : lastConfirmedHelperCheck
+    }
+
+    enum DashboardRecoveryAction { case reload, checkConnection, reconnect }
+
+    var dashboardRecoveryAction: DashboardRecoveryAction {
+        if dashboardConnectionCheckPending || isBridgeConnectionChecking { return .checkConnection }
+        return bridgeConnected ? .reload : .reconnect
+    }
+
+    /// A failed list read never bootstraps a healthy service or refreshes auth/settings.
+    func recoverDashboardRead() async {
+        guard !isDashboardRefreshing, !dashboardConnectionCheckPending, !isBusy else { return }
+        switch dashboardRecoveryAction {
+        case .reload: await refreshDashboard(enrich: false)
+        case .checkConnection:
+            let generation = connectionGeneration
+            dashboardConnectionCheckPending = true
+            await refreshStatus()
+            if generation == connectionGeneration { dashboardConnectionCheckPending = false }
+        case .reconnect:
+            let generation = connectionGeneration
+            dashboardConnectionCheckPending = true
+            if isRemoteClient { await refreshAll() }
+            else { await start() }
+            if generation == connectionGeneration { dashboardConnectionCheckPending = false }
+        }
     }
 
     var hasConnectionTarget: Bool {
@@ -925,6 +965,7 @@ final class AppModel: ObservableObject {
            isRemoteClient || helperStatus?.phase != "stopped" { return true }
         if isRemoteClient {
             guard activeRemoteProfile != nil, remoteHello == nil else { return false }
+            if remoteConnectionRecovery.isChecking { return true }
             return connectionErrorMessage == nil && statusErrorMessage == nil
         }
         if localConnectionRecovery.isChecking,
@@ -952,6 +993,8 @@ final class AppModel: ObservableObject {
     var health: MenuBarHealth {
         // Work outcomes belong to the Dashboard; this status describes the bridge service.
         if systemObservationPending { return .checking }
+        if bridgeConnected, dashboardReadFailure != nil,
+           let checked = lastConfirmedConnectionCheck, Date().timeIntervalSince(checked) > 30 { return .checking }
         if currentActionRequiredProblem != nil { return .attention }
         if isBridgeConnectionChecking { return .checking }
         if bridgeStateStorageError != nil { return .attention }
@@ -959,7 +1002,8 @@ final class AppModel: ObservableObject {
         if bridgeReadProjectionDelayed { return .attention }
         if isRemoteClient {
             guard activeRemoteProfile != nil, remoteHello != nil else { return .unavailable }
-            guard connectionErrorMessage == nil, dashboardErrorMessage == nil else {
+            guard connectionErrorMessage == nil,
+                  dashboardErrorMessage == nil || dashboardReadFailure != nil else {
                 return .attention
             }
             return .healthy
@@ -976,7 +1020,7 @@ final class AppModel: ObservableObject {
         }
         guard authStatus.installed else { return .unavailable }
         guard authStatus.authenticated else { return .attention }
-        guard dashboardErrorMessage == nil else { return .attention }
+        guard dashboardErrorMessage == nil || dashboardReadFailure != nil else { return .attention }
         return .healthy
     }
 
@@ -1590,6 +1634,9 @@ final class AppModel: ObservableObject {
                 guard generation == connectionGeneration, requestGeneration == statusRequestGeneration, isRemoteClient else { return }
                 let refreshContent = systemObservationPending || remoteHello == nil
                 remoteHello = hello
+                lastConfirmedRemoteCheck = Date()
+                remoteConnectionRecovery.observe(available: true, retryable: false)
+                scheduleConnectionRecoveryExpiry()
                 remoteOperationalProblem = nil
                 statusErrorMessage = nil
                 connectionErrorMessage = nil
@@ -1604,7 +1651,13 @@ final class AppModel: ObservableObject {
                 }
             } catch {
                 guard generation == connectionGeneration, requestGeneration == statusRequestGeneration, isRemoteClient else { return }
+                let failure = RPCObservationFailure(error)
+                guard failure.kind != .cancelled else { return }
+                invalidateContentObservations()
                 remoteHello = nil
+                remoteConnectionRecovery.observe(available: false,
+                    retryable: [.timeout, .peerClosed, .transport].contains(failure.kind))
+                scheduleConnectionRecoveryExpiry()
                 remoteOperationalProblem = OperationalProblem.remoteError(error)
                 let message = localizedErrorDescription(error)
                 statusErrorMessage = message
@@ -1653,6 +1706,9 @@ final class AppModel: ObservableObject {
         } ?? false
         if targetChanged {
             invalidateContentObservations()
+            dashboardReadFailure = nil
+            dashboardReadFailureCount = 0
+            dashboardErrorMessage = nil
             dashboard = nil
             lastDashboardRefresh = nil
             dashboardObservationDate = nil
@@ -1709,6 +1765,7 @@ final class AppModel: ObservableObject {
     }
 
     private func invalidateContentObservations() {
+        cancelDashboardRead()
         dashboardRequestGeneration += 1
         settingsRequestGeneration += 1
         skillLibraryRequestGeneration += 1
@@ -1774,7 +1831,7 @@ final class AppModel: ObservableObject {
     }
 
     private func scheduleConnectionRecoveryExpiry(at now: Date = Date()) {
-        let deadline = localConnectionRecovery.deadline
+        let deadline = isRemoteClient ? remoteConnectionRecovery.deadline : localConnectionRecovery.deadline
         if deadline == connectionRecoveryExpiryDeadline, connectionRecoveryExpiryTask != nil { return }
         connectionRecoveryExpiryTask?.cancel()
         connectionRecoveryExpiryTask = nil
@@ -1786,7 +1843,8 @@ final class AppModel: ObservableObject {
             do { try await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000)) } catch { return }
             guard let self, generation == self.connectionGeneration,
                   self.connectionRecoveryExpiryDeadline == deadline else { return }
-            self.localConnectionRecovery.expire(ifDeadline: deadline)
+            if self.isRemoteClient { self.remoteConnectionRecovery.expire(ifDeadline: deadline) }
+            else { self.localConnectionRecovery.expire(ifDeadline: deadline) }
             self.connectionRecoveryExpiryTask = nil
             self.connectionRecoveryExpiryDeadline = nil
         }
@@ -2038,6 +2096,46 @@ final class AppModel: ObservableObject {
     }
 
     private func readDashboard(enrich: Bool, applyCachedEnrichment: Bool) async {
+        pendingDashboardRead = (enrich, applyCachedEnrichment)
+        if let task = dashboardReadTask {
+            // New structural invalidations replace one trailing request; they
+            // cannot publish an intermediate result or grow a request queue.
+            dashboardRequestGeneration += 1
+            await task.value
+            return
+        }
+        let id = UUID(), connection = connectionGeneration
+        dashboardReadTaskID = id
+        isDashboardRefreshing = true
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if self.dashboardReadTaskID == id {
+                    self.dashboardReadTask = nil
+                    self.dashboardReadTaskID = nil
+                    self.isDashboardRefreshing = false
+                }
+            }
+            while !Task.isCancelled, connection == self.connectionGeneration,
+                  let request = self.pendingDashboardRead {
+                self.pendingDashboardRead = nil
+                await self.performDashboardRead(enrich: request.enrich, applyCachedEnrichment: request.applyCachedEnrichment)
+            }
+        }
+        dashboardReadTask = task
+        await task.value
+    }
+
+    private func cancelDashboardRead() {
+        dashboardReadTask?.cancel()
+        dashboardReadTask = nil
+        dashboardReadTaskID = nil
+        pendingDashboardRead = nil
+        isDashboardRefreshing = false
+        dashboardConnectionCheckPending = false
+    }
+
+    private func performDashboardRead(enrich: Bool, applyCachedEnrichment: Bool) async {
         let hadEnrichment = dashboardEnrichmentTask != nil
         dashboardRequestGeneration += 1
         let generation = dashboardRequestGeneration
@@ -2048,6 +2146,7 @@ final class AppModel: ObservableObject {
             dashboard = nil
             clearDashboardHistoryDetails()
             dashboardErrorMessage = nil
+            dashboardReadFailure = nil
             return
         }
         deferredDashboardRead = nil
@@ -2084,6 +2183,8 @@ final class AppModel: ObservableObject {
             }
             lastDashboardRefresh = Date()
             dashboardErrorMessage = nil
+            dashboardReadFailure = nil
+            dashboardReadFailureCount = 0
             if applyCachedEnrichment, next.enrichment?.pendingReads != nil {
                 recordDashboardEnrichment(next)
             }
@@ -2093,7 +2194,21 @@ final class AppModel: ObservableObject {
         } catch {
             guard !Task.isCancelled, connection == connectionGeneration,
                   generation == dashboardRequestGeneration else { return }
-            dashboardErrorMessage = localizedErrorDescription(error)
+            let failure = RPCObservationFailure(error)
+            guard failure.kind != .cancelled else { return }
+            dashboardReadFailure = failure
+            dashboardReadFailureCount += 1
+            // Raw server/transport messages can contain request payloads. The
+            // UI uses operation + typed failure metadata, never that text.
+            dashboardErrorMessage = BridgeAppLocalization.string("macos.dashboard.readFailed", locale: interfaceLocale)
+            let recentHealth = lastConfirmedConnectionCheck.map { Date().timeIntervalSince($0) <= 20 } ?? false
+            if !recentHealth || [.refused, .peerClosed, .transport, .permissionDenied].contains(failure.kind) {
+                // One status-only confirmation, using the existing RPC deadline.
+                // A list failure schedules no automatic list retries.
+                dashboardConnectionCheckPending = true
+                await refreshStatus()
+                if connection == connectionGeneration { dashboardConnectionCheckPending = false }
+            }
         }
     }
 
@@ -2635,6 +2750,7 @@ final class AppModel: ObservableObject {
         if visible {
             enqueueRefresh(["status", "dashboard", "auth", "codex"])
         } else {
+            cancelDashboardRead()
             refreshEventTasks.removeValue(forKey: "dashboard")?.cancel()
             pendingRefreshEvents.remove("dashboard")
             deferredDashboardRead = nil
@@ -3672,6 +3788,7 @@ final class AppModel: ObservableObject {
     }
 
     private func resetConnectionContext() {
+        cancelDashboardRead()
         authRefreshTask?.cancel()
         authRefreshTask = nil
         authRefreshPending = false
@@ -3692,6 +3809,10 @@ final class AppModel: ObservableObject {
         connectionRecoveryExpiryTask?.cancel()
         connectionRecoveryExpiryTask = nil
         localConnectionRecovery = ConnectionRecoveryWindow()
+        remoteConnectionRecovery = ConnectionRecoveryWindow()
+        lastConfirmedRemoteCheck = nil
+        dashboardReadFailure = nil
+        dashboardReadFailureCount = 0
         systemObservationPending = false
         deferredDashboardRead = nil
         dashboardEnrichmentPending = false
@@ -3822,6 +3943,8 @@ final class AppModel: ObservableObject {
     }
 
     func cancelAllPolling() {
+        cancelDashboardRead()
+        dashboardRequestGeneration += 1
         dashboardHistoryExpiryTask?.cancel()
         applicationLaunchReceiptTask?.cancel()
         applicationLaunchReceiptTask = nil
@@ -4030,6 +4153,7 @@ final class AppModel: ObservableObject {
         connectionRecoveryExpiryTask?.cancel()
         connectionRecoveryExpiryTask = nil
         localConnectionRecovery = ConnectionRecoveryWindow()
+        remoteConnectionRecovery = ConnectionRecoveryWindow()
         scheduleOperationalObservation()
     }
 

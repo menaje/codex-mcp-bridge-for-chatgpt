@@ -1,0 +1,107 @@
+{
+  "baseCommit": "efca3367d59945470d5cc30c1e8f13d130f87ee3",
+  "validationEnvironment": {
+    "platform": "macOS arm64",
+    "privateHOME": true,
+    "globalCODEX_HOME": "unset",
+    "inheritedCODEX_and_OPENAI_variables": "removed",
+    "schemaCLI": "0.153.3, override in fast-validation subprocess only"
+  },
+  "fast": {
+    "command": "npm run validate:fast",
+    "exit": 0
+  },
+  "native": {
+    "command": "npm run macos:check",
+    "exit": 0,
+    "executed": 351,
+    "skipped": 3,
+    "failed": 0,
+    "strictConcurrency": true,
+    "warningsAsErrors": true,
+    "seconds": 128.93
+  },
+  "focusedFinal": {
+    "executed": 10,
+    "failed": 0
+  },
+  "node": {
+    "command": "npm run check",
+    "exit": 1,
+    "filesTotal": 172,
+    "filesPassed": 166,
+    "filesFailed": 5,
+    "filesSkipped": 1,
+    "testsTotal": 2055,
+    "testsPassed": 2046,
+    "testsFailed": 8,
+    "testsSkipped": 1,
+    "gatePassed": false,
+    "reporting": "Full run used console output; npm consumed the requested JSON reporter flags as npm config. Exact-base comparison used direct Vitest JSON reporting."
+  },
+  "nodeBaselineComparison": {
+    "baseCommit": "efca3367d59945470d5cc30c1e8f13d130f87ee3",
+    "selectedCases": 8,
+    "failed": 8,
+    "passed": 0,
+    "sameFailedCases": true,
+    "failures": [
+      {
+        "file": "test/currentSelectorReplay.test.ts",
+        "name": "current task selector contract preserves the admitted v6 record but rejects a stale project selector after restart"
+      },
+      {
+        "file": "test/dashboardReadQueries.test.ts",
+        "name": "Dashboard query cost batches titles and handoffs with 20 retained Agents and recovery records"
+      },
+      {
+        "file": "test/dashboardReadQueries.test.ts",
+        "name": "Dashboard query cost batches titles and handoffs with 120 retained Agents and recovery records"
+      },
+      {
+        "file": "test/issue162Context.test.ts",
+        "name": "issue 162 product context marks a changed file environment pending while the old launcher still runs"
+      },
+      {
+        "file": "test/mcpOAuth.test.ts",
+        "name": "MCP OAuth configuration and HTTP discovery publishes resource metadata and both tool security declarations without granting execution"
+      },
+      {
+        "file": "test/server.test.ts",
+        "name": "MCP 2026-07-28 HTTP server discovers and serves only the current tools and resources"
+      },
+      {
+        "file": "test/server.test.ts",
+        "name": "MCP 2026-07-28 HTTP server uses the current request envelope and rejects protocol/header mismatches"
+      },
+      {
+        "file": "test/server.test.ts",
+        "name": "MCP 2026-07-28 HTTP server keeps discovery lists stable across conversation scopes"
+      }
+    ],
+    "productionNodeTypeScriptChanged": false
+  },
+  "nativeUI": {
+    "report": "ui-interaction.json",
+    "sourceHashes": "source-sha256.json",
+    "productionSourceMatchesCompiledProbe": true,
+    "interaction": "Actual localized native Reload list button clicked through computer use; the fixture exits after writing a successful report.",
+    "installedOperationalAcceptance": false
+  },
+  "installedObservation": {
+    "at": "2026-10-16T12:39:45+09:00",
+    "version": "0.4.1",
+    "build": "16",
+    "activeJobs": 1,
+    "helperPhase": "running",
+    "bridgeConnected": true,
+    "tunnelConnected": true,
+    "readServiceStatus": "read-stale",
+    "updatedOrRestarted": false
+  },
+  "issueClosure": {
+    "242": "pending installed dev acceptance; historical 502 follow-up in #262",
+    "264": "implementation and isolated native acceptance delivered; installed dev confirmation pending",
+    "262": "historical operational 502 cause remains unconfirmed"
+  }
+}

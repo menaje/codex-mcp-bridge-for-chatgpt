@@ -5203,6 +5203,238 @@
     "version": "1.0",
     "sourceLanguage": "ko",
     "strings": {
+      "macos.dashboard.readFailed": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Could not load the task list."
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "작업 목록을 불러오지 못했습니다."
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "タスク一覧を読み込めませんでした。"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "无法加载任务列表。"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "無法載入工作清單。"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "No se pudo cargar la lista de tareas."
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Impossible de charger la liste des tâches."
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Die Aufgabenliste konnte nicht geladen werden."
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Não foi possível carregar a lista de tarefas."
+            }
+          }
+        }
+      },
+      "macos.dashboard.reload": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Reload list"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "다시 불러오기"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "再読み込み"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "重新加载"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "重新載入"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Volver a cargar"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Recharger la liste"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Liste neu laden"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Recarregar lista"
+            }
+          }
+        }
+      },
+      "macos.dashboard.checkConnection": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Check connection"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "연결 상태 확인"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "接続状態を確認"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "检查连接"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "檢查連線"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Comprobar conexión"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Vérifier la connexion"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Verbindung prüfen"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Verificar conexão"
+            }
+          }
+        }
+      },
+      "macos.dashboard.diagnostics": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Diagnostic details"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "진단 정보"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "診断情報"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "诊断详情"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "診斷詳細資訊"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Detalles de diagnóstico"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Détails du diagnostic"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Diagnosedetails"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Detalhes de diagnóstico"
+            }
+          }
+        }
+      },
       "macos.input.externalChange": {
         "localizations": {
           "en": {

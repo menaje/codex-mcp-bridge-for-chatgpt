@@ -1890,3 +1890,31 @@ extension DashboardPopoverTests {
         XCTAssertEqual(f.model.dashboard?.activeRows.count, 12); XCTAssertEqual(f.model.dashboard?.terminalRows.count, 24)
     }
 }
+
+extension DashboardPopoverTests {
+    @MainActor
+    func testIssue264ListFailurePreservesExactExecutionDetailsAndPanel() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.jobsContract = true
+        f.model.dashboardHistoryNow = { ISO8601DateFormatter().date(from: "2026-09-11T00:00:00Z")! }
+        await f.model.refreshDashboard(enrich: false)
+        let row = try XCTUnwrap(f.model.dashboard?.terminalRows.first)
+        let target = try XCTUnwrap(f.model.executionTarget(row: row))
+        await f.model.loadExecutionDetail(target)
+        let detail = try XCTUnwrap(f.model.executionDetail(target))
+        let checked = f.model.lastDashboardRefresh
+        await f.model.toggleDashboardPanel(.history)
+        f.state.failDashboard = true
+        await f.model.refreshDashboard(enrich: false)
+        XCTAssertNotNil(f.model.dashboardReadFailure)
+        XCTAssertEqual(f.model.executionDetail(target)?.jobId, detail.jobId)
+        XCTAssertEqual(f.model.executionDetail(target)?.executionRevision, detail.executionRevision)
+        XCTAssertEqual(f.model.dashboardPanel, .history)
+        XCTAssertEqual(f.model.lastDashboardRefresh, checked)
+        f.state.failDashboard = false
+        await f.model.recoverDashboardRead()
+        XCTAssertNil(f.model.dashboardReadFailure)
+        XCTAssertEqual(f.model.executionDetail(target)?.jobId, detail.jobId)
+        XCTAssertEqual(f.model.dashboardPanel, .history)
+    }
+}
