@@ -74,3 +74,26 @@ The isolated app interaction is functional native UI evidence. It does not prove
 acceptance of an upgraded operational installation, the complete #242 criteria,
 or the cause of #262. Keep installed acceptance pending until a safe ordinary
 update can verify the current dev build without interrupting active work.
+
+## Integration SIGPIPE investigation
+
+An integrated native run exposed a test-fixture shutdown race. An accepted socket
+was added to the fixture's client set, `stop()` shut it down, and its serving
+thread then attempted to set `SO_NOSIGPIPE`. On macOS 26.6.2 that late option
+change fails with `EINVAL`; the ignored failure left SIGPIPE enabled when a
+buffered request produced a late reply. Descriptor event tracing captured stop
+before serving started. This was not evidence of descriptor reuse or the cause
+of a historical operational HTTP 502.
+
+The fixture now sets and checks that option under its acceptance lock, before
+publishing the client to `stop()`. A deterministic test pauses the serving
+thread across stop and checks the option before and after shutdown. With the
+original ordering it fails with `[0, 0]`; the corrected ordering must retain
+`[1, 1]`. Its empty response avoids terminating the regression test process on
+the defective ordering. No product signal handler, global SIGPIPE suppression,
+timeout increase, or acceptance-expectation change is used.
+
+[The standalone socket-order reproducer](fixture-socket-order.c) also isolates
+the OS behavior without Swift, fixtures or operational data. Its signal handler
+counts the expected signal in that diagnostic executable only. Exact validation
+is recorded in [the fixture receipt](fixture-validation.json).
