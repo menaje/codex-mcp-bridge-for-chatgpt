@@ -1,0 +1,116 @@
+{
+  "installedCommit": "0d26c7f14353243aa7db221e025095b9a7a60026",
+  "checkoutBase": "60f7d774364c805156b1e3285be6aa106759aab8",
+  "sourceBlobs": [
+    {
+      "path": "src/macosHelperServer.ts",
+      "installedSourceBlob": "96ccd181b99c223b9069a8c0c13e3ac9f81f7141",
+      "checkoutBlob": "96ccd181b99c223b9069a8c0c13e3ac9f81f7141",
+      "matches": true
+    },
+    {
+      "path": "src/runtimeLifecycle.ts",
+      "installedSourceBlob": "f95937dd7a395ff22d4c6c3c1f2c2ee22d00216f",
+      "checkoutBlob": "f95937dd7a395ff22d4c6c3c1f2c2ee22d00216f",
+      "matches": true
+    },
+    {
+      "path": "src/runtimeProcess.ts",
+      "installedSourceBlob": "a48228da2a5cbde71a4332bf340be35a9325355f",
+      "checkoutBlob": "a48228da2a5cbde71a4332bf340be35a9325355f",
+      "matches": true
+    },
+    {
+      "path": "src/cli.ts",
+      "installedSourceBlob": "a0441de58569b65a3af180f44c899a7ffbad055a",
+      "checkoutBlob": "a0441de58569b65a3af180f44c899a7ffbad055a",
+      "matches": true
+    },
+    {
+      "path": "src/macosHelper.ts",
+      "installedSourceBlob": "a69e1c7b39c3504041e5175045a4bba77965dfc3",
+      "checkoutBlob": "a69e1c7b39c3504041e5175045a4bba77965dfc3",
+      "matches": true
+    },
+    {
+      "path": "scripts/start-codex-mcp-bridge.mjs",
+      "installedSourceBlob": "3e15f0445bd39b59c5f5728cf36eea717a6833dc",
+      "checkoutBlob": "3e15f0445bd39b59c5f5728cf36eea717a6833dc",
+      "matches": true
+    },
+    {
+      "path": "scripts/runtime-status.mjs",
+      "installedSourceBlob": "3707e35d5ff03a192bcb550c1f245ec45f1c2cd0",
+      "checkoutBlob": "3707e35d5ff03a192bcb550c1f245ec45f1c2cd0",
+      "matches": true
+    },
+    {
+      "path": "macos/Sources/CodexBridgeKit/HelperBootstrap.swift",
+      "installedSourceBlob": "f6864635408e2f3a22efe73a9704cc812b70e3bb",
+      "checkoutBlob": "f6864635408e2f3a22efe73a9704cc812b70e3bb",
+      "matches": true
+    },
+    {
+      "path": "macos/Sources/CodexBridgeKit/RuntimePaths.swift",
+      "installedSourceBlob": "4aabef794f973df93349dadc8a95f3314d673a03",
+      "checkoutBlob": "4aabef794f973df93349dadc8a95f3314d673a03",
+      "matches": true
+    },
+    {
+      "path": "macos/Sources/CodexBridgeMenuBar/AppModel.swift",
+      "installedSourceBlob": "d4f1c252cdef23c8c28fdfdae7e849aff9a1bc00",
+      "checkoutBlob": "d4f1c252cdef23c8c28fdfdae7e849aff9a1bc00",
+      "matches": true
+    },
+    {
+      "path": "macos/Sources/CodexBridgeMenuBar/CodexBridgeMenuBarApp.swift",
+      "installedSourceBlob": "3b25266c2f2ab13b8e4cc5a643d9429516500046",
+      "checkoutBlob": "3b25266c2f2ab13b8e4cc5a643d9429516500046",
+      "matches": true
+    }
+  ],
+  "installedRuntimeFiles": [
+    {
+      "path": "dist/macosHelperServer.js",
+      "installedSha256": "26704bc268e4d46c67971de1a891d791c28f9e0d93475b67a4cd2418aa3533a5",
+      "checkoutSha256": "26704bc268e4d46c67971de1a891d791c28f9e0d93475b67a4cd2418aa3533a5",
+      "matches": true
+    },
+    {
+      "path": "dist/runtimeLifecycle.js",
+      "installedSha256": "de2f6769456b7c19e595dc398f67dfb6546f07cefada261cd992b99fc80f21c2",
+      "checkoutSha256": "de2f6769456b7c19e595dc398f67dfb6546f07cefada261cd992b99fc80f21c2",
+      "matches": true
+    },
+    {
+      "path": "dist/runtimeProcess.js",
+      "installedSha256": "f15a21bbdc3bf7f33e7b7cb9dfa30fba861bf4cb7928836e8ab489a3a45a8932",
+      "checkoutSha256": "f15a21bbdc3bf7f33e7b7cb9dfa30fba861bf4cb7928836e8ab489a3a45a8932",
+      "matches": true
+    },
+    {
+      "path": "dist/cli.js",
+      "installedSha256": "57b6b18cc22a8a1a2302489688a9eb203788ded7c1a3167ce4107011d3482645",
+      "checkoutSha256": "57b6b18cc22a8a1a2302489688a9eb203788ded7c1a3167ce4107011d3482645",
+      "matches": true
+    },
+    {
+      "path": "dist/macosHelper.js",
+      "installedSha256": "454261d99cf6f4141f5477823d64a9f970f8fdc96533bff6c373e506bb72d456",
+      "checkoutSha256": "454261d99cf6f4141f5477823d64a9f970f8fdc96533bff6c373e506bb72d456",
+      "matches": true
+    },
+    {
+      "path": "scripts/start-codex-mcp-bridge.mjs",
+      "installedSha256": "446c527cf2d29cd26367f433c61369627d548b3e1da03d7192a96ef72b876382",
+      "checkoutSha256": "446c527cf2d29cd26367f433c61369627d548b3e1da03d7192a96ef72b876382",
+      "matches": true
+    },
+    {
+      "path": "scripts/runtime-status.mjs",
+      "installedSha256": "6f74d7ac64524140189aa1f785b462a27e407e9a5b333f625164016c8207af51",
+      "checkoutSha256": "6f74d7ac64524140189aa1f785b462a27e407e9a5b333f625164016c8207af51",
+      "matches": true
+    }
+  ]
+}

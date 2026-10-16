@@ -1,0 +1,462 @@
+{
+  "defaultCommand": "env -u CODEX_HOME npm run check",
+  "files": {
+    "passed": 159,
+    "failed": 12,
+    "skipped": 1
+  },
+  "tests": {
+    "passed": 2020,
+    "failed": 34,
+    "skipped": 1
+  },
+  "previousBaselineFailedCases": [
+    {
+      "file": "test/currentSelectorReplay.test.ts",
+      "name": "current task selector contract preserves the admitted v6 record but rejects a stale project selector after restart"
+    },
+    {
+      "file": "test/dashboardReadQueries.test.ts",
+      "name": "Dashboard query cost batches titles and handoffs with 20 retained Agents and recovery records"
+    },
+    {
+      "file": "test/dashboardReadQueries.test.ts",
+      "name": "Dashboard query cost batches titles and handoffs with 120 retained Agents and recovery records"
+    },
+    {
+      "file": "test/issue162Context.test.ts",
+      "name": "issue 162 product context marks a changed file environment pending while the old launcher still runs"
+    },
+    {
+      "file": "test/mcpOAuth.test.ts",
+      "name": "MCP OAuth configuration and HTTP discovery publishes resource metadata and both tool security declarations without granting execution"
+    },
+    {
+      "file": "test/server.test.ts",
+      "name": "MCP 2026-07-28 HTTP server discovers and serves only the current tools and resources"
+    },
+    {
+      "file": "test/server.test.ts",
+      "name": "MCP 2026-07-28 HTTP server uses the current request envelope and rejects protocol/header mismatches"
+    },
+    {
+      "file": "test/server.test.ts",
+      "name": "MCP 2026-07-28 HTTP server keeps discovery lists stable across conversation scopes"
+    }
+  ],
+  "failures": [
+    {
+      "file": " test/companionServer.test.ts",
+      "name": "native companion server > carries the full worst-case JSON-escaped Bridge skill content over the native socket"
+    },
+    {
+      "file": " test/currentSelectorReplay.test.ts",
+      "name": "current task selector contract > preserves the admitted v6 record but rejects a stale project selector after restart"
+    },
+    {
+      "file": " test/dashboardReadQueries.test.ts",
+      "name": "Dashboard query cost > batches titles and handoffs with 20 retained Agents and recovery records"
+    },
+    {
+      "file": " test/dashboardReadQueries.test.ts",
+      "name": "Dashboard query cost > batches titles and handoffs with 120 retained Agents and recovery records"
+    },
+    {
+      "file": " test/experimentRetirement.test.ts",
+      "name": "blocks active processes and an incomplete or stale open-work review"
+    },
+    {
+      "file": " test/experimentRetirement.test.ts",
+      "name": "rejects archives within active worktrees, a current checkout, and protected branches"
+    },
+    {
+      "file": " test/experimentRetirement.test.ts",
+      "name": "preserves a branch that changes after initial verification"
+    },
+    {
+      "file": " test/experimentRetirement.test.ts",
+      "name": "restores backed-up files if ordinary worktree removal fails"
+    },
+    {
+      "file": " test/experimentRetirement.test.ts",
+      "name": "checks GitHub open work and deletes only the archived remote branch"
+    },
+    {
+      "file": " test/experimentRetirement.test.ts",
+      "name": "preserves the experiment when remote review finds open-pr"
+    },
+    {
+      "file": " test/experimentRetirement.test.ts",
+      "name": "preserves the experiment when remote review finds open-issue"
+    },
+    {
+      "file": " test/experimentRetirement.test.ts",
+      "name": "preserves the experiment when remote review finds changed-head"
+    },
+    {
+      "file": " test/issue162Context.test.ts",
+      "name": "issue 162 product context > marks a changed file environment pending while the old launcher still runs"
+    },
+    {
+      "file": " test/issue221Delivery.test.ts",
+      "name": "#221 delivery transition > rejects an unadmitted historical events followup without modifying approval"
+    },
+    {
+      "file": " test/issue221Delivery.test.ts",
+      "name": "#221 delivery transition > replays an already admitted historical live-card B before retired-policy rejection"
+    },
+    {
+      "file": " test/issue221Delivery.test.ts",
+      "name": "#221 delivery transition > replays an already admitted historical events B before retired-policy rejection"
+    },
+    {
+      "file": " test/issue221Delivery.test.ts",
+      "name": "#221 delivery transition > preserves an admitted live-card B replay carrying its original delivery selector"
+    },
+    {
+      "file": " test/issue221Delivery.test.ts",
+      "name": "#221 delivery transition > preserves an admitted events B replay carrying its original delivery selector"
+    },
+    {
+      "file": " test/issue221Delivery.test.ts",
+      "name": "#221 delivery transition > reports probe reason unsupported without orphaning or replacing the Agent"
+    },
+    {
+      "file": " test/issue246StartupSupervisor.test.ts",
+      "name": "retries the same initial intent only after its owned launcher/group/lock is cleared"
+    },
+    {
+      "file": " test/issue246StartupSupervisor.test.ts",
+      "name": "recovery reply waiting during cancel preserves work and cannot authorize another attempt"
+    },
+    {
+      "file": " test/issue246StartupSupervisor.test.ts",
+      "name": "preserves the unknown orphan after launcher exit and forbids another automatic spawn"
+    },
+    {
+      "file": " test/issue246StartupSupervisor.test.ts",
+      "name": "preserves the lost-drain-ack orphan after launcher exit and forbids another automatic spawn"
+    },
+    {
+      "file": " test/issue246StartupSupervisor.test.ts",
+      "name": "preserves the false-drain-ack orphan after launcher exit and forbids another automatic spawn"
+    },
+    {
+      "file": " test/issue246StartupSupervisor.test.ts",
+      "name": "preserves the missing-owner orphan after launcher exit and forbids another automatic spawn"
+    },
+    {
+      "file": " test/issue246StartupSupervisor.test.ts",
+      "name": "preserves the pending-admission orphan after launcher exit and forbids another automatic spawn"
+    },
+    {
+      "file": " test/issue246StartupSupervisor.test.ts",
+      "name": "a near-expiry initial intent preserves freshly confirmed protected work instead of killing it to retry"
+    },
+    {
+      "file": " test/mcpOAuth.test.ts",
+      "name": "MCP OAuth configuration and HTTP discovery > publishes resource metadata and both tool security declarations without granting execution"
+    },
+    {
+      "file": " test/server.test.ts",
+      "name": "MCP 2026-07-28 HTTP server > discovers and serves only the current tools and resources"
+    },
+    {
+      "file": " test/server.test.ts",
+      "name": "MCP 2026-07-28 HTTP server > uses the current request envelope and rejects protocol/header mismatches"
+    },
+    {
+      "file": " test/server.test.ts",
+      "name": "MCP 2026-07-28 HTTP server > keeps discovery lists stable across conversation scopes"
+    },
+    {
+      "file": " test/stateDatabaseLifecycle.test.ts",
+      "name": "state database lifecycle > rejects malformed and unsupported databases before creating lifecycle sidecars"
+    },
+    {
+      "file": " test/stateServiceProcess.test.ts",
+      "name": "operational state child process > refuses to become a second BridgeStateStore owner"
+    },
+    {
+      "file": " test/workHistory.test.ts",
+      "name": "execution history retention > drains bounded terminal batches using the saved policy while leaving live work untouched"
+    }
+  ],
+  "additionalFailureReplay": {
+    "separateSerialReplay": true,
+    "passed": 110,
+    "failed": 6,
+    "files": [
+      {
+        "file": "companionServer.test.ts",
+        "passed": 25,
+        "failures": []
+      },
+      {
+        "file": "experimentRetirement.test.ts",
+        "passed": 19,
+        "failures": [
+          "checks GitHub open work and deletes only the archived remote branch"
+        ]
+      },
+      {
+        "file": "issue221Delivery.test.ts",
+        "passed": 19,
+        "failures": [
+          "#221 delivery transition rejects an unadmitted historical events followup without modifying approval",
+          "#221 delivery transition preserves an admitted live-card B replay carrying its original delivery selector"
+        ]
+      },
+      {
+        "file": "issue246StartupSupervisor.test.ts",
+        "passed": 22,
+        "failures": [
+          "retries the same initial intent only after its owned launcher/group/lock is cleared",
+          "owner and socket service replacement while ps is pending cannot close replacement admission"
+        ]
+      },
+      {
+        "file": "stateDatabaseLifecycle.test.ts",
+        "passed": 11,
+        "failures": []
+      },
+      {
+        "file": "stateServiceProcess.test.ts",
+        "passed": 12,
+        "failures": []
+      },
+      {
+        "file": "workHistory.test.ts",
+        "passed": 2,
+        "failures": [
+          "execution history retention drains bounded terminal batches using the saved policy while leaving live work untouched"
+        ]
+      }
+    ]
+  },
+  "finalStartupAndRecovery": {
+    "passed": 34,
+    "failed": 0,
+    "skipped": 0,
+    "cases": [
+      {
+        "file": "issue246StartupSupervisor.test.ts",
+        "name": "retries the same initial intent only after its owned launcher/group/lock is cleared",
+        "status": "passed"
+      },
+      {
+        "file": "issue246StartupSupervisor.test.ts",
+        "name": "recovery reply waiting during stop preserves work and cannot authorize another attempt",
+        "status": "passed"
+      },
+      {
+        "file": "issue246StartupSupervisor.test.ts",
+        "name": "recovery reply waiting during cancel preserves work and cannot authorize another attempt",
+        "status": "passed"
+      },
+      {
+        "file": "issue246StartupSupervisor.test.ts",
+        "name": "recovery reply waiting during expired-intent preserves work and cannot authorize another attempt",
+        "status": "passed"
+      },
+      {
+        "file": "issue246StartupSupervisor.test.ts",
+        "name": "owner and socket service replacement while ps is pending cannot close replacement admission",
+        "status": "passed"
+      },
+      {
+        "file": "issue246StartupSupervisor.test.ts",
+        "name": "preserves the protected orphan after launcher exit and forbids another automatic spawn",
+        "status": "passed"
+      },
+      {
+        "file": "issue246StartupSupervisor.test.ts",
+        "name": "preserves the unknown orphan after launcher exit and forbids another automatic spawn",
+        "status": "passed"
+      },
+      {
+        "file": "issue246StartupSupervisor.test.ts",
+        "name": "preserves the unreachable orphan after launcher exit and forbids another automatic spawn",
+        "status": "passed"
+      },
+      {
+        "file": "issue246StartupSupervisor.test.ts",
+        "name": "preserves the missing-owner orphan after launcher exit and forbids another automatic spawn",
+        "status": "passed"
+      },
+      {
+        "file": "issue246StartupSupervisor.test.ts",
+        "name": "preserves the changed-owner orphan after launcher exit and forbids another automatic spawn",
+        "status": "passed"
+      },
+      {
+        "file": "issue246StartupSupervisor.test.ts",
+        "name": "preserves the pending-admission orphan after launcher exit and forbids another automatic spawn",
+        "status": "passed"
+      },
+      {
+        "file": "issue246StartupSupervisor.test.ts",
+        "name": "preserves the lost-drain-ack orphan after launcher exit and forbids another automatic spawn",
+        "status": "passed"
+      },
+      {
+        "file": "issue246StartupSupervisor.test.ts",
+        "name": "preserves the lost-cancel-ack orphan after launcher exit and forbids another automatic spawn",
+        "status": "passed"
+      },
+      {
+        "file": "issue246StartupSupervisor.test.ts",
+        "name": "preserves the false-drain-ack orphan after launcher exit and forbids another automatic spawn",
+        "status": "passed"
+      },
+      {
+        "file": "issue246StartupSupervisor.test.ts",
+        "name": "closes admission before an idle orphan response can race a new Job, then cleans up and retries",
+        "status": "passed"
+      },
+      {
+        "file": "issue246StartupSupervisor.test.ts",
+        "name": "preserves backoff, deadline and attempt count when only the helper re-enters",
+        "status": "passed"
+      },
+      {
+        "file": "issue246StartupSupervisor.test.ts",
+        "name": "a user stop during startup backoff stays stopped after replay and helper-only respawn",
+        "status": "passed"
+      },
+      {
+        "file": "issue246StartupSupervisor.test.ts",
+        "name": "retains a permanent child storage cause without treating it as readiness timeout",
+        "status": "passed"
+      },
+      {
+        "file": "issue246StartupSupervisor.test.ts",
+        "name": "a changed configuration during backoff fails the frozen target without another spawn",
+        "status": "passed"
+      },
+      {
+        "file": "issue246StartupSupervisor.test.ts",
+        "name": "refuses a new spawn or cleanup when a different live owner takes the lock during backoff",
+        "status": "passed"
+      },
+      {
+        "file": "issue246StartupSupervisor.test.ts",
+        "name": "a near-expiry initial intent preserves freshly confirmed protected work instead of killing it to retry",
+        "status": "passed"
+      },
+      {
+        "file": "issue246StartupSupervisor.test.ts",
+        "name": "adopts a completed initial runtime on helper-only re-entry without resetting its receipt or budget",
+        "status": "passed"
+      },
+      {
+        "file": "issue246StartupSupervisor.test.ts",
+        "name": "a proven new OS boot after completed startup establishes a distinct initial intent",
+        "status": "passed"
+      },
+      {
+        "file": "issue246StartupSupervisor.test.ts",
+        "name": "startup diagnostics expose fixed stage/count/timing fields and no private owner identity",
+        "status": "passed"
+      },
+      {
+        "file": "runtimeLifecycleRecovery.test.ts",
+        "name": "a new app launch starts after recovering a completed native shutdown without menu interaction",
+        "status": "passed"
+      },
+      {
+        "file": "runtimeLifecycleRecovery.test.ts",
+        "name": "a helper-only respawn leaves a recovered shutdown stopped until a fresh app launch",
+        "status": "passed"
+      },
+      {
+        "file": "runtimeLifecycleRecovery.test.ts",
+        "name": "an app launch observes a failed shutdown recovery without silently starting",
+        "status": "passed"
+      },
+      {
+        "file": "runtimeLifecycleRecovery.test.ts",
+        "name": "publishes a failed native handoff before acknowledgement and accepts an explicit retry",
+        "status": "passed"
+      },
+      {
+        "file": "runtimeLifecycleRecovery.test.ts",
+        "name": "an acknowledged native handoff consumes a failure receipt",
+        "status": "passed"
+      },
+      {
+        "file": "runtimeLifecycleRecovery.test.ts",
+        "name": "helper shutdown preserves a graceful reservation and its active runtime",
+        "status": "passed"
+      },
+      {
+        "file": "runtimeLifecycleRecovery.test.ts",
+        "name": "cancelling recovered helper replacement must prevent recovery from starting a runtime",
+        "status": "passed"
+      },
+      {
+        "file": "runtimeLifecycleRecovery.test.ts",
+        "name": "a replacement stop cancels old helper recovery before it can start a runtime",
+        "status": "passed"
+      },
+      {
+        "file": "runtimeLifecycleRecovery.test.ts",
+        "name": "a new helper claims execution and completes replacement only after the runtime is ready",
+        "status": "passed"
+      },
+      {
+        "file": "runtimeLifecycleRecovery.test.ts",
+        "name": "a real helper SIGTERM preserves active work, then a new helper adopts and finishes the reservation",
+        "status": "passed"
+      }
+    ]
+  },
+  "selectedDeliveryReplay": {
+    "passed": 2,
+    "failed": 0,
+    "skipped": 19,
+    "cases": [
+      {
+        "file": "issue221Delivery.test.ts",
+        "name": "#221 delivery transition rejects an unadmitted historical events followup without modifying approval",
+        "status": "passed"
+      },
+      {
+        "file": "issue221Delivery.test.ts",
+        "name": "#221 delivery transition preserves an admitted live-card B replay carrying its original delivery selector",
+        "status": "passed"
+      }
+    ]
+  },
+  "unchangedBaseline": {
+    "commit": "60f7d774364c805156b1e3285be6aa106759aab8",
+    "results": {
+      "passed": 2,
+      "failed": 2,
+      "skipped": 40,
+      "cases": [
+        {
+          "file": "experimentRetirement.test.ts",
+          "name": "checks GitHub open work and deletes only the archived remote branch",
+          "status": "failed"
+        },
+        {
+          "file": "issue221Delivery.test.ts",
+          "name": "#221 delivery transition rejects an unadmitted historical events followup without modifying approval",
+          "status": "passed"
+        },
+        {
+          "file": "issue221Delivery.test.ts",
+          "name": "#221 delivery transition preserves an admitted live-card B replay carrying its original delivery selector",
+          "status": "passed"
+        },
+        {
+          "file": "workHistory.test.ts",
+          "name": "execution history retention drains bounded terminal batches using the saved policy while leaving live work untouched",
+          "status": "failed"
+        }
+      ]
+    }
+  },
+  "fullGateClaimedPassing": false
+}
