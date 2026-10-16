@@ -1,0 +1,89 @@
+{
+  "observationStartedAt": "2026-10-16T05:36:16.343008Z",
+  "observationSeconds": 180.05,
+  "drainCompletedSeconds": 201.308,
+  "requests": 148,
+  "responses": 148,
+  "allResponsesSuccessful": true,
+  "methodCountsByLane": {
+    "helper": {
+      "helper.health": 29,
+      "changes.wait": 9,
+      "auth.status": 1,
+      "codex.runtime": 1
+    },
+    "bridge": {
+      "runtime.health": 29,
+      "changes.wait": 43,
+      "completion.availability": 4,
+      "completion.claim": 1,
+      "completion.delivered": 1,
+      "dashboard.snapshot": 20,
+      "dashboard.execution-detail": 10
+    }
+  },
+  "methodCountsByPhase": {
+    "quiet": {
+      "helper.health": 7,
+      "runtime.health": 7,
+      "changes.wait": 11,
+      "completion.availability": 1
+    },
+    "completion-test": {
+      "helper.health": 5,
+      "runtime.health": 5,
+      "changes.wait": 24,
+      "auth.status": 1,
+      "codex.runtime": 1,
+      "completion.availability": 2,
+      "completion.claim": 1,
+      "completion.delivered": 1
+    },
+    "read-sample": {
+      "changes.wait": 12,
+      "helper.health": 14,
+      "runtime.health": 14,
+      "dashboard.snapshot": 20,
+      "dashboard.execution-detail": 10,
+      "completion.availability": 1
+    },
+    "quiet-after": {
+      "helper.health": 3,
+      "runtime.health": 3,
+      "changes.wait": 5
+    }
+  },
+  "topicNoticeCounts": {
+    "dashboard": 36,
+    "settings": 1,
+    "completion-outbox-ready": 1
+  },
+  "completionAvailabilityResponseSeconds": [
+    44.261,
+    85.231,
+    85.304,
+    147.568
+  ],
+  "postDeliveryRecoveryIntervalSeconds": 62.264,
+  "readinessToPreflightRequestMs": 130.0,
+  "manualReadProbeRequests": {
+    "dashboard.snapshot": 20,
+    "dashboard.execution-detail": 10,
+    "helper.health": 10
+  },
+  "manualInitialHealthRequests": 1,
+  "naturalHelperHealthRequests": 18,
+  "restoration": {
+    "originalSocketInodesRestored": true,
+    "originalModes": "0600",
+    "connectionsDrained": true,
+    "watchdogReplacementCount": 0
+  },
+  "limits": [
+    "Preexisting connections bypassed the observer until naturally reconnected; startup/reconnect counts are not claimed.",
+    "Phase labels describe the phase at each event; a long-poll response may arrive in the next phase.",
+    "Helper runtime.health forwards the matching helper.health request; these are two hops, not two independent native polls.",
+    "10 helper.health and 30 Dashboard calls came from the explicit read probe; one initial helper health guard is included.",
+    "The 180-second cap bounds the temporary observer. This finite protocol covered one readiness delivery and one full normal 60-second recovery interval; it is not a soak test."
+  ]
+}

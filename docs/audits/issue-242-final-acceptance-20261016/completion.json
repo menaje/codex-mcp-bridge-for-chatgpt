@@ -1,0 +1,36 @@
+{
+  "newRows": 1,
+  "attempts": 1,
+  "delivered": 1,
+  "minDeliveryMs": 184,
+  "maxDeliveryMs": 184,
+  "jobCount": 1,
+  "jobTerminalState": "completed",
+  "exactOriginalResultMatched": true,
+  "activityLifecycle": "completed",
+  "promptBehavior": "return one fixed acceptance marker; no tools or file changes",
+  "policy": {
+    "completion": "sealed-jobs-terminal",
+    "handoff": "notify"
+  },
+  "completionReadinessNotices": 1,
+  "nativeClaims": 1,
+  "nativeClaimedEvents": 1,
+  "nativeDeliveredAcks": 1,
+  "nativeReleases": 0,
+  "systemSettingsObserved": {
+    "allowNotifications": true,
+    "desktop": true,
+    "notificationCenter": true,
+    "lockScreen": true,
+    "style": "temporary",
+    "sound": true,
+    "settingsChanged": false
+  },
+  "systemAcceptanceEvidence": "Installed delivery calls UNUserNotificationCenter.add and sends completion.delivered only after its success callback; the observed ack succeeded and the new outbox row is delivered.",
+  "bannerVisibility": "user later reported that a notification had arrived; exact displayed text was not captured",
+  "limits": [
+    "OS acceptance and persisted delivery ack are verified. The user also reported an arrived notification; an independently captured banner/title is unavailable.",
+    "The test creates one real acceptance Job and retains its mandatory terminal/result, Activity and outbox records. It does not replay or alter preexisting Jobs."
+  ]
+}

@@ -1,0 +1,35 @@
+import {homedir} from 'node:os';
+import { performance } from 'node:perf_hooks';
+import { BridgeStateStore } from '/Applications/Codex MCP Bridge for ChatGPT.app/Contents/Resources/Runtime/dist/stateStore.js';
+const samples=[];let phase='setup';let changes=0;
+const store=new BridgeStateStore({file:homedir()+'/.codex-mcp-bridge/state.sqlite',readOnly:true});
+const db=store.database;
+const busyTimeoutMs=db.pragma('busy_timeout',{simple:true});
+const queryOnly=db.pragma('query_only',{simple:true});
+const originalPrepare=db.prepare;
+db.prepare=function(sql){
+ const p=performance.now();const stmt=originalPrepare.call(this,sql);const prepareMs=performance.now()-p;
+ const kind=/^\s*(\w+)/.exec(sql)?.[1].toUpperCase()||'unknown';
+ for(const method of ['all','get','run']){
+  const original=stmt[method];stmt[method]=function(...args){
+   const at=performance.now();let code=null;
+   try{const result=original.apply(this,args);if(method==='run')changes+=Number(result.changes||0);return result;}
+   catch(e){code=e.code||'unknown';throw e;}
+   finally{samples.push({phase,kind,method,prepareMs,elapsedMs:performance.now()-at,errorCode:code});}
+  };
+ }
+ return stmt;
+};
+const groups={};
+try{
+ for(const [name,count,fn] of [['dashboardJobHydration',10,()=>store.listJobsForDashboard()],['emptyCompletionAvailability',20,()=>store.nativeCompletionAvailability()]]){
+  phase=name;const at=performance.now();let rows;
+  for(let i=0;i<count;i++){const result=fn();if(Array.isArray(result))rows=result.length;else if(result.available!==false)throw Error('Outbox unexpectedly became available');}
+  groups[name]={calls:count,wallMs:performance.now()-at,...(rows===undefined?{}:{rowsPerCall:rows})};
+ }
+ const summarize=xs=>{const s=[...xs].sort((a,b)=>a-b);return {n:s.length,min:s[0],p50:s[Math.ceil(s.length*.5)-1],p95:s[Math.ceil(s.length*.95)-1],p99:s[Math.ceil(s.length*.99)-1],max:s.at(-1),sum:s.reduce((a,b)=>a+b,0)}};
+ for(const [name,g] of Object.entries(groups)){
+  const rows=samples.filter(r=>r.phase===name);g.statementKinds=Object.fromEntries([...new Set(rows.map(r=>r.kind))].map(k=>[k,rows.filter(r=>r.kind===k).length]));g.statementExecutionMs=summarize(rows.map(r=>r.elapsedMs));g.statementPreparationMs=summarize(rows.map(r=>r.prepareMs));g.errorCount=rows.filter(r=>r.errorCode!==null).length;
+ }
+ console.log(JSON.stringify({scope:'separate read-only observer against the operational database using installed store module; not the native read child',busyTimeoutMs,queryOnly,groups,changedRows:changes,statements:samples,limitations:['Statement elapsed includes scheduling and any lock waiting; exact lock-wait duration is not independently instrumented.','No SQL text, bindings, returned records, prompts, or execution identities are emitted.','This query-only process cannot characterize operational writer transaction durations.']},null,2));
+}finally{store.close();}

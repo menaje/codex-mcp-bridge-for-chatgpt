@@ -1,0 +1,49 @@
+{
+  "completedAt": "2026-10-16T05:47:44.799272+00:00",
+  "taskBase": "c48868d31a2abe036e48d4f766d9fc67c472b733",
+  "scope": "audit-only; no product, dependency or configuration edits",
+  "affected": {
+    "command": "CODEX_MCP_BRIDGE_CODEX=<pinned CLI 0.153.3> npm run validate:affected -- --base origin/dev",
+    "exitCode": 0,
+    "paths": 17,
+    "node": false,
+    "macos": false,
+    "checks": [
+      "localization synchronized",
+      "release manifest 0.4.1 synchronized",
+      "development release policy valid, 119 fragments",
+      "CLI 0.153.3 schemas match, 416 JSON / 827 TypeScript"
+    ],
+    "logSha256": "54cc9c6e86cba62dc38b72dc3823dae35768d3ab0d69c31c7b11fed0013da582"
+  },
+  "supplementary": {
+    "originalProxyFixture": true,
+    "publicTemplateFixture": true,
+    "sqlTemplateNodeSyntax": true,
+    "publicCProbeStrictCompileAndSelfRead": true,
+    "allPublicJsonParsed": true,
+    "relativeReadmeTargetsExist": true,
+    "explicitPrivateValueScan": true,
+    "gitDiffCheck": true
+  },
+  "preservedPriorGates": {
+    "nativeBundle": {
+      "executed": 352,
+      "skipped": 3,
+      "failures": 0
+    },
+    "node": {
+      "passed": 2046,
+      "failed": 8,
+      "skipped": 1,
+      "allFailuresReproducedInPriorBaseline": true
+    }
+  },
+  "liveRestoration": {
+    "originalSocketInodesAndModes": true,
+    "forwardedConnectionsDrained": true,
+    "sameRuntimeHealthy": true,
+    "activeJobs": 0,
+    "pendingAdmissions": 0
+  }
+}

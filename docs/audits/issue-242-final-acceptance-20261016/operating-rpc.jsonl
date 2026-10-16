@@ -1,0 +1,297 @@
+{"t": 2.744, "phase": "quiet", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 2.749, "phase": "quiet", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 2.75, "phase": "quiet", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 1.688, "ok": true}
+{"t": 2.752, "phase": "quiet", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 8.264, "ok": true}
+{"t": 9.578, "phase": "quiet", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 9.578, "phase": "quiet", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 9.579, "phase": "quiet", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 0.707, "ok": true}
+{"t": 9.58, "phase": "quiet", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 2.489, "ok": true}
+{"t": 13.326, "phase": "quiet", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 13.328, "phase": "quiet", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 13.328, "phase": "quiet", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 1.142, "ok": true}
+{"t": 13.337, "phase": "quiet", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 11.1, "ok": true}
+{"t": 21.296, "phase": "quiet", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 23.426, "phase": "quiet", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 23.429, "phase": "quiet", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 23.435, "phase": "quiet", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 5.487, "ok": true}
+{"t": 23.436, "phase": "quiet", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 10.201, "ok": true}
+{"t": 24.153, "phase": "quiet", "kind": "request", "lane": "helper", "method": "changes.wait"}
+{"t": 26.223, "phase": "quiet", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 4926.691, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 26.224, "phase": "quiet", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 26.225, "phase": "quiet", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 1.008, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 26.256, "phase": "quiet", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 26.256, "phase": "quiet", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 0.704, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 26.277, "phase": "quiet", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 33.895, "phase": "quiet", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 33.897, "phase": "quiet", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 33.898, "phase": "quiet", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 1.572, "ok": true}
+{"t": 33.899, "phase": "quiet", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 5.441, "ok": true}
+{"t": 44.093, "phase": "quiet", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 44.094, "phase": "quiet", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 44.094, "phase": "quiet", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 0.719, "ok": true}
+{"t": 44.095, "phase": "quiet", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 2.515, "ok": true}
+{"t": 44.26, "phase": "quiet", "kind": "request", "lane": "bridge", "method": "completion.availability"}
+{"t": 44.261, "phase": "quiet", "kind": "response", "lane": "bridge", "method": "completion.availability", "elapsedMs": 1.866, "ok": true, "available": false}
+{"t": 49.158, "phase": "quiet", "kind": "response", "lane": "helper", "method": "changes.wait", "elapsedMs": 25006.12, "ok": true, "topics": [], "completionTopicSupported": false}
+{"t": 49.159, "phase": "quiet", "kind": "request", "lane": "helper", "method": "changes.wait"}
+{"t": 51.28, "phase": "quiet", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 25003.279, "ok": true, "topics": [], "completionTopicSupported": true}
+{"t": 51.283, "phase": "quiet", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 51.996, "phase": "quiet", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 713.67, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 52.0, "phase": "quiet", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 54.237, "phase": "quiet", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 54.238, "phase": "quiet", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 54.239, "phase": "quiet", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 1.048, "ok": true}
+{"t": 54.24, "phase": "quiet", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 3.953, "ok": true}
+{"t": 56.227, "phase": "quiet", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 4227.035, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 56.229, "phase": "quiet", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 56.23, "phase": "quiet", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 1.909, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 56.275, "phase": "quiet", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 56.276, "phase": "quiet", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 1.368, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 56.292, "phase": "quiet", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 64.686, "phase": "completion-test", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 64.688, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 64.689, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 1.151, "ok": true}
+{"t": 64.69, "phase": "completion-test", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 4.647, "ok": true}
+{"t": 74.162, "phase": "completion-test", "kind": "response", "lane": "helper", "method": "changes.wait", "elapsedMs": 25002.969, "ok": true, "topics": [], "completionTopicSupported": false}
+{"t": 74.163, "phase": "completion-test", "kind": "request", "lane": "helper", "method": "changes.wait"}
+{"t": 75.089, "phase": "completion-test", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 75.091, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 75.093, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 2.396, "ok": true}
+{"t": 75.107, "phase": "completion-test", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 18.912, "ok": true}
+{"t": 75.426, "phase": "completion-test", "kind": "request", "lane": "helper", "method": "auth.status"}
+{"t": 75.434, "phase": "completion-test", "kind": "response", "lane": "helper", "method": "changes.wait", "elapsedMs": 1271.344, "ok": true, "topics": [], "completionTopicSupported": false}
+{"t": 75.437, "phase": "completion-test", "kind": "request", "lane": "helper", "method": "changes.wait"}
+{"t": 75.442, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 19150.074, "ok": true, "topics": ["settings"], "completionTopicSupported": true}
+{"t": 75.473, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 75.524, "phase": "completion-test", "kind": "response", "lane": "helper", "method": "changes.wait", "elapsedMs": 86.86, "ok": true, "topics": [], "completionTopicSupported": false}
+{"t": 75.526, "phase": "completion-test", "kind": "request", "lane": "helper", "method": "changes.wait"}
+{"t": 75.737, "phase": "completion-test", "kind": "request", "lane": "helper", "method": "codex.runtime"}
+{"t": 77.474, "phase": "completion-test", "kind": "response", "lane": "helper", "method": "auth.status", "elapsedMs": 2048.513, "ok": true}
+{"t": 77.476, "phase": "completion-test", "kind": "response", "lane": "helper", "method": "codex.runtime", "elapsedMs": 1739.153, "ok": true}
+{"t": 80.741, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 5268.133, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 80.742, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 80.743, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 0.449, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 80.774, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 80.775, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 0.745, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 80.791, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 80.99, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 199.385, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 80.992, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 80.993, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 1.142, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 81.028, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 81.029, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 2.058, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 81.051, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 81.052, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 1.772, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 81.071, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 81.073, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 1.562, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 81.094, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 84.843, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 3749.389, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 84.847, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 84.848, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 1.827, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 84.914, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 84.915, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 1.869, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 84.923, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 85.062, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 145.588, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 85.091, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 85.092, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 12.392, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 85.095, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 85.099, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 4.037, "ok": true, "topics": ["completion-outbox-ready"], "completionTopicSupported": true}
+{"t": 85.109, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 85.112, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 2.741, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 85.124, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 85.159, "phase": "completion-test", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 85.16, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 85.161, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 1.084, "ok": true}
+{"t": 85.162, "phase": "completion-test", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 3.179, "ok": true}
+{"t": 85.229, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "completion.availability"}
+{"t": 85.231, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "completion.availability", "elapsedMs": 4.037, "ok": true, "available": true}
+{"t": 85.235, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "completion.claim"}
+{"t": 85.242, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "completion.claim", "elapsedMs": 7.104, "ok": true, "eventCount": 1}
+{"t": 85.271, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "completion.delivered"}
+{"t": 85.276, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 153.005, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 85.277, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "completion.delivered", "elapsedMs": 6.033, "ok": true}
+{"t": 85.279, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 85.302, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "completion.availability"}
+{"t": 85.304, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "completion.availability", "elapsedMs": 3.324, "ok": true, "available": false}
+{"t": 86.224, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 945.982, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 86.226, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 86.227, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 0.819, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 86.259, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 86.26, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 1.277, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 86.281, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 95.732, "phase": "completion-test", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 95.735, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 95.736, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 1.43, "ok": true}
+{"t": 95.738, "phase": "completion-test", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 6.135, "ok": true}
+{"t": 100.529, "phase": "completion-test", "kind": "response", "lane": "helper", "method": "changes.wait", "elapsedMs": 25002.893, "ok": true, "topics": [], "completionTopicSupported": false}
+{"t": 100.53, "phase": "completion-test", "kind": "request", "lane": "helper", "method": "changes.wait"}
+{"t": 106.098, "phase": "completion-test", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 106.1, "phase": "completion-test", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 106.101, "phase": "completion-test", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 1.162, "ok": true}
+{"t": 106.102, "phase": "completion-test", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 3.899, "ok": true}
+{"t": 111.282, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 25002.178, "ok": true, "topics": [], "completionTopicSupported": true}
+{"t": 111.286, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 116.227, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 4941.628, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 116.228, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 116.232, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 3.306, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 116.257, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 116.258, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 0.558, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 116.268, "phase": "read-sample", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 116.269, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 116.27, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 116.27, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 1.251, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 116.27, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 0.626, "ok": true}
+{"t": 116.271, "phase": "read-sample", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 2.922, "ok": true}
+{"t": 116.286, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 121.041, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.snapshot"}
+{"t": 121.299, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.snapshot", "elapsedMs": 258.707, "ok": true}
+{"t": 121.312, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.snapshot"}
+{"t": 121.381, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.snapshot", "elapsedMs": 68.787, "ok": true}
+{"t": 121.386, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.snapshot"}
+{"t": 121.447, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.snapshot", "elapsedMs": 60.984, "ok": true}
+{"t": 121.452, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.snapshot"}
+{"t": 121.51, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.snapshot", "elapsedMs": 58.239, "ok": true}
+{"t": 121.514, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.snapshot"}
+{"t": 121.591, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.snapshot", "elapsedMs": 76.762, "ok": true}
+{"t": 121.598, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.snapshot"}
+{"t": 121.663, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.snapshot", "elapsedMs": 65.246, "ok": true}
+{"t": 121.672, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.snapshot"}
+{"t": 121.739, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.snapshot", "elapsedMs": 67.48, "ok": true}
+{"t": 121.748, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.snapshot"}
+{"t": 121.827, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.snapshot", "elapsedMs": 79.378, "ok": true}
+{"t": 121.837, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.snapshot"}
+{"t": 121.898, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.snapshot", "elapsedMs": 61.447, "ok": true}
+{"t": 121.907, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.snapshot"}
+{"t": 121.966, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.snapshot", "elapsedMs": 59.16, "ok": true}
+{"t": 121.976, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.snapshot"}
+{"t": 122.054, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.snapshot", "elapsedMs": 78.463, "ok": true}
+{"t": 122.062, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.snapshot"}
+{"t": 122.142, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.snapshot", "elapsedMs": 80.72, "ok": true}
+{"t": 122.148, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.snapshot"}
+{"t": 122.218, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.snapshot", "elapsedMs": 70.217, "ok": true}
+{"t": 122.223, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.snapshot"}
+{"t": 122.295, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.snapshot", "elapsedMs": 71.397, "ok": true}
+{"t": 122.301, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.snapshot"}
+{"t": 122.372, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.snapshot", "elapsedMs": 71.069, "ok": true}
+{"t": 122.379, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.snapshot"}
+{"t": 122.454, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.snapshot", "elapsedMs": 74.669, "ok": true}
+{"t": 122.46, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.snapshot"}
+{"t": 122.527, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.snapshot", "elapsedMs": 67.323, "ok": true}
+{"t": 122.533, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.snapshot"}
+{"t": 122.608, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.snapshot", "elapsedMs": 75.044, "ok": true}
+{"t": 122.615, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.snapshot"}
+{"t": 122.681, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.snapshot", "elapsedMs": 66.635, "ok": true}
+{"t": 122.687, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.snapshot"}
+{"t": 122.76, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.snapshot", "elapsedMs": 73.193, "ok": true}
+{"t": 122.767, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.execution-detail"}
+{"t": 122.77, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.execution-detail", "elapsedMs": 3.815, "ok": true}
+{"t": 122.771, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.execution-detail"}
+{"t": 122.772, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.execution-detail", "elapsedMs": 1.72, "ok": true}
+{"t": 122.773, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.execution-detail"}
+{"t": 122.774, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.execution-detail", "elapsedMs": 1.447, "ok": true}
+{"t": 122.775, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.execution-detail"}
+{"t": 122.776, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.execution-detail", "elapsedMs": 1.423, "ok": true}
+{"t": 122.777, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.execution-detail"}
+{"t": 122.778, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.execution-detail", "elapsedMs": 1.575, "ok": true}
+{"t": 122.779, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.execution-detail"}
+{"t": 122.78, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.execution-detail", "elapsedMs": 1.713, "ok": true}
+{"t": 122.781, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.execution-detail"}
+{"t": 122.782, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.execution-detail", "elapsedMs": 1.666, "ok": true}
+{"t": 122.783, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.execution-detail"}
+{"t": 122.784, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.execution-detail", "elapsedMs": 1.596, "ok": true}
+{"t": 122.785, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.execution-detail"}
+{"t": 122.786, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.execution-detail", "elapsedMs": 1.429, "ok": true}
+{"t": 122.787, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "dashboard.execution-detail"}
+{"t": 122.788, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "dashboard.execution-detail", "elapsedMs": 1.691, "ok": true}
+{"t": 122.789, "phase": "read-sample", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 122.789, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 122.79, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 0.312, "ok": true}
+{"t": 122.79, "phase": "read-sample", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 1.233, "ok": true}
+{"t": 122.792, "phase": "read-sample", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 122.792, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 122.792, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 0.265, "ok": true}
+{"t": 122.793, "phase": "read-sample", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 0.861, "ok": true}
+{"t": 122.793, "phase": "read-sample", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 122.793, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 122.794, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 0.273, "ok": true}
+{"t": 122.794, "phase": "read-sample", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 0.769, "ok": true}
+{"t": 122.794, "phase": "read-sample", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 122.794, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 122.795, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 0.239, "ok": true}
+{"t": 122.795, "phase": "read-sample", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 0.736, "ok": true}
+{"t": 122.795, "phase": "read-sample", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 122.796, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 122.796, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 0.241, "ok": true}
+{"t": 122.796, "phase": "read-sample", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 0.754, "ok": true}
+{"t": 122.796, "phase": "read-sample", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 122.797, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 122.797, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 0.254, "ok": true}
+{"t": 122.797, "phase": "read-sample", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 0.794, "ok": true}
+{"t": 122.798, "phase": "read-sample", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 122.798, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 122.798, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 0.259, "ok": true}
+{"t": 122.798, "phase": "read-sample", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 0.817, "ok": true}
+{"t": 122.799, "phase": "read-sample", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 122.799, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 122.799, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 0.259, "ok": true}
+{"t": 122.799, "phase": "read-sample", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 0.745, "ok": true}
+{"t": 122.8, "phase": "read-sample", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 122.8, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 122.8, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 0.231, "ok": true}
+{"t": 122.801, "phase": "read-sample", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 0.72, "ok": true}
+{"t": 122.801, "phase": "read-sample", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 122.801, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 122.801, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 0.247, "ok": true}
+{"t": 122.802, "phase": "read-sample", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 0.77, "ok": true}
+{"t": 125.533, "phase": "read-sample", "kind": "response", "lane": "helper", "method": "changes.wait", "elapsedMs": 25003.073, "ok": true, "topics": [], "completionTopicSupported": false}
+{"t": 125.537, "phase": "read-sample", "kind": "request", "lane": "helper", "method": "changes.wait"}
+{"t": 126.584, "phase": "read-sample", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 126.587, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 126.588, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 1.207, "ok": true}
+{"t": 126.589, "phase": "read-sample", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 5.439, "ok": true}
+{"t": 137.076, "phase": "read-sample", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 137.077, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 137.078, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 0.932, "ok": true}
+{"t": 137.092, "phase": "read-sample", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 16.437, "ok": true}
+{"t": 141.288, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 25002.18, "ok": true, "topics": [], "completionTopicSupported": true}
+{"t": 141.29, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 146.227, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 4937.254, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 146.228, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 146.23, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 2.708, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 146.259, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 146.259, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 0.982, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 146.277, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 146.278, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 1.076, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 146.299, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 147.395, "phase": "read-sample", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 147.397, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 147.398, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 1.251, "ok": true}
+{"t": 147.399, "phase": "read-sample", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 3.95, "ok": true}
+{"t": 147.566, "phase": "read-sample", "kind": "request", "lane": "bridge", "method": "completion.availability"}
+{"t": 147.568, "phase": "read-sample", "kind": "response", "lane": "bridge", "method": "completion.availability", "elapsedMs": 2.695, "ok": true, "available": false}
+{"t": 150.539, "phase": "read-sample", "kind": "response", "lane": "helper", "method": "changes.wait", "elapsedMs": 25003.008, "ok": true, "topics": [], "completionTopicSupported": false}
+{"t": 150.541, "phase": "read-sample", "kind": "request", "lane": "helper", "method": "changes.wait"}
+{"t": 157.935, "phase": "quiet-after", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 157.936, "phase": "quiet-after", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 157.937, "phase": "quiet-after", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 1.038, "ok": true}
+{"t": 157.938, "phase": "quiet-after", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 3.408, "ok": true}
+{"t": 168.421, "phase": "quiet-after", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 168.423, "phase": "quiet-after", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 168.424, "phase": "quiet-after", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 0.982, "ok": true}
+{"t": 168.425, "phase": "quiet-after", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 4.994, "ok": true}
+{"t": 171.302, "phase": "quiet-after", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 25003.127, "ok": true, "topics": [], "completionTopicSupported": true}
+{"t": 171.303, "phase": "quiet-after", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 175.543, "phase": "quiet-after", "kind": "response", "lane": "helper", "method": "changes.wait", "elapsedMs": 25002.216, "ok": true, "topics": [], "completionTopicSupported": false}
+{"t": 175.544, "phase": "quiet-after", "kind": "request", "lane": "helper", "method": "changes.wait"}
+{"t": 176.232, "phase": "quiet-after", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 4928.709, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 176.233, "phase": "quiet-after", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 176.236, "phase": "quiet-after", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 3.257, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 176.276, "phase": "quiet-after", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 176.277, "phase": "quiet-after", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 0.809, "ok": true, "topics": ["dashboard"], "completionTopicSupported": true}
+{"t": 176.305, "phase": "quiet-after", "kind": "request", "lane": "bridge", "method": "changes.wait"}
+{"t": 178.687, "phase": "quiet-after", "kind": "request", "lane": "helper", "method": "helper.health"}
+{"t": 178.689, "phase": "quiet-after", "kind": "request", "lane": "bridge", "method": "runtime.health"}
+{"t": 178.69, "phase": "quiet-after", "kind": "response", "lane": "bridge", "method": "runtime.health", "elapsedMs": 1.429, "ok": true}
+{"t": 178.692, "phase": "quiet-after", "kind": "response", "lane": "helper", "method": "helper.health", "elapsedMs": 6.529, "ok": true}
+{"t": 180.05, "phase": "quiet-after", "kind": "restored", "sameOriginalInodes": true}
+{"t": 200.545, "phase": "quiet-after", "kind": "response", "lane": "helper", "method": "changes.wait", "elapsedMs": 25001.55, "ok": true, "topics": [], "completionTopicSupported": false}
+{"t": 201.307, "phase": "quiet-after", "kind": "response", "lane": "bridge", "method": "changes.wait", "elapsedMs": 25002.246, "ok": true, "topics": [], "completionTopicSupported": true}
