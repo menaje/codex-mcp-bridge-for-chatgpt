@@ -62,18 +62,30 @@ detail and the selected panel. Existing target/replacement/late-response and
 connection-recovery tests run with the full native suite. Validation results are
 recorded in `validation.json`.
 
-## Installed operational app remains a separate acceptance step
+## Installed operational app acceptance
 
-At 2026-10-16 12:39 KST the existing installed app was still version 0.4.1 build
+At 2026-10-16 12:39 KST the then-installed app was still version 0.4.1 build
 16: helper/bridge/tunnel running and connected, **one active Job**, and the read
 projection reported `read-stale`. This is an observation of the older installed
 build, during development work, not a benchmark of the correction. No operational
 restart, Job cancellation/re-execution or app replacement was performed.
 
-The isolated app interaction is functional native UI evidence. It does not prove
-acceptance of an upgraded operational installation, the complete #242 criteria,
-or the cause of #262. Keep installed acceptance pending until a safe ordinary
-update can verify the current dev build without interrupting active work.
+The isolated app interaction remains functional native UI evidence. It does not
+establish the complete #242 criteria or the cause of #262.
+
+The app was subsequently updated safely to build 17. Its actual read RPCs and,
+after the user opened its menu at 14:08 KST, local menu interaction were verified.
+The [installed acceptance audit](../issue-242-264-build17-20261016/README.md#installed-menu-acceptance)
+records normal refresh, pagination and a controlled read-only projection pause.
+The installed UI preserved 24 displayed execution cards, the selected History panel
+and last-confirmed time through the list failure. After resuming the same reader,
+the service was healthy while **Reload list** remained available; clicking it
+cleared the notice and refreshed the time, preserving those cards and the panel.
+No service restart or Job execution was needed. Its
+[sanitized receipt](../issue-242-264-build17-20261016/installed-ui.json) distinguishes
+this installed local check from first-load/remote/exact-detail fixture evidence.
+The combined evidence completes #264's scoped UI acceptance; #242 and #262 retain
+their separate remaining work.
 
 ## Integration SIGPIPE investigation
 
