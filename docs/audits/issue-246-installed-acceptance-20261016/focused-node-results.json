@@ -1,0 +1,49 @@
+{
+  "combinedSeparateInvocations": true,
+  "results": [
+    {
+      "file": "issue246DrainTarget.test.ts",
+      "passed": 13,
+      "failed": 0,
+      "sourceReport": "startup-tests.json"
+    },
+    {
+      "file": "issue246ProcessInspection.test.ts",
+      "passed": 15,
+      "failed": 0,
+      "sourceReport": "startup-tests.json"
+    },
+    {
+      "file": "issue246Startup.test.ts",
+      "passed": 21,
+      "failed": 0,
+      "sourceReport": "startup-tests.json"
+    },
+    {
+      "file": "issue246StartupSupervisor.test.ts",
+      "passed": 24,
+      "failed": 0,
+      "sourceReport": "final-startup-supervisor.json"
+    },
+    {
+      "file": "macosHelperServer.test.ts",
+      "passed": 55,
+      "failed": 0,
+      "sourceReport": "final-helper-fixture-tests.json"
+    },
+    {
+      "file": "runtimeLifecycle.test.ts",
+      "passed": 23,
+      "failed": 0,
+      "sourceReport": "startup-tests.json"
+    },
+    {
+      "file": "runtimeLifecycleRecovery.test.ts",
+      "passed": 10,
+      "failed": 0,
+      "sourceReport": "final-startup-supervisor.json"
+    }
+  ],
+  "passed": 161,
+  "failed": 0
+}

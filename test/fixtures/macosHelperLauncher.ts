@@ -116,7 +116,9 @@ if (runtimeStatusFile) {
       transport: ${JSON.stringify(options.runtimeTransport || null)} || transport,
       doctorPassed: true,
       processRunning: true,
-      connected: !${JSON.stringify(Boolean(options.initialStartupTunnelNeverReady))},
+      // An HTTP startup failure happens before Tunnel readiness. Advertising a
+      // connected Tunnel lets an orphan's socket race the launcher's exit.
+      connected: !initialFails && !${JSON.stringify(Boolean(options.initialStartupTunnelNeverReady))},
       lastCheckedAt: new Date().toISOString(),
       lastError: null,
       lastProblem: null
