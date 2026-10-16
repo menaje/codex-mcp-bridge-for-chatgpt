@@ -50,6 +50,8 @@ def file_sha256(file):
 
 
 def runtime_sha256(runtime):
+    if runtime.is_symlink() or not runtime.is_dir():
+        raise ValueError('Runtime root must be a regular directory, not a symlink.')
     runtime = runtime.resolve(strict=True)
     entries = []
     for entry in sorted(runtime.rglob('*')):
@@ -104,6 +106,20 @@ def selected(value, keys):
     return {key: value.get(key) for key in keys}
 
 
+def startup_boot_id(request_id):
+    """Export only the matched startup boot UUID from the private journal."""
+    if not isinstance(request_id, str):
+        return None
+    try:
+        journal = json.loads((RUN / 'lifecycle.json').read_text())
+        for record in reversed(journal['records']):
+            if record['request']['requestId'] == request_id:
+                return str(uuid.UUID(record['startup']['bootId']))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+    return None
+
+
 def snapshot():
     route = subprocess.run(['/sbin/route', '-n', 'get', 'default'],
                            capture_output=True, text=True, timeout=2)
@@ -112,6 +128,10 @@ def snapshot():
         health = rpc('helper.sock', 'helper.health')
         lifecycle = health.get('lifecycle') or {}
         bridge = health.get('bridge') or {}
+        startup = selected(lifecycle.get('startup') or {}, STARTUP_KEYS)
+        # Health intentionally omits durable boot identity. Correlate its exact
+        # request locally; never serialize other journal fields or raw errors.
+        startup['bootId'] = startup_boot_id(lifecycle.get('requestId'))
         row.update({'helperReachable': True, 'phase': health.get('phase'),
                     'runtimePID': health.get('pid'),
                     'bridgeConnected': bridge.get('connected'),
@@ -119,7 +139,7 @@ def snapshot():
                     'tunnelConnected': (health.get('tunnel') or {}).get('connected'),
                     'work': selected(bridge, WORK_KEYS),
                     'lifecycle': selected(lifecycle, ('requestId', 'kind', 'phase', 'createdAt', 'updatedAt')),
-                    'startup': selected(lifecycle.get('startup') or {}, STARTUP_KEYS)})
+                    'startup': startup})
     except (OSError, ValueError, KeyError):
         row['helperReachable'] = False
     return row
@@ -140,27 +160,33 @@ def no_work(work):
             all(work.get(key) == 0 for key in WORK_KEYS if key != 'backgroundProcessState'))
 
 
-def automatic_ready(row, boot_epoch):
+def startup_from_boot(row, current_boot):
+    try:
+        return uuid.UUID((row.get('startup') or {})['bootId']) == uuid.UUID(current_boot['id'])
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return False
+
+
+def automatic_ready(row, current_boot):
     startup = row.get('startup') or {}
     lifecycle = row.get('lifecycle') or {}
     try:
         completed = datetime.datetime.fromisoformat(lifecycle['updatedAt'].replace('Z', '+00:00')).timestamp() * 1000
         within_budget = (startup['deadlineAt'] - startup['startedAt'] == 300000 and
-                         boot_epoch * 1000 <= startup['startedAt'] <= completed <= startup['deadlineAt'])
+                         current_boot['epoch'] * 1000 <= startup['startedAt'] <= completed <= startup['deadlineAt'])
         return (row.get('phase') == 'running' and row.get('runtimePID') and
                 row.get('bridgeConnected') is True and row.get('tunnelConnected') is True and
                 row.get('readServiceStatus') == 'ready' and lifecycle.get('kind') == 'start' and
                 lifecycle.get('phase') == 'completed' and startup.get('stage') == 'ready' and
                 startup.get('source') in ('helper-launch', 'application-launch') and
-                1 <= startup['attempts'] <= 3 and within_budget)
+                1 <= startup['attempts'] <= 3 and within_budget and startup_from_boot(row, current_boot))
     except (KeyError, TypeError, ValueError):
         return False
 
 
-def current_boot_terminal(row, boot_epoch):
-    started_at = (row.get('startup') or {}).get('startedAt')
+def current_boot_terminal(row, current_boot):
     return ((row.get('lifecycle') or {}).get('phase') in ('failed', 'cancelled') and
-            isinstance(started_at, int) and started_at >= boot_epoch * 1000)
+            startup_from_boot(row, current_boot))
 
 
 def prepare(directory):
@@ -201,10 +227,10 @@ def observe(directory):
             row = snapshot()
             offline_seen |= not row['defaultRouteAvailable']
             online_after_offline |= offline_seen and row['defaultRouteAvailable']
-            ready = bool(automatic_ready(row, current_boot['epoch']))
+            ready = bool(automatic_ready(row, current_boot))
             stream.write(json.dumps(row) + '\n')
             stream.flush()
-            if ready or current_boot_terminal(row, current_boot['epoch']):
+            if ready or current_boot_terminal(row, current_boot):
                 break
             time.sleep(1)
     identity_matches = identity_matches and artifact() == manifest['artifact']

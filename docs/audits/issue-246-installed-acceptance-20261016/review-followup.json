@@ -24,14 +24,14 @@
       "thread": "PRRT_kwDOT-Rf-86tFrn2",
       "comment": 4291582324,
       "priority": "P2",
-      "correction": "Hash the full installed Runtime payload, paths, types and file-symlink targets before and after observation.",
+      "correction": "Hash the full installed Runtime payload before and after observation; reject symlink roots as well as external/directory payload links.",
       "url": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt/pull/271#discussion_r4291582324"
     },
     {
       "thread": "PRRT_kwDOT-Rf-86tFrn8",
       "comment": 4291582331,
       "priority": "P2",
-      "correction": "Ignore prior-boot or unidentifiable terminal startup records until the current boot produces its own outcome.",
+      "correction": "Correlate the exact health request with its persisted boot-session UUID; classify success and terminal outcomes by boot identity, independent of prior clock skew.",
       "url": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt/pull/271#discussion_r4291582331"
     }
   ],
@@ -60,7 +60,7 @@
     },
     "observer": {
       "command": "python3 -B docs/audits/issue-246-installed-acceptance-20261016/test-observer.py",
-      "passed": 14,
+      "passed": 18,
       "failed": 0,
       "scope": "Validator fixtures; not OS reboot acceptance."
     },
@@ -97,6 +97,18 @@
         "nativeSha256": "0ff0ca1dc32a6f5fcde7ec8af1ccc8f43852d1084861dfc92c0d91588d6c6c97",
         "runtimeSha256": "ad0049033e529f3356584790f3f74c395945ae9d6b93531210080977e7bb643f"
       }
+    },
+    "bootIdentityCorrelation": {
+      "readOnly": true,
+      "helperReachable": true,
+      "phase": "running",
+      "lifecycleKind": "restart",
+      "lifecyclePhase": "completed",
+      "startupBootIdentityAvailable": false,
+      "automaticReady": false,
+      "persistedStartupRequestsChecked": 13,
+      "exactRequestBootIdentityMatches": 13,
+      "observerArmedOrRegistered": false
     }
   },
   "priorFullNodeGate": {
@@ -112,9 +124,40 @@
   },
   "privateEvidenceDigests": {
     "before-fix-reproduction.json": "e9cb1d37153bf16e1eed93d8bf9d6331b1c4082d50754ac15cfb0b07c4990f97",
-    "installed-runtime-identity.json": "f5383f6b20ee0bb917d4bfbb8b82f7f8eab33316c20742413df37cfed56673b3",
+    "supervisor-recovery.json": "b887537aa8a48c463394af7f8c378bc043c7bc41db6d9d7b460152150179fc16",
     "native-cold-inherited-state.json": "6750e54f6d46c873124bb513eabdfa38f1e12dcf23656a160d0681bc98c5a07d",
     "native-cold-inherited-state.log": "470113054044da7daf2e40eb3643c702491c4e4f6eaa54dabf6a0780fd35a947",
-    "supervisor-recovery.json": "b887537aa8a48c463394af7f8c378bc043c7bc41db6d9d7b460152150179fc16"
+    "installed-runtime-identity.json": "f5383f6b20ee0bb917d4bfbb8b82f7f8eab33316c20742413df37cfed56673b3",
+    "boot-identity-correlation.json": "c5dde4069cba5da594c86394d65c2e9b9e216b552a04f582b3b9526524fd0243",
+    "second-review-before-fix.json": "9e4983eec8eb4bb90059f57054dff37be2091599e70bab693951a8ae9b99faf2"
+  },
+  "secondReview": {
+    "pullRequest": 272,
+    "reviewedCommit": "6d93862ef4b0bbe3f6d33df862d0a13b045a1273",
+    "beforeFix": {
+      "reviewedCommit": "6d93862ef4b0bbe3f6d33df862d0a13b045a1273",
+      "selectedMethods": 2,
+      "failedAssertions": 3,
+      "causes": [
+        "Runtime root symlink was accepted with identical contents",
+        "Prior-boot failed/cancelled records with an advanced clock ended new observation"
+      ]
+    },
+    "findings": [
+      {
+        "thread": "PRRT_kwDOT-Rf-86tF_-N",
+        "comment": 4291714858,
+        "priority": "P2",
+        "url": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt/pull/272#discussion_r4291714858",
+        "correction": "Reject the Runtime root symlink before resolving its destination."
+      },
+      {
+        "thread": "PRRT_kwDOT-Rf-86tF_-S",
+        "comment": 4291714865,
+        "priority": "P2",
+        "url": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt/pull/272#discussion_r4291714865",
+        "correction": "Read only the matched startup boot UUID from the local lifecycle journal and compare UUIDs for both readiness and terminal classification; never emit other journal fields."
+      }
+    ]
   }
 }
