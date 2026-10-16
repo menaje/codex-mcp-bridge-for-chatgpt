@@ -9,6 +9,7 @@ import { ScopeResolver } from "../src/scopeResolver.js";
 import { BridgeStateStore } from "../src/stateStore.js";
 import { UserSettingsStore } from "../src/userSettings.js";
 import type { CodexUpstream } from "../src/upstream.js";
+import type { ExecutionDecision } from "../src/modelPolicy.js";
 
 async function drained(service: ChildProcessStateReadService) {
   const until = Date.now() + 5_000;
@@ -17,6 +18,86 @@ async function drained(service: ChildProcessStateReadService) {
 }
 
 describe("issue 242 shared read contract", () => {
+  it.each(["legacy", "partial", "durable"] as const)("preserves %s execution proofs without hydrating progress bodies", async mode => {
+    const f = await issue242Fixture(1);
+    const { promise: _promise, ...persisted } = f.jobs.list(1, 0)[0]!;
+    const threadId = "proof-thread", turnId = "proof-turn";
+    const decision: ExecutionDecision = { policyRevision: 1, catalogFingerprint: "f".repeat(64),
+      catalogValidation: "valid", backendKind: "app-server", effectiveSelection: { model: "sol", reasoningEffort: "medium" },
+      effectiveReasoningEffort: "medium", savedSelectionSupported: true, source: "fixed", appliedAt: "turn-start", reason: "fixture" };
+    const accepted = { eventId: "accepted", type: "turn", phase: "started", createdAt: Date.now(), summary: "Accepted",
+      details: { evidence: "turn/start-accepted", threadId, turnId } };
+    const reroute = { eventId: "reroute", type: "model", phase: "updated", createdAt: Date.now(), summary: "Rerouted",
+      details: { kind: "rerouted", serverCorrelation: "explicit", threadId, turnId, toModel: "astra" } };
+    f.store.transaction(() => {
+      f.store.upsertJob({ ...persisted, backendKind: "app-server", threadId, upstreamRequestId: turnId,
+        sessionDecision: { ...persisted.sessionDecision, threadId },
+        executionDecision: decision, ...(mode === "legacy" ? {} : { executionEvidence: {
+          accepted, ...(mode === "durable" ? { reroutedModel: { ...reroute, details: { ...reroute.details, toModel: "durable-model" } } } : {})
+        } }) });
+      const events = [accepted, { ...reroute, eventId: "older-reroute", details: { ...reroute.details, toModel: "older-model" } }, reroute,
+        { ...accepted, eventId: "wrong-turn", details: { ...accepted.details, turnId: "unrelated" } },
+        { ...reroute, eventId: "wrong-thread", details: { ...reroute.details, threadId: "unrelated", toModel: "unrelated" } },
+        { ...reroute, eventId: "unconfirmed", details: { ...reroute.details, serverCorrelation: "unconfirmed", toModel: "unconfirmed" } }];
+      for (const event of events) f.store.recordJobTelemetryEvent(persisted.jobId, `app-${event.type}-${event.phase}`, event);
+      for (let i = 0; i < 180; i++) f.store.recordJobTelemetryEvent(persisted.jobId, "app-agent-message", {
+        eventId: `progress-${i}`, type: "agent-message", phase: "updated", createdAt: Date.now(),
+        summary: "Progress", details: { text: "unused progress ".repeat(500) }
+      });
+    });
+    // Older records can carry the thread only in their session decision.
+    if (mode === "legacy") f.database.prepare("UPDATE jobs SET thread_id=NULL WHERE job_id=?").run(persisted.jobId);
+    const readOnly = new BridgeStateStore({ file: f.file, readOnly: true });
+    const full = new CodexJobRegistry({ stateStore: readOnly, allowedRoots: [f.root], projectionOnly: true });
+    const upstream: CodexUpstream = { async listTools() { return { tools: [] }; },
+      async callTool() { throw new Error("No execution in read fixture."); }, async close() {} };
+    const inline = createBridgeReadProjectionService(f.config, upstream,
+      new SessionRegistry({ stateStore: readOnly, allowedRoots: [f.root], projectionOnly: true }), full,
+      createModelCatalog(f.config, upstream), new UserSettingsStore(f.config, { stateStore: readOnly, projectionOnly: true }),
+      new ScopeResolver({ stateStore: readOnly }));
+    const query = { scopeId: fixtureScope, includeHistory: true, inspectRuntime: false };
+    const baseline = await inline.dashboardSnapshot(query);
+    const expected = { model: "sol", reasoningEffort: "medium", requestState: "accepted",
+      reroutedModel: mode === "durable" ? "durable-model" : "astra" };
+    expect(baseline.terminalRows[0]?.execution).toMatchObject(expected);
+    const digest = () => createHash("sha256").update(JSON.stringify(f.store.listJobEvents(persisted.jobId))).digest("hex");
+    const before = digest();
+    const service = await ChildProcessStateReadService.start(f.file, f.environment);
+    try {
+      const observed = await f.measure(() => service.dashboardSnapshot(query));
+      expect(observed.result.terminalRows).toEqual(baseline.terminalRows);
+      expect(observed.result.terminalRows[0]?.execution).toMatchObject(expected);
+      expect(observed.changedRows).toBe(0);
+      expect(digest()).toBe(before);
+      const projected = readOnly.listJobsForDashboard()[0]!;
+      expect(projected.publicEvents!.length).toBeLessThanOrEqual(2);
+      expect(JSON.stringify(projected.publicEvents)).not.toContain("unused progress");
+      expect(Buffer.byteLength(JSON.stringify(projected.publicEvents))).toBeLessThan(2_048);
+
+      // A model notification without execution evidence is not part of this
+      // projection, even when an unused field fails strict text parsing.
+      f.store.recordJobTelemetryEvent(persisted.jobId, "app-model-updated", { ...reroute,
+        eventId: "unused-model", details: { kind: "catalog-updated", text: String.fromCharCode(0xd800) } });
+      expect(() => f.store.listJobs()).toThrow("Invalid job public events");
+      expect((await service.dashboardSnapshot(query)).terminalRows).toEqual(baseline.terminalRows);
+
+      // Event fallback keeps the ordinary ring boundary; it cannot resurrect
+      // older evidence that a full Job projection no longer exposes.
+      f.store.transaction(() => {
+        for (let i = 0; i < 201; i++) f.store.recordJobTelemetryEvent(persisted.jobId, "app-agent-message-updated", {
+          eventId: `later-${i}`, type: "agent-message", phase: "updated", createdAt: Date.now(), summary: "Later progress"
+        });
+      });
+      expect(f.store.listJobs()[0]!.publicEvents).toHaveLength(200);
+      expect(readOnly.listJobsForDashboard()[0]!.publicEvents).toEqual([]);
+      expect((await service.dashboardSnapshot(query)).terminalRows[0]?.execution).toMatchObject({
+        requestState: mode === "legacy" ? "requested" : "accepted"
+      });
+      expect((await service.dashboardSnapshot(query)).terminalRows[0]?.execution?.reroutedModel)
+        .toBe(mode === "durable" ? "durable-model" : undefined);
+    } finally { await service.close(); await full.closeThreadConnections(); readOnly.close(); await f.close(); }
+  }, 15_000);
+
   it("keeps Dashboard state and pending inputs independent of retained event bodies", async () => {
     const f = await issue242Fixture(20);
     const retained = f.jobs.list(20, 0);
