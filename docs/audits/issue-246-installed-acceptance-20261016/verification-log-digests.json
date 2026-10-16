@@ -1,0 +1,20 @@
+{
+  "privateLogsRetained": true,
+  "sha256": {
+    "build.log": "b18ef400042acaae43129ce0021f8719f4c46801918b7e06e02d23dbc48af4c7",
+    "cold-helper-90s.log": "b451b84c93c080248f33b3ab8328b34b0cf89f4c93a0904349e7058135cdbde7",
+    "startup-tests.json": "8c23944cb4d057282005933d43b83ab962f0ff608a67a0ab56068cc93b71df69",
+    "startup-supervisor-isolated.json": "0d6ad161485f73b3ec70fadfc44136409ccb440909b0a3eb91de6ca4dee3b4e0",
+    "native-startup-cold-90s-verified.log": "df38d42c0b3cf07b90a87ee6d8aa7fd5afe2e540a861c9315f98b99c6cf419c9",
+    "native-startup-cold-90s-final.log": "930a3ae08cae569662f258ec0ef882314f7a81f9ffe3f9cfbb39649067e250db",
+    "fast-gate.log": "2e8dfb8b498aed04816322c1e3bee79f728d4902cb7431ef6d8446bf865b53f0",
+    "observer-tests.log": "2e7e95d82618f1ea08b0a24d61f374c3b161fb04ee47113d6baab1ebd15ac0a2",
+    "node-check.log": "3773fa91a962a7c363ec698f792f6073a9142a4fdbe280ca8c425fb30cbec720",
+    "full-suite-new-failure-replay.json": "cdf9607cb18a8bd0a90ef02c2a99a34a1f6a9745c5611acf3bfb590906dc2eaa",
+    "final-helper-fixture-tests.json": "9676441c4370f6d7f9074616245624e40c33a2c522801f2920c5b1b1bf83d448",
+    "final-startup-supervisor.json": "67330b7267008dc9b403663875f78ca0cef288648ef8c47f83bd07a85d986c37",
+    "additional-baseline-tests.json": "dd7fc509886d5786c605d1508e917fe725d574f2cd8c70c8c791978da58a50c9",
+    "delivery-selected-replay.json": "709a08c88a8a9426a1fac0b26387ac2c666e91693e259d6ee5ea906af5e56697",
+    "baseline-cleanup-preflight.json": "185d10bf911fb48b0440a65364e6ad767d0b21f7c9d848205dcaeade341ae4d8"
+  }
+}

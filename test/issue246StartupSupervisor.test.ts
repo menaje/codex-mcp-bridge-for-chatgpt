@@ -3,7 +3,7 @@ import { execFileSync, spawn, type ChildProcess, type SpawnOptions } from "node:
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { createConnection } from "node:net";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -42,7 +42,11 @@ function fixture(failures = 1, failureCode = "STARTUP_HTTP_TIMEOUT", causeCode?:
     orphan = orphan.replace("server.listen(socketPath);", "server.listen(socketPath, () => process.send?.('ready'));");
     orphan = orphan.replace("const result = request.method", `
       appendFileSync(${JSON.stringify(requestsFile)}, JSON.stringify({ method: request.method, params: request.params }) + "\\n");
-      const protectionRead = request.method === "runtime.snapshot" || request.method === "runtime.beginDrain";
+      // Readiness also uses plain snapshots before launcher exit. Inject the
+      // fault at cleanup's inspection/drain boundary, not an earlier probe.
+      // expectTargetedDrain still rejects snapshot-only cleanup.
+      const protectionRead = request.method === "runtime.beginDrain" ||
+        (request.method === "runtime.snapshot" && request.params?.inspectBackgroundProcesses === true);
       if (protectionRead && ${JSON.stringify(orphanState === "unreachable")}) { socket.destroy(); return; }
       if (request.method === "runtime.beginDrain" && ${JSON.stringify(orphanState === "lost-drain-ack")}) { socket.destroy(); return; }
       if (request.method === "runtime.cancelDrain" && ${JSON.stringify(orphanState === "lost-cancel-ack")}) { socket.destroy(); return; }
@@ -81,6 +85,9 @@ function fixture(failures = 1, failureCode = "STARTUP_HTTP_TIMEOUT", causeCode?:
     writeFileSync(launcherPath, launcher);
   }
   updateRuntimeEnvFile(envFile, { apiKey: "sk-startup-fixture-1234567890123456", tunnelId: "tunnel_oooooooooooooooooooooooooooooooo" });
+  // A developer's default profile may need migration. That intentionally takes
+  // the protected legacy path and must not select this startup fixture's path.
+  appendFileSync(envFile, `CODEX_MCP_BRIDGE_STATE_DATABASE_FILE=${path.join(root, "state.sqlite")}\n`);
   const options = { bridgeRoot, envFile, launcherPath, bridgeSocketPath: path.join(runDirectory, "bridge.sock"),
     runtimeLockDirectory: path.join(runDirectory, "launcher.lock"),
     codexRuntimeManager: new CodexRuntimeManager({ root: path.join(root, "cli"), discoverExternal: false }),
