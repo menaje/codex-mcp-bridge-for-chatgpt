@@ -1,0 +1,80 @@
+{
+  "baseCommit": "95aa6b6be214728060224a006293b19d77a3e533",
+  "os": "macOS 26.6.2 arm64",
+  "scope": "NativeRPCFixture test support only; product signal handling unchanged",
+  "redRegression": {
+    "exit": 1,
+    "failures": 1,
+    "observedOptions": [
+      0,
+      0
+    ],
+    "expectedOptions": [
+      1,
+      1
+    ],
+    "scheduling": "Test hook pauses before serve while stop shuts down the accepted socket; original option-setting order retained."
+  },
+  "greenRegressionAndRecovery": {
+    "tests": 18,
+    "failures": 0,
+    "observedOptions": [
+      1,
+      1
+    ]
+  },
+  "native": {
+    "executed": 352,
+    "skipped": 3,
+    "failures": 0
+  },
+  "gates": {
+    "fixture-order-green": {
+      "exit": 0,
+      "seconds": 25.21
+    },
+    "fixture-fast": {
+      "exit": 0,
+      "seconds": 1.76
+    },
+    "fixture-native": {
+      "exit": 0,
+      "seconds": 124.73
+    }
+  },
+  "cReproducer": {
+    "compileFlags": [
+      "-Wall",
+      "-Wextra",
+      "-Werror"
+    ],
+    "configureBeforeShutdown": {
+      "setsockopt": 0,
+      "errno": 0,
+      "option": 1,
+      "writeErrno": 32,
+      "signals": 0
+    },
+    "configureAfterShutdown": {
+      "setsockopt": -1,
+      "errno": 22,
+      "option": 0,
+      "writeErrno": 32,
+      "signals": 1
+    }
+  },
+  "sourceSha256": {
+    "macos/Tests/CodexBridgeKitTests/NativeRPCFixture.swift": "fc23df133455a6e7a1652102675420769ac9e1133dd88df02062e76b1633e9df",
+    "macos/Tests/CodexBridgeKitTests/NativeRPCFixtureTests.swift": "99d99b0d8ae5a1ec9d6a8d6b45206470939020c2c6ca7eaa09e42cdcd78b2d3f",
+    "docs/audits/issue-264-recovery-20261016/fixture-socket-order.c": "b5f7f9e5f696fa66aad7c9b4434990bdf89980c93e44fe4afa15494453d4e72c"
+  },
+  "logsSha256": {
+    "fixture-order-red.log": "d4d1c30e69aab3aac5aa2881b4fcb4b44f37f0d9ef72a838f15cd8c1cad9db5b",
+    "fixture-order-green.log": "1d273fb5c858dfbebd4b42d6903c34817f556e30e056baf8103458f0e8c5433e",
+    "fixture-native.log": "b58336fec338dc1c190d10f4db7eb8b817cd567bb4833bf9168893aec66aca4f",
+    "fixture-fast.log": "2e8dfb8b498aed04816322c1e3bee79f728d4902cb7431ef6d8446bf865b53f0",
+    "fixture-socket-order-public.log": "6479939b44291db3357c4e0d47fa07f472511757d1967423d9bfaaa187613d9c"
+  },
+  "installedOperationalAcceptance": false,
+  "historicalHTTP502CauseEstablished": false
+}
