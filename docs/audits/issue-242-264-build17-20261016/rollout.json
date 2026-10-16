@@ -1,0 +1,22 @@
+{
+  "shutdownAt": "2026-10-16T04:40:57.228427+00:00",
+  "shutdownForce": false,
+  "activeJobsBefore": 0,
+  "pendingAdmissionsBefore": 0,
+  "previousOwnedProcessesVerifiedStopped": 57,
+  "helperLaunchServiceVerifiedUnloadedBeforeSwap": true,
+  "appBackupsRetained": true,
+  "newHelperBuildMatchesApp": true,
+  "readyAt": "2026-10-16T04:42:44.817114+00:00",
+  "phase": "running",
+  "bridgeConnected": true,
+  "tunnelConnected": true,
+  "readServiceStatus": "ready",
+  "activeJobsAfter": 0,
+  "pendingAdmissionsAfter": 0,
+  "launchAgentProcessType": "Interactive",
+  "sampledHelperPriority": 37,
+  "sampledLauncherPriority": 31,
+  "installedMenuInteraction": "unverified: updated accessory app selection timed out",
+  "installedCompletionNotificationDelivery": "unverified: no operating completion event exercised"
+}

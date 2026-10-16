@@ -1,0 +1,31 @@
+{
+  "bundle": {
+    "exit": 0,
+    "seconds": 210.0,
+    "sourceCommit": "0d26c7f14353243aa7db221e025095b9a7a60026",
+    "bundleBuild": "17"
+  },
+  "strictNative": {
+    "executed": 352,
+    "skipped": 3,
+    "failures": 0
+  },
+  "adHocSignatureVerified": true,
+  "packagedHelperImportVerified": true,
+  "temporaryDiagnosticSymbolsAbsent": true,
+  "temporaryDiagnosticLibrariesAbsent": true,
+  "nativeProbeSource": "../issue-242-installed-acceptance-20261016/InstalledReadProbe.swift.txt",
+  "nativeProbeSha256": "b67614ca584f8dbfc1172a255cb2ce815b71d347ed174a8bba0d185601746713",
+  "probeCompiledAgainstCurrentCodexBridgeKit": true,
+  "readProtocolOnly": true,
+  "originalRequestDeadlinesUnchanged": true,
+  "nodeFullGate": "Previous #266 run: 2046 passed, 8 failed, 1 skipped; identical 8 failures reproduced on prior dev. No Node product changes after that run.",
+  "issuesClosed": false,
+  "historicalOperating502CauseEstablished": false,
+  "documentationAffectedGate": {
+    "exit": 0,
+    "paths": 7,
+    "nodeRequired": false,
+    "macOSRequired": false
+  }
+}
