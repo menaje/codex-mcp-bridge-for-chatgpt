@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Avoid oversized transcript responses when resuming or forking supported Codex threads, and provide admitted execution identity with originating-host guidance for scoped recovery checks.",
+  "breaking": false,
+  "migration": null
+}

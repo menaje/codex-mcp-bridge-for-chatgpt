@@ -53,6 +53,9 @@ const threadResponse = (id, result) => {
   if (delay > 0) setTimeout(() => response(id, result), delay);
   else response(id, result);
 };
+const retainedTurns = (params) => process.env.CODEX_TEST_LARGE_THREAD_HISTORY === "1" && params.excludeTurns !== true
+  ? [{ id: "historical-turn", items: [{ type: "agentMessage", text: "x".repeat(9 * 1024 * 1024) }] }]
+  : [];
 const notification = (method, params = {}) => send({ method, params });
 const serverRequest = (id, method, params, accept) => {
   pendingServerRequests.set(String(id), { requestId: id, threadId: params.threadId, accept });
@@ -249,7 +252,7 @@ lines.on("line", (line) => {
       return;
     }
     loadedThreads.add(threadId);
-    threadResponse(message.id, { ...threadPolicyResponse(message.method, message.params, threadId), thread: { id: threadId, ephemeral: threadEphemeral.get(threadId), ...threadLineages.get(threadId) } });
+    threadResponse(message.id, { ...threadPolicyResponse(message.method, message.params, threadId), thread: { id: threadId, ephemeral: threadEphemeral.get(threadId), ...threadLineages.get(threadId), turns: retainedTurns(message.params) } });
     return;
   }
   if (message.method === "thread/unsubscribe") {
@@ -300,7 +303,7 @@ lines.on("line", (line) => {
     });
     threadEphemeral.set(id, message.params.ephemeral === true);
     loadedThreads.add(id);
-    threadResponse(message.id, { ...threadPolicyResponse(message.method, message.params, id), thread: { id, ephemeral: threadEphemeral.get(id), ...threadLineages.get(id) } });
+    threadResponse(message.id, { ...threadPolicyResponse(message.method, message.params, id), thread: { id, ephemeral: threadEphemeral.get(id), ...threadLineages.get(id), turns: retainedTurns(message.params) } });
     return;
   }
   if (message.method === "thread/archive") {

@@ -3,6 +3,7 @@ import { RELAY_TOOL_METADATA, registerRelayCardResource } from "./relayCard.js";
 import { registerRelayTools, relayToolResult, relayControlOutputSchema, relayMutationOutputSchema, relayWaitOutputSchema } from "./relayTools.js";
 import { ProjectLifecycleController } from "./projectLifecycle.js";
 import { withExecutionIdentity } from "./executionIdentity.js";
+import { bridgeExecutionContext } from "./executionContext.js";
 import { dashboardHistoryActionInput, ISSUE_ATTENTION_DAYS, type HistoryRetentionDays, type DashboardHistoryActionInput } from "./workHistory.js";
 import { DASHBOARD_STATUS_FILTERS, dashboardSummaryCategory, type DashboardStatusFilter } from "./dashboardPresentation.js";
 import { problemActionSchema, problemActionResultSchema, problemQuerySchema, problemOperationSchema,
@@ -9369,7 +9370,9 @@ function scopedHandleUnavailable(kind: ScopedHandleKind): Error {
   }[kind];
   return new Error(
     `HANDLE_UNAVAILABLE: The requested ${label} is unavailable in this conversation scope. ` +
-    "Read codex_status({}) to obtain current retained handles before retrying."
+    "Read codex_status({}) to obtain handles owned by this conversation. " +
+    "For handles copied into a nested Codex execution, the originating host must read its own exact state/results and provide a reviewed summary. " +
+    "An empty nested overview does not establish that the originating work is missing or unowned."
   );
 }
 
@@ -9964,12 +9967,13 @@ async function startNewSession(input: {
     executionPolicyCatalogFingerprint:
       input.resolved.admissionCatalogFingerprint,
     sourceThreadId: input.backendHandoff?.sourceThreadId,
-    run: (onProgress, onAssigned) => input.upstream.startThread
+    run: (onProgress, onAssigned, executionContext) => input.upstream.startThread
       ? input.upstream.startThread(
           {
             backendKind: input.config.defaultBackend,
             ...(storage?.contextId ? { contextId: storage.contextId } : {}),
             prompt,
+            executionContext,
             ...access,
             selection: executionDecision.effectiveSelection,
             ...(backendSupports(input.config.defaultBackend, "supportsEphemeralThreads")
@@ -9979,7 +9983,7 @@ async function startNewSession(input: {
           onProgress,
           onAssigned
         )
-      : input.upstream.callTool("codex", payload, onProgress, onAssigned),
+      : input.upstream.callTool("codex", { ...payload, executionContext }, onProgress, onAssigned),
     onAssigned: (assignment, agent, job) => {
       if (!assignment.threadId) return;
       // A cross-backend handoff becomes current only after turn/start accepts
@@ -10131,7 +10135,7 @@ async function continueTrackedSession(input: {
     sourceThreadId: input.session.threadId,
     onAdmitted: input.onAdmitted,
     exclusiveKeys: [threadExclusiveKey(input.session.threadId)],
-    run: (onProgress, onAssigned) => {
+    run: (onProgress, onAssigned, executionContext) => {
       const recordAssignment = (assignment: UpstreamWorkerAssignment) => {
         onAssigned(assignment);
         if (executionStateApplied || !backendSupports(input.session.backendKind, "supportsTurnSelection")) return;
@@ -10154,6 +10158,7 @@ async function continueTrackedSession(input: {
             backendKind: input.session.backendKind,
             threadId: input.session.threadId,
             prompt,
+            executionContext,
             ...access,
             ...(backendSupports(input.session.backendKind, "supportsTurnSelection")
               ? { selection: input.executionDecision.effectiveSelection }
@@ -10166,6 +10171,7 @@ async function continueTrackedSession(input: {
       const payload: Record<string, unknown> = {
         threadId: input.session.threadId,
         prompt,
+        executionContext,
         ...executionAccessArguments(access),
         ...backendRoutingArgument(input.session.backendKind)
       };
@@ -10293,12 +10299,13 @@ async function forkTrackedSession(input: {
     sourceThreadId: input.session.threadId,
     onAdmitted: input.onAdmitted,
     exclusiveKeys: [threadExclusiveKey(input.session.threadId)],
-    run: (onProgress, onAssigned) => input.upstream.forkThread?.(
+    run: (onProgress, onAssigned, executionContext) => input.upstream.forkThread?.(
       {
         backendKind: input.session.backendKind,
         ...access,
         threadId: input.session.threadId,
         prompt,
+        executionContext,
         selection: input.executionDecision.effectiveSelection,
         ephemeral: input.preferences.bridgeThreadPersistence === "ephemeral"
       },
@@ -10390,7 +10397,8 @@ async function runCodex(input: {
   exclusiveKeys?: string[];
   run: (
     onProgress: (progress: Progress) => void,
-    onAssigned: (assignment: UpstreamWorkerAssignment) => void
+    onAssigned: (assignment: UpstreamWorkerAssignment) => void,
+    executionContext: string
   ) => Promise<ToolResult>;
   onAssigned?: (assignment: UpstreamWorkerAssignment, agent: BridgeAgent, job: CodexJob) => void;
   onComplete?: (result: ToolResult, agent: BridgeAgent, job: CodexJob) => void | (() => void);
@@ -10508,7 +10516,7 @@ async function runCodex(input: {
           (input.executionDecision.effectiveSelection.serviceTier === "ultrafast" ? "ultrafast" : "legacy"));
         assertAdmittedSelectionSupported(input.executionDecision.effectiveSelection, catalog);
         input.jobs.assertJobMayExecute(job.jobId);
-        return input.run(onProgress, onAssigned);
+        return input.run(onProgress, onAssigned, bridgeExecutionContext(job));
       },
       input.onComplete
         ? (result, currentJob) => input.onComplete?.(result, agent, currentJob)

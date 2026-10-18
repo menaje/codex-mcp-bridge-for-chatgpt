@@ -107,6 +107,7 @@ export type CodexAppServerProtocolOptions = {
 };
 
 type ResolvedCodexAppServerProtocolOptions = {
+  historyOmission?: CliProtocolSupport["historyOmission"];
   environment?: NodeJS.ProcessEnv;
   versionCheckTimeoutMs: number;
   requestTimeoutMs: number;
@@ -362,6 +363,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     return this.callTool(
       "codex",
       requestArguments(input.prompt, input.selection, {
+        ...(input.executionContext ? { executionContext: input.executionContext } : {}),
         ...executionAccessArguments(input),
         ephemeral: input.ephemeral === true
       }),
@@ -379,6 +381,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
       "codex-reply",
       requestArguments(input.prompt, input.selection, {
         threadId: input.threadId,
+        ...(input.executionContext ? { executionContext: input.executionContext } : {}),
         ...(input.cwd ? executionAccessArguments(input) : {})
       }),
       onProgress,
@@ -401,6 +404,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
       const result = await connection.forkThreadAndTurn(
         input.threadId,
         requestArguments(input.prompt, input.selection, {
+          ...(input.executionContext ? { executionContext: input.executionContext } : {}),
           ...executionAccessArguments(input.cwd ? input : this.requireThreadAccess(input.threadId)),
           ephemeral: input.ephemeral === true
         }),
@@ -883,6 +887,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
           generation,
           {
             ...this.protocolOptions,
+            historyOmission: this.protocolSupport?.historyOmission,
             onLateResponse: (response) => this.onWorkerLateResponse(worker, response)
           },
           (observation) => this.onWorkerExit(worker, connection, observation),
@@ -1236,7 +1241,8 @@ class AppServerConnection {
     const expectedAccess = executionAccessRequest(args);
     const response = await this.rpc.request<Record<string, unknown>>(
       "thread/fork",
-      { threadId: sourceThreadId, ephemeral: args.ephemeral === true, ...threadAccessParams(expectedAccess) },
+      { threadId: sourceThreadId, ...(this.protocolOptions.historyOmission?.fork ? { excludeTurns: true } : {}),
+        ephemeral: args.ephemeral === true, ...threadAccessParams(expectedAccess) },
       {
         timeoutMs: this.protocolOptions.threadInitializationTimeoutMs,
         lateResponseContext: { sourceThreadId }
@@ -1451,7 +1457,10 @@ class AppServerConnection {
     this.threadTokenTotals.delete(threadId);
     const response = await this.rpc.request<Record<string, unknown>>(
       "thread/resume",
-      { threadId, ...(expectedAccess ? threadAccessParams(expectedAccess) : {}) },
+      // Resume the existing conversation without copying its retained transcript
+      // onto the JSON-RPC wire. Long histories can exceed the wire-size limit.
+      { threadId, ...(this.protocolOptions.historyOmission?.resume ? { excludeTurns: true } : {}),
+        ...(expectedAccess ? threadAccessParams(expectedAccess) : {}) },
       {
         timeoutMs: this.protocolOptions.threadInitializationTimeoutMs,
         lateResponseContext: { threadId, loadRevision }
@@ -1743,7 +1752,12 @@ class AppServerConnection {
     const sent = {
       threadId,
       ...turnAccessParams(executionAccess),
-      input: [{ type: "text", text: prompt, text_elements: [] }],
+      input: [
+        { type: "text", text: prompt, text_elements: [] },
+        ...(optionalString(args.executionContext)
+          ? [{ type: "text", text: args.executionContext as string, text_elements: [] }]
+          : [])
+      ],
       model: optionalString(args.model) || null,
       effort: modelReasoningEffort(args.config) || null,
       ...wireSpeedArguments(args, "turn")

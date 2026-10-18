@@ -163,6 +163,8 @@ export type CodexBackgroundTerminal = {
 export type CodexThreadStartRequest = ExecutionAccessRequest & {
   backendKind: CodexBackendKind;
   prompt: string;
+  /** Bridge-generated admission metadata, separate from the caller's prompt. */
+  executionContext?: string;
   selection: ModelSelection;
   /** App Server only: keep the new thread in memory instead of materializing it on disk. */
   contextId?: string;
@@ -173,6 +175,7 @@ export type CodexThreadContinueRequest = ExecutionAccessRequest & {
   backendKind: CodexBackendKind;
   threadId: string;
   prompt: string;
+  executionContext?: string;
   selection?: ModelSelection;
 };
 
@@ -180,6 +183,7 @@ export type CodexThreadForkRequest = ExecutionAccessRequest & {
   backendKind: CodexBackendKind;
   threadId: string;
   prompt: string;
+  executionContext?: string;
   selection?: ModelSelection;
   /** App Server only: keep the fork in memory instead of materializing it on disk. */
   contextId?: string;

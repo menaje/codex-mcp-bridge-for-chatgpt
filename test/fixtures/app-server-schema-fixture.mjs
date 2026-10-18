@@ -5,6 +5,13 @@ import path from "node:path";
 if (process.argv.includes("generate-json-schema")) {
   const directory = process.argv[process.argv.indexOf("--out") + 1];
   const schema = JSON.parse(readFileSync(new URL("./app-server-request-contract.json", import.meta.url), "utf8"));
+  // Optional metadata-only hydration contract observed in Codex 0.163.0.
+  if (process.env.CODEX_TEST_LARGE_THREAD_HISTORY === "1") {
+    for (const method of ["thread/resume", "thread/fork"]) {
+      schema.oneOf.find(variant => variant.properties.method.enum[0] === method)
+        .properties.params.properties.excludeTurns = { type: "boolean" };
+    }
+  }
   if (process.env.CODEX_TEST_MISSING_METHOD) schema.oneOf = schema.oneOf.filter(
     variant => variant.properties.method.enum[0] !== process.env.CODEX_TEST_MISSING_METHOD
   );

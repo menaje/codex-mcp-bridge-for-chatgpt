@@ -79,6 +79,26 @@ machine is needed.
 
 ## Failure and restart decisions
 
+Delegated Codex turns receive a separate bridge-generated admission binding
+(`jobId`, `requestId`, `activityId`, `agentId`, and context mode). The original
+task prompt is preserved. This metadata identifies the admitted execution; it
+does not prove an earlier OS process's ownership, upstream acceptance, or product
+success. It copies neither conversation scope authority nor prior Job output.
+
+A nested Codex thread has its own authenticated conversation scope. A copied
+parent handle returning `HANDLE_UNAVAILABLE`, or an empty nested overview, does
+not establish that the originating Job is missing or unowned. Before delegating
+a recovery or acceptance check, the originating host reads the exact prior Job
+result and execution evidence and supplies the necessary reviewed facts in its
+task prompt. Missing parent facts return to that host for an exact scoped read;
+local process and lock prerequisites still require their own evidence. Terminal
+HOLD results stay HOLD and the Activity requires its normal completion decision.
+
+For CLIs whose inspected protocol supports `excludeTurns`, resume and fork use
+it to return thread metadata and live state without copying the retained
+transcript onto the JSON-RPC wire. The upstream conversation still retains its
+history. Older CLI contracts retain their existing behavior and wire-size bound.
+
 1. If the state writer cannot durably admit a **new** request, do not dispatch
    it. A response-loss retry checks the exact receipt and fingerprint. Existing
    owner work continues without a new turn.

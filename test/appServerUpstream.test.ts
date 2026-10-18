@@ -35,6 +35,39 @@ const protocolFixture = (name: string): string => path.join(
 );
 
 describe("CodexAppServerUpstreamPool", () => {
+  it("resumes and forks long histories without hydrating them or replacing the execution worker", async () => {
+    const request = vi.spyOn(JsonRpcProcess.prototype, "request");
+    const assignments: UpstreamWorkerAssignment[] = [];
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, {
+      environment: { ...process.env, CODEX_TEST_LARGE_THREAD_HISTORY: "1", CODEX_TEST_UNSUBSCRIBE_UNLOAD: "1" }
+    });
+    const input = { backendKind: "app-server" as const, prompt: "report selection", cwd: process.cwd(),
+      sandbox: "read-only" as const, approvalPolicy: "on-request" as const,
+      selection: { model: "gpt-5.6-sol", reasoningEffort: "medium" } };
+    try {
+      const started = await pool.startThread({ ...input, executionContext: "binding:start" }, undefined, assignment => assignments.push(assignment));
+      const threadId = started.structuredContent!.threadId as string;
+      expect(await pool.releaseThreadConnection(threadId, { canRelease: async () => true })).toMatchObject({ phase: "released" });
+      const continued = await pool.continueThread({ ...input, threadId, executionContext: "binding:continue" }, undefined, assignment => assignments.push(assignment));
+      expect(continued.structuredContent).toMatchObject({ threadId, turnStatus: "completed" });
+      const forked = await pool.forkThread({ ...input, threadId, executionContext: "binding:fork" }, undefined, assignment => assignments.push(assignment));
+      expect(forked.structuredContent!.threadId).not.toBe(threadId);
+      expect(forked.structuredContent).toMatchObject({ turnStatus: "completed", forkedFromThreadId: threadId });
+      expect(new Set(assignments.map(assignment => `${assignment.workerId}:${assignment.workerGeneration}`)).size).toBe(1);
+      expect(assignments.filter(assignment => assignment.upstreamRequestId)).toHaveLength(3);
+      const turns = request.mock.calls.filter(([method]) => method === "turn/start");
+      expect(turns.map(([, params]) => (params as { input: unknown }).input)).toEqual([
+        "binding:start", "binding:continue", "binding:fork"
+      ].map(text => [{ type: "text", text: input.prompt, text_elements: [] }, { type: "text", text, text_elements: [] }]));
+      for (const method of ["thread/resume", "thread/fork"]) {
+        expect(request.mock.calls.find(([name]) => name === method)?.[1]).toMatchObject({ excludeTurns: true });
+      }
+    } finally {
+      await pool.close();
+      request.mockRestore();
+    }
+  }, 15_000);
+
   it.each(["fast", "unset"])("retains legacy scope and distinguishes per-turn Standard/inheritance with CLI default %s", async defaultTier => {
     const root = await mkdtemp(path.join(tmpdir(), "bridge-215-wire-")), log = path.join(root, "speed.jsonl");
     const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, { environment: { ...process.env, CODEX_TEST_SPEED_LOG: log,

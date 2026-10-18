@@ -11,6 +11,8 @@ export type CliProtocolSupport = {
   missingCore: string[];
   capabilities: BackendCapabilities;
   unsupported: Record<string, string[]>;
+  /** Newer CLIs can resume/fork without returning the retained transcript. */
+  historyOmission?: { resume: boolean; fork: boolean };
 };
 
 export const UNVERIFIED_APP_SERVER_CAPABILITIES: BackendCapabilities = Object.freeze({
@@ -146,7 +148,11 @@ export function inspectClientRequestContract(schema: Schema, configSchema?: Sche
     ])
   };
   const missingCore = [...checks.values()].flat().concat(configSchema ? inspectConnectorApprovalConfig(configSchema) : []);
-  return { compatible: missingCore.length === 0, missingCore, capabilities, unsupported };
+  const historyOmission = {
+    resume: check("thread/resume", policies.map(policy => ({ ...policy, threadId: "bridge-contract-check", excludeTurns: true }))).length === 0,
+    fork: check("thread/fork", policies.map(policy => ({ ...policy, threadId: "bridge-contract-check", ephemeral: false, excludeTurns: true }))).length === 0
+  };
+  return { compatible: missingCore.length === 0, missingCore, capabilities, unsupported, historyOmission };
 }
 
 /** `config` accepts arbitrary keys on the wire. Its presence alone does not

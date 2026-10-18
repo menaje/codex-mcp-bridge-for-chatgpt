@@ -113,6 +113,7 @@ export class CodexBackendRouter implements CodexUpstream {
       "codex",
       {
         prompt: input.prompt,
+        ...(input.executionContext ? { executionContext: input.executionContext } : {}),
         ...executionAccessArguments(input),
         ...(backendSupports(input.backendKind, "supportsEphemeralThreads")
           ? { ephemeral: input.ephemeral === true }
@@ -135,6 +136,7 @@ export class CodexBackendRouter implements CodexUpstream {
       {
         threadId: input.threadId,
         prompt: input.prompt,
+        ...(input.executionContext ? { executionContext: input.executionContext } : {}),
         ...executionAccessArguments(input),
         ...(input.selection ? selectionArguments(input.selection, input.backendKind) : {}),
         ...backendRoutingArgument(input.backendKind)

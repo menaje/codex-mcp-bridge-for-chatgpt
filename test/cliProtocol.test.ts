@@ -43,6 +43,19 @@ describe("CLI operation contracts", () => {
     expect(() => requireCliProtocol(support, "fork")).toThrow("thread/fork");
   });
 
+  it("detects optional history omission independently for resume and fork", () => {
+    const changed = structuredClone(contract) as any;
+    expect(inspectClientRequestContract(changed).historyOmission).toEqual({ resume: false, fork: false });
+    const resume = changed.oneOf.find((entry: any) => entry.properties.method.enum[0] === "thread/resume").properties.params;
+    const fork = changed.oneOf.find((entry: any) => entry.properties.method.enum[0] === "thread/fork").properties.params;
+    resume.properties.excludeTurns = { type: "boolean" };
+    expect(inspectClientRequestContract(changed)).toMatchObject({ compatible: true, historyOmission: { resume: true, fork: false } });
+    fork.properties.excludeTurns = { type: "boolean" };
+    expect(inspectClientRequestContract(changed).historyOmission).toEqual({ resume: true, fork: true });
+    resume.properties.excludeTurns = { const: false };
+    expect(inspectClientRequestContract(changed)).toMatchObject({ compatible: true, historyOmission: { resume: false, fork: true } });
+  });
+
   it.each(["thread/archive", "thread/unarchive"])("isolates the optional %s contract", method => {
     const changed = structuredClone(contract);
     changed.oneOf = changed.oneOf.filter(entry => entry.properties.method.enum[0] !== method);

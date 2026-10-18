@@ -2731,6 +2731,44 @@ describe("current bridge tool contracts", () => {
     expect(upstream.calls).toHaveLength(0);
   });
 
+  it("provides admitted execution identity while preserving nested scope isolation and HOLD results", async () => {
+    const descriptor = (await client.listTools()).tools.find(tool => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    expect(properties).not.toHaveProperty("executionContext");
+    const project = settings.current.projects[0]!;
+    const hold = upstream.holdNextCall();
+    const prompt = "Review the supplied recovery evidence; report HOLD if local process ownership remains unknown.";
+    const admitted = await client.callTool({ name: "codex_task", _meta: metadata, arguments: {
+      scopeId: randomUUID(), requestId: randomUUID(), prompt, selection,
+      taskContractVersion: properties.taskContractVersion?.const, executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+      project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision }
+    } });
+    expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
+    await hold.started;
+    const handles = admitted.structuredContent as any;
+    const dispatched = upstream.calls[0]!.args;
+    expect(dispatched.prompt).toBe(prompt);
+    const binding = JSON.parse((dispatched.executionContext as string).split("\n")[1]!);
+    expect(binding).toEqual({ jobId: handles.jobId, requestId: handles.requestId, activityId: handles.activityId,
+      agentId: handles.agentId, contextMode: "fresh" });
+    const job = state.listJobs().find(value => value.jobId === handles.jobId)!;
+    expect(dispatched.executionContext).not.toContain(job.scopeId);
+    hold.release({ structuredContent: { threadId: fixtureThreadId, content: "HOLD: local process ownership unconfirmed." },
+      content: [{ type: "text", text: "HOLD: local process ownership unconfirmed." }] });
+    await eventually(() => state.listJobs().some(value => value.jobId === handles.jobId && value.status === "completed"));
+    const query = { kind: "job", id: handles.jobId };
+    const original = await client.callTool({ name: "codex_status", arguments: { query }, _meta: metadata });
+    expect(original.isError, JSON.stringify(original)).not.toBe(true);
+    expect(JSON.stringify(original)).toContain("HOLD: local process ownership unconfirmed.");
+    const nested = await client.callTool({ name: "codex_status", arguments: { query, scopeId: job.scopeId },
+      _meta: { "openai/session": "nested-codex-execution" } });
+    expect(nested.isError).toBe(true);
+    expect(JSON.stringify(nested)).toContain("HANDLE_UNAVAILABLE");
+    expect(JSON.stringify(nested)).toContain("originating host must read its own exact state/results");
+    expect(state.getActivity(handles.activityId)?.lifecycle).toBe("open");
+    expect(upstream.calls).toHaveLength(1);
+  });
+
   it("does not distinguish scope-mismatched handles from missing handles", async () => {
     const descriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
     const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
