@@ -13,7 +13,7 @@ import { BridgeStateStore } from "../src/stateStore.js";
 // fixtures; this is not a clock, elapsed-duration or continuous-operation test.
 const resources: Array<() => void> = [];
 afterEach(() => { for (const close of resources.splice(0).reverse()) close(); });
-function fixture() {
+function fixture(input = false) {
   const state = new BridgeStateStore({ file: ":memory:" }); resources.push(() => state.close());
   const scopes = new ScopeResolver({ stateStore: state });
   const metadata = { "openai/session": "relay-card-owner" }, scopeId = scopes.resolve(metadata)!.scopeId;
@@ -21,9 +21,10 @@ function fixture() {
   const agent = state.createAgent({ scopeId, agentName: "Worker" });
   const job = { jobId: randomUUID(), requestId: randomUUID(), scopeId, activityId: activity.activityId, agentId: agent.agentId,
     cwd: "/private/project/path", sandbox: "read-only", completionDeliveryPolicy: "relay-card" as const,
-    status: "running", version: 1, createdAt: Date.now(), updatedAt: Date.now() };
+    status: "running", version: 1, createdAt: Date.now(), updatedAt: Date.now(),
+    ...(input ? { trackingState: "connected", pendingInteractions: [{ interactionId: "original-question" }] } : {}) };
   state.upsertJob(job);
-  state.upsertJob({ ...job, status: "completed", version: 2, result: { content: [{ type: "text", text: "PRIVATE ORIGINAL SECRET" }] } });
+  if (!input) state.upsertJob({ ...job, status: "completed", version: 2, result: { content: [{ type: "text", text: "PRIVATE ORIGINAL SECRET" }] } });
   const opening = { contractGeneration: 1, jobId: job.jobId, activityId: job.activityId,
     inputRequestId: job.requestId, presentationRef: relayPresentationRef(job.requestId) };
   const handlers = new Map<string, any>();
@@ -35,6 +36,7 @@ type Message = { id?: number; method?: string; params?: any; result?: unknown; e
 type HostOptions = {
   compatibility?: boolean; initialGlobals?: Record<string, unknown>; deferredInitialize?: boolean;
   initializeError?: boolean; messageCapability?: boolean; ackResponseLoss?: boolean;
+  toolResponse?: (name: string, args: any) => "hold" | { error: any } | { result: any } | undefined;
   send?: (message: Message) => "hold" | { error: any } | { result: any };
 };
 function mount(f: Fixture, options: HostOptions = {}) {
@@ -46,6 +48,10 @@ function mount(f: Fixture, options: HostOptions = {}) {
   const reply = (message: Message, result: unknown) => receive({ id: message.id, result });
   const tool = async (name: string, args: any) => {
     calls.push({ name, arguments: structuredClone(args) });
+    const response = options.toolResponse?.(name, args);
+    if (response === "hold") return new Promise(() => {});
+    if (response && "error" in response) throw response.error;
+    if (response && "result" in response) return response.result;
     return f.handlers.get(name)({ ...args, ...(name === "codex_relay_wait" ? { waitMs: 0 } : {}) }, { mcpReq: { _meta: f.metadata } });
   };
   const parent = { postMessage(message: Message) {
@@ -57,9 +63,9 @@ function mount(f: Fixture, options: HostOptions = {}) {
     } else if (message.method === "tools/call") {
       void tool(message.params.name, message.params.arguments).then(result => {
         if (options.ackResponseLoss && !lostAck && message.params.arguments.action === "ack") {
-          lostAck = true; receive({ id: message.id, error: { code: -32000 } });
+          lostAck = true;
         } else reply(message, result);
-      }, () => receive({ id: message.id, error: { code: -32000 } }));
+      }, error => receive({ id: message.id, error: typeof error?.code === "number" ? error : { code: -32000 } }));
     } else if (message.method === "ui/message") {
       const response = options.send?.(message) || { result: {} };
       if (response !== "hold") queueMicrotask(() => receive({ id: message.id, ...response }));
@@ -90,7 +96,7 @@ function mount(f: Fixture, options: HostOptions = {}) {
   const link = async () => { input(); result(); await run("correlate()"); await until(() => document.documentElement.dataset.relay === "linked"); };
   const fire = (delay: number) => { const entry = [...timers].find(([, timer]) => timer.delay === delay); expect(entry).toBeDefined(); timers.delete(entry![0]); entry![1].callback(); };
   const teardown = () => receive({ id: 99_999, method: "ui/resource-teardown" }); resources.push(teardown);
-  return { run, until, drain, input, result, globals, link, fire, teardown, initializeReply, document, timers, messages, calls, compatibilitySends, receive,
+  return { run, until, drain, input, result, globals, link, fire, teardown, initializeReply, document, timers, messages, calls, compatibilitySends, receive, emit,
     watch: () => run("watch()") as Promise<void>, sends: () => messages.filter(value => value.method === "ui/message") };
 }
 
@@ -137,11 +143,118 @@ describe("#261 blank relay host protocol", () => {
   it("retries an ACK response loss with the same attempt and no extra host send", async () => {
     const f = fixture(), h = mount(f, { ackResponseLoss: true }); await h.link();
     const watching = h.watch();
-    await h.until(() => h.calls.filter(call => call.arguments.action === "ack").length === 1 && [...h.timers.values()].some(timer => timer.delay === 1000));
-    expect(f.event().state).toBe("accepted"); h.fire(1000); await watching;
+    await h.until(() => h.calls.filter(call => call.arguments.action === "ack").length === 1);
+    expect(f.event().state).toBe("accepted"); h.fire(35000);
+    await h.until(() => [...h.timers.values()].some(timer => timer.delay === 1000)); h.fire(1000); await watching;
     const acknowledgements = h.calls.filter(call => call.arguments.action === "ack");
     expect(acknowledgements).toHaveLength(2); expect(acknowledgements[0]).toEqual(acknowledgements[1]); expect(h.sends()).toHaveLength(1);
     await h.watch(); expect(h.sends()).toHaveLength(1);
+  });
+
+  it.each(["connect", "claim", "enter", "ack", "wait"])("stops the mounted relay after permanent %s rejection", async action => {
+    const f = fixture(), h = mount(f, { toolResponse: (name, args) =>
+      (action === "wait" ? name === "codex_relay_wait" : args.action === action)
+        ? { error: { code: -32001, message: "timeout retry temporary", data: { retryable: false } } } : undefined });
+    await h.link();
+    const watching = h.watch();
+    await h.until(() => h.document.documentElement.dataset.relay === "blocked"); await watching;
+    const before = h.calls.length;
+    expect(h.calls.filter(call => action === "wait" ? call.name === "codex_relay_wait" : call.arguments.action === action)).toHaveLength(1);
+    expect(h.timers.size).toBe(0);
+    h.globals({}); h.emit("online", {}); h.emit("pageshow", {});
+    await h.watch(); await h.drain();
+    expect(h.calls).toHaveLength(before);
+    expect(h.sends()).toHaveLength(action === "ack" ? 1 : 0);
+    expect(f.state.getActivity(f.job.activityId)?.lifecycle).toBe("open");
+    expect(f.state.getRelayJobSnapshot(f.job.jobId)?.status).toBe("completed");
+  });
+
+  it.each([false, true])("stops on tool error results with compatibility=%s", async compatibility => {
+    const f = fixture(), h = mount(f, { compatibility, initializeError: compatibility,
+      toolResponse: () => ({ result: { isError: true, content: [{ type: "text", text: "Approval declined; retry later" }] } }) });
+    await h.link(); const watching = h.watch();
+    await h.until(() => h.document.documentElement.dataset.relay === "blocked"); await watching;
+    expect(h.calls).toHaveLength(1); expect(h.timers.size).toBe(0);
+    await h.watch(); expect(h.calls).toHaveLength(1);
+    expect(h.sends()).toHaveLength(0); expect(h.compatibilitySends).toHaveLength(0);
+  });
+
+  it.each([new Error("Approval declined"), "timeout retry temporary", { code: -32001, data: { retryable: false } }])(
+    "does not retry an unclassified compatibility rejection: %s", async error => {
+      const f = fixture(), h = mount(f, { compatibility: true, initializeError: true, toolResponse: () => ({ error }) });
+      await h.link(); const watching = h.watch();
+      await h.until(() => h.document.documentElement.dataset.relay === "blocked"); await watching;
+      expect(h.calls).toHaveLength(1); expect(h.timers.size).toBe(0);
+      await h.watch(); expect(h.calls).toHaveLength(1);
+    });
+
+  it.each([false, true])("recovers explicitly retryable tool rejections with compatibility=%s", async compatibility => {
+    let rejected = false;
+    const f = fixture(), h = mount(f, { compatibility, initializeError: compatibility, toolResponse: (_name, args) => {
+      if (args.action !== "connect" || rejected) return;
+      rejected = true;
+      return { error: { code: -32000, data: { delivery: "not-sent", retryable: true } } };
+    } });
+    await h.link(); const watching = h.watch();
+    await h.until(() => [...h.timers.values()].some(timer => timer.delay === 1000)); h.fire(1000); await watching;
+    expect(h.calls.filter(call => call.arguments.action === "connect")).toHaveLength(2);
+    expect(h.document.documentElement.dataset.relay).toBe("waiting");
+    expect(f.event().state).toBe("accepted");
+    expect(h.sends().length + h.compatibilitySends.length).toBe(1);
+  });
+
+  it.each([false, true])("recovers a tool response timeout with compatibility=%s", async compatibility => {
+    let held = false;
+    const f = fixture(), h = mount(f, { compatibility, initializeError: compatibility, toolResponse: (_name, args) => {
+      if (args.action !== "connect" || held) return;
+      held = true; return "hold";
+    } });
+    await h.link(); const watching = h.watch();
+    await h.until(() => h.calls.length === 1); h.fire(35000);
+    await h.until(() => [...h.timers.values()].some(timer => timer.delay === 1000)); h.fire(1000); await watching;
+    expect(h.calls.filter(call => call.arguments.action === "connect")).toHaveLength(2);
+    expect(h.document.documentElement.dataset.relay).toBe("waiting");
+    expect(f.event().state).toBe("accepted");
+    expect(h.sends().length + h.compatibilitySends.length).toBe(1);
+  });
+
+  it.each([false, true])("recovers a real input-owner pause during claim with compatibility=%s", async compatibility => {
+    let paused = false;
+    const f = fixture(true), h = mount(f, { compatibility, initializeError: compatibility, toolResponse: (_name, args) => {
+      if (args.action !== "claim" || paused) return;
+      paused = true; f.state.upsertJob({ ...f.job, version: 2, trackingState: "liveness-unknown" });
+    } });
+    await h.link(); const watching = h.watch();
+    await h.until(() => [...h.timers.values()].some(timer => timer.delay === 1000));
+    expect(f.event().state).toBe("pending");
+    f.state.upsertJob({ ...f.job, version: 3, trackingState: "connected" }); h.fire(1000); await watching;
+    const claims = h.calls.filter(call => call.arguments.action === "claim");
+    expect(claims).toHaveLength(2); expect(claims[0]).toEqual(claims[1]);
+    expect(h.document.documentElement.dataset.relay).toBe("waiting");
+    expect(f.event().state).toBe("accepted"); expect(h.sends().length + h.compatibilitySends.length).toBe(1);
+  });
+
+  it("resumes after a pagehide cancellation without treating detachment as a rejection", async () => {
+    let held = false;
+    const f = fixture(), h = mount(f, { toolResponse: (_name, args) => {
+      if (args.action !== "connect" || held) return;
+      held = true; return "hold";
+    } });
+    await h.link(); const watching = h.watch();
+    await h.until(() => h.calls.length === 1); h.emit("pagehide", {}); await watching;
+    expect(h.timers.size).toBe(0);
+    h.emit("pageshow", {}); await h.watch();
+    expect(h.document.documentElement.dataset.relay).toBe("waiting");
+    expect(f.event().state).toBe("accepted"); expect(h.sends()).toHaveLength(1);
+  });
+
+  it("waits for an unavailable host bridge and connects when it becomes ready", async () => {
+    const options = { initializeError: true }, f = fixture(), h = mount(f, options);
+    await h.link(); await h.watch();
+    expect(h.document.documentElement.dataset.relay).toBe("recovering"); expect(h.calls).toHaveLength(0);
+    options.initializeError = false; await h.watch();
+    expect(h.document.documentElement.dataset.relay).toBe("waiting");
+    expect(f.event().state).toBe("accepted"); expect(h.sends()).toHaveLength(1);
   });
 
   it("keeps post-send timeout unknown and never switches to compatibility sending", async () => {

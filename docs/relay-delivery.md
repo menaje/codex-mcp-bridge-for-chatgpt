@@ -31,6 +31,17 @@ the one logical Activity connection; already-entered sends remain unchanged.
 Worker-to-Reviewer Agent transitions stay enrolled when ordinary admission
 authorizes them within the same Activity and project.
 
+Host approval remains under ChatGPT's control. A rejected tool call, an error
+result or an unclassified host failure stops automatic calls from that mounted
+Relay, including after online, page-show or globals notifications. Only local
+response timeouts and explicit structured `delivery:"not-sent", retryable:true`
+errors are retried. Bridge-owned transient failures (paused or stale events and
+wait capacity) carry that evidence in `codex/relayRetry@1` result metadata.
+Temporary detachment or an unavailable host bridge can recover. Stopping the
+mounted Relay does not cancel Jobs, close the Activity or
+erase delivery receipts; a new valid card can reconnect. This does not change
+ChatGPT's saved approval policy or make a rejected call authorized.
+
 Only task/answer results associate the resource. `codex_status`, receipt pages,
 internal waits, claim, entry and ACK do not create another card. The blank body
 has zero margins, border and requested height, no controls and no Dashboard

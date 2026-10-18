@@ -312,6 +312,50 @@ describe("#261 durable relay delivery", () => {
     expect(f.state.getRelayJobSnapshot(a.jobId)?.status).toBe("completed");
   });
 
+  it.each(["claim", "enter"])("marks a paused %s as explicitly retryable without changing the attempt", async action => {
+    const f = fixture(), a = f.seed({ trackingState: "connected", pendingInteractions: [{ interactionId: "original-question" }] });
+    const event = f.state.relay.registration(a.jobId)!.event!, card = f.connect(), attempt = randomUUID(), handlers = new Map<string, any>();
+    registerRelayTools({ registerTool(name: string, _descriptor: any, callback: any) { handlers.set(name, callback); } } as unknown as McpServer, f.state, f.scopes);
+    if (action === "enter") f.state.relay.claim(f.activity.activityId, f.owner, card, event.eventId, attempt);
+    f.state.upsertJob({ ...a, version: 2, trackingState: "liveness-unknown" });
+    const before = f.state.relay.registration(a.jobId)!.event;
+    const result = await handlers.get("codex_relay")({ contractGeneration: 1, activityId: f.activity.activityId,
+      cardId: card, action, eventId: event.eventId, attemptId: attempt }, { mcpReq: { _meta: f.metadata } });
+    expect(result).toMatchObject({ isError: true, _meta: { "codex/relayRetry@1": { delivery: "not-sent", retryable: true } } });
+    expect(f.state.relay.registration(a.jobId)!.event).toEqual(before);
+  });
+
+  it("marks wait capacity as retryable and releases all existing observations on abort", async () => {
+    const f = fixture(), handlers = new Map<string, any>(), controller = new AbortController(), pending: Promise<any>[] = [];
+    registerRelayTools({ registerTool(name: string, _descriptor: any, callback: any) { handlers.set(name, callback); } } as unknown as McpServer, f.state, f.scopes);
+    const extra = { mcpReq: { _meta: f.metadata, signal: controller.signal } };
+    try {
+      for (let index = 0; index < 8; index++) {
+        const activity = f.state.createActivity({ scopeId: f.scopeId, handoffPolicy: "none", completionTrigger: "manual" });
+        f.seed({ activityId: activity.activityId }); const cardId = randomUUID();
+        f.state.relay.connect(activity.activityId, f.owner, cardId);
+        pending.push(handlers.get("codex_relay_wait")({ contractGeneration: 1, activityId: activity.activityId,
+          cardId, after: f.state.relayRevision, waitMs: 25_000 }, extra));
+      }
+      f.seed(); const cardId = f.connect();
+      const result = await handlers.get("codex_relay_wait")({ contractGeneration: 1, activityId: f.activity.activityId,
+        cardId, after: f.state.relayRevision, waitMs: 25_000 }, extra);
+      expect(result).toMatchObject({ isError: true, _meta: { "codex/relayRetry@1": { delivery: "not-sent", retryable: true } } });
+    } finally { controller.abort(); await Promise.all(pending); }
+  });
+
+  it.each(["claim", "enter"])("allows recovery from a stale %s without reviving a resolved question", async action => {
+    const f = fixture(), a = f.seed({ pendingInteractions: [{ interactionId: "resolved-question" }] });
+    const event = f.state.relay.registration(a.jobId)!.event!, card = f.connect(), attempt = randomUUID(), handlers = new Map<string, any>();
+    registerRelayTools({ registerTool(name: string, _descriptor: any, callback: any) { handlers.set(name, callback); } } as unknown as McpServer, f.state, f.scopes);
+    if (action === "enter") f.state.relay.claim(f.activity.activityId, f.owner, card, event.eventId, attempt);
+    f.state.upsertJob({ ...a, version: 2, pendingInteractions: [] });
+    const result = await handlers.get("codex_relay")({ contractGeneration: 1, activityId: f.activity.activityId,
+      cardId: card, action, eventId: event.eventId, attemptId: attempt }, { mcpReq: { _meta: f.metadata } });
+    expect(result).toMatchObject({ isError: true, _meta: { "codex/relayRetry@1": { delivery: "not-sent", retryable: true } } });
+    expect(f.state.relay.registration(a.jobId)!.event).toBeUndefined(); expect(f.state.relay.pending(f.activity.activityId)).toEqual([]);
+  });
+
   it("uses a stable question event through progress, drops resolved/replaced questions and rejects late entry or ACK", () => {
     const f = fixture(), a = f.seed();
     const input = { interactionId: "question-one", kind: "user-input", origin: "codex-question", isBlocking: false,

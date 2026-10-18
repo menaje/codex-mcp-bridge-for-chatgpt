@@ -247,6 +247,10 @@ describe("#261 bounded followup contracts", () => {
     expect((await call("codex_relay", { ...base, action: "claim", eventId: event.eventId, attemptId })).structuredContent).toMatchObject({ event: { state: "leased" } });
     expect((await call("codex_relay", { ...base, action: "enter", eventId: event.eventId, attemptId })).structuredContent).toMatchObject({ dispatch: true });
     expect((await call("codex_relay", { ...base, action: "ack", eventId: event.eventId, attemptId, outcome: "accepted" })).structuredContent).toMatchObject({ event: { state: "accepted" } });
+    const stale = await call("codex_relay", { ...base, action: "claim", attemptId,
+      eventId: event.eventId.replace(a.jobId.replaceAll("-", ""), randomUUID().replaceAll("-", "")) });
+    expect(stale).toMatchObject({ isError: true, _meta: { "codex/relayRetry@1": { delivery: "not-sent", retryable: true } } });
+    expect(stale._meta || {}).not.toHaveProperty("openai/outputTemplate");
     const read = await call("codex_status", { query: { kind: "job", id: a.jobId } });
     expect(read._meta || {}).not.toHaveProperty("codex/relayOpen@1");
     expect(read._meta || {}).not.toHaveProperty("openai/outputTemplate");

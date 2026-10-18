@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { currentUiResourceRevision, uiRevisionMetadata } from "./uiResources.js";
 import { hostToolResultMetadata, normalizeHostToolResult, parseUiJsonTextStrict, uiJsonTextIsWellFormed } from "./uiHostToolResult.js";
 import { serializeUiFunction } from "./uiFunctionSerialization.js";
-import { RELAY_GUIDANCE, RELAY_METADATA_KEY } from "./relayDelivery.js";
+import { RELAY_GUIDANCE, RELAY_METADATA_KEY, RELAY_RETRY_METADATA_KEY } from "./relayDelivery.js";
 
 // A new immutable contract: no historical Dashboard sender is re-enabled.
 export const RELAY_CARD_URI = "ui://codex-mcp-bridge/relay/v1.html";
@@ -38,20 +38,22 @@ ${serializeUiFunction(uiJsonTextIsWellFormed)}
 ${serializeUiFunction(parseUiJsonTextStrict)}
 ${serializeUiFunction(normalizeHostToolResult)}
 ${serializeUiFunction(hostToolResultMetadata)}
-const OPEN_KEY=${JSON.stringify(RELAY_METADATA_KEY)},GUIDANCE=${JSON.stringify(RELAY_GUIDANCE)};
+const OPEN_KEY=${JSON.stringify(RELAY_METADATA_KEY)},RETRY_KEY=${JSON.stringify(RELAY_RETRY_METADATA_KEY)},GUIDANCE=${JSON.stringify(RELAY_GUIDANCE)};
 const cardId=crypto.randomUUID(),pending=new Map();
 let nextId=1,mounted=true,tornDown=false,stopped=false,running=false,timer=0,connected=false,standard=false,messageSupported=false;
 let openingInput=null,openingResult=null,linked=null,revision,ackPending=null,initializing;
 
 function notify(method,params){window.parent.postMessage({jsonrpc:"2.0",method,params},"*")}
+function timeoutError(){const error=new Error("RELAY_TIMEOUT");error.relayTimeout=true;return error}
+function unmountedError(){const error=new Error("RELAY_UNMOUNTED");error.relayUnmounted=true;return error}
 function rpc(method,params,timeout=35000){
-  if(!mounted)return Promise.reject(new Error("RELAY_UNMOUNTED"));
+  if(!mounted)return Promise.reject(unmountedError());
   return new Promise((resolve,reject)=>{const id=nextId++,timeoutId=setTimeout(()=>{
-    pending.delete(id);notify("notifications/cancelled",{requestId:id,reason:"Relay request timed out"});reject(new Error("RELAY_TIMEOUT"));
+    pending.delete(id);notify("notifications/cancelled",{requestId:id,reason:"Relay request timed out"});reject(timeoutError());
   },timeout);pending.set(id,{resolve(value){clearTimeout(timeoutId);resolve(value)},reject(error){clearTimeout(timeoutId);reject(error)}});
   window.parent.postMessage({jsonrpc:"2.0",id,method,params},"*")});
 }
-function cancelRequests(){for(const[id,entry]of pending){notify("notifications/cancelled",{requestId:id,reason:"Relay detached"});entry.reject(new Error("RELAY_UNMOUNTED"))}pending.clear()}
+function cancelRequests(){for(const[id,entry]of pending){notify("notifications/cancelled",{requestId:id,reason:"Relay detached"});entry.reject(unmountedError())}pending.clear()}
 function schedule(delay=0){if(timer||running||!mounted||stopped||!linked)return;timer=setTimeout(()=>{timer=0;void watch()},delay)}
 async function correlate(){
   if(linked||!openingInput||!openingResult)return;
@@ -75,16 +77,23 @@ async function initialize(){
   }catch{/* The compatibility path is selected before any message or mutation. */}
 }
 async function tool(name,args){
-  await initializing;if(!mounted)throw new Error("RELAY_UNMOUNTED");
-  const value=standard?await rpc("tools/call",{name,arguments:args}):
-    await bounded(()=>window.openai.callTool(name,args),35000);
-  const result=normalizeHostToolResult(value);
-  if(!result||result.isError)throw new Error("RELAY_TOOL_FAILED");
-  return result.structuredContent||result;
+  await initializing;if(!mounted)throw unmountedError();
+  try{
+    const value=standard?await rpc("tools/call",{name,arguments:args}):
+      await bounded(()=>window.openai.callTool(name,args),35000);
+    const result=normalizeHostToolResult(value);
+    if(!result||result.isError){const error=new Error("RELAY_TOOL_FAILED");error.data=hostToolResultMetadata(result)[RETRY_KEY];throw error}
+    return result.structuredContent||result;
+  }catch(error){
+    // A local response timeout or an explicit not-sent retry grant can recover.
+    // Other host failures may be approval denials: never resubmit them silently.
+    if(error&&(error.relayUnmounted===true||error.relayTimeout===true||error.relayRetryable===true||error.data&&error.data.delivery==="not-sent"&&error.data.retryable===true))throw error;
+    const permanent=new Error("RELAY_TOOL_REJECTED");permanent.relayToolPermanent=true;throw permanent;
+  }
 }
-function bounded(operation,timeout){return new Promise((resolve,reject)=>{const id=setTimeout(()=>reject(new Error("RELAY_TIMEOUT")),timeout);Promise.resolve().then(operation).then(value=>{clearTimeout(id);resolve(value)},error=>{clearTimeout(id);reject(error)})})}
+function bounded(operation,timeout){return new Promise((resolve,reject)=>{const id=setTimeout(()=>reject(timeoutError()),timeout);Promise.resolve().then(operation).then(value=>{clearTimeout(id);resolve(value)},error=>{clearTimeout(id);reject(error)})})}
 function base(){return {contractGeneration:1,activityId:linked.activityId,cardId}}
-async function mutate(args,retry=true){let error;for(let count=0;count<(retry?3:1);count++){try{return await tool("codex_relay",{...base(),...args})}catch(caught){error=caught;if(!mounted)break;await bounded(()=>new Promise(resolve=>setTimeout(resolve,1000*(count+1))),4000)}}throw error}
+async function mutate(args,retry=true){const attempts=retry?3:1;for(let count=0;count<attempts;count++){try{return await tool("codex_relay",{...base(),...args})}catch(error){if(!mounted||error&&error.relayToolPermanent===true||count+1===attempts)throw error;await bounded(()=>new Promise(resolve=>setTimeout(resolve,1000*(count+1))),4000)}}}
 async function flushAck(){if(!ackPending)return;const current=ackPending;await mutate({action:"ack",...current});if(ackPending===current)ackPending=null}
 async function deliver(event){
   const compat=window.openai&&typeof window.openai.sendFollowUpMessage==="function";
@@ -117,7 +126,9 @@ async function deliver(event){
 async function watch(){
   if(running||!mounted||!linked||stopped)return;running=true;let retryDelay=2000;
   try{
-    await initializing;if(!standard&&!(window.openai&&typeof window.openai.callTool==="function")){initializing=initialize();await initializing}await flushAck();
+    await initializing;if(!standard&&!(window.openai&&typeof window.openai.callTool==="function")){initializing=initialize();await initializing}
+    if(!standard&&!(window.openai&&typeof window.openai.callTool==="function"))throw new Error("RELAY_TOOL_UNAVAILABLE");
+    await flushAck();
     if(!connected){const result=await mutate({action:"connect",inputRequestId:linked.inputRequestId,presentationRef:linked.presentationRef});
       if(result.stopped){stopped=true;return}connected=true;let after=result.recoveryAfter;
       while(after&&mounted){const next=await mutate({action:"recover",afterJob:after});if(next.stopped){stopped=true;return}after=next.recoveryAfter}
@@ -126,7 +137,10 @@ async function watch(){
     revision=result.revision;if(result.stopped){stopped=true;return}
     for(const event of result.events||[]){if(!mounted)break;await deliver(event)}
     document.documentElement.dataset.relay="waiting";retryDelay=(result.events||[]).length?2000:0;
-  }catch{document.documentElement.dataset.relay="recovering";}
+  }catch(error){
+    if(error&&error.relayToolPermanent===true){stopped=true;clearTimeout(timer);timer=0;document.documentElement.dataset.relay="blocked"}
+    else document.documentElement.dataset.relay="recovering";
+  }
   finally{running=false;schedule(retryDelay)}
 }
 

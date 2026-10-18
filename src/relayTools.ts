@@ -4,7 +4,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { authenticatedMcpPrincipal } from "./mcpPrincipal.js";
 import type { BridgeStateStore } from "./stateStore.js";
 import type { ScopeResolver, ToolCallMetadata } from "./scopeResolver.js";
-import { RELAY_EVENT_PATTERN, RELAY_METADATA_KEY, relayPresentationRef } from "./relayDelivery.js";
+import { RELAY_EVENT_PATTERN, RELAY_METADATA_KEY, RELAY_RETRY_METADATA_KEY, RelayEventUnavailableError, relayPresentationRef } from "./relayDelivery.js";
 
 export const relayEventOutputSchema = z.strictObject({
   eventId: z.string().regex(RELAY_EVENT_PATTERN), jobId: z.string().uuid(), kind: z.enum(["terminal", "input"]),
@@ -56,6 +56,9 @@ export function registerRelayTools(server: McpServer, state: BridgeStateStore, s
     return { scopeId: resolved.scopeId, mcpPrincipal: principal };
   };
   const response = <T>(structuredContent: T) => ({ content: [{ type: "text" as const, text: JSON.stringify(structuredContent) }], structuredContent });
+  const retryableFailure = (message: string) => ({ isError: true,
+    content: [{ type: "text" as const, text: message }],
+    _meta: { [RELAY_RETRY_METADATA_KEY]: { delivery: "not-sent", retryable: true } } });
 
   const mutation = z.discriminatedUnion("action", [
     z.strictObject({ ...base, action: z.literal("connect"), inputRequestId: z.string().uuid(), presentationRef: z.string().regex(/^[a-f0-9]{64}$/) }),
@@ -82,8 +85,13 @@ export function registerRelayTools(server: McpServer, state: BridgeStateStore, s
       if (goal.cardId !== args.cardId || goal.ended || goal.monitoringStopped) return response({ kind: "relay" as const, stopped: true });
       return response({ kind: "relay" as const, recoveryAfter: state.relay.recover(args.activityId, args.afterJob) });
     }
-    if (args.action === "claim") return response({ kind: "relay" as const, event: state.relay.claim(args.activityId, auth, args.cardId, args.eventId, args.attemptId) });
-    if (args.action === "enter") return response({ kind: "relay" as const, dispatch: state.relay.enter(args.activityId, auth, args.cardId, args.eventId, args.attemptId) });
+    try {
+      if (args.action === "claim") return response({ kind: "relay" as const, event: state.relay.claim(args.activityId, auth, args.cardId, args.eventId, args.attemptId) });
+      if (args.action === "enter") return response({ kind: "relay" as const, dispatch: state.relay.enter(args.activityId, auth, args.cardId, args.eventId, args.attemptId) });
+    } catch (error) {
+      if (error instanceof RelayEventUnavailableError) return retryableFailure(error.message);
+      throw error;
+    }
     return response({ kind: "relay" as const, event: state.relay.acknowledge(args.activityId, auth, args.cardId, args.eventId, args.attemptId, args.outcome) });
   });
 
@@ -105,7 +113,7 @@ export function registerRelayTools(server: McpServer, state: BridgeStateStore, s
     waits.get(key)?.abort();
     waits.delete(key);
     if (waits.size >= 8 || [...waits.keys()].filter(key => key.startsWith(args.activityId + "/")).length >= 2) {
-      throw new Error("RELAY_WAIT_CAPACITY: Retry with bounded backoff.");
+      return retryableFailure("RELAY_WAIT_CAPACITY: Retry with bounded backoff.");
     }
     const controller = new AbortController(); waits.set(key, controller);
     try {

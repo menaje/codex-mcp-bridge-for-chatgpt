@@ -88,7 +88,7 @@ export const UI_RESOURCE_MANIFEST = {
       {
         "name": "relay",
         "uriVersion": 1,
-        "digest": "05ef4df5d0bee4526d3794ac268b38f9a32827a85fa85c94848345756faf7bfd",
+        "digest": "a427e5eadd0b03d1843fdc94af0b37560fc90ba6cacbf3d9de82d16f01b37419",
         "uri": "ui://codex-mcp-bridge/relay/v1.html",
         "inventories": [
           "development-current"
@@ -203,7 +203,7 @@ export const UI_RESOURCE_MANIFEST = {
     },
     "relay": {
       "uriVersion": 1,
-      "digest": "05ef4df5d0bee4526d3794ac268b38f9a32827a85fa85c94848345756faf7bfd",
+      "digest": "a427e5eadd0b03d1843fdc94af0b37560fc90ba6cacbf3d9de82d16f01b37419",
       "uri": "ui://codex-mcp-bridge/relay/v1.html",
       "metadata": {
         "descriptor": {
