@@ -1,0 +1,49 @@
+{
+  "date": "2026-10-22",
+  "integrationTarget": "dev",
+  "validatedInputSHA256": {
+    "macos/Sources/CodexBridgeMenuBar/AppModel.swift": "1886a136d4c80a3804a33ca8fed1550279c0d6c30ebf4f4fd176679630e5b8d0",
+    "macos/Tests/CodexBridgeKitTests/ChangeObservationTests.swift": "1d7cabdb8572e22919810bd64b1cf8dabb758d50aaa10993502be4fb877d3426",
+    ".changes/issue-274-menubar-cpu.json": "eeeee731ea39669f0072d0f8c72e0088bf52a9aba30d7737ef5fa77e9e0e85ba"
+  },
+  "affectedPlan": {
+    "base": "dev",
+    "node": false,
+    "macos": true,
+    "requiredCommands": [
+      "npm run validate:fast",
+      "npm run macos:check"
+    ]
+  },
+  "checks": [
+    {
+      "command": "npm run validate:affected -- --base dev",
+      "exitCode": 1,
+      "reason": "Installed Codex CLI 0.163.0 differs from schema reproducibility pin 0.153.3; stopped during validate:fast, before native checks. Resolved by running the same affected-plan commands separately with the pinned CLI."
+    },
+    {
+      "command": "CODEX_MCP_BRIDGE_CODEX=<isolated @openai/codex@0.153.3 binary> npm run validate:fast",
+      "exitCode": 0,
+      "result": "Localization catalogs, release manifests and change fragments valid; 416 JSON and 827 TypeScript App Server schema files match the pinned CLI. Global CLI and lock files unchanged."
+    },
+    {
+      "command": "npm run macos:check",
+      "exitCode": 0,
+      "result": "Executed 353 tests, with 3 tests skipped and 0 failures (0 unexpected) in 93.954 (94.022) seconds",
+      "nativeInputContract": "32 declarations checked; 3 documented system-owned exceptions",
+      "executed": 353,
+      "skipped": 3,
+      "failed": 0,
+      "skippedTests": [
+        "HelperBootstrapTests.testNinetySecondLoadedHelperPreparation (opt-in cold-helper fixture)",
+        "LiveCompanionTests.testLiveDashboardAndSettingsContractsWhenRequested (requires live companion socket)",
+        "RemoteConnectionTests.testLivePinnedPairingWhenRequested (requires HTTPS pairing invitation)"
+      ],
+      "logSHA256": "eedf5a0392b37e7c8b13f086d76a8cb2888f9f8586885ad66b170075ef8f96a6"
+    }
+  ],
+  "behaviorRegression": "Repeated progress/quiet notices, disconnection, recovery and repeated cancellation publish only Bool transitions; no hidden dashboard.snapshot requests.",
+  "completionDeliveryRegression": "Existing progress/permission/singleflight/ACK recovery tests pass; the full-suite ACK_ORDER probe reports 25 unique notification IDs, 3 final ACK RPCs, and 0 releases.",
+  "performanceEvidence": "performance-comparison.json",
+  "installation": "Installed build 18 remains running. No app restart, production job interruption, service/settings/data change or remote desktop reconfiguration was performed."
+}
