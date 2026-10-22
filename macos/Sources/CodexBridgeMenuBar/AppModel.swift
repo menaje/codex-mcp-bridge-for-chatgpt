@@ -4232,7 +4232,7 @@ final class AppModel: ObservableObject {
                     do {
                         let notice = try await client.waitForChanges(after: revision)
                         guard !Task.isCancelled, generation == self.connectionGeneration else { return }
-                        self.helperChangesAvailable = true
+                        if !self.helperChangesAvailable { self.helperChangesAvailable = true }
                         revision = notice.revision
                         failures = 0
                         var topics = Set<String>()
@@ -4243,7 +4243,7 @@ final class AppModel: ObservableObject {
                         self.enqueueRefresh(topics)
                     } catch {
                         guard !Task.isCancelled, generation == self.connectionGeneration else { return }
-                        self.helperChangesAvailable = false
+                        if self.helperChangesAvailable { self.helperChangesAvailable = false }
                         if let error = error as? LocalRPCError, error.isUnsupportedMethod {
                             self.helperChangesUnsupported = true
                             return
@@ -4266,7 +4266,10 @@ final class AppModel: ObservableObject {
                 do {
                     let notice = try await client.waitForChanges(after: revision)
                     guard !Task.isCancelled, generation == self.connectionGeneration else { return }
-                    self.companionChangesAvailable = true
+                    // A progress-only notice still proves the subscription is
+                    // alive, but publishing the same value invalidates every
+                    // view observing this model, including hidden windows.
+                    if !self.companionChangesAvailable { self.companionChangesAvailable = true }
                     self.recordCompletionChangeNotice(notice)
                     revision = notice.revision
                     failures = 0
@@ -4279,7 +4282,7 @@ final class AppModel: ObservableObject {
                     self.enqueueRefresh(topics)
                 } catch {
                     guard !Task.isCancelled, generation == self.connectionGeneration else { return }
-                    self.companionChangesAvailable = false
+                    if self.companionChangesAvailable { self.companionChangesAvailable = false }
                     self.completionWakeState.disconnected()
                     if let error = error as? LocalRPCError, error.isUnsupportedMethod {
                         self.companionChangesUnsupported = true
@@ -4297,8 +4300,8 @@ final class AppModel: ObservableObject {
         helperChangesTask = nil
         companionChangesTask?.cancel()
         companionChangesTask = nil
-        helperChangesAvailable = false
-        companionChangesAvailable = false
+        if helperChangesAvailable { helperChangesAvailable = false }
+        if companionChangesAvailable { companionChangesAvailable = false }
         helperChangesUnsupported = false
         companionChangesUnsupported = false
         completionWakeState = CompletionNotificationWakeState()

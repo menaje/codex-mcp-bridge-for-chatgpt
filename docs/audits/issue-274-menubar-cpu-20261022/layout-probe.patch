@@ -1,0 +1,62 @@
+diff --git a/macos/Tests/CodexBridgeKitTests/SkillsLibraryTextInputTests.swift b/macos/Tests/CodexBridgeKitTests/SkillsLibraryTextInputTests.swift
+index 3fce82b..8b344f5 100644
+--- a/macos/Tests/CodexBridgeKitTests/SkillsLibraryTextInputTests.swift
++++ b/macos/Tests/CodexBridgeKitTests/SkillsLibraryTextInputTests.swift
+@@ -2,0 +3 @@ import CodexBridgeKit
++import Darwin
+@@ -7,0 +9,33 @@ final class SkillsLibraryTextInputTests: XCTestCase {
++    @MainActor
++    func testStableLibraryLayout() async throws {
++        let content = (0..<200).map { "## Section \($0)\n\nA stable paragraph with **emphasis**, `code`, and [a link](references/api.md).\n\n- First item\n- Second item\n" }.joined(separator: "\n")
++        let fixture = try await SkillTextFixture(content: content)
++        defer { fixture.close() }
++        let status = String(decoding: try JSONEncoder().encode(fixture.model.helperStatus), as: UTF8.self)
++        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": fixture.root.path])
++        let helper = try NativeRPCFixture(path: paths.helperSocket.path) { method in
++            if method == "helper.health" { return NativeFixtureReply(body: "{\"result\":\(status)}") }
++            if method == "changes.wait" { return NativeFixtureReply(body: #"{"result":{"revision":"quiet:0","topics":[]}}"#, delay: 25) }
++            return NativeFixtureReply(body: #"{"error":{"code":-32601,"message":"unsupported"}}"#)
++        }
++        defer { helper.stop() }
++        await fixture.model.loadBridgeSkill(.init(skillId: "bridge_text_fixture", version: "1"))
++        try await fixture.settle()
++        fixture.window.orderFront(nil)
++        await fixture.model.refreshStatus()
++        try await Task.sleep(for: .seconds(2))
++        for mode in ["notice-traffic"] {
++            let start = fixture.host.layoutCount
++            var usage = rusage()
++            getrusage(RUSAGE_SELF, &usage)
++            let cpu = Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) + Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1_000_000
++            let clock = ContinuousClock.now
++            for _ in 0..<600 {
++                try await Task.sleep(for: .milliseconds(100))
++            }
++            getrusage(RUSAGE_SELF, &usage)
++            let elapsedCPU = Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) + Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1_000_000 - cpu
++            print("LAYOUT PROBE \(mode): passes=\(fixture.host.layoutCount - start), cpu=\(elapsedCPU), elapsed=\(clock.duration(to: .now))")
++        }
++    }
++
+@@ -194,0 +229 @@ private final class SkillTextFixture {
++    let host: SkillLayoutCountingHost
+@@ -213 +248,2 @@ private final class SkillTextFixture {
+-        window.contentView = NSHostingView(rootView: SkillsLibraryWindowView().environmentObject(model).environmentObject(state))
++        host = SkillLayoutCountingHost(rootView: AnyView(SkillsLibraryWindowView().environmentObject(model).environmentObject(state)))
++        window.contentView = host
+@@ -251,0 +288,9 @@ private final class SkillTextFixture {
++@MainActor
++private final class SkillLayoutCountingHost: NSHostingView<AnyView> {
++    private(set) var layoutCount = 0
++    override func layout() {
++        layoutCount += 1
++        super.layout()
++    }
++}
++
+@@ -256,0 +302 @@ private final class SkillTextResponses: @unchecked Sendable {
++    private var noticeRevision = 0
+@@ -283,0 +330,3 @@ private final class SkillTextResponses: @unchecked Sendable {
++            case "changes.wait":
++                noticeRevision += 1
++                return NativeFixtureReply(body: "{\"result\":{\"revision\":\"probe:\(noticeRevision)\",\"topics\":[\"dashboard\"]}}", delay: 0.1)
