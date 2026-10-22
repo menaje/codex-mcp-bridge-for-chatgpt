@@ -1,0 +1,26 @@
+[0/1] Planning build
+Building for debugging...
+[0/6] Write sources
+[2/6] Write swift-version--58304C5D6DBC2206.txt
+[4/8] Emitting module CodexBridgeMenuBar
+[5/8] Compiling CodexBridgeMenuBar AppModel.swift
+[5/9] Write Objects.LinkFileList
+[6/9] Linking CodexBridgeMenuBar
+[7/9] Applying CodexBridgeMenuBar
+[9/11] Emitting module CodexBridgeKitTests
+[10/11] Compiling CodexBridgeKitTests SkillsLibraryTextInputTests.swift
+[10/12] Write Objects.LinkFileList
+[11/12] Linking CodexBridgeMacPackageTests
+Build complete! (10.05s)
+Test Suite 'Selected tests' started at 2026-10-22 11:07:21.254.
+Test Suite 'CodexBridgeMacPackageTests.xctest' started at 2026-10-22 11:07:21.255.
+Test Suite 'SkillsLibraryTextInputTests' started at 2026-10-22 11:07:21.255.
+Test Case '-[CodexBridgeKitTests.SkillsLibraryTextInputTests testStableLibraryLayout]' started.
+Test Case '-[CodexBridgeKitTests.SkillsLibraryTextInputTests testStableLibraryLayout]' passed (67.798 seconds).
+Test Suite 'SkillsLibraryTextInputTests' passed at 2026-10-22 11:08:29.053.
+	 Executed 1 test, with 0 failures (0 unexpected) in 67.798 (67.798) seconds
+Test Suite 'CodexBridgeMacPackageTests.xctest' passed at 2026-10-22 11:08:29.053.
+	 Executed 1 test, with 0 failures (0 unexpected) in 67.798 (67.798) seconds
+Test Suite 'Selected tests' passed at 2026-10-22 11:08:29.053.
+	 Executed 1 test, with 0 failures (0 unexpected) in 67.798 (67.800) seconds
+LAYOUT PROBE notice-traffic: passes=603, cpu=17.974794, elapsed=63.982559042000005 seconds
