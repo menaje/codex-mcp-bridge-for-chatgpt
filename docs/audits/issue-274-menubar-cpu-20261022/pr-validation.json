@@ -1,0 +1,40 @@
+{
+  "date": "2026-10-22",
+  "purpose": "Validate the issue-274-only PR on the remote dev base; the original local dev also contains unrelated unpublished work.",
+  "pullRequestBase": {
+    "branch": "dev",
+    "commit": "505421371e884549cd24d6ec6ddde5940e889bbb"
+  },
+  "validatedImplementationCommit": "fca8e88e0c054bde4816a57005cb1796435bdd81",
+  "originalLocalDevImplementationCommit": "e7c128be2a77625d7773f08d3af69a346c543dc5",
+  "stablePatchId": "f427136f7b4787757ac179c3cbf48eec6f3ba11e",
+  "patchIdMatchesOriginal": true,
+  "validatedInputSHA256": {
+    "macos/Sources/CodexBridgeMenuBar/AppModel.swift": "1886a136d4c80a3804a33ca8fed1550279c0d6c30ebf4f4fd176679630e5b8d0",
+    "macos/Tests/CodexBridgeKitTests/ChangeObservationTests.swift": "1d7cabdb8572e22919810bd64b1cf8dabb758d50aaa10993502be4fb877d3426",
+    ".changes/issue-274-menubar-cpu.json": "eeeee731ea39669f0072d0f8c72e0088bf52a9aba30d7737ef5fa77e9e0e85ba"
+  },
+  "command": "CODEX_MCP_BRIDGE_CODEX=<isolated @openai/codex@0.153.3 binary> npm run validate:affected -- --base origin/dev",
+  "exitCode": 0,
+  "affectedScope": {
+    "pathsAtValidation": 8,
+    "node": false,
+    "macOS": true,
+    "checks": [
+      "validate:fast",
+      "macos:check"
+    ]
+  },
+  "nativeTests": {
+    "summary": "Executed 353 tests, with 3 tests skipped and 0 failures (0 unexpected) in 90.813 (90.873) seconds",
+    "executed": 353,
+    "skipped": 3,
+    "failed": 0,
+    "skips": "Existing opt-in cold-helper, live companion and live HTTPS pairing scenarios."
+  },
+  "rawLogSHA256": "f7c9ecfa7c396e50a3030e6fd90767a9d3484daf8d6a90605ece4e456592d299",
+  "performanceEvidence": "performance-comparison.json records the earlier A/B comparison at source base 4eb7216. The pre-fix AppModel and SkillsLibraryTextInputTests fixture are identical on that measured base and the PR base. The archived optional probe also applies cleanly to the PR branch. Performance was not remeasured for this PR preparation.",
+  "automaticCI": "The checked-in workflows do not run for ordinary pull requests targeting dev. Local affected validation is the verification evidence.",
+  "installation": "No installed app replacement, production service restart or job interruption.",
+  "reviewWork": "PR remains open for review; issue 274 remains open for installed-app and remaining-condition verification."
+}
