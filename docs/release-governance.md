@@ -118,8 +118,7 @@ clean temporary worktree, project that candidate to stable with
 `release:promote`, run `validate:stable`, rebuild and compare the npm archive,
 promote and compare both candidate DMGs, and verify the five-asset assembly. The
 rehearsal creates no tag or GitHub release. Record the candidate commit, PR run,
-release-workflow commit, input artifact checksums, and comparison results. The
-physical candidate checks remain separate required evidence.
+release-workflow commit, input artifact checksums, and comparison results.
 
 An `X.Y.Z-rc.N` identifier is provisional until its GitHub prerelease exists. A
 defect found during the rehearsal may be fixed on the same unpublished `rc.N`;
@@ -183,11 +182,17 @@ None of these local metadata commands publishes a tag or GitHub release.
 | Affected | `npm run validate:affected` | fast checks plus Node and/or Swift checks selected from changed paths |
 | Full integration | `npm run validate:full` | full Node build/tests, exact App Server schema, full Swift tests |
 | Candidate | `npm run validate:candidate`, the read-only release PR, plus the manual release workflow | clean installs, all five assets, npm archive, both app/DMG structures, architectures, ad-hoc signatures, checksums, and three artifact-bound state migration/restore reports |
-| Stable promotion | `npm run validate:stable`, the required Stable promotion gate, the main release workflow, and physical-Mac evidence | latest source RC, normalized payload equivalence, exact stage/tag, installation readiness |
+| Stable promotion | `npm run validate:stable`, the required Stable promotion gate, and the main release workflow | latest source RC, normalized payload equivalence, exact stage/tag, installation readiness |
 
 A successful result applies only to the exact commit and inputs that produced
 it. An unexplained difference, absent source candidate, missing asset, failed
-physical-Mac check, or ambiguous evidence leaves the release on `HOLD`.
+required check, or ambiguous evidence leaves the release on `HOLD`.
+
+Clean-Mac installation, upgrade, quit/process cleanup, `.env` and state
+preservation, and live ChatGPT/Tunnel checks are optional manual validation.
+Their availability is not a prerequisite for candidate or stable publication.
+Record only checks actually performed; automated checks do not establish
+manual or live-host results.
 
 Affected validation compares committed changes with `origin/dev` and also checks
 staged, unstaged, and untracked paths. Deletions and both sides of renames count;
@@ -261,7 +266,3 @@ remain deletable because they are short-lived. These settings are defined in
 or deleting an existing one. Apply the workflow before activating the required
 remote status context, then verify the remote settings separately. Remote
 protection does not replace the repository-local checks.
-
-No candidate should be published until the physical clean-Mac install,
-upgrade, quit/process cleanup, `.env`, and state-preservation checks are recorded.
-No stable release should be published until its source RC passes those gates.

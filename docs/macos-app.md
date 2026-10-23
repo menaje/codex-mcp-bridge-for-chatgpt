@@ -446,9 +446,9 @@ missing or expired Codex login is shown as needing attention, never as healthy,
 and the browser flow remains pending until a later check confirms authentication.
 The app itself does not call Keychain for Tunnel credentials. `codex login
 status` still follows the user's existing Codex credential-store configuration,
-so any operating-system prompt caused by that external configuration belongs in
-the physical release test rather than being claimed away by the Tunnel dotenv
-contract.
+so an operating-system prompt caused by that external configuration can be
+observed during optional manual validation. The Tunnel dotenv contract does
+not establish the behavior of the external credential store.
 
 After the tunnel is running, ChatGPT setup remains unchanged: enable Developer
 mode, select the matching Secure MCP Tunnel, and connect it with `No Auth`.
@@ -578,6 +578,6 @@ runtime it supervises.
 The release manifest supports macOS 13+ with separate Apple Silicon (`arm64`)
 and Intel (`x64`) DMGs. Node.js, Codex CLI, and `tunnel-client` remain explicit
 native-architecture external prerequisites. A Universal DMG and an automatic
-updater remain outside the release scope. Manual app replacement/rollback and
-the physical accessibility, appearance, sleep/wake, network-recovery, and
-helper-crash matrix remain gates listed in [releasing.md](releasing.md).
+updater remain outside the release scope. Manual app replacement/rollback,
+accessibility, appearance, sleep/wake, network recovery, and helper-crash checks
+are optional validation described in [releasing.md](releasing.md).

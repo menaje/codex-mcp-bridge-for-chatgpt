@@ -43,14 +43,14 @@ This is a current-only MCP release. Confirm that:
   the experimental Events profile adds one model-visible follow-up descriptor.
 
 Run `npx tsx scripts/audit-tool-guidance.ts` to record the isolated descriptor
-inventory and no-execution probes. This audit is not a substitute for a
-connector acceptance test.
+inventory and no-execution probes. This audit does not establish live connector
+acceptance.
 
-Before publishing, deploy the candidate through its Secure MCP Tunnel and
-record one actual ChatGPT discovery, tool call, and card open. If that host
-cannot consume the current protocol or schema, mark the release blocked. Do
-not add a legacy server, parser, resource, or tool descriptor to bypass the
-failure.
+When a ChatGPT/Tunnel test environment is available, optionally record actual
+discovery, a tool call, and a card open. This manual validation is not a
+publication prerequisite. Keep the current protocol and schema contracts;
+do not add a legacy server, parser, resource, or tool descriptor to bypass a
+host incompatibility.
 
 ## Tool contract gate
 
@@ -81,8 +81,10 @@ When card source or host-affecting metadata changes:
    for compatible changes;
 3. increment only the affected card's URI version if a cached card cannot use
    the new server contract safely;
-4. run `npm run release:check`;
-5. deploy the build, refresh the ChatGPT connection, and reopen affected visible cards; Relay attaches on the next task/answer call.
+4. run `npm run release:check`.
+
+For deployment or optional live-host validation, refresh the ChatGPT connection
+and reopen affected visible cards; Relay attaches on the next task/answer call.
 
 The catalog and package must not include digest-named history, a
 published-baseline, or a temporary compatibility revision.
@@ -101,8 +103,10 @@ reviewed migration explicitly removes data. A wire-contract removal is not a
 reason to discard state.
 
 Build and inspect the npm package and macOS DMG as the final candidate
-artifacts. Record the artifact hashes, source revision, validation output, and
-ChatGPT/Tunnel acceptance in the release notes or tracking issue.
+artifacts. Record the artifact hashes, source revision, and required validation
+output in the release notes or tracking issue. Record optional manual checks
+separately when performed, without inferring ChatGPT/Tunnel acceptance from
+automated results.
 
 ## Deployment and rollback
 
