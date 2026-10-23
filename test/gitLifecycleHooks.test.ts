@@ -140,3 +140,13 @@ it("rejects ambiguous cleanup commands and leaves ordinary commands alone", () =
     })).toEqual({});
   });
 });
+
+it("routes remote deletion through merge verification without bypassing an explicit lease", () => {
+  withRepository(repository => {
+    const result = runHook("pre-tool-use", repository, {
+      tool_name: "Bash", tool_input: { command: "git push origin --delete codex/task" }
+    });
+    expect(result.hookSpecificOutput.permissionDecision).toBe("deny");
+    expect(result.hookSpecificOutput.permissionDecisionReason).toContain("explicit --force-with-lease");
+  });
+});
