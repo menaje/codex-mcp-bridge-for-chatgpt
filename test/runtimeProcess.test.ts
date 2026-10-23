@@ -1719,7 +1719,8 @@ describe("isolated production runtime", () => {
     await expect(runtime.server.applicationService.settingsSnapshot()).resolves.toMatchObject({
       settings: { settingsRevision: expect.any(Number) }
     });
-  }, 12_000);
+    // Cover initial startup plus both independent eight-second recovery waits.
+  }, 30_000);
 
   it("keeps the operational database rollback-compatible and rebuilds telemetry independently", async () => {
     const runtime = await start();

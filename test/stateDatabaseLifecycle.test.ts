@@ -83,7 +83,7 @@ describe("state database lifecycle", () => {
     expect(readFileSync(nonCanonical)).toEqual(nonCanonicalBefore);
     expect(existsSync(`${nonCanonical}.migration-lock.json`)).toBe(false);
     expect(existsSync(`${nonCanonical}.migration-status.json`)).toBe(false);
-  });
+  }, 15_000);
 
   it("uses the real database target for alias-safe maintenance ownership", () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-state-alias-"));

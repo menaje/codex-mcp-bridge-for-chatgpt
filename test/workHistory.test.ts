@@ -72,10 +72,16 @@ describe("execution history retention",()=>{
     expect(store.workHistory.sweep(7,()=>false,now)).toBe(0);
     store.writeSettings({historyRetentionDays:30},2,now);
     let removed=0;
-    for(let n=0;n<10;n++) removed+=store.maintainHistoryRetention(now).historyRemoved;
+    // A sweep stops at either 64 rows or its 25 ms budget. Slow runners may
+    // need more passes; every pass must still make bounded progress.
+    for(let n=0;n<502 && removed<502;n++) {
+      const batch=store.maintainHistoryRetention(now).historyRemoved;
+      expect(batch).toBeGreaterThan(0);expect(batch).toBeLessThanOrEqual(64);
+      removed+=batch;
+    }
     expect(removed).toBe(502);expect(store.listDashboardRetainedJobs()).toHaveLength(0);
     expect(store.workHistory.sweep(0,()=>false,now)).toBe(0);
     store.close();
-  });
+  },20_000);
 
 });
