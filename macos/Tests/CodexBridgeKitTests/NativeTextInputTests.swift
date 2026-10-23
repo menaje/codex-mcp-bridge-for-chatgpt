@@ -354,25 +354,31 @@ final class NativeTextInputTests: XCTestCase {
         XCTAssertEqual(fixture.state.editor, "한글 초안")
 
         let longDocument = String(repeating: "한글 문서 한 줄\n", count: 300)
+        let scrollView = try XCTUnwrap(editor.enclosingScrollView)
         fixture.state.editor = longDocument
-        // Wait for the external binding before asserting AppKit's document geometry.
+        // Binding delivery and AppKit document layout settle on separate turns.
         for _ in 0..<100 {
             try await fixture.refresh()
-            if editor.string == longDocument { break }
+            if editor.string == longDocument,
+               editor.frame.height > scrollView.contentSize.height,
+               abs(editor.frame.width - scrollView.contentSize.width) <= 1 { break }
         }
         XCTAssertEqual(editor.string, longDocument)
-        let scrollView = try XCTUnwrap(editor.enclosingScrollView)
         XCTAssertGreaterThan(editor.frame.width, 200)
         XCTAssertGreaterThan(editor.frame.height, scrollView.contentSize.height)
         XCTAssertEqual(editor.frame.width, scrollView.contentSize.width, accuracy: 1)
         fixture.window.setContentSize(NSSize(width: 840, height: 520))
-        try await fixture.refresh()
+        for _ in 0..<100 {
+            try await fixture.refresh()
+            if abs(editor.frame.width - scrollView.contentSize.width) <= 1 { break }
+        }
         XCTAssertEqual(editor.frame.width, scrollView.contentSize.width, accuracy: 1)
 
         fixture.state.editor = "짧은 문서"
         for _ in 0..<100 {
             try await fixture.refresh()
-            if editor.string == "짧은 문서" { break }
+            if editor.string == "짧은 문서",
+               abs(editor.frame.height - scrollView.contentSize.height) <= 1 { break }
         }
         XCTAssertEqual(editor.string, "짧은 문서")
         XCTAssertEqual(editor.frame.height, scrollView.contentSize.height, accuracy: 1)

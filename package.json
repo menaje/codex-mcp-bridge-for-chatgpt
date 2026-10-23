@@ -130,7 +130,7 @@
     "smol-toml": "1.9.0",
     "standardwebhooks": "^1.1.1",
     "tar": "7.5.22",
-    "zod": "^4.2.0"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "^2.3.1",
