@@ -88,7 +88,12 @@ describe("Dashboard query cost", () => {
       expect(statements.filter(sql => /FROM automatic_recovery_incidents WHERE identity_key=/u.test(sql))).toHaveLength(0);
       expect(statements.filter(sql => /SELECT activity_id,title FROM activities/u.test(sql))).toHaveLength(2);
       expect(statements.filter(sql => /SELECT \* FROM thread_connections\s+WHERE thread_id IN/u.test(sql))).toHaveLength(1);
-      expect(statements.length).toBeLessThan(50);
+      // Retention-aware projections validate the saved policy at each read
+      // boundary. These 18 reads stay constant for both 20 and 120 Agents.
+      const policyReads = statements.filter(sql => sql === "SELECT payload,settings_revision FROM user_settings WHERE singleton=1");
+      expect(policyReads.length).toBeLessThanOrEqual(18);
+      expect(statements.length - policyReads.length).toBeLessThan(50);
+      expect(statements.length).toBeLessThan(60);
       expect(statements.filter(sql => /^\s*(INSERT|UPDATE|DELETE|REPLACE|BEGIN|COMMIT)/u.test(sql))).toEqual([]);
     } finally {
       await server.close();

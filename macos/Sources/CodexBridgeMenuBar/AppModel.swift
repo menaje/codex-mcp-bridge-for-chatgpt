@@ -388,7 +388,12 @@ final class AppModel: ObservableObject {
         dashboardHistoryExpiryTask?.cancel()
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let rows = (snapshot.statusRows ?? []) + snapshot.activeRows + snapshot.terminalRows + snapshot.idleRows + (snapshot.backgroundRows ?? []) + (snapshot.problems?.rows.map { $0.row } ?? [])
+        var rows: [DashboardRow] = snapshot.statusRows ?? []
+        rows.append(contentsOf: snapshot.activeRows)
+        rows.append(contentsOf: snapshot.terminalRows)
+        rows.append(contentsOf: snapshot.idleRows)
+        rows.append(contentsOf: snapshot.backgroundRows ?? [])
+        rows.append(contentsOf: snapshot.problems?.rows.map { $0.row } ?? [])
         let dates = rows.compactMap { row -> Date? in
             if let raw = row.nextExpiryAt { return formatter.date(from: raw) ?? ISO8601DateFormatter().date(from: raw) }
             guard snapshot.historyModeApplied == "jobs", let raw = row.latestTurn?.endedAt,

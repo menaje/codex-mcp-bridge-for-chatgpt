@@ -380,7 +380,7 @@ describe("isolated production runtime", () => {
     expect(executionProcessIds[0]).not.toBe(stateProcessIds[0]);
     expect(execFileSync("ps", ["-p", String(executionProcessIds[0]), "-o", "command="], {
       encoding: "utf8"
-    })).toContain("Codex MCP Bridge Execution");
+    })).toContain(process.platform === "darwin" ? "Codex MCP Bridge Execution" : "--codex-execution-child");
 
     const taskClient = await connectTaskClient(runtime.baseUrl);
     let executionStopped = false;

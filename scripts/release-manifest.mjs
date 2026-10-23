@@ -172,7 +172,11 @@ const STATE_DERIVED_CHECKPOINTS = [
     return [schema, 3, `bridge-state-${schema - 1}-to-${schema}`];
   }),
   [17, 16, "bridge-state-16-to-17"],
-  [19, 18, "bridge-state-18-to-19"]
+  [19, 18, "bridge-state-18-to-19"],
+  ...Array.from({ length: 12 }, (_, index) => {
+    const schema = index + 20;
+    return [schema, 18, `bridge-state-${schema - 1}-to-${schema}`];
+  })
 ];
 
 export function loadReleaseManifest(repoRoot = DEFAULT_REPO_ROOT) {

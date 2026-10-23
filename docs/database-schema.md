@@ -271,7 +271,7 @@ snapshot.
 The supported schema-3 fixture is taken from the published v0.3.0 implementation
 and follows the fixed migration path through schema 32. Exact deployed-development
 fixtures cover schemas 16 and 18; the catalog names derived checkpoints for
-schemas 4 through 15, 17, and 19 from those sources. `state-migrations.json` lists
+schemas 4 through 15, 17, and 19 through 31 from those sources. `state-migrations.json` lists
 the full supported source range, migration checksums, and fixture provenance.
 Schemas 1 and 2 are
 outside the supported release floor and are rejected before a backup or mutation.

@@ -1173,14 +1173,17 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
           }
           const existingRun = request.kind === "start" ? this.lifecycleRunIdentity() : null;
           const cli = changesRuntime && !existingRun ? await this.requestedCliManager().activationTarget() : undefined;
-          const stateFile = configuredStateDatabaseFile(this.envFile);
-          const inspection = request.kind === "start" && !existingRun && existsSync(stateFile)
-            ? inspectStateDatabase(stateFile) : null;
+          let inspection: ReturnType<typeof inspectStateDatabase> | null = null;
+          if (request.kind === "start" && !existingRun) {
+            const stateFile = configuredStateDatabaseFile(this.envFile);
+            if (existsSync(stateFile)) inspection = inspectStateDatabase(stateFile);
+          }
           const startupRecoveryProtected = inspection !== null &&
             ((inspection.schemaVersion !== null && inspection.schemaVersion !== CURRENT_STATE_DATABASE_SCHEMA) || inspection.pendingMigrationId !== null);
           return { request, target: { cli, helperInstance: this.helperInstance, bootId: this.startupBoot.id, startupRecoveryProtected,
             ...(existingRun ? { existingRun } : {}),
-            ...(changesRuntime ? { environmentFingerprint: this.environmentFingerprint() } : {}) }, description: cli?.description };
+            ...(changesRuntime && (!existingRun || request.configuration !== undefined)
+              ? { environmentFingerprint: this.environmentFingerprint() } : {}) }, description: cli?.description };
         },
         inspect: record => this.inspectLifecycle(record),
         execute: async (record, reportPhase, recoveryAction) => {
@@ -3100,7 +3103,7 @@ export function readProcessTable(deadlineAt = Infinity, spawnInspector: typeof s
             const [pid, parentPid, processGroupId] = values;
             if (values.length !== 3 || !Number.isSafeInteger(pid) || pid <= 0 ||
                 !Number.isSafeInteger(parentPid) || parentPid < 0 ||
-                !Number.isSafeInteger(processGroupId) || processGroupId <= 0) {
+                !Number.isSafeInteger(processGroupId) || processGroupId < 0) {
               throw new Error("Process table row format is invalid.");
             }
             return { pid, parentPid, processGroupId };

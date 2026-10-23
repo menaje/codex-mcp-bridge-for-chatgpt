@@ -20,6 +20,9 @@ import { OPERATIONAL_STATE_PROTOCOL_VERSION } from "../src/stateService.js";
 
 const CURRENT_PROTOCOL = "2026-07-28";
 const CURRENT_TOOL_ORDER = [
+  "codex_relay",
+  "codex_relay_wait",
+  "codex_relay_control",
   "codex_answer",
   "bridge_skill",
   "bridge_skill_manage",
@@ -382,6 +385,7 @@ describe("MCP 2026-07-28 HTTP server", () => {
       const resources = await client.listResources();
       expect(resources.resources.map((resource) => resource.name).sort()).toEqual([
         "codex-dashboard-card",
+        "codex-relay-card",
         "codex-settings-card"
       ]);
       const dashboard = resources.resources.find((resource) => resource.name === "codex-dashboard-card");
@@ -408,6 +412,27 @@ describe("MCP 2026-07-28 HTTP server", () => {
     } finally {
       await client.close();
     }
+  });
+
+  it("bounds structured tool input before validation and keeps subsequent requests available", async () => {
+    const { baseUrl } = await start();
+    const client = currentClient("bounded-input-regression");
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`)));
+    try {
+      const rejected = await client.callTool({ name: "codex_models", arguments: { extra: Array(10_001).fill(0) } });
+      expect(rejected.isError).toBe(true);
+      expect(JSON.stringify(rejected.content)).toContain("maximum of 10000 elements");
+      const oversized = await fetch(`${baseUrl}/mcp`, {
+        method: "POST",
+        headers: currentHeaders("tools/call", "codex_models"),
+        body: JSON.stringify(currentRequest("tools/call", {
+          name: "codex_models", arguments: { extra: "x".repeat(8 * 1024 * 1024) }
+        }))
+      });
+      expect(oversized.status).toBe(413);
+      await oversized.body?.cancel();
+      expect((await client.callTool({ name: "codex_models", arguments: {} })).isError).not.toBe(true);
+    } finally { await client.close(); }
   });
 
   it("rejects the retired initialize handshake and stateful HTTP verbs", async () => {

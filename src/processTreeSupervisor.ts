@@ -510,7 +510,9 @@ export function readProcessTable(
         if (entries.length === 0 || !entries.every((entry) =>
             Number.isSafeInteger(entry.pid) && entry.pid > 0 &&
             Number.isSafeInteger(entry.parentPid) && entry.parentPid >= 0 &&
-            Number.isSafeInteger(entry.processGroupId) && entry.processGroupId > 0 &&
+            // Linux kernel processes may have PGID 0. Observation does not
+            // grant signal authority; supervised identities still require >= 2.
+            Number.isSafeInteger(entry.processGroupId) && entry.processGroupId >= 0 &&
             typeof entry.state === "string" && entry.state.length > 0 &&
             typeof entry.startedAt === "string" && entry.startedAt.length > 0
           )) throw new Error("Invalid process table rows.");

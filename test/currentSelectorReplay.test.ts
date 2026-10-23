@@ -180,7 +180,9 @@ describe("current task selector contract", () => {
       expect(replay.structuredContent).toMatchObject({
         replay: false,
         jobId: null,
-        error: { code: "PROJECT_REGISTRY_CHANGED" }
+        // Archiving retires the admitted project's handle before selector
+        // resolution; a replacement with the same name grants no authority.
+        error: { code: "HANDLE_UNAVAILABLE" }
       });
       expect(jobId).toEqual(expect.any(String));
       expect(upstream.calls).toHaveLength(1);

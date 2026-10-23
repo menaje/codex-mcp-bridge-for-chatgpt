@@ -157,7 +157,7 @@ try {
   })), undefined, settings.current.registryRevision);
   await probe("registered-but-all-archived", "codex_task", withSelection());
   assert.equal(upstreamCalls, 0);
-  const report = { date: "2026-09-19", protocolVersion: "2026-07-28", method: "actual current-protocol tools/list on an isolated bridge plus no-execution contract probes",
+  const report = { date: new Date().toISOString().slice(0, 10), protocolVersion: "2026-07-28", method: "actual current-protocol tools/list on an isolated bridge plus no-execution contract probes",
     realChatGptModelRun: false, installedServiceChanged: false, upstreamCalls,
     totals: { all: summaries.length, public: summaries.filter(t => t.public).length,
       private: summaries.filter(t => !t.public).length,

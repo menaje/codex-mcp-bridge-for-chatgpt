@@ -44,6 +44,7 @@ import type { OperationalStateOperationObservation } from "./stateService.js";
 import type { BridgeTelemetryService } from "./telemetryService.js";
 
 const MAX_MCP_REQUEST_BYTES = 8 * 1024 * 1024;
+class McpRequestBodyTooLargeError extends Error {}
 
 export const BRIDGE_READINESS_REASONS = [
   "ready",
@@ -230,6 +231,7 @@ export function createBridgeMcpServer(
       // cannot install an unguarded tools/call handler in its constructor.
       capabilities: { resources: {} },
       supportedProtocolVersions: ["2026-07-28"],
+      maxToolInputElements: 10_000,
       cacheHints: {
         "server/discover": { ttlMs: 0, cacheScope: "private" },
         "tools/list": { ttlMs: 0, cacheScope: "private" },
@@ -380,6 +382,7 @@ export function createHttpServer(
     {
       legacy: "reject",
       responseMode: "auto",
+      maxRequestBodySize: MAX_MCP_REQUEST_BYTES,
       onerror: (error) => {
         observeOperationFailure(runtimeOptions.onOperationFailure, error);
         logMcpError("MCP request failed", error);
@@ -412,6 +415,7 @@ export function createHttpServer(
     return new Response(JSON.stringify(body), { status: response.status, headers });
   } };
   const nodeMcpHandler = toNodeHandler(oauthMcpHandler, {
+    maxRequestBodySize: MAX_MCP_REQUEST_BYTES,
     onerror: (error) => {
       observeOperationFailure(runtimeOptions.onOperationFailure, error);
       logMcpError("MCP node adapter failed", error);
@@ -668,10 +672,13 @@ async function handleHttpRequest(
   let parsedBody: unknown;
   try {
     parsedBody = await readMcpJsonBody(req);
-  } catch {
-    writeJson(res, 400, {
+  } catch (error) {
+    const tooLarge = error instanceof McpRequestBodyTooLargeError;
+    writeJson(res, tooLarge ? 413 : 400, {
       jsonrpc: "2.0",
-      error: { code: -32700, message: "MCP request body is not valid UTF-8 JSON." },
+      error: { code: tooLarge ? -32600 : -32700, message: tooLarge
+        ? "MCP request body exceeds the 8 MiB limit."
+        : "MCP request body is not valid UTF-8 JSON." },
       id: null
     });
     return;
@@ -703,15 +710,14 @@ async function handleHttpRequest(
 async function readMcpJsonBody(req: IncomingMessage): Promise<unknown | undefined> {
   if (req.method === "GET" || req.method === "HEAD") return undefined;
   const declaredLength = Number(req.headers["content-length"] || 0);
-  if (!Number.isSafeInteger(declaredLength) || declaredLength < 0 || declaredLength > MAX_MCP_REQUEST_BYTES) {
-    throw new Error("MCP request body is too large.");
-  }
+  if (!Number.isSafeInteger(declaredLength) || declaredLength < 0) throw new Error("Invalid MCP Content-Length.");
+  if (declaredLength > MAX_MCP_REQUEST_BYTES) throw new McpRequestBodyTooLargeError();
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += bytes.length;
-    if (size > MAX_MCP_REQUEST_BYTES) throw new Error("MCP request body is too large.");
+    if (size > MAX_MCP_REQUEST_BYTES) throw new McpRequestBodyTooLargeError();
     chunks.push(bytes);
   }
   if (size === 0) return undefined;

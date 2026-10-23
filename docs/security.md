@@ -15,6 +15,9 @@ an operating-system sandbox or a multi-tenant service.
 - Host validation runs before MCP dispatch. Browser requests with an Origin
   header must pass the explicit origin allowlist; native and Secure MCP Tunnel
   requests may omit Origin.
+- MCP HTTP bodies are limited to 8 MiB. Tool arguments are limited to 10,000
+  structured elements before schema validation, including array entries and
+  object keys. Long strings remain subject to the request byte limit.
 - Local HTTP authorization remains enforced unless the operator explicitly
   enables the local no-auth development setting. Tunnel credentials live in a
   private owner-only runtime dotenv file outside registered projects.

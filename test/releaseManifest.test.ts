@@ -125,6 +125,14 @@ describe("release manifest", () => {
       expect.objectContaining({ schema: 18, kind: "deployed-development" })
     ]));
     for (const source of manifest.stateCompatibility.supportedSourceSchemas) {
+      const fixture = catalog.fixtures.find((entry: any) => entry.schema === source);
+      const checkpoint = catalog.derivedCheckpoints.find((entry: any) => entry.schema === source);
+      expect(Boolean(fixture) !== Boolean(checkpoint), `schema ${source} must have exactly one audit seed`).toBe(true);
+      if (checkpoint) {
+        expect(catalog.fixtures.some((entry: any) => entry.schema === checkpoint.sourceFixtureSchema)).toBe(true);
+        expect(checkpoint.sourceFixtureSchema).toBeLessThan(source);
+        expect(catalog.migrations.find((entry: any) => entry.id === checkpoint.afterMigrationId)?.toSchema).toBe(source);
+      }
       let schema = source;
       const visited = new Set<number>();
       while (schema !== 32) {

@@ -383,6 +383,78 @@
       "kind": "derived-migration-checkpoint",
       "sourceFixtureSchema": 18,
       "afterMigrationId": "bridge-state-18-to-19"
+    },
+    {
+      "schema": 20,
+      "kind": "derived-migration-checkpoint",
+      "sourceFixtureSchema": 18,
+      "afterMigrationId": "bridge-state-19-to-20"
+    },
+    {
+      "schema": 21,
+      "kind": "derived-migration-checkpoint",
+      "sourceFixtureSchema": 18,
+      "afterMigrationId": "bridge-state-20-to-21"
+    },
+    {
+      "schema": 22,
+      "kind": "derived-migration-checkpoint",
+      "sourceFixtureSchema": 18,
+      "afterMigrationId": "bridge-state-21-to-22"
+    },
+    {
+      "schema": 23,
+      "kind": "derived-migration-checkpoint",
+      "sourceFixtureSchema": 18,
+      "afterMigrationId": "bridge-state-22-to-23"
+    },
+    {
+      "schema": 24,
+      "kind": "derived-migration-checkpoint",
+      "sourceFixtureSchema": 18,
+      "afterMigrationId": "bridge-state-23-to-24"
+    },
+    {
+      "schema": 25,
+      "kind": "derived-migration-checkpoint",
+      "sourceFixtureSchema": 18,
+      "afterMigrationId": "bridge-state-24-to-25"
+    },
+    {
+      "schema": 26,
+      "kind": "derived-migration-checkpoint",
+      "sourceFixtureSchema": 18,
+      "afterMigrationId": "bridge-state-25-to-26"
+    },
+    {
+      "schema": 27,
+      "kind": "derived-migration-checkpoint",
+      "sourceFixtureSchema": 18,
+      "afterMigrationId": "bridge-state-26-to-27"
+    },
+    {
+      "schema": 28,
+      "kind": "derived-migration-checkpoint",
+      "sourceFixtureSchema": 18,
+      "afterMigrationId": "bridge-state-27-to-28"
+    },
+    {
+      "schema": 29,
+      "kind": "derived-migration-checkpoint",
+      "sourceFixtureSchema": 18,
+      "afterMigrationId": "bridge-state-28-to-29"
+    },
+    {
+      "schema": 30,
+      "kind": "derived-migration-checkpoint",
+      "sourceFixtureSchema": 18,
+      "afterMigrationId": "bridge-state-29-to-30"
+    },
+    {
+      "schema": 31,
+      "kind": "derived-migration-checkpoint",
+      "sourceFixtureSchema": 18,
+      "afterMigrationId": "bridge-state-30-to-31"
     }
   ]
 }

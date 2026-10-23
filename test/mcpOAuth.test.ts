@@ -236,7 +236,10 @@ describe("MCP OAuth configuration and HTTP discovery", () => {
     }
     expect((await rpc(f, "server/discover")).body.result.capabilities.events).toEqual({});
     const list = await rpc(f, "tools/list");
-    expect(list.body.result.tools).toHaveLength(17);
+    expect(list.body.result.tools).toHaveLength(20);
+    expect(list.body.result.tools.map((tool: { name: string }) => tool.name)).toEqual(expect.arrayContaining([
+      "codex_relay", "codex_relay_wait", "codex_relay_control", "codex_event_access"
+    ]));
     for (const tool of list.body.result.tools) {
       expect(tool.securitySchemes).toEqual([{ type: "oauth2", scopes: ["bridge"] }]);
       expect(tool._meta.securitySchemes).toEqual(tool.securitySchemes);

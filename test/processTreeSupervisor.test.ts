@@ -162,9 +162,24 @@ describe("supervised process table observation", () => {
   );
 
   it.skipIf(process.platform === "win32")(
+    "accepts kernel PGID zero in observation without granting supervised signal authority",
+    async () => {
+      const rows = await readProcessTable(() => spawn(
+        process.execPath, ["-e", "process.stdout.write('2 0 0 S Fri Oct 23 00:00:00 2026\\n999 1 999 S Fri Oct 23 00:00:01 2026\\n')"],
+        { stdio: ["ignore", "pipe", "pipe"] }
+      ));
+      expect(rows.map(({ pid, processGroupId }) => ({ pid, processGroupId }))).toEqual([
+        { pid: 2, processGroupId: 0 }, { pid: 999, processGroupId: 999 }
+      ]);
+      const registry = new SupervisedProcessTreeRegistry(async () => rows);
+      expect(() => registry.remember({ pid: 2, processGroupId: 0 })).toThrow("Invalid supervised root");
+    }
+  );
+
+  it.skipIf(process.platform === "win32")(
     "rejects malformed process rows instead of accepting an incomplete tree",
     async () => {
-      for (const output of ["not-a-process-row\n", "999 1 999 S\n"]) {
+      for (const output of ["not-a-process-row\n", "999 1 999 S\n", "999 1 -1 S Fri Oct 23 00:00:00 2026\n"]) {
         const error = await readProcessTable(() => spawn(
           process.execPath, ["-e", `process.stdout.write(${JSON.stringify(output)})`],
           { stdio: ["ignore", "pipe", "pipe"] }

@@ -39,8 +39,8 @@ This is a current-only MCP release. Confirm that:
 - current discovery, tool call, resource list, and resource read work with the
   SDK v2 client;
 - host, Origin, and configured authorization checks run before MCP dispatch;
-- the 14 model-visible and 6 app-private current descriptors are the only
-  discovery inventory.
+- ordinary discovery contains 13 model-visible and 6 app-private descriptors;
+  the experimental Events profile adds one model-visible follow-up descriptor.
 
 Run `npx tsx scripts/audit-tool-guidance.ts` to record the isolated descriptor
 inventory and no-execution probes. This audit is not a substitute for a

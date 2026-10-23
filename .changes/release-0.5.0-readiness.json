@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Fix Linux process observation and macOS build compatibility, preserve adoption of an already running environment, and audit every supported state schema and active card during release validation.",
+  "breaking": false,
+  "migration": null
+}

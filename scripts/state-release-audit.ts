@@ -216,8 +216,8 @@ function auditUiCompatibility(): Record<string, unknown> {
   );
   assert.deepEqual(packagedFiles, physicalFiles, "artifact must contain only explicitly selected UI snapshots");
 
-  assert.equal(counts.selected, 2);
-  assert.equal(counts.developmentCurrent, 2);
+  assert.equal(counts.selected, runtimeUiCatalog.activeResources.length);
+  assert.equal(counts.developmentCurrent, runtimeUiCatalog.activeResources.length);
   return {
     catalogVersion: runtimeUiCatalog.catalogVersion,
     activeResources: runtimeUiCatalog.activeResources,
@@ -281,7 +281,8 @@ function auditSupportedStarts(): Array<{
     const direct = new currentStateModule.BridgeStateStore({ file: databaseFile });
     try {
       assert.equal(direct.schemaVersion, runtimeCatalog.currentSchema);
-      assert.equal(direct.getMeta("schema_v19_source_version"), String(sourceSchema));
+      assert.equal(direct.getMeta("state_last_migration_source_schema"), String(sourceSchema));
+      assert.equal(direct.getMeta("state_last_migration_target_schema"), String(runtimeCatalog.currentSchema));
     } finally {
       direct.close();
     }
@@ -480,7 +481,7 @@ async function auditMigrationCase(
     retiredPreferredSelectionRemoved: !("preferredSelection" in settings.current.modelPolicy),
     registeredProjectCount: settings.current.projects.length
   };
-  assert.equal(settingsContract.schemaVersion, 5);
+  assert.equal(settingsContract.schemaVersion, runtimeManifest.stateCompatibility.persistentContracts.userSettingsSchema);
   assert.equal(settingsContract.retiredPreferredSelectionRemoved, true);
   if (sourceSchema === 3) {
     assert.equal(settingsContract.accessStrategy, "always-full");

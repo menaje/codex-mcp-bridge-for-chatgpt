@@ -62,12 +62,29 @@ it("a late close after timeout cannot turn partial output into cleanup permissio
   expect(f.child.kill).toHaveBeenCalledExactlyOnceWith("SIGKILL");
 });
 
-it.each(["", "not-a-process-row\n", "100 1 100\ninvalid\n"])("rejects empty or malformed process observations instead of confirming cleanup: %j", async output => {
+it.each(["", "not-a-process-row\n", "100 1 100\ninvalid\n", "2 0 -1\n"])("rejects empty or malformed process observations instead of confirming cleanup: %j", async output => {
   const f = inspection();
   const observed = readProcessTable(Date.now() + 5_000, f.inspect);
   const rejected = expect(observed).rejects.toThrow(/empty|format/);
   f.child.stdout.write(output); f.child.emit("close", 0);
   await rejected;
+});
+
+it.skipIf(process.platform === "win32")("observes kernel PGID zero but refuses to signal it", async () => {
+  const f = inspection();
+  const observed = readProcessTable(Date.now() + 5_000, f.inspect);
+  f.child.stdout.write("2 0 0\n100 1 100\n"); f.child.emit("close", 0);
+  const rows = await observed;
+  expect(rows).toEqual([
+    { pid: 2, parentPid: 0, processGroupId: 0 }, { pid: 100, parentPid: 1, processGroupId: 100 }
+  ]);
+  const next = inspection();
+  const signal = vi.spyOn(process, "kill");
+  const stopped = terminateManagedProcessTree([rows[0]!], Date.now() + 5_000, undefined, next.inspect);
+  const rejected = expect(stopped).rejects.toThrow("Refusing to signal unsafe managed process group 0");
+  next.child.stdout.write("2 0 0\n100 1 100\n"); next.child.emit("close", 0);
+  await rejected;
+  expect(signal).not.toHaveBeenCalled();
 });
 
 it("rejects oversized output immediately even when the inspector never closes", async () => {
