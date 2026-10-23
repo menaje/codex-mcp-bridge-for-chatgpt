@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { retireExperiment, verifyExperimentRetirement } from "./experiment-retirement.mjs";
+import { checkRemoteBranchRemoval } from "./remote-branch-cleanup.mjs";
 
 function git(cwd, ...args) {
   return spawnSync("git", args, { cwd, encoding: "utf8", timeout: 5_000 });
@@ -254,7 +255,9 @@ function preToolUse(input) {
   } else if (args[0] === "worktree" && args[1] === "remove") {
     reason = checkWorktreeRemoval(parts.cwd, sessionRoot, args);
   }
-  else if (args[0] === "push" && args.includes("--delete")) reason = "Verify the merged PR before deleting a remote branch; this hook cannot prove remote integration.";
+  else if (args[0] === "push" && args.includes("--delete")) {
+    reason = checkRemoteBranchRemoval(parts.cwd, args, targetName(input.cwd || process.cwd()));
+  }
   else reason = "Unsupported Git cleanup command; verify integration and use a simple branch/worktree removal command.";
   return reason ? deny(reason) : {};
 }
