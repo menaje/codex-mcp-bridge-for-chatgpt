@@ -99,7 +99,8 @@ function inspectUsage(plan) {
     if (repository.toLowerCase() !== github.repository.toLowerCase()) fail("GitHub review does not match this Git remote");
     const prs = JSON.parse(run(plan.cwd, "gh", ["pr", "list", "--repo", github.repository, "--state", "open", "--head", plan.record.branch, "--json", "number"]));
     if (!Array.isArray(prs) || prs.length) fail("an open pull request still uses the experiment");
-    if (github.issue !== undefined) {
+    if (plan.record.kind === "archived-integrated-cleanup") verifySnapshotIntegration(plan);
+    else if (github.issue !== undefined) {
       if (!Number.isSafeInteger(github.issue) || github.issue <= 0) fail("invalid experiment issue");
       const issue = JSON.parse(run(plan.cwd, "gh", ["issue", "view", String(github.issue), "--repo", github.repository, "--json", "state"]));
       if (issue.state !== "CLOSED") fail("the experiment issue is still open");
@@ -110,14 +111,51 @@ function inspectUsage(plan) {
   }
 }
 
+function verifySnapshotIntegration(plan) {
+  const { record, cwd } = plan;
+  const proof = record.integration, github = record.github;
+  const oid = value => typeof value === "string" && /^[a-f0-9]{40,64}$/.test(value);
+  if (!github || !proof || ![proof.base, proof.publicationHead, proof.mergeCommit].every(oid) ||
+      !Number.isSafeInteger(proof.pullRequest) || proof.pullRequest <= 0 ||
+      typeof proof.target !== "string" || !Array.isArray(proof.preservedAuditPaths)) fail("explicit snapshot integration evidence is required");
+  git(cwd, "check-ref-format", "--branch", proof.target);
+  const targetFile = resolve(record.worktree, git(record.worktree, "rev-parse", "--git-path", "codex-integration-target"));
+  const target = existsSync(targetFile) ? readFileSync(targetFile, "utf8").trim() || "dev" : "dev";
+  if (proof.target !== target || proof.target === record.branch) fail("snapshot integration target differs from the worktree target");
+  git(cwd, "merge-base", "--is-ancestor", proof.base, record.head);
+  git(cwd, "merge-base", "--is-ancestor", proof.base, proof.publicationHead);
+  git(cwd, "merge-base", "--is-ancestor", proof.base, proof.mergeCommit);
+  const changed = (left, right) => git(cwd, "diff", "--name-only", "--no-renames", "-z", left, right).split("\0").filter(Boolean);
+  const sourcePaths = changed(proof.base, record.head);
+  const publicationPaths = changed(proof.base, proof.publicationHead);
+  const audits = proof.preservedAuditPaths;
+  const auditPath = path => typeof path === "string" && /^docs\/audits\/[^\r\n\0]+\.md$/.test(path) && !path.split("/").some(part => part === "." || part === "..");
+  if (new Set(audits).size !== audits.length || audits.some(path => !auditPath(path) || !sourcePaths.includes(path))) fail("only named historical audit documents may be preserved without publication");
+  const blob = (ref, path) => git(cwd, "ls-tree", "-z", ref, "--", path);
+  if (audits.some(path => blob(proof.base, path) !== blob(proof.publicationHead, path))) fail("a preserved audit also changed in the publication");
+  const productPaths = sourcePaths.filter(path => !audits.includes(path));
+  if (!productPaths.length || productPaths.some(path => blob(record.head, path) !== blob(proof.publicationHead, path) || blob(record.head, path) !== blob(proof.mergeCommit, path)) ||
+      publicationPaths.some(path => !productPaths.includes(path) && !auditPath(path))) fail("published source blobs or file modes differ from the archived source");
+  const pr = JSON.parse(run(cwd, "gh", ["api", `repos/${github.repository}/pulls/${proof.pullRequest}`]));
+  const repositoryMatches = value => typeof value === "string" && value.toLowerCase() === github.repository.toLowerCase();
+  if (pr.number !== proof.pullRequest || pr.merged !== true || pr.state !== "closed" ||
+      pr.head?.sha !== proof.publicationHead || pr.base?.ref !== proof.target ||
+      pr.merge_commit_sha !== proof.mergeCommit || !repositoryMatches(pr.base?.repo?.full_name) ||
+      !repositoryMatches(pr.head?.repo?.full_name)) fail("the merged PR does not match the recorded publication identity");
+  const remoteTarget = git(cwd, "ls-remote", "--refs", github.remote, `refs/heads/${proof.target}`).split(/\s+/);
+  if (remoteTarget.length !== 2 || remoteTarget[1] !== `refs/heads/${proof.target}` || !oid(remoteTarget[0])) fail("live integration target could not be identified");
+  git(cwd, "merge-base", "--is-ancestor", proof.mergeCommit, remoteTarget[0]);
+  git(cwd, "merge-base", "--is-ancestor", proof.mergeCommit, `refs/heads/${proof.target}`);
+}
+
 // The record documents existing human authorization; creating it never grants
 // authority. Both the hook and the command perform fresh verification.
-export function verifyExperimentRetirement(cwd, recordFile, inspect = inspectUsage) {
+function verifyArchivedCleanup(cwd, recordFile, inspect, kind) {
   cwd = realpathSync(cwd);
   const recordPath = realpathSync(recordFile);
   if (lstatSync(recordPath).size > 1024 * 1024) fail("retirement record is too large");
   const record = JSON.parse(readFileSync(recordPath, "utf8"));
-  if (record.version !== 1 || record.kind !== "archived-experiment-retirement" || !same(record.repository, git(cwd, "worktree", "list", "--porcelain").split("\n")[0].slice(9))) fail("retirement record does not identify this repository");
+  if (record.version !== 1 || record.kind !== kind || !same(record.repository, git(cwd, "worktree", "list", "--porcelain").split("\n")[0].slice(9))) fail("retirement record does not identify this repository");
   if (typeof record.branch !== "string" || !record.branch.startsWith("codex/") || !/^[a-f0-9]{40,64}$/.test(record.head)) fail("only an exact task branch HEAD can be retired");
   git(cwd, "check-ref-format", "--branch", record.branch);
   const approval = record.approval;
@@ -134,6 +172,7 @@ export function verifyExperimentRetirement(cwd, recordFile, inspect = inspectUsa
   if (listed.some(item => inside(realpathSync(item.path), archive) || inside(realpathSync(item.path), recordPath)) || !inside(archive, recordPath)) fail("the record and archive must be outside every active worktree");
   if (!Array.isArray(record.archive.files) || !Array.isArray(record.discardedCaches) || record.discardedCaches.some(name => !CACHE_PATHS.has(name))) fail("only declared dependency/build caches may be omitted");
   const plan = { cwd, recordPath, record, archive };
+  if (kind === "archived-integrated-cleanup" && !record.github) fail("snapshot integration requires a live GitHub review");
   verifyBundle(plan);
   plan.untracked = localState(plan);
   verifyReview(record);
@@ -141,11 +180,18 @@ export function verifyExperimentRetirement(cwd, recordFile, inspect = inspectUsa
   return plan;
 }
 
-export function retireExperiment(cwd, recordFile, inspect = inspectUsage) {
-  const plan = verifyExperimentRetirement(cwd, recordFile, inspect);
+export function verifyExperimentRetirement(cwd, recordFile, inspect = inspectUsage) {
+  return verifyArchivedCleanup(cwd, recordFile, inspect, "archived-experiment-retirement");
+}
+
+export function verifyIntegratedCleanup(cwd, recordFile, inspect = inspectUsage) {
+  return verifyArchivedCleanup(cwd, recordFile, inspect, "archived-integrated-cleanup");
+}
+
+function removeArchivedWork(plan, inspect) {
   const { record, recordPath } = plan;
   const receipt = { version: 1, branch: record.branch, head: record.head, archive: plan.archive,
-    startedAt: new Date().toISOString(), retiredWithoutIntegration: true, status: "prepared",
+    startedAt: new Date().toISOString(), retiredWithoutIntegration: record.kind === "archived-experiment-retirement", status: "prepared",
     remoteRemoved: false, worktreeRemoved: false, branchRemoved: false, forceDeletionUsed: false };
   const save = () => {
     const temporary = `${recordPath}.result.${process.pid}.tmp`;
@@ -155,11 +201,11 @@ export function retireExperiment(cwd, recordFile, inspect = inspectUsage) {
   save();
   const removed = [];
   try {
-    // Check again immediately before deletion. A normal push also protects
-    // against changes after the server advertises its current reference.
+    // Recheck immediately before deletion. The explicit lease also protects
+    // changes between this inspection and the server's ref advertisement.
     localState(plan); verifyReview(record); inspect(plan); localState(plan);
     if (record.github) {
-      if (remoteHead(plan)) git(plan.cwd, "push", record.github.remote, "--delete", record.branch);
+      if (remoteHead(plan)) git(plan.cwd, "push", `--force-with-lease=refs/heads/${record.branch}:${record.head}`, record.github.remote, "--delete", record.branch);
       if (remoteHead(plan) !== null) fail("remote deletion was not confirmed");
       receipt.remoteRemoved = true; save();
     }
@@ -191,4 +237,12 @@ export function retireExperiment(cwd, recordFile, inspect = inspectUsage) {
     receipt.status = "pending"; receipt.error = error.message; save();
     throw error;
   }
+}
+
+export function retireExperiment(cwd, recordFile, inspect = inspectUsage) {
+  return removeArchivedWork(verifyExperimentRetirement(cwd, recordFile, inspect), inspect);
+}
+
+export function cleanupIntegrated(cwd, recordFile, inspect = inspectUsage) {
+  return removeArchivedWork(verifyIntegratedCleanup(cwd, recordFile, inspect), inspect);
 }

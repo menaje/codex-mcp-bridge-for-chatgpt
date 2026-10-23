@@ -79,7 +79,7 @@ node .codex/hooks/git-lifecycle.mjs retire-experiment /absolute/archive/retireme
 
 Both the hook and the retirement command verify the record. The command repeats
 source/activity checks before deletion, verifies the remote HEAD before an
-ordinary remote deletion, removes only backed-up untracked files, uses ordinary
+remote deletion with an explicit expected-HEAD lease, removes only backed-up untracked files, uses ordinary
 `git worktree remove`, and deletes the local reference only if it still equals
 the archived commit. It does not force deletion or claim the experiment was
 integrated. A recreated or changed remote ref blocks subsequent cleanup.
@@ -89,3 +89,37 @@ If a later step fails, keep the archive and remaining refs/worktree and report
 the partial result. Backed-up untracked files are restored when worktree removal
 fails. Inspect the receipt and live Git state after an unknown outcome before
 retrying; never overwrite new work or bypass a rejection.
+
+## Cleanup after a separately published integration snapshot
+
+When the original source HEAD is not an ancestor of the target, preserve its exact
+history and evidence using the same archive, independent restore and usage review
+requirements above. An explicitly authorized cleanup can use record kind
+`archived-integrated-cleanup` with an additional `integration` object:
+
+```json
+{
+  "target": "dev",
+  "base": "FULL_SHARED_BASE_COMMIT",
+  "publicationHead": "FULL_MERGED_PR_HEAD_COMMIT",
+  "mergeCommit": "FULL_PR_MERGE_COMMIT",
+  "pullRequest": 250,
+  "preservedAuditPaths": ["docs/audits/historical-private-record.md"]
+}
+```
+
+The verifier checks every changed source blob and mode against the publication
+HEAD and resulting merge commit. Only explicitly named historical Markdown records inside `docs/audits/`
+may remain solely in the archive; the publication must leave those paths at the
+shared base. Additional publication changes must also be audit Markdown. The PR
+must be merged into the worktree's selected target with matching head, merge and
+repository identities, and that merge must remain reachable from both the live
+remote target and local target. Missing evidence fails closed.
+
+Use `verify-integrated-cleanup <absolute-record.json>` and then
+`cleanup-integrated <absolute-record.json>` through `git-lifecycle.mjs`. The
+command repeats the checks before removal and records
+`retiredWithoutIntegration: false`. An open issue is allowed in this mode because
+source integration and operational acceptance can have different completion
+conditions; cleanup never closes the issue or changes conversations. The
+experiment retirement command continues to require its issue to be closed.

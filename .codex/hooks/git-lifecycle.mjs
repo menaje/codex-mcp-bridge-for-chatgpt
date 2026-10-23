@@ -2,7 +2,7 @@ import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { retireExperiment, verifyExperimentRetirement } from "./experiment-retirement.mjs";
+import { cleanupIntegrated, retireExperiment, verifyExperimentRetirement, verifyIntegratedCleanup } from "./experiment-retirement.mjs";
 import { checkRemoteBranchRemoval } from "./remote-branch-cleanup.mjs";
 
 function git(cwd, ...args) {
@@ -160,7 +160,7 @@ function shellWords(command) {
 }
 
 function looksLikeCleanup(command) {
-  return /\bretire-experiment\b/.test(command) || /\bgit\b/.test(command) && (
+  return /\b(?:retire-experiment|cleanup-integrated)\b/.test(command) || /\bgit\b/.test(command) && (
     /\bworktree\b[\s\S]*\bremove\b/.test(command) ||
     /\bbranch\b[\s\S]*(?:-d\b|-D\b|--delete\b)/.test(command) ||
     /\bpush\b[\s\S]*--delete\b/.test(command)
@@ -226,9 +226,10 @@ function preToolUse(input) {
   const words = shellWords(command);
   if (words && /(?:^|\/)node$/.test(words[0]) && words.length === 4 &&
       samePath(resolve(input.cwd || process.cwd(), words[1]), fileURLToPath(import.meta.url)) &&
-      words[2] === "retire-experiment") {
+      ["retire-experiment", "cleanup-integrated"].includes(words[2])) {
     try {
-      verifyExperimentRetirement(input.cwd || process.cwd(), resolve(input.cwd || process.cwd(), words[3]));
+      const verify = words[2] === "retire-experiment" ? verifyExperimentRetirement : verifyIntegratedCleanup;
+      verify(input.cwd || process.cwd(), resolve(input.cwd || process.cwd(), words[3]));
       return {};
     } catch (error) {
       return deny(error.message);
@@ -262,13 +263,13 @@ function preToolUse(input) {
   return reason ? deny(reason) : {};
 }
 
-if (["retire-experiment", "verify-retirement"].includes(process.argv[2])) {
+if (["retire-experiment", "verify-retirement", "cleanup-integrated", "verify-integrated-cleanup"].includes(process.argv[2])) {
   try {
     if (process.argv.length !== 4) throw new Error("Provide one absolute retirement record path.");
-    const result = process.argv[2] === "retire-experiment"
-      ? retireExperiment(process.cwd(), resolve(process.argv[3]))
-      : verifyExperimentRetirement(process.cwd(), resolve(process.argv[3]));
-    process.stdout.write(`${JSON.stringify(process.argv[2] === "retire-experiment" ? result :
+    const commands = { "retire-experiment": retireExperiment, "verify-retirement": verifyExperimentRetirement,
+      "cleanup-integrated": cleanupIntegrated, "verify-integrated-cleanup": verifyIntegratedCleanup };
+    const result = commands[process.argv[2]](process.cwd(), resolve(process.argv[3]));
+    process.stdout.write(`${JSON.stringify(["retire-experiment", "cleanup-integrated"].includes(process.argv[2]) ? result :
       { branch: result.record.branch, head: result.record.head, verified: true })}\n`);
   } catch (error) {
     process.stderr.write(`${error.message}\n`);
