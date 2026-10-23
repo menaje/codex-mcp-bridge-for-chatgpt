@@ -64,6 +64,12 @@ Restart and settings reservations continue while the app window is closed. Exit,
 
 ## Bounded initial startup (Issue #246)
 
+On October 23, 2026, the user reported that their checks found no issues and
+requested closure of [#246](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/246).
+The [October 16 installed acceptance record](audits/issue-246-installed-acceptance-20261016/README.md)
+preserves its original measured scope; this later user confirmation does not
+invent reboot traces or new measurements.
+
 A configured initial application launch, or a helper launch proven to belong to
 an initial/new OS boot, can recover a confirmed transient startup failure. A
 loaded helper without a handshake is first observed for up to 150 seconds,

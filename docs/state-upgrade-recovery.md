@@ -1,8 +1,8 @@
 # State upgrade and recovery runbook
 
 This runbook owns the release-time contract for the bridge SQLite database.
-The current target is schema 31. Supported source schemas are 3 through 30;
-schemas 1 and 2, databases newer than 31, and the retired standalone Settings,
+The current target is schema 32. Supported source schemas are 3 through 31;
+schemas 1 and 2, databases newer than 32, and the retired standalone Settings,
 session, and Job JSON stores are rejected. `release-manifest.json` and
 `state-migrations.json` are the machine-readable authorities.
 
@@ -53,7 +53,7 @@ Every persistent HTTP and stdio startup follows the same lifecycle:
    product/build, and time. A durable pending record closes the crash window
    between the schema commit and its provenance record.
 6. Validate the complete applied path, database integrity, foreign keys, and
-   schema 30 before registering the runtime owner and opening a transport.
+   schema 32 before registering the runtime owner and opening a transport.
 
 The private status file beside the DB ends in `.migration-status.json` and
 records `preflight`, `backup`, `migrating`, `verifying`, `completed`, or
@@ -74,8 +74,8 @@ For a source schema `S`, the migration creates these mode-0600 files beside the
 database:
 
 ```text
-state.sqlite.pre-vS-to-v30.sqlite
-state.sqlite.migration-vS-to-v30.backup.json
+state.sqlite.pre-vS-to-v32.sqlite
+state.sqlite.migration-vS-to-v32.backup.json
 ```
 
 The JSON sidecar binds the snapshot to the logical and physical source database,
@@ -83,6 +83,8 @@ source/target schemas, exact migration path and checksums, source runtime when i
 was recorded, target product/build and Settings schema, creation time, snapshot
 SHA-256, integrity/foreign-key results, and a digest of every table's row count.
 The sidecar itself is owner-only, bounded, and read without following symlinks.
+These examples use the current target. An existing backup keeps the target
+version recorded when it was created; never rename a pair to match a newer build.
 
 After the source marker is durable, retry reuses and re-verifies that exact
 snapshot. A missing, changed, wrong-schema, wrong-path, or other-database backup
@@ -138,7 +140,7 @@ Stop every bridge/helper process, then inspect the exact pair:
 ```bash
 node dist/stateRecovery.js inspect \
   --database /absolute/path/state.sqlite \
-  --backup /absolute/path/state.sqlite.pre-v18-to-v30.sqlite
+  --backup /absolute/path/state.sqlite.pre-v18-to-v32.sqlite
 ```
 
 Inspection verifies the current target schema, service-open marker, live owners,
@@ -161,7 +163,7 @@ rollback pair. Then run:
 ```bash
 node dist/stateRecovery.js restore \
   --database /absolute/path/state.sqlite \
-  --backup /absolute/path/state.sqlite.pre-v18-to-v30.sqlite \
+  --backup /absolute/path/state.sqlite.pre-v18-to-v32.sqlite \
   --source-product-version 0.3.0 \
   --source-build-id exact-recorded-build-id
 ```

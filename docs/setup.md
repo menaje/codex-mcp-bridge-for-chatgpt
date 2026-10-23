@@ -7,7 +7,7 @@ documentation at its Git tag; the same product version can have newer features
 on the development branch. After connecting, try the [first task](../README.md#try-your-first-task)
 and [first reusable skill](skills.md#create-and-use-your-first-skill).
 
-Conversation connections have an independent six-hour idle grace controlled by `CODEX_MCP_BRIDGE_THREAD_IDLE_MS` (`0` disables automatic release). Job results retain their existing separate six-hour/100-Job policy. See [connection lifetime, app handoff and retention](thread-lifecycle.md) for protection rules, persistent/ephemeral choices and restart recovery.
+Conversation connections have an independent six-hour idle grace controlled by `CODEX_MCP_BRIDGE_THREAD_IDLE_MS` (`0` disables automatic release). Durable results and related history follow the saved 7/30/90-day or unlimited policy; the six-hour/100-Job bounds apply to the in-memory registry. See [connection lifetime, app handoff and retention](thread-lifecycle.md) for protection rules, persistent/ephemeral choices and restart recovery.
 
 Official background:
 
@@ -123,6 +123,12 @@ The menu-bar status distinguishes normal startup from a failure:
 - **Ready/Connected**: the Bridge and Tunnel are available;
 - an orange or red message: follow the displayed recovery action or open the diagnostic logs.
 
+Configured startup can recover a confirmed temporary readiness failure within
+one five-minute budget and at most three total attempts. The app shows the
+current stage and retry state. An explicit stop or cancellation takes priority;
+unknown ownership, authentication, or storage failures require the displayed
+recovery action. See [initial startup recovery](runtime-lifecycle.md#bounded-initial-startup-issue-246).
+
 ## Connect the server to ChatGPT
 
 Once the server reports that the Bridge and Tunnel are connected:
@@ -149,13 +155,15 @@ actual ChatGPT Events acceptance remain pending. The app has no provider setup
 form; its existing Tunnel runtime key is separate from the user's OAuth login.
 
 The Dashboard switches between **This conversation** and **All conversations**, with
-running work, response requests and problems summarized in the selected scope.
+**In progress**, **Run history**, and **Problem history** in the selected scope.
+In progress includes running work and input/approval waits. The history lists
+group individual runs by Activity and Agent; **Show more** appends further entries.
 Open Dashboard for scoped work monitoring and Settings for configuration. GPT
 asks for ordinary user input directly in the current ChatGPT conversation and
 delivers a valid answer to the exact Codex question.
 
 <p align="center">
-  <img src="images/chatgpt-dashboard-light-en.png" alt="English ChatGPT Dashboard showing conversation scope, weekly usage, current work, and run history" width="645">
+  <img src="images/chatgpt-dashboard-light-en.png" alt="English ChatGPT Dashboard showing conversation scope, weekly usage, and the three work and history tabs" width="645">
 </p>
 
 ## macOS client mode
@@ -313,10 +321,14 @@ This choice cannot exceed **Server → Maximum Allowed Access**. For example, se
 - **Fixed** chooses one model and reasoning level for new work.
 - **Automatic** lets ChatGPT choose from either the visible catalog or an explicit allowlist.
 - **Allow Ultra reasoning** exposes Ultra effort where supported. This setting does not gate all sub-agent delegation.
-- **Processing speed** chooses Inherit conversation speed, Standard, Fast, or Ultrafast for new Jobs. Migrated settings retain Legacy behavior until you choose another mode. Faster processing can affect usage or charges, and requested speed is distinct from confirmed execution. See [speed choices and scope](processing-speed.md#choose-a-speed).
+- **Processing speed** offers Standard and Fast for new Jobs. Ultrafast stays hidden until access can be confirmed; current CLI contracts cannot provide that confirmation. Earlier speed settings retain their behavior until you explicitly choose an available grade. Faster processing can affect usage or charges, and requested speed is distinct from confirmed execution. See [speed choices and scope](processing-speed.md#choose-a-speed).
 - **Refresh model list** reloads the currently available catalog.
 
 Existing Agents keep execution context according to their continuation rules. Model availability can change with the installed Codex version and service catalog.
+
+<p align="center">
+  <img src="images/macos-models-execution-light-en.png" alt="English Models and Execution settings showing the Standard processing speed and automatic model selection" width="820">
+</p>
 
 ### Models & Execution: model descriptions
 
@@ -343,12 +355,12 @@ and conflict handling.
 - **Launch Menu Bar App at Login**, in General, is local to the current Mac. It does not determine whether the background server remains running.
 - **Conversation storage**, in General, chooses persistent or memory-only storage for new conversations. Persistent conversations can resume after the worker stops when their original Codex storage remains available.
 - **Show bridge threads in Codex app** is a separate visibility preference. Actual app visibility also depends on the original store and native support; a Bridge-owned private store is not automatically the app's store. Neither setting rewrites older conversations. See [connection lifetime and app handoff](thread-lifecycle.md).
-- **Run history retention**, in Models & Execution, keeps display history for 7, 30 (default), or 90 days, or indefinitely. Full result retention and connection idle time remain separate. Historical completion records keep their original retention rules; current Dashboard cards do not send results into chat. See [work history](work-history.md).
+- **Run history retention**, in Models & Execution, keeps sanitized results, run summaries, related diagnostic/problem records, and completion-delivery history for 7, 30 (default), or 90 days, or indefinitely. Current execution and minimal replay-prevention records remain protected. Connection idle time and in-memory registry limits are separate. Dashboard cards do not send results into chat. See [work history](work-history.md).
 - **Result delivery** automatically attaches a blank goal relay to new ordinary Jobs and question answers, with no activation or delivery setting. Exact reads remain available. Host teardown stops its iframe; retained events recover on the next valid connection. See [relay delivery](relay-delivery.md).
 
 Admission is durable and asynchronous. ChatGPT repeats bounded exact Job waits, inspects current input after every non-terminal return, reviews the original result, and continues only already-approved work. Timeout or host abort ends the read, never the Job. A new question or approval stops continuation without automatically opening Dashboard. Open that card only on explicit user request; display refresh and management remain available without chat sends.
 
-Retained legacy Jobs preserve their policy, identities, results and receipts. The [transition rules](issue-221-delivery-transition.md) distinguish unexecuted followups requiring explicit reapproval from executed B replay. Close old cards, deploy the server and current v5 resources together, and refresh connector discovery. If automatic continuation does not occur, recover the exact retained result in the originating conversation. The [#222 final evidence](audits/2026-10-03-issue-222-final-evidence.md) records tested host behavior without making it a guarantee for all hosts.
+Retained legacy Jobs preserve their policy, identities, results and receipts. The [transition rules](issue-221-delivery-transition.md) distinguish unexecuted followups requiring explicit reapproval from executed B replay. Deploy the server and its current card resources together, refresh connector discovery, and reopen visible cards. See [UI compatibility](ui-release-compatibility.md) for the current contracts. If automatic continuation does not occur, recover the exact retained result in the originating conversation. The [#222 final evidence](audits/2026-10-03-issue-222-final-evidence.md) records tested host behavior without making it a guarantee for all hosts.
 
 The macOS app's operational notifications and any explicit Activity-native
 completion notification are separate local channels. They depend on macOS
@@ -363,13 +375,16 @@ Each project has a display name and an existing absolute folder on the server co
 
 - Renaming a project changes only its display name.
 - Relocating changes the registered folder without moving files.
-- Archiving hides it from new task selection while preserving history.
-- Restoring makes the same project identity selectable again.
-- Archive ends project use and confirms execution/context cleanup. Unresolved cleanup can be retried. Delete then removes Bridge registration, sessions, assignments and work/result records. The actual folder, files, Git repository and original Codex/ChatGPT conversations are preserved. See [project lifecycle](project-lifecycle.md).
+- Archiving blocks new work, stops project-owned execution, and confirms context cleanup. Processing or unresolved cleanup remains visible and can be retried; retained history follows its saved policy.
+- Restoring a fully archived registration makes the same project identity selectable again. Its next use starts fresh execution context.
+- Deleting is available after archive cleanup is confirmed. It removes the Bridge registration, sessions, assignments and work/result records. The actual folder, files, Git repository and original Codex/ChatGPT conversations are preserved. See [project lifecycle](project-lifecycle.md).
 
-Use the deleted-project recovery view to restore a removed registration when
-available. Confirm that its folder still exists before using it again; recovery
-does not recreate project files.
+To use the same folder after deletion, add it as a new project. It receives a
+new identity and execution context; deleted Bridge history is not restored.
+
+<p align="center">
+  <img src="images/macos-projects-light-en.png" alt="English Projects settings showing the Bridge Demo registration and project management controls" width="820">
+</p>
 
 When settings are opened from a remote client, enter the absolute path as it exists on the selected server.
 

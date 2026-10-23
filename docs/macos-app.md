@@ -11,14 +11,16 @@ shared generated localization catalog. Native String Catalog files are derived
 from `locales/catalog.json`; see [Localization source and generation](localization.md)
 before editing copy or running localization checks.
 
-The menu bar opens as a compact status and usage summary with **Running**,
-**Response needed**, and **Issues** counts. Selecting a count expands only
+The menu bar opens as a compact status and usage summary with **In progress**,
+**Execution history**, and **Problem history** counts. Selecting a count expands only
 that view below the summary; selecting it again collapses it, and another count
-replaces the detail view. **Work & Run History** in the footer expands current
-work followed by retained runs, including their failed/interrupted status. The
-problem review section appears only under **Issues**. Closing and reopening
+replaces the detail view. In progress includes input and approval waits.
+Execution history lists individual completed, failed, interrupted, or cancelled
+runs; Problem history contains only failed, interrupted, or cancelled runs.
+Both histories use recorded reasons without a review or acknowledgement workflow. Closing and reopening
 the menu resets the selection. Reopening performs a fresh Dashboard read;
 leaving the menu open does not poll or reactively reread display data.
+The ChatGPT card labels its execution-history tab **Run history**.
 
 The popover fits its content when collapsed or showing a short list. Long detail
 lists scroll within the height available on the popover's screen, keeping the
@@ -30,6 +32,13 @@ previous normal shutdown is reconciled, without requiring a menu click. Stopping
 the server during the same app session remains effective across menu openings
 and refreshes. Remote clients do not start a local server. See
 [runtime lifecycle](runtime-lifecycle.md) for recovery and concurrent intent handling.
+Confirmed transient initial failures can retry within one five-minute budget,
+with at most three total attempts and visible stage/retry status. User stop or
+cancellation takes priority over automatic startup.
+
+<p align="center">
+  <img src="images/macos-settings-sidebar-light-en.png" alt="English native Settings with the General destination selected" width="820">
+</p>
 
 ## Architecture
 
@@ -72,7 +81,7 @@ the ChatGPT card. It publishes an `enrich: false`, `includeHistory: false`
 structural snapshot first. That response carries summary counts and one complete
 history-free status index, while the visible run-history pages remain empty.
 The same explicit refresh then applies a bounded `enrich: true` response in a
-separate task. Opening **Work & Run History** requests the stored history in
+separate task. Opening **Execution history** requests the stored history in
 12-row pages
 with `includeHistory: true` and does not start another runtime inspection.
 Structural RPC has a two-second client ceiling; enrichment has a ten-second
@@ -117,28 +126,23 @@ Within each coverage class, subsequent refreshes prioritize unobserved and older
 threads so slow reads cannot repeatedly exclude the rest of the selected batch.
 These display caches never authorize admission, settings changes or shutdown.
 
-The native popover and both retained ChatGPT cards use the same presentation
-rules. When a status or history view is selected, its Activity-first rows contain
-one or more Agents; an idle history heading is explicitly the Agent's latest
-Activity, not a current assignment. Project/conversation context appears once
-on the Activity. Agent state, background processes, work time, and the latest
-recorded model/reasoning effort remain on every Agent even when sibling values
-match. Rows present status, recorded selection, time, then older history. A
-separately labelled next-run setting appears only when the current model, effort,
-effective Fast tier, or reroute differs from the latest recorded turn. Active
-work shows only the duration captured by the last explicit snapshot. Past work
-adds relative age and omits absolute start, update, and end timestamps. The
-native UI never prints the private
-compatibility session alias. Active and recent sections start open; idle starts
-collapsed. A native Agent's retained-history label and chevron share one
-full-width click target, and expanded history remains left-aligned with the rest
-of the row. Same-Activity history omits the already visible Activity title;
-distinct same-title Activities retain a neutral previous-Activity boundary, and
-every historical turn keeps its own model/reasoning line or an unavailable label.
+The native popover and ChatGPT Dashboard group each list by Activity, then Agent,
+then individual Job. Project and conversation context appears once on the
+Activity. Each run keeps its own status, model/reasoning selection, speed badge,
+and time. Recorded errors and cancellation reasons appear once;
+missing reasons have no placeholder. **Show more** appends further entries.
+Opening these lists does not fetch exact execution details or display private
+Job IDs. Read-only detail APIs remain available internally.
+
+Ongoing work shows the relative age of its recorded start. The visible time
+labels update locally once a minute without querying the server. Finished runs
+show duration and relative finish time. The native UI never prints the private
+compatibility session alias. See [work history](work-history.md) for the current
+lists, retention policy and English examples.
 
 **Processing speed** offers Standard, Fast and eligible Ultrafast. Older speed
-settings remain internal; other settings saves preserve their behavior. The menu bar and Dashboard show **⚡ Fast** or
-**🚀 Ultrafast** beside the recorded model, with no Standard badge. The tooltip
+settings remain internal; other settings saves preserve their behavior. The menu bar and Dashboard show **⚡** for Fast or
+**🚀** for Ultrafast beside the recorded model, with no Standard badge. The tooltip
 identifies a selected speed; routine rows omit acceptance and missing-speed
 confirmation messages while the execution record keeps that evidence.
 Ultrafast is hidden for new selection until account/workspace access can be
@@ -467,9 +471,9 @@ user's effective UID. They expose small allowlisted JSON-RPC contracts, not MCP
 and not the old unauthenticated loopback HTTP control surface. Requests and responses are
 bounded. Helper diagnostics retain at most 200 redacted lines.
 
-The helper handshake is bound to local companion protocol version 10 and the
+The helper handshake is bound to local companion protocol version 12 and the
 exact bundled runtime build. Remote management uses companion protocol version
-8. A protocol-changing upgrade requires the native client to reconnect or
+10. A protocol-changing upgrade requires the native client to reconnect or
 restart. Replacement of a reachable LaunchAgent drains its runtime before
 the plist is changed, so a drain timeout leaves the installed helper and plist
 in place for a later retry. If an incompatible helper cannot be reached while

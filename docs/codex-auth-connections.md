@@ -5,6 +5,12 @@ Changing the selected executable does not copy or change a login. Existing
 installations continue using their current shared Codex login until someone
 explicitly selects another connection.
 
+On October 23, 2026, the user confirmed that their checks found no issues and
+requested closure of [post-merge validation #218](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/218).
+This records user acceptance; the dated implementation and synthetic-test
+records retain their original scope and do not become evidence of every
+possible login, refresh, billing or storage combination.
+
 The Bridge does not start `codex login` in the existing shared home. The legacy
 Helper login endpoints reject that request, including calls from older clients.
 Codex CLI clears its current login before a new browser flow completes; using

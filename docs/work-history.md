@@ -1,10 +1,37 @@
 # Execution history and current work
 
-The macOS menu and ChatGPT card use **In progress**, **Execution history**, and
-**Problem history**. Input and approval waits remain distinct states in In progress.
-Problem history is a single read-only occurrence list; there is no acknowledgement,
-recheck, retry-stop or resolution workflow. History counts are occurrences, while
-current warnings follow exact current impact, not the age or unread status of failures.
+The macOS menu uses **In progress**, **Execution history**, and **Problem history**.
+The ChatGPT card labels execution history **Run history**. Input and approval
+waits remain distinct states in In progress.
+Execution history contains retained terminal Jobs. Problem history contains one
+entry per retained failed, interrupted, or cancelled Job. Successful Jobs,
+system incidents and extra recovery attempts do not add problem entries.
+It is read-only, with no acknowledgement, recheck, retry-stop or resolution
+workflow. Current service warnings follow current impact independently of
+historical failures.
+
+## Read the lists
+
+Select a count to open its list, and select it again to collapse it. In ChatGPT,
+choose **This conversation** or **All conversations** before inspecting the list.
+Each list groups Activity → Agent → individual run. Every run keeps its own
+status, model, reasoning level, speed selection and time. Recorded
+errors or cancellation reasons appear once; missing reasons have no placeholder.
+The lists omit private Job IDs and exact-detail controls. **Show more** appends
+the next page without replacing entries already on screen.
+
+<p align="center">
+  <img src="images/macos-execution-history-light-en.png" alt="English native Execution history with multiple runs grouped under Code Review" width="360" valign="top">
+  <img src="images/macos-problem-history-light-en.png" alt="English native Problem history with a recorded failure and a user-requested cancellation" width="360" valign="top">
+</p>
+
+<p align="center">
+  <img src="images/chatgpt-execution-history-light-en.png" alt="English ChatGPT Run history showing each run's status, model, and relative finish time" width="645">
+</p>
+
+<p align="center">
+  <img src="images/chatgpt-problem-history-light-en.png" alt="English ChatGPT Problem history showing recorded failure and cancellation reasons" width="645">
+</p>
 
 Current rows sort by representative run start descending with stable identity ties.
 An old Activity's new run moves to its new position. Activity grouping follows the
@@ -47,10 +74,10 @@ existing scoped management-ending semantics.
 
 ## Bounded summaries, pages and caches
 
-The first structural snapshot supplies up to three recent summaries and the exact
-retained count for each visible Agent. Further history uses 12-item pages bound to
-scope, representative execution, actual history revision and applied policy.
-Already supplied/cached summaries unfold without another request. Pane switches
+Current clients request Job-based history with 12-item pages bound to scope,
+history revision and the applied policy. Opening a list does not request exact
+execution details. Older clients retain the Agent-based projection, including
+up to three recent summaries per visible Agent. Pane switches
 and unrelated progress refreshes reuse valid cache data. New history, expiry,
 policy/security/project/scope changes and late responses use the same identity
 checks. Cache eviction leaves the persistent original available.

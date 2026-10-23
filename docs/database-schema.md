@@ -219,7 +219,7 @@ Development and candidate packages use separate default state profiles; selectin
 the stable DB requires an explicit profile or absolute-file override.
 
 The upgrade gets one private, mode-0600 backup named
-`state.sqlite.pre-v<SOURCE>-to-v30.sqlite` and a bound metadata sidecar. The
+`state.sqlite.pre-v<SOURCE>-to-v32.sqlite` and a bound metadata sidecar. The
 sidecar records the logical/physical database identity, source and target runtime
 facts, migration path/checksums, snapshot checksum, integrity/foreign-key results,
 and a digest of table row counts. Retrying the same upgrade reuses and fully
@@ -269,10 +269,11 @@ relationship. Migration never creates a project from a slug, name, cwd, or old
 snapshot.
 
 The supported schema-3 fixture is taken from the published v0.3.0 implementation
-and passes every fixed checkpoint through schema 32. Exact deployed-development
-fixtures cover schemas 16 and 18; schemas 4 through 15, 17, and 19 through 29 are generated
-only as named, committed checkpoints from those sources. `state-migrations.json` binds
-their provenance and hashes to the shipped implementation. Schemas 1 and 2 are
+and follows the fixed migration path through schema 32. Exact deployed-development
+fixtures cover schemas 16 and 18; the catalog names derived checkpoints for
+schemas 4 through 15, 17, and 19 from those sources. `state-migrations.json` lists
+the full supported source range, migration checksums, and fixture provenance.
+Schemas 1 and 2 are
 outside the supported release floor and are rejected before a backup or mutation.
 Removed JSON import markers/backends cannot reintroduce retired fields on later
 restarts.
@@ -306,7 +307,8 @@ ends and the upgraded database has survived normal restarts, remove older backup
 as a deliberate operator action. Backups contain the same private material as the
 source database and require the same access controls. The bridge does not silently
 delete them because release and rollback policy belong to the operator. Keep each
-backup with its `.migration-v<SOURCE>-to-v30.backup.json` sidecar. Supported
+backup with its `.migration-v<SOURCE>-to-v32.backup.json` sidecar for a schema-32
+upgrade, or the exact original target's sidecar for an earlier upgrade. Supported
 snapshot restore is allowed only while the migrated DB records that neither HTTP
 nor stdio service-open occurred; after that boundary, preserve current state and
 use forward repair or explicit data reconciliation. See the

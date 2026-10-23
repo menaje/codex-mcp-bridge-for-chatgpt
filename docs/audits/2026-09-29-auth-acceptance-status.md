@@ -1,5 +1,10 @@
 # Authentication issues #208 and #210: acceptance status
 
+October 23, 2026 follow-up: the user reported that their checks found no issues
+and requested closure of [post-merge validation #218](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/218),
+which is now closed as completed. This later user acceptance leaves the dated
+evidence and unperformed-test labels in this checkpoint intact.
+
 This is a checkpoint for the implementation based on `origin/dev` at
 `031c193`. It is not evidence that either GitHub issue is complete. The issue
 checkboxes require separate product and operational evidence; a green unit

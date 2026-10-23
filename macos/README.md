@@ -11,20 +11,22 @@ that target. The menu-bar login-item preference remains local to this Mac.
 Pairing and the security model are documented in
 [Remote client mode](../docs/remote-client.md).
 
-The Dashboard uses the same **Running / Response needed / Issues** summary as
-the current ChatGPT status card. The three tiles keep the previous menu-bar
+The Dashboard uses the same **In progress / Execution history / Problem history** summary as
+the current ChatGPT Dashboard card, where execution history is labelled **Run history**. The three tiles keep the menu-bar
 dashboard styling, with an icon and label above each larger number.
 The popover starts at that summary. The tiles filter one complete, history-free
-status index in memory, while **Work & Run History** loads retained history in
+status index in memory, while **Execution history** loads retained history in
 12-row pages only when opened. Closing the popover collapses any selected list, and
 reopening it performs the next Dashboard read. Keeping it open, connectivity
 events, and work-change notices do not trigger display-only Dashboard reads.
 The native menu window follows the measured content height while retaining its
 top edge. Expanding and collapsing a panel moves only the bottom edge; long
 lists scroll below the summary and above the footer within the owning display.
-Counts classify current work and recent actionable outcomes;
-background processes appear separately when present. Idle Agents have no
-standalone count or section, but their recorded turns remain in run history.
+Counts use active Jobs, retained terminal Jobs, and retained failed/interrupted/
+cancelled Jobs respectively. Problem history is read-only and shows recorded
+reasons without acknowledgement controls. Background processes appear separately
+when present. Idle Agents have no standalone count or section; their recorded
+turns remain in execution history.
 The menu-bar icon and header describe bridge service health. Work failures,
 interruptions, orphaned Agents, and input/approval waits appear in the Dashboard
 without marking the bridge unhealthy. Loading the first Dashboard snapshot
@@ -35,11 +37,12 @@ the summary, so the server and native client should be updated together.
 Immutable older clients retain their original projection when those optional
 parameters are omitted.
 
-Native and ChatGPT rows use the same status, recorded execution evidence,
-snapshot time, and older-history order. Current Jobs distinguish the requested
-model, effort, and speed from acceptance and correlated server confirmation;
-acceptance alone does not confirm actual speed. Next-run settings appear only
-when they differ from the latest recorded execution. See
+Native and ChatGPT lists group Activity → Agent → Job, with each run's own
+status, recorded model/effort/speed and time. **Show more** appends
+entries. The lists omit Job IDs and exact-detail controls, and opening them does
+not fetch exact execution details. Requested model, effort and speed remain
+distinct from acceptance and correlated server confirmation; acceptance alone
+does not confirm actual speed. See
 [processing speed and evidence](../docs/processing-speed.md). Effort
 values stay as canonical lowercase catalog text in the menu, card, and both
 Settings surfaces; labels and descriptions remain localized.
@@ -49,6 +52,9 @@ start label and each surface's existing relative-time formatter. Time labels
 refresh locally once a minute while visible without querying the server or
 replacing open controls. Finished runs keep their duration and relative finish
 time. Both surfaces use the shared, concise completion label.
+
+The current English documentation captures and the isolated reproduction command
+are listed in [Documentation screenshots](../docs/images/README.md).
 
 ## Development
 

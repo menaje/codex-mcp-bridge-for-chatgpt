@@ -6,11 +6,11 @@ Agent identity, the Codex conversation, an individual Job, a loaded App Server t
 
 | Setting or data | Default | Basis |
 | --- | --- | --- |
-| `CODEX_MCP_BRIDGE_JOB_TTL_MS` | 21,600,000 ms (6 hours) | Retained terminal Job update time |
-| `CODEX_MCP_BRIDGE_MAX_RETAINED_JOBS` | 100 | Unprotected retained Jobs |
-| `CODEX_MCP_BRIDGE_MAX_JOB_RESULT_BYTES` | 1 MiB | Maximum individual result body |
+| `CODEX_MCP_BRIDGE_JOB_TTL_MS` | 21,600,000 ms (6 hours) | In-memory terminal Job eviction; durable originals follow the saved history policy |
+| `CODEX_MCP_BRIDGE_MAX_RETAINED_JOBS` | 100 | In-memory registry and execution-slot capacity |
+| `CODEX_MCP_BRIDGE_MAX_JOB_RESULT_BYTES` | 1 MiB | In-memory result preview bound; durable sanitized originals follow the saved history policy |
 | `CODEX_MCP_BRIDGE_THREAD_IDLE_MS` | 21,600,000 ms (6 hours) | First durably committed end of the latest actual turn |
-| Diagnostic events | 7 days | Event time, with the size bounds below |
+| Durable results, history and related diagnostics | 30 days | Saved 7/30/90-day or unlimited policy; fixed Job end or first incident occurrence |
 
 Set `THREAD_IDLE_MS=0` to disable automatic connection release, or use a positive integer to adjust it. Restart the bridge to apply environment changes. Explicit app handoff still operates when automatic release is disabled. Reads, dashboard refreshes, notification delivery and terminal Job rewrites cannot move the connection's work-end clock. A restart does not replace it with startup time. A synthetic interruption discovered at restart is not evidence of when actual work ended.
 

@@ -4,7 +4,7 @@ Use ChatGPT to work with Codex on your own computer. Register your projects, reu
 
 [Download releases](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/releases) · [Setup guide](docs/setup.md) · [Skill library](docs/skills.md) · [Security model](docs/security.md)
 
-This README and its screenshots describe the current **development branch**. A downloaded release can have different features and screens; use the README at that release's Git tag. The latest published stable release as of October 4, 2026 is [v0.4.1](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/tree/v0.4.1). A development build can retain the same product version while its features change.
+This README describes the current **development branch**, with English screenshots refreshed on October 23, 2026. A downloaded release can have different features and screens; use the README at that release's Git tag, such as [v0.4.1](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/tree/v0.4.1). A development build can retain the same product version while its features change. Screenshots use [sample data](docs/images/README.md).
 
 ## What you can do
 
@@ -12,7 +12,7 @@ This README and its screenshots describe the current **development branch**. A d
 - **Reuse your procedures.** Keep review checklists, release instructions, and reference Markdown in the Bridge skill library. Import a folder or ZIP, edit the source, and restore earlier versions.
 - **Choose your installation and account.** Use an existing Codex installation or a Bridge-managed CLI, and choose an existing login, a separate ChatGPT login, or a Bridge API-key connection.
 - **Control model and execution settings.** Choose fixed or automatic model selection, edit model descriptions with version history, select processing speed, and set access and concurrency limits.
-- **Keep track of work.** See running work, questions, approvals, issues, retained runs, and available account usage. Save new conversations across restarts and choose app visibility separately.
+- **Keep track of work.** View work in progress, individual run history, and problem history, with available account usage above the lists. Save new conversations across restarts and choose app visibility separately.
 - **Manage another Mac.** Pair a client Mac with a server on your private LAN or VPN and switch between saved servers.
 
 ChatGPT → OpenAI Secure MCP Tunnel → Bridge on your server computer → Codex in a registered project folder.
@@ -95,9 +95,9 @@ The native Settings sidebar separates General, Models & Execution, Projects, Cod
 | --- | --- |
 | Codex installation and [authentication](docs/codex-auth-connections.md) | Choose the executable separately from its account. Reuse an existing login, prepare a separate ChatGPT login, or explicitly select API billing. |
 | Fixed or automatic model | Keep one model/effort pair, or let ChatGPT choose within your allowed catalog. In automatic mode, edit [model descriptions](docs/model-selection.md#user-model-descriptions) and restore earlier descriptions from history. |
-| [Processing speed](docs/processing-speed.md#choose-a-speed) | Inherit the conversation speed, select Standard, Fast, or Ultrafast for each new Job, or preserve earlier settings. Availability depends on the selected model, CLI, and account. |
+| [Processing speed](docs/processing-speed.md#choose-a-speed) | Choose Standard or Fast for each new Job. Ultrafast requires verified access and is currently unavailable for new selection. Earlier settings keep their behavior until you explicitly choose a speed. |
 | Conversation storage | Save new conversations across restarts or use memory-only context. App visibility is a separate choice; opening a conversation also needs accessible original storage and a released connection. |
-| Projects and history | Rename, relocate, archive, or restore registrations without moving project files. Recover deleted registrations that still own resumable work. Choose a run-history retention period. |
+| [Projects](docs/project-lifecycle.md) and [history](docs/work-history.md) | Archive to end active work safely; restore an archived registration or delete its Bridge records after cleanup. Choose 7, 30, 90 days, or unlimited retention for results and related history. |
 | Language and concurrency | Apply an explicit language to the app and cards and limit concurrent Jobs. Automatic language follows the host showing each surface. |
 
 <p align="center">
@@ -110,17 +110,17 @@ The native Settings sidebar separates General, Models & Execution, Projects, Cod
 
 ## Check work and usage
 
-Open the menu-bar icon for server health, available weekly Codex usage, and **Running / Response needed / Issues** counts. Select a count to filter current work; **Work & Run History** opens retained runs. Refresh explicitly to get a new snapshot.
+Open the menu-bar icon for server health, available weekly Codex usage, and **In progress / Execution history / Problem history** counts. Select one to expand its list, select it again to collapse it, and use **Show more** for further entries. Refresh explicitly to get a new snapshot.
 
 <p align="center">
   <img src="docs/images/macos-menubar-usage-light-en.png" alt="English macOS menu-bar summary with weekly usage and current work counts" width="360" valign="top">
-  <img src="docs/images/macos-dashboard-light-en.png" alt="English macOS work and run history showing Agents and the requested execution settings" width="360" valign="top">
+  <img src="docs/images/macos-dashboard-light-en.png" alt="English macOS In progress view showing grouped work, a running Agent, and an Agent waiting for input" width="360" valign="top">
 </p>
 
-The ChatGPT Dashboard switches between **This conversation** and **All conversations**. It shows retained work known to this Bridge, available weekly usage, questions, approvals, and run history. Execution details distinguish requested settings, accepted requests, and any server-confirmed values; an accepted request does not prove the actual processing speed.
+The ChatGPT Dashboard switches between **This conversation** and **All conversations**. The three lists group work by Activity, Agent, and individual run. Problem history includes failed, interrupted, or cancelled runs and their recorded reasons. Each run shows its own model, reasoning level, speed selection, and time; a selected speed does not prove the actual processing tier.
 
 <p align="center">
-  <img src="docs/images/chatgpt-dashboard-light-en.png" alt="English ChatGPT Dashboard showing conversation scope, weekly usage, current work, and retained run history" width="645">
+  <img src="docs/images/chatgpt-dashboard-light-en.png" alt="English ChatGPT Dashboard showing conversation scope, weekly usage, and the In progress, Run history, and Problem history tabs" width="645">
 </p>
 
 The Dashboard opens when requested. It manages and displays work without sending results into the chat or starting automatic followups. Read more about [questions](docs/gpt-questions.md), [history](docs/work-history.md), and [conversation handoff](docs/thread-lifecycle.md).
@@ -153,7 +153,7 @@ Only one saved server is active at a time. Switching changes the source of statu
 | [Bridge skill library](docs/skills.md) | Create, import, use, version, restore, and export reusable procedures |
 | [Codex installations](docs/codex-runtimes.md) and [authentication](docs/codex-auth-connections.md) | CLI ownership, manual updates, account choices, storage, and billing |
 | [Model selection](docs/model-selection.md) and [processing speed](docs/processing-speed.md) | Allowed models, description history, speed scope, and execution evidence |
-| [Native macOS app](docs/macos-app.md) and [remote client](docs/remote-client.md) | Native settings, lifecycle, pairing, and recovery |
+| [Native macOS app](docs/macos-app.md), [remote client](docs/remote-client.md), and [work history](docs/work-history.md) | Native settings, current work, retained runs, pairing, and recovery |
 | [ChatGPT integration](docs/chatgpt-setup.md), [card tools](docs/card-tools.md), and [decision files](docs/standalone-decision-html.md) | Connection refresh, task contracts, questions, comparisons, and smoke checks |
 | [Security](docs/security.md), [database](docs/database-schema.md), and [recovery](docs/state-upgrade-recovery.md) | Trust boundaries, retained data, backups, and upgrades |
 | [MCP migration](docs/mcp-2026-07-28-migration.md), [input](docs/input-contracts.md), and [output](docs/output-contracts.md) | Current protocol and tool contracts |

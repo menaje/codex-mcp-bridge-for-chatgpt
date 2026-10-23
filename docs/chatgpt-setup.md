@@ -212,9 +212,10 @@ deploying a change to either:
 4. verify the current resources listed in
    [the UI release policy](ui-release-compatibility.md).
 
-Dashboard and Settings currently use v5 URIs. The v3-to-v4 transition removed
-the sender API and automatic mount inputs; v5 introduces explicit processing
-speed and scope. A server refusal cannot retract result text or a queued message
+Dashboard currently uses a v5 URI and Settings uses v6. The v3-to-v4 transition removed
+the sender API and automatic mount inputs; v5 introduced explicit processing
+speed and scope, and Settings v6 updates project lifecycle controls.
+A server refusal cannot retract result text or a queued message
 already held in an old v3 iframe; close those instances before accepting the cutover.
 
 The bridge offers no old resource URI or old descriptor fallback. A conversation

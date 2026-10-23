@@ -1,6 +1,11 @@
 # Issue #246 installed startup acceptance
 
-Status: **HOLD — actual reboot/login and initial network delay are pending.**
+Current issue status, October 23, 2026: **Closed at the user's request after
+their checks found no issues.** [Issue #246](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/246)
+was closed as completed. The evidence below remains the October 16 checkpoint;
+its pending tests were not rerun or relabelled by this documentation update.
+
+October 16 checkpoint: **HOLD — actual reboot/login and initial network delay were pending.**
 
 PR #250 integrated the startup recovery implementation into `dev` as
 `704020b9aa7c9e728e225a14e9921357364dbd2e`. This follow-up repairs acceptance

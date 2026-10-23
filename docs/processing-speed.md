@@ -98,7 +98,7 @@ the model change. Acceptance does not confirm speed, effort or inference routing
 
 Missing confirmation is independent of Job outcome. Do not rerun normal work to
 obtain it or fill historical actual values using saved/requested/current settings.
-The menu bar and Dashboard show **⚡ Fast** or **🚀 Ultrafast** beside the
+The menu bar and Dashboard show **⚡** for Fast or **🚀** for Ultrafast beside the
 recorded model. Legacy Fast uses the same Fast badge. Standard, inheritance and
 unknown modes have no speed badge. The tooltip identifies a selected speed,
 not a confirmed processing grade. Request acceptance and missing speed
@@ -143,8 +143,11 @@ approval reviewer, connector approval configuration, start/resume/turn and model
 discovery remain required. Management failure is never reported as success.
 
 This work keeps the managed CLI, dedicated durable storage and existing official
-Codex authentication boundaries. SIWC introduction in #214 is excluded. The
-paused observation and remaining operational validation in #218 stay unchanged.
+Codex authentication boundaries. SIWC introduction in #214 is excluded.
+On October 23, 2026, the user reported no issues after checking and requested
+closure of [#218](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/218).
+That user confirmation is separate from the dated synthetic evidence;
+no additional login, billing run or observation restart is implied.
 
 ## Saved modes and compatible clients
 
@@ -173,8 +176,9 @@ settings is idempotent.
 An old client may still send `usePriorityServiceTier` with unrelated changes. Once
 a modern mode is saved, that boolean alone cannot overwrite the canonical mode.
 New clients send the explicit mode only when appropriate; unknown modes remain
-visible and unrelated saves omit them. Dashboard and Settings use resource
-contract v5. The stable task execution envelope remains v6. Execution policy
+visible and unrelated saves omit them. Dashboard uses resource contract v5 and
+Settings v6; [UI compatibility](ui-release-compatibility.md) tracks the current
+resources. The stable task execution envelope remains v6. Execution policy
 signature v6 includes the canonical mode, separately from that stable envelope.
 
 New Jobs retain both their execution decision and an exact public request digest.

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Update user guides and English screenshots for current work/history tabs, project lifecycle, speed choices, retention and schema-32 recovery.",
+  "breaking": false,
+  "migration": null
+}
