@@ -4,8 +4,12 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { retireExperiment } from "../.codex/hooks/experiment-retirement.mjs";
+
+// Each fixture runs real Git clone/bundle/restore subprocesses. Allow their
+// filesystem work to finish under the parallel release suite's load.
+vi.setConfig({ testTimeout: 15_000 });
 
 const hook = fileURLToPath(new URL("../.codex/hooks/git-lifecycle.mjs", import.meta.url));
 const hash = (file: string) => createHash("sha256").update(readFileSync(file)).digest("hex");
