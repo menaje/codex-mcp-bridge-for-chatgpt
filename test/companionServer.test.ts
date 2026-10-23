@@ -977,15 +977,15 @@ function request(
 ): Promise<Record<string, any>> {
   return new Promise((resolve, reject) => {
     const socket = createConnection(socketPath);
-    let buffer = "";
+    const chunks: string[] = [];
     socket.setEncoding("utf8");
     socket.once("connect", () => socket.write(`${JSON.stringify(payload)}\n`));
     socket.on("data", (chunk: string) => {
-      buffer += chunk;
-      const newline = buffer.indexOf("\n");
+      const newline = chunk.indexOf("\n");
+      chunks.push(newline < 0 ? chunk : chunk.slice(0, newline));
       if (newline < 0) return;
       try {
-        resolve(JSON.parse(buffer.slice(0, newline)) as Record<string, any>);
+        resolve(JSON.parse(chunks.join("")) as Record<string, any>);
       } catch (error) {
         reject(error);
       } finally {

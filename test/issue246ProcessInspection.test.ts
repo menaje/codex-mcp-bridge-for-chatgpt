@@ -128,14 +128,20 @@ it.each(["error", "nonzero", "signal", "invalid-stderr"] as const)("clears the i
   else expect(f.child.kill).not.toHaveBeenCalled();
 });
 
-it.skipIf(process.platform === "win32")("owner change after TERM prevents KILL despite a still-running captured group", async () => {
+it.skipIf(process.platform === "win32").each([false, true])("owner change after TERM prevents KILL despite a still-running captured group (last poll stalls: %s)", async stalls => {
   let owner = "A";
+  let termAt = 0;
+  let stalled = false;
   const signal = vi.spyOn(process, "kill").mockImplementation((_pid, sent) => {
-    if (sent === "SIGTERM") owner = "B";
+    if (sent === "SIGTERM") { owner = "B"; termAt = Date.now(); }
     return true;
   });
   const inspector = (() => {
     const f = inspection();
+    if (stalls && !stalled && termAt > 0 && Date.now() - termAt >= 2_000) {
+      stalled = true;
+      return f.child as unknown as ChildProcess;
+    }
     queueMicrotask(() => { f.child.stdout.write("123456 1 123456\n"); f.child.emit("close", 0); });
     return f.child as unknown as ChildProcess;
   }) as typeof spawn;
@@ -144,4 +150,5 @@ it.skipIf(process.platform === "win32")("owner change after TERM prevents KILL d
   await expect(terminateManagedProcessTree([{ pid: 123456, parentPid: 1, processGroupId: 123456 }],
     Date.now() + 10_000, authorize, inspector)).rejects.toThrow("STARTUP_OWNERSHIP_UNCONFIRMED");
   expect(signal.mock.calls.map(call => call[1])).toEqual(["SIGTERM"]);
+  expect(stalled).toBe(stalls);
 });

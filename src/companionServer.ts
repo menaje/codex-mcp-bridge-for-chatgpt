@@ -426,23 +426,35 @@ export async function startPrivateJsonLineServer(
 }
 
 function serveClient(socket: Socket, options: PrivateJsonLineServerOptions): void {
-  let buffer = Buffer.alloc(0);
+  let fragments: Buffer[] = [];
+  let pendingBytes = 0;
   let requestQueue = Promise.resolve();
   const cancellation = new AbortController();
   socket.once("close", () => cancellation.abort());
 
   socket.on("data", (chunk: Buffer) => {
-    buffer = Buffer.concat([buffer, chunk]);
-    if (buffer.length > options.maxRequestBytes) {
+    if (pendingBytes + chunk.length > options.maxRequestBytes) {
+      fragments = [];
+      pendingBytes = 0;
       writeResponse(socket, options.requestTooLarge(), options.maxResponseBytes);
       socket.destroy();
       return;
     }
-    while (true) {
-      const newline = buffer.indexOf(0x0a);
-      if (newline < 0) break;
-      const lineBytes = buffer.subarray(0, newline);
-      buffer = buffer.subarray(newline + 1);
+    let offset = 0;
+    while (offset < chunk.length) {
+      const newline = chunk.indexOf(0x0a, offset);
+      if (newline < 0) {
+        fragments.push(chunk.subarray(offset));
+        pendingBytes += chunk.length - offset;
+        break;
+      }
+      const end = chunk.subarray(offset, newline);
+      // Join a fragmented frame once, rather than copying and rescanning the
+      // entire pending request for every socket chunk (up to 72 MiB).
+      const lineBytes = fragments.length === 0 ? end : Buffer.concat([...fragments, end], pendingBytes + end.length);
+      fragments = [];
+      pendingBytes = 0;
+      offset = newline + 1;
       let line: string;
       try {
         line = decodeUtf8Strict(lineBytes, "Companion request");

@@ -3007,7 +3007,18 @@ async function waitForManagedProcesses(
   while (running.length > 0 && Date.now() < deadline) {
     await delay(Math.max(0, Math.min(50, deadline - Date.now())));
     if (Date.now() >= deadline) break;
-    running = await matchingManagedProcesses(captured, deadline, spawnInspector);
+    try {
+      running = await matchingManagedProcesses(captured, deadline, spawnInspector);
+    } catch (error) {
+      if (deadline < deadlineAt && Date.now() >= deadline &&
+          error instanceof Error && error.message.startsWith("PROCESS_TABLE_TIMEOUT:")) {
+        // Expiry of this TERM/KILL wait is not evidence of exit. Retain the
+        // last running set; the caller must reobserve within the absolute
+        // cleanup budget and reauthorize before escalation.
+        break;
+      }
+      throw error;
+    }
   }
   return running;
 }

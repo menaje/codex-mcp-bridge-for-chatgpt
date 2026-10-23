@@ -76,7 +76,7 @@
     "dev:stdio": "tsx src/stdio.ts",
     "start": "node dist/cli.js",
     "start:stdio": "node dist/stdio.js",
-    "test": "vitest run --maxWorkers=4",
+    "test": "vitest run --maxWorkers=2",
     "test:dashboard-scope-browser": "tsx scripts/dashboard-scope-browser-regression.ts",
     "test:dashboard-summary-browser": "tsx scripts/dashboard-summary-browser-regression.ts",
     "test:issue-137-status-wait": "tsx scripts/issue-137-status-wait-regression.ts",
