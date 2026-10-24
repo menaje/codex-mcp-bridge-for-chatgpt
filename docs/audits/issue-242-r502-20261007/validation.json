@@ -1,0 +1,121 @@
+{
+  "base": "f710974b33fc40432653c815d175058cba1adaee",
+  "branch": "codex/issue-242-r502",
+  "codeCommit": "49d29e9b246d6f7fadc64726222f1b589ae5658e",
+  "sourceSha256": {
+    "src/httpDiagnostics.ts": "a103a38cf8ccb0ce520ad73d0eca87c314d3ffaaf1b4aecb2b048e6249e194ac",
+    "src/runtimeProcess.ts": "31207373b97bb0c79e47db8cd423c231c0917e173f4c437b67d74404589ee613",
+    "src/server.ts": "01b8ec9b55b0d79a04a2b9e3ce60f34080b8410ea5fe48877b861c0c63c4109a",
+    "test/httpDiagnostics.test.ts": "4967a80b29e58922289875340ce21aaaf938607a816cbd75607a8a166e35ae1d",
+    "test/issue242R502.test.ts": "056b638168d58e9b54156e948e28c1eaf4d9f75c8c45734e11e3e2903b3849d7",
+    "test/issue242R502Tunnel.test.ts": "249041c3c268c4593472318838e336bf3362e3dc7c1f9579a8da5d86f7d1a258"
+  },
+  "productionCause": "unresolved",
+  "integration": {
+    "target": "dev",
+    "targetHead": "ea8f93e2acbb9f4b6deca113165d27e8c9c23857",
+    "targetHeadAtStart": "ea8f93e2acbb9f4b6deca113165d27e8c9c23857",
+    "devHeadPreserved": true,
+    "devCheckoutClean": true,
+    "merged": false,
+    "cleanup": "task branch/worktree retained by explicit no-dev-merge instruction",
+    "previewOnly": {
+      "exitCode": 1,
+      "tree": "f9808442c50ccaac73f8a2f4051652069e2ea9ca",
+      "conflicts": [
+        "docs/ui-release-compatibility.md",
+        "macos/Sources/CodexBridgeMenuBar/AppModel.swift",
+        "macos/Sources/CodexBridgeMenuBar/SkillsLibraryViews.swift",
+        "src/stateReadModels.ts",
+        "src/stateReadProcess.ts",
+        "src/threadConnections.ts",
+        "src/tools.ts",
+        "src/uiManifest.generated.ts",
+        "ui-manifest.lock.json",
+        "ui-resources/settings.html"
+      ]
+    },
+    "baselinePreview": {
+      "exitCode": 1,
+      "tree": "0800e8204a6fb2afb35a0e20aa5039d9fc6684fe",
+      "conflicts": [
+        "docs/ui-release-compatibility.md",
+        "macos/Sources/CodexBridgeMenuBar/AppModel.swift",
+        "macos/Sources/CodexBridgeMenuBar/SkillsLibraryViews.swift",
+        "src/stateReadModels.ts",
+        "src/stateReadProcess.ts",
+        "src/threadConnections.ts",
+        "src/tools.ts",
+        "src/uiManifest.generated.ts",
+        "ui-manifest.lock.json",
+        "ui-resources/settings.html"
+      ]
+    },
+    "conflictsIdenticalToBaseline": true,
+    "conflictsInR502EditedPaths": []
+  },
+  "tests": [
+    {
+      "selection": "httpDiagnostics, issue242R502, issue242ProxyCharacterization",
+      "exitCode": 0,
+      "passed": 23,
+      "files": 3,
+      "log": "proxy-tests.txt"
+    },
+    {
+      "selection": "pinned local Go tunnel optional fixture",
+      "exitCode": 0,
+      "passed": 1,
+      "requestCases": 14,
+      "log": "tunnel-tests.txt",
+      "report": "tunnel-matrix.json"
+    },
+    {
+      "selection": "tools/jobRegistry response-loss, exact retries, followup recovery, HTTP detach, aborted status wait",
+      "exitCode": 0,
+      "passed": 6,
+      "unselected": 96,
+      "files": 2,
+      "log": "replay-detach-tests.txt"
+    },
+    {
+      "selection": "runtimeProcess, server, stdioServer, runtimeAdmission, runtimeLifecycle, runtimeLifecycleRecovery, currentSelectorReplay, executionRecovery, workerIsolation, operationalCommandReceipt, cancellation",
+      "exitCode": 1,
+      "passed": 66,
+      "failed": 31,
+      "failureCategory": "existing startup/test/hook deadlines",
+      "filesPassed": 7,
+      "filesFailed": 4,
+      "log": "focused-tests.txt"
+    },
+    {
+      "selection": "exact unmodified baseline controls: proxy connection failure and optional client identity",
+      "exitCode": 1,
+      "failed": 2,
+      "unselected": 35,
+      "failureCategory": "existing 5-second test deadlines",
+      "log": "baseline-control-tests.txt",
+      "receipt": "baseline-control-receipt.json"
+    },
+    {
+      "selection": "tsc -p tsconfig.json --noEmit",
+      "exitCode": 0,
+      "log": "typecheck.txt"
+    },
+    {
+      "selection": "git diff --check (including normalized captured logs)",
+      "exitCode": 0
+    }
+  ],
+  "diagnosticReportPrivacyAllowlistChecked": true,
+  "regressionGate": "not green: full runtimeProcess/current-selector and timed-out HTTP/lifecycle cases remain pending",
+  "remainingRisks": [
+    "Production termination boundary not proven by a joined installed trace",
+    "Late transport-error ordering is synthetic; production occurrence unproven",
+    "Diagnostics stop after bounded cap and child IPC delivery is best effort",
+    "Local response finish does not prove caller receipt",
+    "External tunnel record join is time-based, not the private diagnostic UUID",
+    "Ten baseline/local-dev integration conflicts and incomplete broader test gate"
+  ],
+  "prohibitedActionsPerformed": []
+}

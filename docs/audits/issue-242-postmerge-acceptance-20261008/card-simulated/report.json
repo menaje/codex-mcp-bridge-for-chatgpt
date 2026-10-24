@@ -1,0 +1,10 @@
+{
+  "passed": true,
+  "source": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-postmerge-acceptance-20261008/macos/build/postmerge/Codex MCP Bridge for ChatGPT.app/Contents/Resources/Runtime/dist",
+  "artifacts": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-postmerge-evidence-20261008/card-simulated",
+  "checks": [
+    "Dashboard keeps its last confirmed DOM after a dispatched read timeout",
+    "Settings keeps its last confirmed form after a dispatched read timeout",
+    "neither card retries the timed-out read through a second tool-call path"
+  ]
+}

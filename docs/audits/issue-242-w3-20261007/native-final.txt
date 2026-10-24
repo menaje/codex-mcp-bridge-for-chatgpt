@@ -1,0 +1,87 @@
+[0/1] Planning build
+Building for debugging...
+[0/8] Write sources
+[2/8] Write swift-version--58304C5D6DBC2206.txt
+[4/11] Compiling CodexBridgeMenuBar CompletionNotifications.swift
+[5/11] Compiling CodexBridgeMenuBar AppModel.swift
+[6/11] Emitting module CodexBridgeMenuBar
+[7/25] Compiling CodexBridgeMenuBar WorkHistoryPresentation.swift
+[8/25] Compiling CodexBridgeMenuBar ModelDescriptionSettings.swift
+[9/25] Compiling CodexBridgeMenuBar ProblemReviewViews.swift
+[10/25] Compiling CodexBridgeMenuBar RuntimeLifecycleNoticeView.swift
+[11/25] Compiling CodexBridgeMenuBar SettingsViews.swift
+[12/25] Compiling CodexBridgeMenuBar SkillsLibraryViews.swift
+[13/25] Compiling CodexBridgeMenuBar CodexBridgeMenuBarApp.swift
+[14/25] Compiling CodexBridgeMenuBar CodexRuntimeUpdateControls.swift
+[15/25] Compiling CodexBridgeMenuBar CodexRuntimeViews.swift
+[16/25] Compiling CodexBridgeMenuBar ConnectionAssistantViews.swift
+[17/25] Compiling CodexBridgeMenuBar CodexAccountUsageView.swift
+[18/25] Compiling CodexBridgeMenuBar CodexAuthSelectionViews.swift
+[19/25] Compiling CodexBridgeMenuBar ConnectionObservationNotice.swift
+[20/25] Compiling CodexBridgeMenuBar DashboardViews.swift
+[20/25] Write Objects.LinkFileList
+[21/25] Linking CodexBridgeMenuBar
+[22/25] Applying CodexBridgeMenuBar
+[24/45] Compiling CodexBridgeKitTests SettingsConnectionPresentationTests.swift
+[25/45] Compiling CodexBridgeKitTests SkillsLibraryPresentationTests.swift
+[26/45] Compiling CodexBridgeKitTests TextIntegrityTests.swift
+[27/45] Compiling CodexBridgeKitTests UnixSocketRPCClientTests.swift
+[28/45] Compiling CodexBridgeKitTests LiveCompanionTests.swift
+/Volumes/Data/Dev/codex-mcp-bridge-issue-242-w3-completion/macos/Tests/CodexBridgeKitTests/OperationalNotificationsTests.swift:290:21: error: expression of type 'Bool' is unused [#no-usage]
+288 |         await notifications.refresh(client: client, locale: Locale(identifier: "en"))
+289 |         first.cancel()
+290 |         await first.value
+    |                     `- error: expression of type 'Bool' is unused [#no-usage]
+291 |         XCTAssertEqual(server.count("completion.availability"), 1)
+292 |         XCTAssertEqual(server.count("completion.claim"), 0)
+
+/Volumes/Data/Dev/codex-mcp-bridge-issue-242-w3-completion/macos/Tests/CodexBridgeKitTests/OperationalNotificationsTests.swift:349:23: error: expression of type 'Bool' is unused [#no-usage]
+347 |         }
+348 |         delivery.authorized = false
+349 |         await pending.value
+    |                       `- error: expression of type 'Bool' is unused [#no-usage]
+350 |         XCTAssertEqual(server.count("completion.claim"), 0)
+351 |     }
+[29/45] Compiling CodexBridgeKitTests NativeRPCFixture.swift
+/Volumes/Data/Dev/codex-mcp-bridge-issue-242-w3-completion/macos/Tests/CodexBridgeKitTests/OperationalNotificationsTests.swift:290:21: error: expression of type 'Bool' is unused [#no-usage]
+288 |         await notifications.refresh(client: client, locale: Locale(identifier: "en"))
+289 |         first.cancel()
+290 |         await first.value
+    |                     `- error: expression of type 'Bool' is unused [#no-usage]
+291 |         XCTAssertEqual(server.count("completion.availability"), 1)
+292 |         XCTAssertEqual(server.count("completion.claim"), 0)
+
+/Volumes/Data/Dev/codex-mcp-bridge-issue-242-w3-completion/macos/Tests/CodexBridgeKitTests/OperationalNotificationsTests.swift:349:23: error: expression of type 'Bool' is unused [#no-usage]
+347 |         }
+348 |         delivery.authorized = false
+349 |         await pending.value
+    |                       `- error: expression of type 'Bool' is unused [#no-usage]
+350 |         XCTAssertEqual(server.count("completion.claim"), 0)
+351 |     }
+[30/45] Compiling CodexBridgeKitTests OperationalNotificationsTests.swift
+/Volumes/Data/Dev/codex-mcp-bridge-issue-242-w3-completion/macos/Tests/CodexBridgeKitTests/OperationalNotificationsTests.swift:290:21: error: expression of type 'Bool' is unused [#no-usage]
+288 |         await notifications.refresh(client: client, locale: Locale(identifier: "en"))
+289 |         first.cancel()
+290 |         await first.value
+    |                     `- error: expression of type 'Bool' is unused [#no-usage]
+291 |         XCTAssertEqual(server.count("completion.availability"), 1)
+292 |         XCTAssertEqual(server.count("completion.claim"), 0)
+
+/Volumes/Data/Dev/codex-mcp-bridge-issue-242-w3-completion/macos/Tests/CodexBridgeKitTests/OperationalNotificationsTests.swift:349:23: error: expression of type 'Bool' is unused [#no-usage]
+347 |         }
+348 |         delivery.authorized = false
+349 |         await pending.value
+    |                       `- error: expression of type 'Bool' is unused [#no-usage]
+350 |         XCTAssertEqual(server.count("completion.claim"), 0)
+351 |     }
+[31/45] Compiling CodexBridgeKitTests CodexRuntimeModelsTests.swift
+[32/45] Compiling CodexBridgeKitTests CompletionNotificationWakeTests.swift
+[33/45] Compiling CodexBridgeKitTests ConnectionRecoveryWindowTests.swift
+[34/47] Compiling CodexBridgeKitTests RemoteConnectionTests.swift
+[35/47] Compiling CodexBridgeKitTests RuntimeLifecycleTests.swift
+[36/47] Compiling CodexBridgeKitTests RuntimePathsTests.swift
+[37/47] Compiling CodexBridgeKitTests W3NativeOutboxFixture.swift
+[38/47] Compiling CodexBridgeKitTests WorkHistoryPresentationTests.swift
+[39/47] Compiling CodexBridgeKitTests DashboardPopoverTests.swift
+[40/47] Compiling CodexBridgeKitTests DashboardPopoverWindowTests.swift
+[41/47] Compiling CodexBridgeKitTests HelperBootstrapTests.swift

@@ -1,0 +1,76 @@
+{
+  "source": "CUA native accessibility and screenshot observations; aggregates omit private execution labels",
+  "observedDate": "2026-10-16",
+  "timezone": "Asia/Seoul",
+  "observationMinutes": [
+    "14:08",
+    "14:09",
+    "14:11"
+  ],
+  "version": "0.4.1",
+  "build": "17",
+  "installedBuildId": "0d26c7f14353:41d00390ea3a",
+  "localMode": true,
+  "healthyMenuVisible": true,
+  "historyTotal": 733,
+  "normalRefresh": {
+    "lastConfirmedMinuteBefore": "14:08",
+    "lastConfirmedMinuteAfter": "14:09",
+    "historyPanelRetained": true
+  },
+  "pagination": {
+    "renderedExecutionsBefore": 12,
+    "renderedExecutionsAfter": 24
+  },
+  "controlledReadFailure": {
+    "fault": "SIGSTOP of the installed read-only projection child",
+    "ownershipAndIdentityChecked": true,
+    "activeJobs": 0,
+    "pendingAdmissions": 0,
+    "watchdogSeconds": 30,
+    "pauseMs": 16832.462,
+    "resumedBy": "explicit verification release",
+    "renderedExecutions": 24,
+    "rowsEqualToBefore": true,
+    "historyPanelSelected": true,
+    "noticePresent": true,
+    "reloadButtonPresent": true,
+    "helperReconnectButtonAbsent": true,
+    "lastConfirmedMinute": "14:09",
+    "readProjectionAttentionVisible": true
+  },
+  "afterReadResume": {
+    "healthyMenu": true,
+    "noticeRetained": true,
+    "rowsEqualToBefore": true
+  },
+  "clickedReload": {
+    "noticeCleared": true,
+    "healthyMenu": true,
+    "rowsEqualToBefore": true,
+    "renderedExecutions": 24,
+    "historyPanelSelected": true,
+    "lastConfirmedMinute": "14:11"
+  },
+  "postconditions": {
+    "sameRuntimeProcess": true,
+    "sameReaderProcess": true,
+    "readerResumed": true,
+    "phase": "running",
+    "bridgeConnected": true,
+    "tunnelConnected": true,
+    "readServiceStatus": "ready",
+    "activeJobs": 0,
+    "pendingAdmissions": 0
+  },
+  "evidenceBoundaries": {
+    "installedLocalRetainedRecovery": "verified",
+    "firstLoadAndRemoteRecovery": "separate production-model fixture evidence; no installed remote fault test",
+    "exactExecutionDetailPreservation": "separate production-model fixture evidence",
+    "completionNotificationDelivery": "unverified",
+    "operationalSQLWaitAndPhysicalIO": "unmeasured",
+    "historical502Cause": "unconfirmed"
+  },
+  "originalRequestDeadlinesUnchanged": true,
+  "durationBasedSoak": false
+}

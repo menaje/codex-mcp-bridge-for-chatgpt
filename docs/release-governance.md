@@ -17,9 +17,9 @@ product. They never receive independent product versions.
 | Stable provenance | `release.sourceCandidate` | Exact last `X.Y.Z-rc.N` used for stable promotion |
 | Build identity | `CFBundleVersion`, `dist/build-info.json` commit/time/source hash | Identifies a build, not the product version |
 | Manifest schema | `manifestVersion` (currently 6) | Release metadata plus state and UI compatibility contracts |
-| UI compatibility | `ui-release-catalog.json`, its manifest digest, the generated release inventory, UI contract generations and immutable resource URIs | Cached-card compatibility and retirement, independent of SemVer |
-| State compatibility | `stateCompatibility` plus `state-migrations.json` (currently schemas 3–18 to 19) | Local data, applied-migration provenance, state-profile, backup, and recovery axes; see the [state upgrade and recovery runbook](state-upgrade-recovery.md) |
-| Tool/runtime compatibility | Task input contract 2, helper protocol 2, local companion protocol 2, remote companion protocol 1, execution-policy references, App Server schema lock and pinned Codex CLI | Independent protocol and compatibility axes |
+| UI resource policy | `ui-release-catalog.json`, its manifest digest, generated release inventory, UI contract generations and explicit URI versions | One current file per active card; compatible updates keep the URI, independent of SemVer |
+| State compatibility | `stateCompatibility` plus `state-migrations.json` (currently source schemas 3–31 to 32) | Local data, applied-migration provenance, state-profile, backup, and recovery axes; see the [state upgrade and recovery runbook](state-upgrade-recovery.md) |
+| Tool/runtime contracts | Settings schema 8, task input contract 6, helper protocol 2, local companion protocol 12, remote companion protocol 10, execution-policy references, App Server schema lock and pinned Codex CLI | Independent protocol and state axes |
 | Runtime state | `.env`, authentication material, SQLite data, process locks | Never a version authority or release payload |
 
 `npm run release:check` checks the version mirrors, generated plugin and UI
@@ -46,30 +46,19 @@ and are retained as private workflow evidence for 90 days. All three must belong
 to the same final RC. See the [runbook](state-upgrade-recovery.md) for the exact
 pre-service restore and post-service forward-repair boundary.
 
-## Card compatibility at release boundaries
+## Card resource gate at release boundaries
 
-The [UI card release and retirement policy](ui-release-compatibility.md) separates
-published stable baselines, development-current cards, and explicitly supported
-development/RC deployments. Ordinary UI synchronization must not turn every
-development revision into a permanent compatibility obligation. A release
-contains supported published identities, its final current cards and selected
-temporary exceptions. Preserve immutable identities and their required
-presenters/tool contracts; product SemVer does not replace UI contract checks.
+The [UI card release policy](ui-release-compatibility.md) requires one current
+file for each active card: Settings, Dashboard and Relay. Compatible card and metadata
+updates overwrite those files while preserving their explicit URI versions.
+The catalog has no published baseline or temporary compatibility selection.
 
-The target active cards are Settings, Dashboard and Question. Activity cards
-belong to a retirement and client-migration path, with only explicitly supported
-legacy revisions retained. Their removal must preserve shared work data and
-execution logic and resolve the existing #69 client-support conditions. Finalize
-card selection and any removal before the final RC; stable promotion must not
-prune or add UI payload files.
-
-Manifest version 6 implements this policy. The generator selects one current
-revision for each active card, the exact supported v0.3.0 baseline, and one
-explicit deployed-development exception; it does not carry unclassified lock
-history into a package. Activity remains registered only for those compatibility
-identities and rejects new presentations. #53 tracks the support window and
-eventual removal decision, #52 verifies the selection in all artifacts, and #11
-verifies the upgrade instructions against the exact candidate.
+Finalize card contracts before the final RC. Increment only the affected
+card's URI version when a cached card cannot safely use the new server contract,
+then refresh connector discovery and reopen the affected visible cards. Relay
+attaches automatically on the next ordinary task/answer call. Activity and Question
+presentation resources remain retired while their durable state and execution
+logic remain available through current contracts.
 
 ## Stage and branch lifecycle
 
@@ -129,8 +118,7 @@ clean temporary worktree, project that candidate to stable with
 `release:promote`, run `validate:stable`, rebuild and compare the npm archive,
 promote and compare both candidate DMGs, and verify the five-asset assembly. The
 rehearsal creates no tag or GitHub release. Record the candidate commit, PR run,
-release-workflow commit, input artifact checksums, and comparison results. The
-physical candidate checks remain separate required evidence.
+release-workflow commit, input artifact checksums, and comparison results.
 
 An `X.Y.Z-rc.N` identifier is provisional until its GitHub prerelease exists. A
 defect found during the rehearsal may be fixed on the same unpublished `rc.N`;
@@ -194,11 +182,17 @@ None of these local metadata commands publishes a tag or GitHub release.
 | Affected | `npm run validate:affected` | fast checks plus Node and/or Swift checks selected from changed paths |
 | Full integration | `npm run validate:full` | full Node build/tests, exact App Server schema, full Swift tests |
 | Candidate | `npm run validate:candidate`, the read-only release PR, plus the manual release workflow | clean installs, all five assets, npm archive, both app/DMG structures, architectures, ad-hoc signatures, checksums, and three artifact-bound state migration/restore reports |
-| Stable promotion | `npm run validate:stable`, the required Stable promotion gate, the main release workflow, and physical-Mac evidence | latest source RC, normalized payload equivalence, exact stage/tag, installation readiness |
+| Stable promotion | `npm run validate:stable`, the required Stable promotion gate, and the main release workflow | latest source RC, normalized payload equivalence, exact stage/tag, installation readiness |
 
 A successful result applies only to the exact commit and inputs that produced
 it. An unexplained difference, absent source candidate, missing asset, failed
-physical-Mac check, or ambiguous evidence leaves the release on `HOLD`.
+required check, or ambiguous evidence leaves the release on `HOLD`.
+
+Clean-Mac installation, upgrade, quit/process cleanup, `.env` and state
+preservation, and live ChatGPT/Tunnel checks are optional manual validation.
+Their availability is not a prerequisite for candidate or stable publication.
+Record only checks actually performed; automated checks do not establish
+manual or live-host results.
 
 Affected validation compares committed changes with `origin/dev` and also checks
 staged, unstaged, and untracked paths. Deletions and both sides of renames count;
@@ -272,7 +266,3 @@ remain deletable because they are short-lived. These settings are defined in
 or deleting an existing one. Apply the workflow before activating the required
 remote status context, then verify the remote settings separately. Remote
 protection does not replace the repository-local checks.
-
-No candidate should be published until the physical clean-Mac install,
-upgrade, quit/process cleanup, `.env`, and state-preservation checks are recorded.
-No stable release should be published until its source RC passes those gates.

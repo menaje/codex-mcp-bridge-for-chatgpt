@@ -1,0 +1,39 @@
+{
+  "limitation": "Clearing Darwin background on the existing child did not change inherited launchd priority. This is not a successful live-policy intervention.",
+  "restored": true,
+  "observations": [
+    {
+      "policy": "original-background",
+      "priority": "4  0",
+      "request": {
+        "ms": 2707.279416,
+        "ok": false,
+        "error": {
+          "code": -32602,
+          "message": "STATE_READ_STALE: Observation deadline expired; retain the last confirmed view."
+        }
+      }
+    },
+    {
+      "policy": "background-cleared",
+      "priority": "4  0",
+      "request": {
+        "ms": 2538.8468749999997,
+        "ok": false,
+        "error": {
+          "code": -32602,
+          "message": "STATE_READ_STALE: Observation deadline expired; retain the last confirmed view."
+        }
+      }
+    },
+    {
+      "policy": "restored-background",
+      "priority": "4  0",
+      "request": {
+        "ms": 3002.229624999999,
+        "ok": false,
+        "error": "native-budget timeout"
+      }
+    }
+  ]
+}

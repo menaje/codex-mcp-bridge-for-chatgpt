@@ -10,14 +10,45 @@ import {
   unlinkSync,
   writeFileSync
 } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, resolve } from "node:path";
-import { loadEnvFile } from "node:process";
 import { parseEnv } from "node:util";
+import { decodeUtf8Strict } from "./text-integrity.mjs";
+import { assertAuthProfileStorageEnvironment, authProfileEnvironment, authSelectionRoot, desiredAuthSelection, knownExternalHome, readAuthSelection } from "./auth-selection.mjs";
 
 const RUNTIME_CONFIG_DIRECTORY = "codex-mcp-bridge";
 const RUNTIME_ENV_FILENAME = ".env";
+const MCP_OAUTH_NAMES = ["ISSUER", "RESOURCE", "RESOURCE_METADATA_URL", "JWKS_URI", "OPERATOR_SUBJECT"];
+
+/** Only MCP login configuration; never Codex execution authentication. */
+export function mcpOAuthRequested(environment) {
+  return MCP_OAUTH_NAMES.some(name => Boolean(
+    environment[`CODEX_MCP_BRIDGE_OAUTH_${name}`] || environment[`CODEX_GPT_BRIDGE_OAUTH_${name}`]
+  ));
+}
+
+/** Only this Bridge's public, read-only metadata may use loopback HTTP. */
+export function isLoopbackOAuthMetadataUrl(value, host, port) {
+  const binding = host.replace(/^\[|\]$/gu, "");
+  if (!["127.0.0.1", "localhost", "::1"].includes(binding) || /[\s"\\<>]/u.test(value)) return false;
+  let url;
+  try { url = new URL(value); } catch { return false; }
+  return url.protocol === "http:" && !url.username && !url.password && !url.search && !url.hash &&
+    url.hostname.replace(/^\[|\]$/gu, "") === binding && Number(url.port || 80) === Number(port) &&
+    ["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"].includes(url.pathname);
+}
+
+export function mcpOAuthEnvironment(environment) {
+  const selected = {};
+  for (const prefix of ["CODEX_MCP_BRIDGE_", "CODEX_GPT_BRIDGE_"]) {
+    for (const suffix of [...MCP_OAUTH_NAMES.map(name => `OAUTH_${name}`), "TOKEN"]) {
+      const key = prefix + suffix;
+      if (environment[key] !== undefined) selected[key] = environment[key];
+    }
+  }
+  return selected;
+}
 export const RUNTIME_ENV_MANAGED_KEYS = [
   "CONTROL_PLANE_API_KEY",
   "CONTROL_PLANE_TUNNEL_ID",
@@ -25,6 +56,121 @@ export const RUNTIME_ENV_MANAGED_KEYS = [
   "CODEX_MCP_BRIDGE_ALLOW_WRITE",
   "CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS"
 ];
+
+// The same Codex child settings are projected for the native helper and the
+// launcher. Tunnel, billing, and API-key credentials are deliberately absent.
+export const CODEX_CHILD_ENV_KEYS = Object.freeze([
+  "CODEX_HOME", "CODEX_SQLITE_HOME", "CODEX_MCP_BRIDGE_RUNTIME_HOME", "CODEX_MCP_BRIDGE_AUTH_DISCONNECTED", "CODEX_MCP_BRIDGE_AUTH_SOURCE",
+  "CODEX_MCP_BRIDGE_AUTH_GENERATION",
+  "CODEX_MCP_BRIDGE_CODEX", "CODEX_GPT_BRIDGE_CODEX",
+  "XDG_CONFIG_HOME", "XDG_STATE_HOME",
+  "LANG", "LC_ALL", "LC_CTYPE",
+  "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+  "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+  "CA_BUNDLE", "NODE_EXTRA_CA_CERTS", "SSL_CERT_DIR", "SSL_CERT_FILE"
+]);
+
+export const CODEX_APPLIED_ENV_KEYS = Object.freeze([
+  "HOME", "PATH", "USER", "LOGNAME", "SHELL", "TMPDIR", ...CODEX_CHILD_ENV_KEYS
+]);
+
+/** The launcher's private status retains only the Codex child environment it applied. */
+export function codexAppliedEnvironment(environment) {
+  const applied = {};
+  for (const name of CODEX_APPLIED_ENV_KEYS) {
+    if (typeof environment[name] === "string") applied[name] = environment[name];
+  }
+  return applied;
+}
+
+/**
+ * Process values win over private-file values, including across the current
+ * and legacy command names. A legacy command is normalized to the current
+ * name so every consumer observes the same effective override.
+ */
+export function codexChildEnvironment(filePath, inherited = process.env) {
+  const fromFile = filePath ? readRuntimeEnvSubset(filePath, CODEX_CHILD_ENV_KEYS) : {};
+  const projected = {};
+  for (const name of CODEX_CHILD_ENV_KEYS) {
+    if (name === "CODEX_MCP_BRIDGE_CODEX" || name === "CODEX_GPT_BRIDGE_CODEX") continue;
+    const value = inherited[name] ?? fromFile[name];
+    if (value !== undefined) projected[name] = value;
+  }
+  const command = inherited.CODEX_MCP_BRIDGE_CODEX || inherited.CODEX_GPT_BRIDGE_CODEX ||
+    fromFile.CODEX_MCP_BRIDGE_CODEX || fromFile.CODEX_GPT_BRIDGE_CODEX;
+  if (command) projected.CODEX_MCP_BRIDGE_CODEX = command;
+  delete projected.CODEX_MCP_BRIDGE_AUTH_DISCONNECTED;
+  delete projected.CODEX_MCP_BRIDGE_AUTH_SOURCE;
+  delete projected.CODEX_MCP_BRIDGE_AUTH_GENERATION;
+  if (["shared", "external", "bridge-chatgpt", "bridge-api", "disconnected"].includes(inherited.CODEX_MCP_BRIDGE_AUTH_SOURCE)) {
+    projected.CODEX_MCP_BRIDGE_AUTH_SOURCE = inherited.CODEX_MCP_BRIDGE_AUTH_SOURCE;
+    projected.CODEX_MCP_BRIDGE_AUTH_GENERATION = inherited.CODEX_MCP_BRIDGE_AUTH_GENERATION || "0";
+    if (inherited.CODEX_MCP_BRIDGE_AUTH_SOURCE === "disconnected") projected.CODEX_MCP_BRIDGE_AUTH_DISCONNECTED = "1";
+    return projected;
+  }
+  const explicitHome = inherited.CODEX_HOME !== undefined || fromFile.CODEX_HOME !== undefined;
+  const { connection, generation } = explicitHome
+    ? { connection: { kind: "shared" }, generation: 0 }
+    : desiredAuthSelection({ ...inherited, ...projected });
+  projected.CODEX_MCP_BRIDGE_AUTH_SOURCE = explicitHome ? "shared" : connection.kind;
+  projected.CODEX_MCP_BRIDGE_AUTH_GENERATION = String(explicitHome ? 0 : generation);
+  if (connection.kind !== "shared" && !explicitHome) {
+    if (connection.kind === "disconnected") projected.CODEX_MCP_BRIDGE_AUTH_DISCONNECTED = "1";
+    else if (connection.kind === "external") {
+      const root = authSelectionRoot({ ...inherited, ...projected });
+      projected.CODEX_HOME = knownExternalHome(readAuthSelection({ CODEX_MCP_BRIDGE_RUNTIME_HOME: root }), connection.homeId);
+    } else Object.assign(projected, authProfileEnvironment(authSelectionRoot({ ...inherited, ...projected }), connection.profileId, projected));
+  }
+  return projected;
+}
+
+/** Keep launcher/tunnel credentials out of selected Codex processes. */
+export function codexProcessEnvironment(environment) {
+  const projected = { ...environment };
+  delete projected.CODEX_MCP_BRIDGE_AUTH_ACTIVATION_ID;
+  const sealedSource = projected.CODEX_MCP_BRIDGE_AUTH_SOURCE;
+  const explicitHome = Boolean(projected.CODEX_HOME) && !sealedSource;
+  const needsSaved = !sealedSource && !explicitHome ||
+    (["external", "bridge-chatgpt", "bridge-api"].includes(sealedSource)) && !projected.CODEX_HOME;
+  const desired = needsSaved ? desiredAuthSelection(projected) : null;
+  const connection = sealedSource || (explicitHome ? "shared" : desired.connection.kind);
+  projected.CODEX_MCP_BRIDGE_AUTH_SOURCE = connection;
+  projected.CODEX_MCP_BRIDGE_AUTH_GENERATION ||= String(explicitHome ? 0 : desired?.generation || 0);
+  if (!projected.CODEX_HOME && connection === "external") {
+    const selected = desired.connection;
+    if (selected.kind !== "external") throw new Error("CODEX_AUTH_SELECTION_INVALID: The applied Codex location is unavailable.");
+    projected.CODEX_HOME = knownExternalHome(readAuthSelection(projected), selected.homeId);
+  }
+  if (!projected.CODEX_HOME && (connection === "bridge-chatgpt" || connection === "bridge-api")) {
+    const selected = desired.connection;
+    if (selected.kind !== connection) throw new Error("CODEX_AUTH_SELECTION_INVALID: The applied authentication profile is unavailable.");
+    Object.assign(projected, authProfileEnvironment(authSelectionRoot(projected), selected.profileId, projected));
+  }
+  if (connection === "external" || connection === "bridge-chatgpt" || connection === "bridge-api") {
+    assertAuthProfileStorageEnvironment(projected);
+    delete projected.OPENAI_API_KEY;
+    delete projected.CODEX_API_KEY;
+  }
+  if (connection === "disconnected") projected.CODEX_MCP_BRIDGE_AUTH_DISCONNECTED = "1";
+  for (const name of Object.keys(projected)) {
+    if (name.startsWith("CONTROL_PLANE_") || name.startsWith("CLOUDFLARED_") ||
+        name === "TUNNEL_CLIENT" || name.startsWith("TUNNEL_CLIENT_") ||
+        name === "CODEX_MCP_BRIDGE_TOKEN" || name === "CODEX_GPT_BRIDGE_TOKEN" ||
+        name.startsWith("CODEX_MCP_BRIDGE_OAUTH_") || name.startsWith("CODEX_GPT_BRIDGE_OAUTH_")) {
+      delete projected[name];
+    }
+  }
+  return projected;
+}
+
+/** A private status marker; raw proxy credentials and paths are never emitted. */
+export function codexChildEnvironmentFingerprint(environment) {
+  const effective = codexChildEnvironment(undefined, environment);
+  return createHash("sha256").update(JSON.stringify(
+    ["HOME", "PATH", ...CODEX_CHILD_ENV_KEYS.filter(name => name !== "CODEX_GPT_BRIDGE_CODEX")]
+      .map(name => [name, name === "HOME" || name === "PATH" ? environment[name] ?? null : effective[name] ?? null])
+  )).digest("hex");
+}
 
 const DEFAULT_OPERATOR_CONFIGURATION = Object.freeze({
   defaultBackend: "app-server",
@@ -57,7 +203,6 @@ export function loadRuntimeEnvFile(
   filePath,
   {
     required = false,
-    apply = loadEnvFile,
     allowedKey,
     platform = process.platform,
     uid = typeof process.getuid === "function" ? process.getuid() : undefined
@@ -81,13 +226,14 @@ export function loadRuntimeEnvFile(
     }
   }
 
-  if (allowedKey) {
-    const values = parseEnv(readFileSync(filePath, "utf8"));
-    for (const [key, value] of Object.entries(values)) {
-      if (allowedKey(key) && process.env[key] === undefined) process.env[key] = value;
+  const values = parseEnv(readRuntimeEnvText(filePath));
+  for (const [key, value] of Object.entries(values)) {
+    // Match process.loadEnvFile's no-overwrite behavior while keeping the
+    // selected bytes under this module's strict UTF-8 policy. NODE_OPTIONS is
+    // intentionally not accepted from dotenv files.
+    if (key !== "NODE_OPTIONS" && (!allowedKey || allowedKey(key)) && process.env[key] === undefined) {
+      process.env[key] = value;
     }
-  } else {
-    apply(filePath);
   }
   return true;
 }
@@ -158,7 +304,7 @@ export function inspectRuntimeEnvFile(
   try {
     assertRuntimeEnvDirectory(dirname(resolvedPath), { platform, uid });
     assertPrivateRuntimeEnvFile(resolvedPath, { platform, uid });
-    const values = readManagedRuntimeEnvValues(readFileSync(resolvedPath, "utf8"));
+    const values = readManagedRuntimeEnvValues(readRuntimeEnvText(resolvedPath));
     validateSecureTunnelEnvironment(values, resolvedPath);
     return {
       path: resolvedPath,
@@ -253,7 +399,7 @@ export function readRuntimeEnvSubset(
   if (!Array.isArray(keys) || keys.some((key) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key))) {
     throw new Error("Runtime environment subset keys must be valid environment names.");
   }
-  return readSelectedRuntimeEnvValues(readFileSync(resolvedPath, "utf8"), new Set(keys));
+  return readSelectedRuntimeEnvValues(readRuntimeEnvText(resolvedPath), new Set(keys));
 }
 
 /**
@@ -276,7 +422,7 @@ export function prepareRuntimeEnvUpdate(
 
   const existed = pathEntryExists(resolvedPath);
   if (existed) assertPrivateRuntimeEnvFile(resolvedPath, { platform, uid });
-  const original = existed ? readFileSync(resolvedPath, "utf8") : "";
+  const original = existed ? readRuntimeEnvText(resolvedPath) : "";
   const previousValues = readManagedRuntimeEnvValues(original);
   const operatorUpdates = runtimeOperatorUpdates({ defaultBackend, maximumAccess });
   const updates = {
@@ -411,7 +557,7 @@ function writeAtomicPrivateRuntimeEnv(filePath, contents, options) {
     assertPrivateRuntimeEnvFile(temporaryPath, options);
     if (options.validate) {
       validateSecureTunnelEnvironment(
-        readManagedRuntimeEnvValues(readFileSync(temporaryPath, "utf8")),
+        readManagedRuntimeEnvValues(readRuntimeEnvText(temporaryPath)),
         filePath
       );
     }
@@ -450,9 +596,13 @@ function assertRuntimeEnvUnchanged(prepared, expectedContents, expectedExists) {
   }
   if (!exists) return;
   assertPrivateRuntimeEnvFile(prepared.path, prepared);
-  if (readFileSync(prepared.path, "utf8") !== expectedContents) {
+  if (readRuntimeEnvText(prepared.path) !== expectedContents) {
     throw new Error("RUNTIME_ENV_CHANGED: Runtime environment changed during the operation.");
   }
+}
+
+function readRuntimeEnvText(filePath) {
+  return decodeUtf8Strict(readFileSync(filePath), `Runtime environment file ${resolve(filePath)}`);
 }
 
 function ensurePrivateRuntimeDirectory(directory, { platform, uid }) {

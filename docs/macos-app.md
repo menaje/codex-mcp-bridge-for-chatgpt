@@ -1,19 +1,26 @@
 # Native macOS menu bar app
 
-The issue #44 implementation is a native SwiftUI/AppKit companion for Codex MCP
-Bridge for ChatGPT. It intentionally does not embed the Settings or Dashboard
-cards in a WebView. The existing ChatGPT cards and MCP tools remain the primary
-remote interface and keep their current descriptors, schemas, resource URIs,
-and cache contracts.
+The macOS app is a native SwiftUI/AppKit companion for Codex MCP Bridge for
+ChatGPT, with a menu-bar Dashboard, Settings, and a separate Skill Library.
+The ChatGPT cards and MCP tools use the same application services. Follow the
+[setup guide](setup.md) for installation and the [first-skill walkthrough](skills.md#create-and-use-your-first-skill)
+for reusable procedures.
 
-The menu bar opens as a compact status and usage summary with **Running**,
-**Response required**, and **Problems** counts. Selecting a count expands only
+Fixed UI copy, supported languages, and locale fallback rules come from the
+shared generated localization catalog. Native String Catalog files are derived
+from `locales/catalog.json`; see [Localization source and generation](localization.md)
+before editing copy or running localization checks.
+
+The menu bar opens as a compact status and usage summary with **In progress**,
+**Execution history**, and **Problem history** counts. Selecting a count expands only
 that view below the summary; selecting it again collapses it, and another count
-replaces the detail view. **Work & Run History** in the footer expands current
-work followed by retained runs, including their failed/interrupted status. The
-problem review section appears only under **Problems**. Closing and reopening
+replaces the detail view. In progress includes input and approval waits.
+Execution history lists individual completed, failed, interrupted, or cancelled
+runs; Problem history contains only failed, interrupted, or cancelled runs.
+Both histories use recorded reasons without a review or acknowledgement workflow. Closing and reopening
 the menu resets the selection. Reopening performs a fresh Dashboard read;
 leaving the menu open does not poll or reactively reread display data.
+The ChatGPT card labels its execution-history tab **Run history**.
 
 The popover fits its content when collapsed or showing a short list. Long detail
 lists scroll within the height available on the popover's screen, keeping the
@@ -25,11 +32,18 @@ previous normal shutdown is reconciled, without requiring a menu click. Stopping
 the server during the same app session remains effective across menu openings
 and refreshes. Remote clients do not start a local server. See
 [runtime lifecycle](runtime-lifecycle.md) for recovery and concurrent intent handling.
+Confirmed transient initial failures can retry within one five-minute budget,
+with at most three total attempts and visible stage/retry status. User stop or
+cancellation takes priority over automatic startup.
+
+<p align="center">
+  <img src="images/macos-settings-sidebar-light-en.png" alt="English native Settings with the General destination selected" width="820">
+</p>
 
 ## Architecture
 
 ```text
-MenuBarExtra and native Settings window
+Native NSStatusItem/NSPopover and native Settings window
   -> versioned private helper socket
      -> per-user background helper
         -> existing secure loopback-HTTP launcher
@@ -43,7 +57,8 @@ Swift never reads or writes the bridge SQLite database. The Settings card and
 native Settings window both use the same revisioned service, including separate
 `settingsRevision` and `registryRevision` compare-and-swap checks. Project
 changes remain explicit add, rename, relocate, archive, restore, and delete
-operations. The Dashboard remains read-only.
+operations. Dashboard snapshot reads do not change execution; separately
+authorized management actions use their own service operations.
 
 The same binary can instead run as a remote-only client:
 
@@ -66,7 +81,7 @@ the ChatGPT card. It publishes an `enrich: false`, `includeHistory: false`
 structural snapshot first. That response carries summary counts and one complete
 history-free status index, while the visible run-history pages remain empty.
 The same explicit refresh then applies a bounded `enrich: true` response in a
-separate task. Opening **Work & Run History** requests the stored history in
+separate task. Opening **Execution history** requests the stored history in
 12-row pages
 with `includeHistory: true` and does not start another runtime inspection.
 Structural RPC has a two-second client ceiling; enrichment has a ten-second
@@ -75,6 +90,18 @@ with 1.5 seconds per observation and for usage/account details.
 These are display budgets: pending reads continue under the App Server's final
 RPC deadlines (normally thirty seconds). Matching last-known usage and runtime
 evidence is included in later structural snapshots without an upstream call.
+Usage display has a separate identity from the short-lived request cache: a
+same-account token refresh starts a new read but keeps the last confirmed
+numbers and their original check time. Missing or failed usage fields in either
+snapshot stage or a stored-history page leave the usage card in place while
+counts, rows and connection status continue to update. When the server already
+retained a newer valid usage reading, the app compares the usage check times
+and keeps that reading instead of restoring an older screen value. The account
+read time does not stand in for the usage check time. A confirmed new account,
+sign-out, authentication mode or server change clears those numbers; an
+unprovable identity does not reuse old quota and shows an unconfirmed card
+until a fresh read succeeds. A confirmed
+zero or a confirmed response with no usage replaces the old value.
 Status buttons classify the loaded index locally, so switching or collapsing
 them cannot clear counts, reorder data, or start a request. Pagination reads
 stored history only. One in-flight enrichment is shared across reopen/refresh
@@ -82,10 +109,10 @@ generations, and its cached result is projected onto the latest selected panel
 and page. An enrichment failure leaves the structural view visible. Swift does
 not issue App Server runtime probes itself.
 
-Slow details show an updating notice, separately from a failed observation.
-The native menu retains known values and shows their oldest observation time
-when available. Identical ongoing usage, account, and runtime reads are shared
-across snapshots; runtime observations hold one of eight shared slots until
+Slow or failed details show a compact status icon beside the last-check time;
+its explanation is available from the icon. The usage card shows its own last
+confirmed check time. Identical ongoing usage, account, and runtime reads are
+shared across snapshots; runtime observations hold one of eight shared slots until
 their actual read settles, including any follow-up process query. Valid late
 results update the cache and emit an `enrichment` invalidation. That invalidation
 is retained for the next explicit Dashboard read; it does not refresh a visible
@@ -99,28 +126,28 @@ Within each coverage class, subsequent refreshes prioritize unobserved and older
 threads so slow reads cannot repeatedly exclude the rest of the selected batch.
 These display caches never authorize admission, settings changes or shutdown.
 
-The native popover and both retained ChatGPT cards use the same presentation
-rules. When a status or history view is selected, its Activity-first rows contain
-one or more Agents; an idle history heading is explicitly the Agent's latest
-Activity, not a current assignment. Project/conversation context appears once
-on the Activity. Agent state, background processes, work time, and the latest
-actual model/reasoning effort remain on every Agent even when sibling values
-match. Rows present status, actual execution, time, then older history. A
-separately labelled next-run setting appears only when the current model, effort,
-effective Fast tier, or reroute differs from the latest actual turn. Active
-work shows only the duration captured by the last explicit snapshot. Past work
-adds relative age and omits absolute start, update, and end timestamps. The
-native UI never prints the private
-compatibility session alias. Active and recent sections start open; idle starts
-collapsed. A native Agent's retained-history label and chevron share one
-full-width click target, and expanded history remains left-aligned with the rest
-of the row. Same-Activity history omits the already visible Activity title;
-distinct same-title Activities retain a neutral previous-Activity boundary, and
-every historical turn keeps its own model/reasoning line or an unavailable label.
+The native popover and ChatGPT Dashboard group each list by Activity, then Agent,
+then individual Job. Project and conversation context appears once on the
+Activity. Each run keeps its own status, model/reasoning selection, speed badge,
+and time. Recorded errors and cancellation reasons appear once;
+missing reasons have no placeholder. **Show more** appends further entries.
+Opening these lists does not fetch exact execution details or display private
+Job IDs. Read-only detail APIs remain available internally.
 
-**Fast mode** uses the localized name **빠른 처리 (Fast)** in Korean Settings.
-The menu bar and Activity/Dashboard cards show a localized lightning badge beside
-the model and reasoning level when that execution captured `priority` or `fast`.
+Ongoing work shows the relative age of its recorded start. The visible time
+labels update locally once a minute without querying the server. Finished runs
+show duration and relative finish time. The native UI never prints the private
+compatibility session alias. See [work history](work-history.md) for the current
+lists, retention policy and English examples.
+
+**Processing speed** offers Standard, Fast and eligible Ultrafast. Older speed
+settings remain internal; other settings saves preserve their behavior. The menu bar and Dashboard show **⚡** for Fast or
+**🚀** for Ultrafast beside the recorded model, with no Standard badge. The tooltip
+identifies a selected speed; routine rows omit acceptance and missing-speed
+confirmation messages while the execution record keeps that evidence.
+Ultrafast is hidden for new selection until account/workspace access can be
+confirmed by an authoritative CLI contract; existing saved choices remain
+readable. See [speed choices and scope](processing-speed.md#choose-a-speed).
 Changing the preference updates supported next-run settings without relabelling
 running or historical work. Settings explains that the model and reasoning level
 stay the same while usage or costs may increase. Effort values themselves use
@@ -128,16 +155,44 @@ the catalog's canonical lowercase English text (`low`, `medium`, `high`,
 `xhigh`, and other supported values) in the native menu, Dashboard card and both
 Settings surfaces. The effort field name and description remain localized.
 
-The normal native UI is intentionally limited to that Dashboard and the
-Settings card's General and Projects content plus a small Server tab for the
-backend and maximum access. General changes save automatically, except model
-descriptions, which use explicit Save/Cancel controls; the Server tab
-keeps an explicit apply-and-restart confirmation because those values are stored
-in the private dotenv and require runtime replacement. Tunnel setup, Codex
-browser login, and profile repair appear in a separate first-run/connection-
-repair window instead of becoming additional everyday Settings tabs.
+### Settings and skill management
 
-The General tab also contains one native-only **Mac app** control for launching
+The native Settings window uses a resizable macOS sidebar/detail layout. Its
+compact title bar keeps only the standard window controls; the visible title,
+sidebar toggle, and split-view separator are omitted. The localized **Settings**
+name is retained for accessibility, while the detail header identifies the
+selected destination. Its native split-view sidebar uses the same material,
+column sizing, and sidebar search placement as the Skill Library. The sidebar
+always remains visible because it is the window's only settings navigation.
+Search at the top of the sidebar matches
+individual localized controls as well as destinations; selecting a result
+opens its destination and scrolls to the related settings group. The sidebar
+exposes **General**, **Models & Execution**, **Projects**, **Codex Account &
+Installation**, **Connection**, and **Server** when each destination applies to
+the current role and connection state. A pinned card at the bottom identifies the
+currently managed Mac or remote server and its health, and opens Connection when
+selected. General contains language, operational/security notifications,
+launch behavior, conversation storage, and separate app visibility. New ordinary Jobs attach the blank goal relay automatically; the retired delivery switch is absent. See [relay delivery and host lifetime](relay-delivery.md). Shared access, model, processing speed,
+concurrency, and retention controls live under Models & Execution. Projects uses
+a list-oriented manager, while the Server destination retains an explicit
+apply-and-restart confirmation because those values are stored in the private
+dotenv and require runtime replacement. Shared changes save automatically;
+model-description edits keep their explicit Save/Cancel controls. Skill
+management remains only in the separate Skill Library window.
+
+The Skill Library presents the authored body as `SKILL.md` content rather than
+as a generic document. Archive/reactivate and permanent-delete icon actions are
+fixed at the inspector bottom, include tooltips and accessibility labels, and
+stay disabled while an edit is unsaved or a mutation is running. Permanent
+deletion uses one destructive confirmation without typed-name verification;
+the request still carries the exact skill id, expected version, and idempotent
+request id. Legacy `document` and `document.md` records remain readable.
+
+<p align="center">
+  <img src="images/macos-settings-sidebar-light-en.png" alt="English native Settings window showing the six sidebar destinations and General storage, language, and app preferences" width="820">
+</p>
+
+The General destination also contains one native-only **Mac app** control for launching
 the menu-bar UI at user login. It uses `SMAppService.mainApp` and reads the
 system registration or approval state directly. It is not part of the shared
 Settings revision, is not written to dotenv or UserDefaults, and does not change
@@ -152,8 +207,9 @@ explicit **Quit App** action is different: it stops the managed runtime, verifie
 and removes captured descendant process groups, boots the helper LaunchAgent out
 of the current login session, and only then terminates the menu bar app. Its plist
 is preserved so reopening the app or starting the next user login can bootstrap
-the helper again. A browser-login process started by the helper is tracked and its
-process tree is also stopped during helper shutdown. Pending native Settings edits
+the helper again. A separate-profile browser login that survives Helper shutdown
+remains unconfirmed; its profile cannot be reused or applied without a new
+verified login. Pending native Settings edits
 must finish saving before quit; a save failure leaves the app open and reports the
 problem instead of discarding the edit. Graceful quit/stop/restart first blocks new Job admission, waits
 for active Jobs and pending admissions, and then verifies every current retained
@@ -187,20 +243,27 @@ time. The candidate and development app builds use isolated default state
 profiles; an operational stable-DB upgrade requires an explicit selection. See
 the [state upgrade and recovery runbook](state-upgrade-recovery.md).
 
-Routine companion status probes allow two seconds for a response. A failed
-observation while the runtime remains running is presented as checking for at
-most eight seconds, with one-second retries and retained Dashboard/Settings
-content. A confirmed runtime stop or exit bypasses that grace period. These
-presentation rules do not reuse stale admission or shutdown evidence. Helper
-and Tunnel diagnostics record failure/recovery transitions with PID and duration;
-Tunnel diagnostics retain only non-secret probe status fields.
+Routine companion status probes allow two seconds for a response. The helper
+classifies a missed deadline as `timed-out`, separately from an immediate probe
+failure, and reports the last successful observation only for the same managed
+PID. While the runtime remains running, the app presents the first eight seconds
+as checking. Repeated timeouts then become response-unconfirmed attention rather
+than a confirmed disconnect: the last Dashboard/Settings content stays visible,
+but stale content is not admission or shutdown evidence. Dashboard controls that
+require a fresh Bridge connection stay unavailable, and any other action still
+requires a live RPC response. A confirmed runtime stop or exit
+bypasses the grace period and clears retained content through the normal
+unavailable path. A timeout by itself does not recommend restarting the runtime.
+Helper and Tunnel diagnostics record failure/recovery transitions with PID and
+duration; Tunnel diagnostics retain only non-secret probe status fields.
 
 During startup and Tunnel readiness, the menu shows checking without an
 unavailable/recovery banner. Invalid configuration and confirmed runtime failure
-still show recovery guidance immediately. If readiness remains unresolved past
-the existing sixty-second operational notification grace, the menu switches from
-checking to attention and recovery guidance. Fresh observations take precedence
-over a previous alert while the notification refresh is still pending.
+still show recovery guidance immediately. A response-unconfirmed observation
+switches from checking to attention after eight seconds and may notify after the
+separate sixty-second operational grace, but it does not offer a restart as
+though the process had exited. Fresh observations take precedence over a
+previous alert while the notification refresh is still pending.
 
 ### Native refresh policy
 
@@ -230,6 +293,20 @@ The channel carries only topic names and revision identifiers, accepts at most
 four pending watchers, and releases a watcher when its socket closes. It is not
 exposed through the remote HTTPS application method allowlist.
 
+For an explicit Activity policy that creates a local `notify` outbox event, the
+Bridge-host menu-bar app watches Dashboard invalidations while its popover and
+Settings window are closed. It claims retryable records through the private
+`completion.claim`/`completion.delivered`/`completion.release` socket methods,
+which are deliberately absent from the remote HTTPS allowlist. The bridge sends
+only an opaque event ID and outbox ID; the macOS banner has generic text and
+opens the local Dashboard when clicked. It never sends a ChatGPT message or
+exposes a task prompt, result, project path, Activity ID, or conversation ID.
+The app must be running and macOS notifications must be allowed. A failed
+presentation releases the durable lease; a crash after presentation and before
+acknowledgement can produce a retry, so visible delivery is at-least-once rather
+than exactly once. There is no shared or native Settings checkbox for this
+Activity policy, and a remote client cannot receive the local-host notification.
+
 | Information | Refresh policy |
 | --- | --- |
 | Local connection | Change notices and an independent ten-second watchdog |
@@ -240,6 +317,7 @@ exposed through the remote HTTPS application method allowlist.
 | Authentication | Login completion/auth changes and opening a window; five-minute fallback, two-second bounded browser-login checks |
 | CLI/SDK details | Installation changes and window entry; five-minute background fallback; visible settings reconcile each minute with change support, otherwise thirty seconds or two seconds during installation |
 | Operational notifications | Reevaluate on observed state changes and watchdog observations; existing sixty-second grace/deduplication remains |
+| Completion notifications | Local host only: coalesced on bridge Dashboard invalidations, settings refresh, connection recovery, and the ten-second watchdog; no Dashboard snapshot is loaded solely to deliver one |
 
 The app coalesces bursts of automatic non-Dashboard refresh requests over 250 ms.
 System wake, display wake, session activation, app activation and network-path
@@ -255,22 +333,45 @@ policy, even after the short recovery window expires. Closing the menu or switch
 servers discards the pending read. Later connection observations do not reread an
 already loaded Dashboard. A failed probe with a running process offers
 reconnection and does not claim the server stopped. No observation failure
-restarts the server or cancels a Codex job. Closing both content windows cancels
-the companion watcher, while helper lifecycle observation remains active. Old
+restarts the server or cancels a Codex job. Closing both content windows keeps
+the local companion watcher active so it can deliver a pending completion
+notification, while helper lifecycle observation remains active. Old
 helpers that do not support the new methods use the existing status RPC and
 periodic fallback. Watch failures retry with bounded exponential backoff and do
 not themselves mark a healthy runtime as disconnected.
 
 ## First run and connection repair
 
+When setup is incomplete, the menu-bar popover shows a compact neutral
+**Connection Setup Required** state with one primary action. Credentials and
+diagnostics are not embedded in the popover. That action opens a resizable,
+localized assistant with a fixed footer and default/cancel keyboard actions. A
+new setup follows these focused stages:
+
+1. choose whether this Mac runs the server or connects to an existing server;
+2. check supported existing settings before showing manual credentials;
+3. enter a Runtime API key and Tunnel ID only when discovery cannot complete the connection;
+4. check Codex authentication and, when needed, prepare a separate Bridge login in Codex settings; and
+5. continue to ChatGPT Tunnel connection and first-project registration.
+
+<p align="center">
+  <img src="images/macos-connection-setup-light-en.png" alt="English first-run connection assistant showing the role-selection stage and fixed navigation footer" width="720">
+</p>
+
+Connection recovery is a separate state-based view. It prioritizes failed
+components and their actions, summarizes healthy components, keeps paths and
+logs in an Advanced Details disclosure, and does not use red failure styling
+until the operator attempts recovery. Settings → Connection uses the same setup
+entry point when initial configuration is required.
+
 The helper first inspects the existing runtime configuration. A valid file is
 reused without rewriting it or asking for a key. If it is missing or invalid,
-the native connection sheet accepts:
+the connection-details stage accepts:
 
 - the Secure MCP Tunnel runtime API key; and
 - the Tunnel identifier (`tunnel_` followed by 32 lowercase letters or digits).
 
-Before requiring manual entry, the connection sheet performs an explicit,
+Before requiring manual entry, the existing-settings stage performs an explicit,
 read-only discovery pass. It can find a partial private bridge dotenv, a valid
 `CONTROL_PLANE_TUNNEL_ID` paired with `CONTROL_PLANE_API_KEY` or the
 `tunnel-client`-supported `OPENAI_API_KEY` fallback, and current-user-private
@@ -283,7 +384,7 @@ Discovery returns only an opaque candidate identifier, source label, non-secret
 Tunnel ID, and whether a usable key exists. Selecting a complete candidate
 causes the helper to rediscover it and apply the key internally; the key is not
 returned to Swift. An ID-only candidate fills the non-secret Tunnel field so the
-operator can add the missing key. The sheet also links directly to the official
+operator can add the missing key. The assistant also links directly to the official
 Runtime API key and Tunnel settings pages and can parse both values from one
 operator-initiated clipboard paste. It does not create credentials, retain the
 clipboard contents, or place an API key on the clipboard.
@@ -300,7 +401,7 @@ app-owned editor changes only `CONTROL_PLANE_API_KEY` and
 the existing value when a field is blank. The config directory and file must
 be current-user-owned regular non-symlinks with `0700` and `0600` permissions.
 Replacement is same-directory, validated, synced, and atomic.
-If only those permissions are too broad, the repair sheet can restrict the
+If only those permissions are too broad, the recovery assistant can restrict the
 existing current-user-owned regular directory and file in place. It can also
 repair an over-readable pre-existing configuration directory before the first
 dotenv is created. It never follows a symlink or changes dotenv contents.
@@ -326,11 +427,17 @@ match. Otherwise it is rebuilt before use. A separate
 It does not change SQLite, projects, Settings, Codex authentication, or the
 dotenv.
 
-The app checks `codex login status` and starts `codex login` only after the user
-selects the browser-login action. It does not inspect, copy, replace, delete, or
-log out the shared Codex credential cache. In particular, missing ChatGPT login
-never causes an API-key fallback. Explicit execution API-key selection remains
-deferred to issue #29. In app-managed mode, `OPENAI_API_KEY` and `CODEX_API_KEY`
+The app checks the selected Codex account through App Server. The legacy
+shared-home browser-login actions are disabled: starting `codex login` against
+the home used by the Codex desktop app can revoke and remove that app's current
+authentication before the new browser login completes. For a new Bridge login,
+the user prepares a separate persistent ChatGPT profile in Codex settings;
+the selected CLI logs in with that profile's own `CODEX_HOME`. A missing ChatGPT login
+never causes an API-key fallback. **API key for the bridge** prepares a different
+persistent profile and requires API billing confirmation, account/model
+verification, and explicit application. A running server applies a pending
+connection only through a safe restart. See [authentication connections](codex-auth-connections.md).
+In app-managed mode, `OPENAI_API_KEY` and `CODEX_API_KEY`
 from an older dotenv or ambient process are not inherited by Codex children;
 the existing CLI/dotenv launcher behavior outside app-managed mode remains
 compatible.
@@ -339,9 +446,9 @@ missing or expired Codex login is shown as needing attention, never as healthy,
 and the browser flow remains pending until a later check confirms authentication.
 The app itself does not call Keychain for Tunnel credentials. `codex login
 status` still follows the user's existing Codex credential-store configuration,
-so any operating-system prompt caused by that external configuration belongs in
-the physical release test rather than being claimed away by the Tunnel dotenv
-contract.
+so an operating-system prompt caused by that external configuration can be
+observed during optional manual validation. The Tunnel dotenv contract does
+not establish the behavior of the external credential store.
 
 After the tunnel is running, ChatGPT setup remains unchanged: enable Developer
 mode, select the matching Secure MCP Tunnel, and connect it with `No Auth`.
@@ -364,8 +471,10 @@ user's effective UID. They expose small allowlisted JSON-RPC contracts, not MCP
 and not the old unauthenticated loopback HTTP control surface. Requests and responses are
 bounded. Helper diagnostics retain at most 200 redacted lines.
 
-The helper handshake is bound to the IPC protocol version and exact bundled
-runtime build. Replacement of a reachable LaunchAgent drains its runtime before
+The helper handshake is bound to local companion protocol version 12 and the
+exact bundled runtime build. Remote management uses companion protocol version
+10. A protocol-changing upgrade requires the native client to reconnect or
+restart. Replacement of a reachable LaunchAgent drains its runtime before
 the plist is changed, so a drain timeout leaves the installed helper and plist
 in place for a later retry. If an incompatible helper cannot be reached while
 its runtime lock still exists, automatic replacement fails closed instead of
@@ -469,6 +578,6 @@ runtime it supervises.
 The release manifest supports macOS 13+ with separate Apple Silicon (`arm64`)
 and Intel (`x64`) DMGs. Node.js, Codex CLI, and `tunnel-client` remain explicit
 native-architecture external prerequisites. A Universal DMG and an automatic
-updater remain outside the release scope. Manual app replacement/rollback and
-the physical accessibility, appearance, sleep/wake, network-recovery, and
-helper-crash matrix remain gates listed in [releasing.md](releasing.md).
+updater remain outside the release scope. Manual app replacement/rollback,
+accessibility, appearance, sleep/wake, network recovery, and helper-crash checks
+are optional validation described in [releasing.md](releasing.md).

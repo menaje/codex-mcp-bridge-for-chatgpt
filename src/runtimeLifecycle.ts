@@ -1,6 +1,7 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readPrivateFile, writePrivateFileAtomic } from "../scripts/managed-file.mjs";
 import * as z from "zod/v4";
+import { parseJsonUtf8Strict } from "./textIntegrity.js";
 
 export const lifecycleConfigurationSchema = z.strictObject({
   apiKey: z.string().max(4096).optional(),
@@ -38,7 +39,41 @@ export type LifecycleSnapshot = {
   requestId: string; kind: LifecycleRequest["kind"]; force: boolean; phase: LifecyclePhase;
   createdAt: string; updatedAt: string; reasons: LifecycleReason[]; error: string | null;
   targetBuildId?: string; targetDescription?: string; cancellable: boolean;
+  startup?: Pick<InitialStartup, "source" | "startedAt" | "deadlineAt" | "attempts" | "nextAttemptAt" | "stage" | "failureCode" | "failureStage" | "retrySuppressed">;
 };
+
+// Only an app launch or helper RunAtLoad owns this budget. Ordinary lifecycle
+// reservations and bounded legacy RPCs retain their existing contracts.
+export const INITIAL_START_BUDGET_MS = 300_000;
+export const INITIAL_START_MAX_ATTEMPTS = 3;
+// Reserve time inside the same budget for a fresh protection read and owned cleanup.
+export const INITIAL_START_CLEANUP_MS = 7_000;
+const startupSchema = z.object({
+  source: z.enum(["application-launch", "helper-launch"]),
+  bootId: z.string().uuid().optional(),
+  retrySuppressed: z.boolean().optional(),
+  startedAt: z.number().int(), deadlineAt: z.number().int(),
+  attempts: z.number().int().min(0).max(INITIAL_START_MAX_ATTEMPTS),
+  nextAttemptAt: z.number().nullable(),
+  cleanup: z.enum(["clear", "pending", "uncertain"]),
+  owner: z.object({ pid: z.number().int().positive().nullable(), token: z.string().uuid() }).nullable(),
+  stage: z.enum(["queued", "launching", "state-owner", "http", "tunnel", "ready", "backoff", "cleanup"]),
+  failureCode: z.string().regex(/^[A-Z][A-Z0-9_]{2,79}$/).nullable(),
+  failureStage: z.enum(["queued", "launching", "state-owner", "http", "tunnel", "ready", "backoff", "cleanup"]).optional()
+}).superRefine((value, context) => {
+  if (value.deadlineAt < value.startedAt || value.deadlineAt > value.startedAt + INITIAL_START_BUDGET_MS ||
+      (value.nextAttemptAt !== null && (value.nextAttemptAt >= value.deadlineAt || value.attempts === 0))) {
+    context.addIssue({ code: "custom", message: "Invalid persisted initial startup budget." });
+  }
+});
+export type InitialStartup = z.infer<typeof startupSchema>;
+export type StartupProgress = Pick<InitialStartup, "stage"> & Partial<Pick<InitialStartup, "owner" | "cleanup">>;
+const transientStartupCodes = new Set(["STARTUP_STATE_TIMEOUT", "STARTUP_HTTP_TIMEOUT", "STARTUP_TUNNEL_TIMEOUT"]);
+export class InitialStartupFailure extends Error {
+  constructor(readonly code: string, readonly cleanupConfirmed: boolean, readonly causeCode?: string, readonly stage?: InitialStartup["stage"]) {
+    super(`${code}${causeCode ? `: ${causeCode}` : ""}: Initial startup failed; ${cleanupConfirmed ? "the owned attempt is stopped" : "cleanup requires review"}.`);
+  }
+}
 
 const recordSchema = z.object({
   request: lifecycleRequestSchema,
@@ -51,17 +86,18 @@ const recordSchema = z.object({
   reasons: z.array(z.object({ code: z.string(), count: z.number().optional() })),
   error: z.string().nullable(), beforeRun: z.string().nullable(),
   // Old RPC callers retain their bounded attempt contract, using this same coordinator.
-  deadlineAt: z.number().optional()
+  deadlineAt: z.number().optional(),
+  startup: startupSchema.optional()
 });
 export type LifecycleRecord = z.infer<typeof recordSchema>;
 const stateSchema = z.object({ version: z.literal(1), records: z.array(recordSchema) });
 export type LifecycleInspection = { run: string | null; reasons: LifecycleReason[] };
 export type LifecycleRecoveryAction = "activate-helper";
-export type LifecycleReconciliation = "completed" | "handoff-ready" | "retry" | LifecycleRecoveryAction;
+export type LifecycleReconciliation = "completed" | "handoff-ready" | "retry" | "startup-pending" | LifecycleRecoveryAction;
 export interface LifecycleDriver {
   prepare(request: LifecycleRequest): Promise<{ request: LifecycleRequest; target: Record<string, unknown>; description?: string }>;
   inspect(record: LifecycleRecord): Promise<LifecycleInspection>;
-  execute(record: LifecycleRecord, phase: (phase: "executing" | "reconnecting") => void, recoveryAction?: LifecycleRecoveryAction): Promise<"completed" | "handoff-ready">;
+  execute(record: LifecycleRecord, phase: (phase: "executing" | "reconnecting", progress?: StartupProgress) => void, recoveryAction?: LifecycleRecoveryAction): Promise<"completed" | "handoff-ready">;
   // Observe only. Any recovered side effect must pass the coordinator's
   // cancellation check and persisted execution claim before execute is called.
   reconcile(record: LifecycleRecord): Promise<LifecycleReconciliation>;
@@ -89,9 +125,11 @@ export class RuntimeLifecycleCoordinator {
   private closed = false;
 
   constructor(private readonly file: string, private readonly driver: LifecycleDriver,
-    private readonly options: { intervalMs?: number; now?: () => number } = {}) {
+    private readonly options: { intervalMs?: number; now?: () => number; bootId?: string } = {}) {
     try {
-      this.records = stateSchema.parse(JSON.parse(readPrivateFile(file, { encoding: "utf8" }))).records;
+      this.records = stateSchema.parse(
+        parseJsonUtf8Strict(readPrivateFile(file), "runtime lifecycle state")
+      ).records;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       this.records = [];
@@ -103,13 +141,17 @@ export class RuntimeLifecycleCoordinator {
     const record = [...this.records].reverse().find(record => !terminal(record.phase));
     return record ? this.project(record) : null;
   }
+  get latestBootId(): string | undefined {
+    const record = this.records.at(-1);
+    return record?.startup?.bootId ?? (typeof record?.target.bootId === "string" ? record.target.bootId : undefined);
+  }
   get latest(): LifecycleSnapshot | null { return this.records.length ? this.project(this.records.at(-1)!) : null; }
   snapshot(requestId?: string): LifecycleSnapshot | null {
     const record = requestId ? this.records.find(record => record.request.requestId === requestId) : this.records.at(-1);
     return record ? this.project(record) : null;
   }
 
-  async submit(input: LifecycleRequest, deadlineMs?: number): Promise<LifecycleSnapshot> {
+  async submit(input: LifecycleRequest, deadlineMs?: number, source?: "helper-launch"): Promise<LifecycleSnapshot> {
     const request = lifecycleRequestSchema.parse(input);
     const fingerprint = createHash("sha256").update(JSON.stringify(request)).digest("hex");
     const operation = this.submission.then(async () => {
@@ -132,9 +174,23 @@ export class RuntimeLifecycleCoordinator {
           if (active || latest.request.kind === "mode-switch" ||
               Date.parse(latest.createdAt) >= launchedAt ||
               (Date.parse(latest.updatedAt) >= launchedAt && !priorShutdownCompleted)) {
+            // Joining an already accepted helper launch can only shorten its
+            // budget. It cannot recreate intent or extend an old deadline.
+            if (active?.startup && launchedAt < active.startup.startedAt) {
+              const deadlineAt = Math.min(active.startup.deadlineAt, launchedAt + INITIAL_START_BUDGET_MS);
+              this.transition(active, active.phase, active.reasons, active.error,
+                { ...active.startup, startedAt: launchedAt, deadlineAt,
+                  nextAttemptAt: active.startup.nextAttemptAt !== null && active.startup.nextAttemptAt >= deadlineAt
+                    ? null : active.startup.nextAttemptAt });
+            }
             return this.project(active ?? latest);
           }
         }
+      }
+      if (active?.startup && ["executing", "reconnecting"].includes(active.phase) &&
+          ["stop", "shutdown", "mode-switch"].includes(request.kind)) {
+        this.transition(active, active.phase, active.reasons, active.error, { ...active.startup, retrySuppressed: true });
+        throw new Error("LIFECYCLE_BUSY: INITIAL_START_RETRY_SUPPRESSED: The current attempt cannot be interrupted. Automatic retries are disabled; request Stop again after it finishes.");
       }
       if (active && (request.replacesRequestId !== active.request.requestId || !cancellable(active.phase))) {
         throw new Error("LIFECYCLE_BUSY: Cancel or replace the current reservation before submitting another operation.");
@@ -145,11 +201,18 @@ export class RuntimeLifecycleCoordinator {
       if (this.closed) throw new Error("LIFECYCLE_CLOSED: The helper is shutting down.");
       if (active && (!cancellable(active.phase) || terminal(active.phase))) throw new Error("LIFECYCLE_STALE: The reservation changed while preparing its replacement.");
       const now = this.now();
+      const startupSource = deadlineMs === undefined && request.kind === "start" && !request.force &&
+        !prepared.target.existingRun && !prepared.target.startupRecoveryProtected ? (request.applicationLaunchAt ? "application-launch" : source) : undefined;
+      const startupStartedAt = request.applicationLaunchAt ? Math.min(now, Date.parse(request.applicationLaunchAt)) : now;
       const record: LifecycleRecord = {
         request: prepared.request, fingerprint, target: prepared.target, targetDescription: prepared.description,
         phase: "waiting", createdAt: new Date(now).toISOString(), updatedAt: new Date(now).toISOString(),
         reasons: [], error: null, beforeRun: null,
-        ...(deadlineMs !== undefined ? { deadlineAt: now + deadlineMs } : {})
+        ...(deadlineMs !== undefined ? { deadlineAt: now + deadlineMs } : {}),
+        ...(startupSource ? { startup: { source: startupSource, bootId: this.options.bootId, startedAt: startupStartedAt,
+          deadlineAt: startupStartedAt + INITIAL_START_BUDGET_MS, attempts: 0,
+          nextAttemptAt: null, cleanup: "clear" as const, owner: null,
+          stage: "queued" as const, failureCode: null } } : {})
       };
       const previous = this.records.map(item => ({ ...item }));
       if (active) { active.phase = "cancelled"; active.updatedAt = record.createdAt; active.reasons = []; }
@@ -168,7 +231,13 @@ export class RuntimeLifecycleCoordinator {
     const record = this.records.find(item => item.request.requestId === requestId);
     if (!record) throw new Error("LIFECYCLE_UNKNOWN: This reservation no longer exists.");
     if (record.phase === "cancelled") return this.project(record);
-    if (!cancellable(record.phase)) throw new Error("LIFECYCLE_NOT_CANCELLABLE: The operation has already begun or finished.");
+    if (!cancellable(record.phase)) {
+      if (record.startup && ["executing", "reconnecting"].includes(record.phase)) {
+        this.transition(record, record.phase, record.reasons, record.error, { ...record.startup, retrySuppressed: true });
+        throw new Error("LIFECYCLE_NOT_CANCELLABLE: INITIAL_START_RETRY_SUPPRESSED: The current attempt cannot be interrupted; automatic retries are disabled.");
+      }
+      throw new Error("LIFECYCLE_NOT_CANCELLABLE: The operation has already begun or finished.");
+    }
     // A prepared handoff has already stopped the runtime; cancellation does not restart it.
     this.transition(record, "cancelled", [], null);
     this.stopWatchingIfIdle();
@@ -245,20 +314,29 @@ export class RuntimeLifecycleCoordinator {
     const revision = this.revision;
     const current = () => !this.closed && revision === this.revision && !terminal(record.phase);
     try {
+      if (record.startup?.nextAttemptAt && this.now() < record.startup.nextAttemptAt) return;
       if (this.recovery.has(record.request.requestId) || ["handoff-ready", "handing-off"].includes(record.phase)) {
         const result = await this.driver.reconcile(record);
         if (!current()) return;
+        if (result === "startup-pending") {
+          if (record.startup && this.now() >= record.startup.deadlineAt - INITIAL_START_CLEANUP_MS) throw new InitialStartupFailure("STARTUP_BUDGET_EXHAUSTED", false);
+          return;
+        }
         this.recovery.delete(record.request.requestId);
         if (result === "activate-helper") {
           await this.execute(record, result);
           return;
         }
-        if (result !== "retry") { this.transition(record, result, [], null); return; }
+        if (result !== "retry") { this.transition(record, result, [], null,
+          record.startup && result === "completed" ? { ...record.startup, cleanup: "clear", stage: "ready" } : undefined); return; }
         if (["handoff-ready", "handing-off"].includes(record.phase)) return;
         this.transition(record, "waiting", [], null);
         this.startWatching();
         this.signal();
         return;
+      }
+      if (record.startup && this.now() >= record.startup.deadlineAt - INITIAL_START_CLEANUP_MS) {
+        throw new InitialStartupFailure("STARTUP_BUDGET_EXHAUSTED", record.startup.cleanup === "clear");
       }
       if (record.deadlineAt !== undefined && this.now() >= record.deadlineAt) {
         this.transition(record, "failed", [], "DRAIN_TIMEOUT: The bounded legacy attempt expired. Existing work was preserved.");
@@ -287,6 +365,20 @@ export class RuntimeLifecycleCoordinator {
     } catch (error) {
       if (this.closed || terminal(record.phase)) return;
       const message = this.driver.error(error);
+      if (record.startup) {
+        const failure = error instanceof InitialStartupFailure ? error : null;
+        const code = failure?.code || "STARTUP_UNCLASSIFIED_FAILURE";
+        const retryAt = this.now() + 1000 * 2 ** Math.max(0, record.startup.attempts - 1);
+        const retry = !record.startup.retrySuppressed && failure?.cleanupConfirmed && transientStartupCodes.has(code) &&
+          record.startup.attempts < INITIAL_START_MAX_ATTEMPTS && retryAt < record.startup.deadlineAt - INITIAL_START_CLEANUP_MS;
+        this.recovery.delete(record.request.requestId);
+        this.transition(record, retry ? "waiting" : record.startup.retrySuppressed && failure?.cleanupConfirmed ? "cancelled" : "failed", retry ? [{ code: "startup-retry", count: record.startup.attempts + 1 }] : [],
+          message, { ...record.startup, cleanup: failure?.cleanupConfirmed ? "clear" : "uncertain",
+            stage: retry ? "backoff" : "cleanup", nextAttemptAt: retry ? retryAt : null, failureCode: code,
+            failureStage: failure?.stage ?? (record.startup.stage === "backoff" ? "queued" : record.startup.stage) });
+        if (retry) this.startWatching();
+        return;
+      }
       if (/DRAIN_TIMEOUT|BACKGROUND_PROCESS|CODEX_APPLY_PENDING|CODEX_MEMORY_THREADS_ACTIVE|CODEX_INTERACTIONS_PENDING/.test(message)
           && !/DRAIN_CANCEL_FAILED|CONFIG_ROLLBACK_FAILED|CONFIG_ROLLBACK_RESTART_FAILED/.test(message)
           && !record.request.force && record.deadlineAt === undefined) {
@@ -300,18 +392,28 @@ export class RuntimeLifecycleCoordinator {
 
   private async execute(record: LifecycleRecord, recoveryAction?: LifecycleRecoveryAction): Promise<void> {
     // No await between the caller's revision check and this execution claim.
-    this.transition(record, "executing", [], null);
+    const startup = record.startup;
+    if (startup && (startup.retrySuppressed || startup.cleanup !== "clear" || startup.attempts >= INITIAL_START_MAX_ATTEMPTS)) {
+      throw new InitialStartupFailure("STARTUP_CLEANUP_UNCONFIRMED", false);
+    }
+    // Persist consumption and the unique token before any process side effect.
+    this.transition(record, "executing", [], null, startup ? { ...startup,
+      attempts: startup.attempts + 1, bootId: this.options.bootId ?? startup.bootId, nextAttemptAt: null, cleanup: "pending",
+      owner: { pid: null, token: randomUUID() }, stage: "launching", failureCode: null } : undefined);
     // Do not leave our own long-poll socket holding up companion shutdown.
     this.watcher?.abort();
     this.watcher = undefined;
-    const result = await this.driver.execute(record, phase => this.transition(record, phase, [], null), recoveryAction);
-    this.transition(record, result, [], null);
+    const result = await this.driver.execute(record, (phase, progress) => this.transition(record, phase, [], null,
+      progress && record.startup ? { ...record.startup, ...progress } : undefined), recoveryAction);
+    this.transition(record, result, [], null, record.startup ? { ...record.startup,
+      cleanup: "clear", stage: "ready", nextAttemptAt: null } : undefined);
   }
 
-  private transition(record: LifecycleRecord, phase: LifecyclePhase, reasons: LifecycleReason[], error: string | null): void {
-    if (record.phase === phase && JSON.stringify(record.reasons) === JSON.stringify(reasons) && record.error === error) return;
+  private transition(record: LifecycleRecord, phase: LifecyclePhase, reasons: LifecycleReason[], error: string | null, startup?: InitialStartup): void {
+    if (record.phase === phase && JSON.stringify(record.reasons) === JSON.stringify(reasons) && record.error === error &&
+        (!startup || JSON.stringify(startup) === JSON.stringify(record.startup))) return;
     const before = { ...record };
-    Object.assign(record, { phase, reasons, error, updatedAt: new Date(this.now()).toISOString() });
+    Object.assign(record, { phase, reasons, error, ...(startup ? { startup } : {}), updatedAt: new Date(this.now()).toISOString() });
     try { this.persist(); } catch (failure) { Object.assign(record, before); throw failure; }
     this.driver.changed();
   }
@@ -328,7 +430,11 @@ export class RuntimeLifecycleCoordinator {
       requestId: record.request.requestId, kind: record.request.kind, force: record.request.force,
       phase: record.phase, createdAt: record.createdAt, updatedAt: record.updatedAt, reasons: record.reasons.map(reason => ({ ...reason })),
       error: record.error, targetBuildId: record.request.targetBuildId, targetDescription: record.targetDescription,
-      cancellable: cancellable(record.phase)
+      cancellable: cancellable(record.phase),
+      ...(record.startup ? { startup: { source: record.startup.source, startedAt: record.startup.startedAt,
+        deadlineAt: record.startup.deadlineAt, attempts: record.startup.attempts,
+        nextAttemptAt: record.startup.nextAttemptAt, stage: record.startup.stage,
+        failureCode: record.startup.failureCode, failureStage: record.startup.failureStage, retrySuppressed: record.startup.retrySuppressed } } : {})
     };
   }
   private stopWatchingIfIdle(): void {

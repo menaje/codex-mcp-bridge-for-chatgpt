@@ -1,12 +1,17 @@
 import { randomUUID, createHash } from "node:crypto";
-import { RuntimeLifecycleCoordinator, lifecycleRequestSchema, isLifecycleHandoff, type LifecycleRequest, type LifecycleRecord, type LifecycleSnapshot, type LifecycleReason, type LifecycleReconciliation } from "./runtimeLifecycle.js";
+import { RuntimeLifecycleCoordinator, INITIAL_START_CLEANUP_MS, InitialStartupFailure, type StartupProgress, lifecycleRequestSchema, isLifecycleHandoff, type LifecycleRequest, type LifecycleRecord, type LifecycleSnapshot, type LifecycleReason, type LifecycleReconciliation } from "./runtimeLifecycle.js";
 import { ChangeSignal, changeWaitParamsSchema } from "./changeSignal.js";
 import { CodexService } from "./codexService.js";
+import { CodexAuthSelectionManager, type AuthConnection } from "./codexAuthSelection.js";
+import { authSelectionRoot } from "../scripts/auth-selection.mjs";
+import { isActiveActivityJobStatus } from "./activity.js";
+import { BridgeStateStore } from "./stateStore.js";
 import { DiagnosticLog } from "./diagnosticLog.js";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import {
   existsSync,
+  readFileSync,
   lstatSync,
   unlinkSync,
   watch,
@@ -15,24 +20,23 @@ import {
 import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import path from "node:path";
-import Database from "better-sqlite3";
 import {
   defaultStateProfile,
   parseStateProfile,
   stateDatabaseFileForProfile
 } from "./config.js";
 import {
-  CURRENT_STATE_DATABASE_SCHEMA,
-  SUPPORTED_STATE_SCHEMA_VERSIONS
-} from "./stateCompatibility.js";
-import {
   inspectStateDatabase,
   readStateMigrationStatus,
   stateMigrationExtendsStartupDeadline
 } from "./stateDatabaseLifecycle.js";
+import { CURRENT_STATE_DATABASE_SCHEMA } from "./stateCompatibility.js";
+import { inspectRegisteredProjectRoots } from "./stateProjectInspection.js";
 import * as z from "zod/v4";
 import {
   commitRuntimeEnvUpdate,
+  codexChildEnvironment,
+  codexChildEnvironmentFingerprint,
   defaultRuntimeEnvFile,
   inspectRuntimeEnvFile,
   prepareRuntimeEnvUpdate,
@@ -48,8 +52,10 @@ import {
   type ManagedTunnelStatus
 } from "../scripts/runtime-status.mjs";
 import {
+  acquireRuntimeLock,
   defaultRuntimeLockDirectory,
-  readRuntimeLockOwner
+  readRuntimeLockOwner,
+  releaseStoppedRuntimeLock
 } from "../scripts/runtime-lock.mjs";
 import {
   COMPANION_PROTOCOL_NAME,
@@ -58,7 +64,7 @@ import {
   type BridgeCompanionServer
 } from "./companionServer.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
-import { atomicRuntimeJson, CodexRuntimeManager, withRuntimeLock, type CliRuntimeSnapshot } from "./codexRuntime.js";
+import { atomicRuntimeJson, CodexRuntimeManager, withRuntimeLock, type CliEnvironmentSummary, type CliRuntimeSnapshot } from "./codexRuntime.js";
 import { assertRuntimeEnvOutsideProjectRoots } from "./runtimeEnvProjectGuard.js";
 import {
   discoverTunnelSetup,
@@ -66,6 +72,7 @@ import {
   type TunnelSetupDiscovery,
   type TunnelSetupDiscoveryOptions
 } from "./tunnelSetupDiscovery.js";
+import { assertJsonTextIntegrity, decodeUtf8Strict, parseJsonUtf8Strict } from "./textIntegrity.js";
 
 export const MACOS_HELPER_PROTOCOL_NAME = "codex-mcp-bridge-macos-helper";
 export const MACOS_HELPER_PROTOCOL_VERSION = 2;
@@ -81,6 +88,7 @@ const MANAGED_LAUNCHER_SHUTDOWN_TIMEOUT_MS = 20_000;
 const MANAGED_PROCESS_TREE_TERM_TIMEOUT_MS = 3_000;
 const MANAGED_PROCESS_TREE_KILL_TIMEOUT_MS = 2_000;
 const PROCESS_TABLE_MAX_BYTES = 4 * 1_024 * 1_024;
+const PROCESS_TABLE_TIMEOUT_MS = 2_000;
 const CRASH_WINDOW_MS = 5 * 60_000;
 const MAX_AUTOMATIC_RESTARTS = 3;
 const MACOS_MANAGED_TUNNEL_PROFILE = "codex-mcp-bridge-macos";
@@ -100,6 +108,19 @@ type ManagedProcessIdentity = {
   parentPid: number;
   processGroupId: number;
 };
+
+type BridgeStatusObservation = {
+  admission: RuntimeAdmissionSnapshot | null;
+  state: "fresh" | "timed-out" | "failed";
+  lastSuccessfulAt: number | null;
+};
+
+class BridgeCompanionRequestTimeoutError extends Error {
+  constructor() {
+    super("Bridge companion request timed out.");
+    this.name = "BridgeCompanionRequestTimeoutError";
+  }
+}
 
 const requestIdSchema = z.union([
   z.string().min(1).max(128),
@@ -167,7 +188,9 @@ const logsParamsSchema = z.strictObject({
 const codexRuntimeParamsSchema = z.strictObject({
   kind: z.literal("cli").optional(),
   includeAccount: z.boolean().optional(),
-  action: z.enum(["status", "configure-billing", "remove-billing", "login", "select", "install", "update", "remove", "reinstall", "rollback", "cleanup", "retry", "check-updates", "apply-pending", "preferences"]),
+  action: z.enum(["status", "configure-billing", "remove-billing", "login", "select", "install", "update", "remove", "reinstall", "rollback", "cleanup", "retry", "check-updates", "apply-pending", "preferences",
+    "auth-prepare", "auth-login", "auth-api-key", "auth-verify", "auth-apply", "auth-cancel", "auth-cancel-pending",
+    "auth-remove-api-key", "auth-logout-profile", "auth-reconcile-stopped", "auth-select-profile"]),
   selectionId: z.string().regex(/^[a-f0-9]{24}$/).optional(),
   version: z.string().regex(/^\d+\.\d+\.\d+$/).optional(),
   billing: z.object({ adminKey: z.string().max(32768), organizationId: z.string().max(164), projectId: z.string().max(165).nullable() }).optional(),
@@ -175,7 +198,17 @@ const codexRuntimeParamsSchema = z.strictObject({
     pinnedVersion: z.string().regex(/^\d+\.\d+\.\d+$/).nullable().optional(),
     skippedVersion: z.string().regex(/^\d+\.\d+\.\d+$/).nullable().optional(),
     notifications: z.boolean().optional()
-  }).optional()
+  }).optional(),
+  authKind: z.enum(["shared", "external", "bridge-chatgpt", "bridge-api", "disconnected"]).optional(),
+  authCandidateId: z.string().uuid().optional(),
+  authProfileId: z.string().uuid().optional(),
+  authHomeId: z.string().uuid().optional(),
+  authActivationId: z.string().uuid().optional(),
+  authRevision: z.number().int().nonnegative().optional(),
+  authApiKey: z.string().max(32768).optional(),
+  authBillingConfirmed: z.boolean().optional(),
+  authRemovalConfirmed: z.boolean().optional(),
+  authResolutionConfirmed: z.boolean().optional()
 });
 export type CodexRuntimeAction = z.infer<typeof codexRuntimeParamsSchema>;
 const companionHelloSchema = z.object({
@@ -224,13 +257,39 @@ export type MacOSHelperStatus = {
   bridge: {
     socketPath: string;
     connected: boolean;
+    /**
+     * `timed-out` means the bounded observation missed its deadline; it is not
+     * evidence that the managed process or its socket exited. Optional for
+     * compatibility with helpers that predate response classification.
+     */
+    observation?: "fresh" | "timed-out" | "failed";
+    /** Last fresh observation for this exact managed process generation. */
+    lastSuccessfulAt?: string | null;
     acceptingNewJobs: boolean | null;
     activeJobs: number | null;
     pendingAdmissions: number | null;
+    pendingInteractions?: number | null;
+    memoryOnlyThreads?: number | null;
+    protectedMemoryOnlyThreads?: number | null;
+    discardableMemoryOnlyThreads?: number | null;
     backgroundProcessState: "confirmed" | "unknown" | null;
     backgroundProcesses: number | null;
     backgroundProcessAgents: number | null;
     backgroundProcessUnknownAgents: number | null;
+    stateServiceStatus?: string | null;
+    stateServiceAccess?: "read" | "write" | null;
+    stateServicePhase?: string | null;
+    stateServiceObservedAt?: number | null;
+    stateServiceLastCommitAt?: number | null;
+    stateServiceStorageError?: "busy" | "full" | "io" | "corrupt" | "read-only" | null;
+    stateServiceStorageErrorObservedAt?: number | null;
+    readServiceStatus?: string | null;
+    readServicePhase?: string | null;
+    readServiceObservedAt?: number | null;
+    readServiceLastSnapshotAt?: number | null;
+    telemetryServiceStatus?: string | null;
+    telemetryDropped?: number | null;
+    telemetryFailed?: number | null;
   };
   tunnel: {
     phase: string;
@@ -239,6 +298,7 @@ export type MacOSHelperStatus = {
     doctorPassed: boolean;
     processRunning: boolean;
     connected: boolean;
+    observation?: ManagedTunnelStatus["observation"];
     lastCheckedAt: string | null;
     lastError: string | null;
     lastProblem: StatusProblem | null;
@@ -315,6 +375,10 @@ export type MacOSBridgeSupervisorOptions = {
   setupDiscoveryHomeDirectory?: string;
   codexRuntimeManager?: CodexRuntimeManager;
   lifecycleIntervalMs?: number;
+  /** Fixture override; production reads only OS boot identity/time. */
+  startupBoot?: { id?: string; startedAt?: number };
+  /** Local regression injection only; never exposed in helper RPC/config. */
+  processInspectorSpawn?: typeof spawn;
 };
 
 export class MacOSBridgeSupervisor implements MacOSHelperController {
@@ -359,7 +423,9 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     if (!state) return "missing";
     // A routine heartbeat is not a connection change.
     return JSON.stringify({ pid: state.launcherPid, phase: state.phase, build: state.runtimeBuildId,
-      tunnel: { ...state.tunnel, lastCheckedAt: null } });
+      tunnel: { ...state.tunnel, lastCheckedAt: null,
+        observation: state.tunnel.observation && { ...state.tunnel.observation,
+          controlPlanePoll: { ...state.tunnel.observation.controlPlanePoll, lastSuccessfulAt: null } } } });
   }
 
   private watchManager(manager: CodexRuntimeManager): void {
@@ -368,7 +434,6 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     this.managerSubscriptions.add(manager.subscribeChanges(() => this.changed("installation")));
   }
 
-  private codexService?: CodexService;
   private readonly bridgeRoot: string;
   private readonly envFile: string;
   private readonly bridgeSocketPath: string;
@@ -398,27 +463,43 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   private loginProcess: ChildProcess | undefined;
   private pendingProcessCleanup: ManagedProcessIdentity[] = [];
   private readonly logEntries: DiagnosticLog<MacOSHelperLogEntry>;
-  private bridgeStatusProbe: Promise<RuntimeAdmissionSnapshot | null> | undefined;
-  private bridgeProbeObservation: { pid: number | undefined; connected: boolean; failedAt: number | null } | undefined;
+  private bridgeStatusProbe: Promise<BridgeStatusObservation> | undefined;
+  private bridgeProbeObservation: {
+    pid: number | undefined;
+    startedAt: string | null;
+    state: BridgeStatusObservation["state"];
+    failedAt: number | null;
+    lastSuccessfulAt: number | null;
+  } | undefined;
   private operation: Promise<unknown> = Promise.resolve();
   private lifecycleManager?: RuntimeLifecycleCoordinator;
   private handoffWatcher?: FSWatcher;
   private closed = false;
   private readonly lifecycleIntervalMs: number;
-  private lifecyclePhaseReporter?: (phase: "executing" | "reconnecting") => void;
+  private lifecyclePhaseReporter?: (phase: "executing" | "reconnecting", progress?: StartupProgress) => void;
   private executingLifecycle?: LifecycleRecord;
   private readonly helperInstance = randomUUID();
+  private startupDiagnosticKey?: string;
+  private readonly startupBoot: { id?: string; startedAt?: number };
   private cliManager?: CodexRuntimeManager;
+  private readonly injectedCliManager?: CodexRuntimeManager;
+  private cliContext?: { fingerprint: string; manager: CodexRuntimeManager; service: CodexService };
+  private requestedContext?: { fingerprint: string; manager: CodexRuntimeManager; service: CodexService };
   private cliInstallation?: Promise<unknown>;
   private cliUpdateCheck?: Promise<unknown>;
+  private authStatusFailure: string | undefined;
+  private readonly processInspectorSpawn: typeof spawn;
 
   constructor(options: MacOSBridgeSupervisorOptions) {
+    this.processInspectorSpawn = options.processInspectorSpawn ?? spawn;
     this.logEntries = new DiagnosticLog({ maxEntries: HELPER_LOG_LIMIT,
       maxBytes: options.logMaxBytes ?? 1_024 * 1_024, retentionMs: options.logRetentionMs ?? 24 * 60 * 60_000 });
     this.lifecycleIntervalMs = options.lifecycleIntervalMs ?? 5000;
+    this.startupBoot = options.startupBoot ?? currentSystemBoot();
     this.bridgeRoot = path.resolve(options.bridgeRoot);
     this.envFile = path.resolve(options.envFile || defaultRuntimeEnvFile());
     this.cliManager = options.codexRuntimeManager;
+    this.injectedCliManager = options.codexRuntimeManager;
     this.bridgeSocketPath = path.resolve(options.bridgeSocketPath);
     this.launcherPath = path.resolve(
       options.launcherPath || path.join(this.bridgeRoot, "scripts", "start-codex-mcp-bridge.mjs")
@@ -455,7 +536,8 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
 
   async snapshot(options: { includeDetails?: boolean } = {}): Promise<MacOSHelperStatus> {
     this.reconcileManagedRuntime();
-    const bridgeAdmission = await this.readBridgeStatus();
+    const bridgeObservation = await this.readBridgeStatus();
+    const bridgeAdmission = bridgeObservation.admission;
     const includeDetails = options.includeDetails !== false;
     const generation = this.configurationGeneration;
     const cached = this.healthConfiguration;
@@ -484,36 +566,66 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       bridge: {
         socketPath: this.bridgeSocketPath,
         connected: bridgeAdmission !== null,
+        observation: bridgeObservation.state,
+        lastSuccessfulAt: bridgeObservation.lastSuccessfulAt === null
+          ? null : new Date(bridgeObservation.lastSuccessfulAt).toISOString(),
         acceptingNewJobs: bridgeAdmission?.acceptingNewJobs ?? null,
         activeJobs: bridgeAdmission?.activeJobs ?? null,
         pendingAdmissions: bridgeAdmission?.pendingAdmissions ?? null,
+        pendingInteractions: bridgeAdmission?.pendingInteractions ?? null,
+        memoryOnlyThreads: bridgeAdmission?.memoryOnlyThreads ?? null,
+        protectedMemoryOnlyThreads: bridgeAdmission?.protectedMemoryOnlyThreads ?? null,
+        discardableMemoryOnlyThreads: bridgeAdmission?.discardableMemoryOnlyThreads ?? null,
         backgroundProcessState: bridgeAdmission?.backgroundProcessState ?? null,
         backgroundProcesses: bridgeAdmission?.backgroundProcesses ?? null,
         backgroundProcessAgents: bridgeAdmission?.backgroundProcessAgents ?? null,
-        backgroundProcessUnknownAgents: bridgeAdmission?.backgroundProcessUnknownAgents ?? null
+        backgroundProcessUnknownAgents: bridgeAdmission?.backgroundProcessUnknownAgents ?? null,
+        stateServiceStatus: bridgeAdmission?.stateService?.status ?? null,
+        stateServiceAccess: bridgeAdmission?.stateService?.activeOperation?.access ?? null,
+        stateServicePhase: bridgeAdmission?.stateService?.activeOperation?.phase ?? null,
+        stateServiceObservedAt: bridgeAdmission?.stateService?.activeOperation?.observedAt ?? null,
+        stateServiceLastCommitAt: bridgeAdmission?.stateService?.lastCommitAt ?? null,
+        stateServiceStorageError: bridgeAdmission?.stateService?.storageError ?? null,
+        stateServiceStorageErrorObservedAt:
+          bridgeAdmission?.stateService?.storageErrorObservedAt ?? null,
+        readServiceStatus: bridgeAdmission?.readService?.status ?? null,
+        readServicePhase: bridgeAdmission?.readService?.activeOperation?.phase ?? null,
+        readServiceObservedAt: bridgeAdmission?.readService?.activeOperation?.observedAt ?? null,
+        readServiceLastSnapshotAt: bridgeAdmission?.readService?.lastSnapshotAt ?? null,
+        telemetryServiceStatus: bridgeAdmission?.telemetryService?.status ?? null,
+        telemetryDropped: bridgeAdmission?.telemetryService?.dropped ?? null,
+        telemetryFailed: bridgeAdmission?.telemetryService?.failed ?? null
       },
       tunnel
     };
   }
 
-  private readBridgeStatus(): Promise<RuntimeAdmissionSnapshot | null> {
+  private readBridgeStatus(): Promise<BridgeStatusObservation> {
     if (this.bridgeStatusProbe) return this.bridgeStatusProbe;
     const pid = this.managedPid;
+    const processStartedAt = this.startedAt;
     const started = Date.now();
     let failure: unknown;
     const probe = readBridgeHealth(this.bridgeSocketPath, (error) => { failure = error; })
       .then((admission) => {
-        if (pid !== this.managedPid) return null;
-        const connected = admission !== null;
-        const previous = this.bridgeProbeObservation?.pid === pid ? this.bridgeProbeObservation : undefined;
-        const failedAt = connected ? null : previous?.failedAt ?? started;
-        if (!connected && previous?.connected !== false && this.phase === "running") {
-          this.appendLog("helper", `Bridge status check failed (pid ${pid ?? "unknown"}, ${Date.now() - started}ms): ${safeErrorMessage(failure)}`);
-        } else if (connected && previous?.connected === false && previous.failedAt !== null) {
+        if (pid !== this.managedPid || processStartedAt !== this.startedAt) {
+          return { admission: null, state: "failed" as const, lastSuccessfulAt: null };
+        }
+        const state: BridgeStatusObservation["state"] = admission !== null
+          ? "fresh"
+          : failure instanceof BridgeCompanionRequestTimeoutError ? "timed-out" : "failed";
+        const observed = this.bridgeProbeObservation;
+        const previous = observed && observed.pid === pid && observed.startedAt === processStartedAt
+          ? observed : undefined;
+        const failedAt = state === "fresh" ? null : previous?.failedAt ?? started;
+        const lastSuccessfulAt = state === "fresh" ? Date.now() : previous?.lastSuccessfulAt ?? null;
+        if (state !== "fresh" && previous?.state !== "timed-out" && previous?.state !== "failed" && this.phase === "running") {
+          this.appendLog("helper", `Bridge status check failed (${state}; pid ${pid ?? "unknown"}, ${Date.now() - started}ms): ${safeErrorMessage(failure)}`);
+        } else if (state === "fresh" && previous && previous.state !== "fresh" && previous.failedAt !== null) {
           this.appendLog("helper", `Bridge status check recovered (pid ${pid ?? "unknown"}, unavailable for ${Date.now() - previous.failedAt}ms).`);
         }
-        this.bridgeProbeObservation = { pid, connected, failedAt };
-        return admission;
+        this.bridgeProbeObservation = { pid, startedAt: processStartedAt, state, failedAt, lastSuccessfulAt };
+        return { admission, state, lastSuccessfulAt };
       }).finally(() => {
         if (this.bridgeStatusProbe === probe) this.bridgeStatusProbe = undefined;
       });
@@ -692,27 +804,146 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     });
   }
 
-  private selectedCliManager(): CodexRuntimeManager {
-    return this.cliManager ||= new CodexRuntimeManager({ environment: commandEnvironment(this.envFile) });
+  private requestedCliManager(): CodexRuntimeManager {
+    return this.requestedCliContext().manager;
   }
 
-  private selectedCodexService(): CodexService {
-    return this.codexService ||= new CodexService(commandEnvironment(this.envFile), this.selectedCliManager());
+  private selectedCliContext(): { manager: CodexRuntimeManager; service: CodexService } {
+    let environment: NodeJS.ProcessEnv;
+    if (this.isManagedRuntimeRunning()) {
+      const applied = readManagedRuntimeStatus(this.runtimeStatusFile);
+      if (!applied || applied.launcherPid !== this.managedPid) {
+        throw new Error("CODEX_APPLIED_CONTEXT_UNAVAILABLE: The running Codex environment could not be verified.");
+      }
+      // Launchers from before this field was added still expose a fingerprint.
+      // Current settings are safe to use only when they match that fingerprint.
+      if (applied.codexEnvironment) environment = applied.codexEnvironment;
+      else {
+        try {
+          environment = commandEnvironment(this.envFile);
+          if (applied.codexEnvironmentFingerprint !== codexChildEnvironmentFingerprint(environment)) {
+            throw new Error("context mismatch");
+          }
+        } catch {
+          throw new Error("CODEX_APPLIED_CONTEXT_UNAVAILABLE: The running Codex environment could not be verified.");
+        }
+      }
+    } else environment = commandEnvironment(this.envFile);
+    const fingerprint = createHash("sha256").update(JSON.stringify(environment)).digest("hex");
+    if (this.cliContext?.fingerprint === fingerprint) return this.cliContext;
+    const manager = this.injectedCliManager || new CodexRuntimeManager({ environment });
+    const service = new CodexService(environment, manager);
+    this.cliManager = manager;
+    this.cliContext = { fingerprint, manager, service };
+    return this.cliContext;
+  }
+
+  private requestedCliContext(environment = commandEnvironment(this.envFile)): { manager: CodexRuntimeManager; service: CodexService } {
+    const fingerprint = createHash("sha256").update(JSON.stringify(environment)).digest("hex");
+    if (this.requestedContext?.fingerprint === fingerprint) return this.requestedContext;
+    const manager = this.injectedCliManager || new CodexRuntimeManager({ environment });
+    this.requestedContext = { fingerprint, manager, service: new CodexService(environment, manager) };
+    return this.requestedContext;
+  }
+
+  private requestedEnvironmentState(): { pending: boolean; environment?: NodeJS.ProcessEnv; problem: StatusProblem | null } {
+    if (!this.isManagedRuntimeRunning()) return { pending: false, problem: null };
+    const applied = readManagedRuntimeStatus(this.runtimeStatusFile);
+    if (!applied || applied.launcherPid !== this.managedPid || !applied.codexEnvironmentFingerprint) {
+      return { pending: true, problem: null };
+    }
+    try {
+      const environment = commandEnvironment(this.envFile);
+      return { pending: applied.codexEnvironmentFingerprint !== codexChildEnvironmentFingerprint(environment),
+        environment, problem: null };
+    } catch (error) {
+      return { pending: true, problem: runtimeConfigurationProblem(safeErrorMessage(error)) };
+    }
+  }
+
+  private cliEnvironmentPending(): boolean {
+    return this.requestedEnvironmentState().pending;
+  }
+
+  private authSelectionManager(appliedRuntimeHome?: string): CodexAuthSelectionManager {
+    const configured = appliedRuntimeHome ||
+      readRuntimeEnvSubset(this.envFile, ["CODEX_MCP_BRIDGE_RUNTIME_HOME"]).CODEX_MCP_BRIDGE_RUNTIME_HOME;
+    return new CodexAuthSelectionManager(this.injectedCliManager?.root ||
+      authSelectionRoot({ CODEX_MCP_BRIDGE_RUNTIME_HOME: process.env.CODEX_MCP_BRIDGE_RUNTIME_HOME || configured }));
+  }
+
+  private explicitAuthHome(): string | undefined {
+    return process.env.CODEX_HOME || readRuntimeEnvSubset(this.envFile, ["CODEX_HOME"]).CODEX_HOME;
+  }
+
+  private authSelectionEnvironment(): NodeJS.ProcessEnv {
+    return { ...commandEnvironment(this.envFile), CODEX_HOME: this.explicitAuthHome() };
   }
 
   async codexRuntime(request: CodexRuntimeAction): Promise<CliRuntimeSnapshot> {
-    const manager = this.selectedCliManager();
+    if (request.action === "login") {
+      throw new Error("CODEX_SHARED_LOGIN_DISABLED: Choose a separate ChatGPT profile in Codex settings.");
+    }
+    // An uncertain launch makes the requested child environment unreadable by
+    // design. Its local stopped-runtime reconciliation must bypass that path.
+    if (request.action === "auth-reconcile-stopped") {
+      return this.reconcileStoppedAuthActivation(request);
+    }
+    const { manager, service } = this.selectedCliContext();
     this.watchManager(manager);
-    if (!["status", "check-updates"].includes(request.action) &&
+    const requestState = this.requestedEnvironmentState();
+    const environmentPending = requestState.pending;
+    // An invalid requested .env must remain reportable through status. It
+    // cannot be used to choose or mutate an authentication profile.
+    if (requestState.problem && request.action.startsWith("auth-")) {
+      throw new Error("CODEX_AUTH_ENVIRONMENT_INVALID: Repair the runtime environment before changing authentication.");
+    }
+    const authManager = requestState.problem
+      ? new CodexAuthSelectionManager(manager.root) : this.authSelectionManager();
+    const authEnvironment = requestState.problem
+      ? { ...service.environment, CODEX_HOME: process.env.CODEX_HOME } : this.authSelectionEnvironment();
+    if (environmentPending && ["select", "install", "update", "reinstall", "retry", "rollback", "remove", "apply-pending"].includes(request.action)) {
+      throw new Error("CODEX_ENVIRONMENT_PENDING: Restart the managed runtime after current work finishes before using the changed Codex environment.");
+    }
+    if (!["status", "check-updates", "auth-verify"].includes(request.action) &&
         ["executing", "reconnecting"].includes(this.lifecycleManager?.active?.phase || "")) {
       throw new Error("LIFECYCLE_BUSY: Runtime activation is in progress.");
     }
     switch (request.action) {
       case "status": {
         const base = await manager.snapshot();
-        const service = this.selectedCodexService(), kind = "app-server" as const;
-        const snapshot = { ...base, billing: await service.billing.configuration(), account: base.selection?.available
-          ? request.includeAccount === false ? service.cachedAccount(kind) : await service.readAccount(kind, true) || service.cachedAccount(kind) : null };
+        const appliedEnvironment = cliEnvironmentSummary(manager, service, base);
+        const kind = "app-server" as const;
+        const billing = await service.billing.configuration();
+        // A newly edited private .env is only a requested context while the
+        // managed runtime is still using its previous authentication home.
+        const observedEnvironment = this.isManagedRuntimeRunning()
+          ? { ...authEnvironment, ...service.environment, HOME: service.environment.HOME || authEnvironment.HOME }
+          : authEnvironment;
+        if (!requestState.problem && observedEnvironment.CODEX_HOME &&
+            (!observedEnvironment.CODEX_MCP_BRIDGE_AUTH_SOURCE ||
+              observedEnvironment.CODEX_MCP_BRIDGE_AUTH_SOURCE === "shared")) {
+          assertRuntimeEnvOutsideProjectRoots(path.join(authManager.root, "auth-selection.json"), await this.registeredProjectRoots());
+          await authManager.rememberExplicitHome(observedEnvironment);
+        }
+        const authSelection = await authManager.snapshot(authEnvironment);
+        const account = base.selection?.available && service.environment.CODEX_MCP_BRIDGE_AUTH_DISCONNECTED !== "1"
+          ? request.includeAccount === false ? service.cachedAccount(kind) : await service.readAccount(kind, true) || service.cachedAccount(kind) : null;
+        let requestedEnvironment: CliEnvironmentSummary | null = null;
+        let requestedEnvironmentProblem = requestState.problem;
+        if (environmentPending && !requestedEnvironmentProblem && requestState.environment) {
+          try {
+            const requested = this.requestedCliContext(requestState.environment);
+            requestedEnvironment = cliEnvironmentSummary(requested.manager, requested.service);
+            requestedEnvironment = cliEnvironmentSummary(requested.manager, requested.service,
+              await requested.manager.snapshot({ selectInitial: false }));
+          } catch (error) {
+            requestedEnvironmentProblem = requestedContextProblem(error);
+          }
+        }
+        const snapshot = { ...base, authSelection, environmentPending, appliedEnvironment,
+          runningEnvironment: this.isManagedRuntimeRunning() ? appliedEnvironment : null,
+          requestedEnvironment, requestedEnvironmentProblem, billing, account };
         if (snapshot.selection?.source === "bridge" && snapshot.preferences.notifications && !this.cliUpdateCheck &&
             (!snapshot.checkedAt || Date.now() - Date.parse(snapshot.checkedAt) > 24 * 60 * 60_000)) {
           this.cliUpdateCheck = manager.checkUpdates().catch(() => undefined).finally(() => { this.cliUpdateCheck = undefined; });
@@ -721,16 +952,94 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       }
       case "configure-billing": {
         if (!request.billing) throw new Error("CODEX_BILLING_SETTINGS_REQUIRED");
-        const billing = this.selectedCodexService().billing;
+        const billing = service.billing;
         assertRuntimeEnvOutsideProjectRoots(billing.file, await this.registeredProjectRoots());
         await billing.configure(request.billing);
         return { ...await manager.snapshot(), billing: await billing.snapshot() };
       }
       case "remove-billing": {
-        await this.selectedCodexService().billing.remove();
-        return { ...await manager.snapshot(), billing: await this.selectedCodexService().billing.snapshot() };
+        await service.billing.remove();
+        return { ...await manager.snapshot(), billing: await service.billing.snapshot() };
       }
-      case "login": await this.startLogin(request.kind); return manager.snapshot();
+      case "auth-prepare": {
+        if (request.authKind !== "bridge-chatgpt" && request.authKind !== "bridge-api" || request.authRevision === undefined) {
+          throw new Error("CODEX_AUTH_REQUEST_INVALID");
+        }
+        if (this.explicitAuthHome()) throw new Error("CODEX_AUTH_OVERRIDE_ACTIVE: The explicit CODEX_HOME controls this runtime.");
+        assertRuntimeEnvOutsideProjectRoots(path.join(authManager.root, "auth-selection.json"), await this.registeredProjectRoots());
+        await authManager.prepare(request.authKind, request.authRevision, authEnvironment);
+        return { ...await manager.snapshot(), authSelection: await authManager.snapshot(authEnvironment) };
+      }
+      case "auth-select-profile": {
+        if (!request.authProfileId || request.authRevision === undefined) {
+          throw new Error("CODEX_AUTH_REQUEST_INVALID");
+        }
+        if (this.explicitAuthHome()) throw new Error("CODEX_AUTH_OVERRIDE_ACTIVE: The explicit CODEX_HOME controls this runtime.");
+        assertRuntimeEnvOutsideProjectRoots(path.join(authManager.root, "auth-selection.json"), await this.registeredProjectRoots());
+        await authManager.selectOwnedProfile(request.authProfileId, request.authRevision);
+        return { ...await manager.snapshot(), authSelection: await authManager.snapshot(authEnvironment) };
+      }
+      case "auth-login": case "auth-api-key": case "auth-verify": {
+        if (!request.authCandidateId) throw new Error("CODEX_AUTH_CANDIDATE_REQUIRED");
+        assertRuntimeEnvOutsideProjectRoots(path.join(authManager.root, "auth-selection.json"), await this.registeredProjectRoots());
+        const selection = await manager.resolve();
+        if (request.action === "auth-login") await authManager.startChatGptLogin(request.authCandidateId, selection.command, authEnvironment);
+        if (request.action === "auth-api-key") {
+          if (!request.authApiKey) throw new Error("CODEX_AUTH_API_KEY_REQUIRED");
+          await authManager.setApiKey(request.authCandidateId, selection.command, authEnvironment, request.authApiKey);
+        }
+        if (request.action === "auth-verify") await authManager.verify(request.authCandidateId,
+          selection.command, manager.appliedContextFingerprint(), authEnvironment);
+        return { ...await manager.snapshot(), authSelection: await authManager.snapshot(authEnvironment) };
+      }
+      case "auth-apply": {
+        if (!request.authKind || request.authRevision === undefined) throw new Error("CODEX_AUTH_REQUEST_INVALID");
+        const selection = await manager.resolve();
+        let connection: AuthConnection;
+        if (request.authKind === "shared" || request.authKind === "disconnected") connection = { kind: request.authKind };
+        else if (request.authKind === "external") {
+          if (!request.authHomeId) throw new Error("CODEX_AUTH_HOME_UNAVAILABLE");
+          connection = { kind: "external", homeId: request.authHomeId };
+        }
+        else {
+          const candidate = (await authManager.snapshot(authEnvironment)).candidate;
+          if (!candidate || candidate.id !== request.authCandidateId || candidate.connection.kind !== request.authKind) {
+            throw new Error("CODEX_AUTH_CANDIDATE_CHANGED");
+          }
+          connection = candidate.connection;
+        }
+        await authManager.stage(connection, request.authRevision, selection.command,
+          manager.appliedContextFingerprint(),
+          authEnvironment, request.authBillingConfirmed === true);
+        return { ...await manager.snapshot(), authSelection: await authManager.snapshot(authEnvironment) };
+      }
+      case "auth-cancel": {
+        if (!request.authCandidateId || request.authRevision === undefined) throw new Error("CODEX_AUTH_REQUEST_INVALID");
+        await authManager.cancelCandidate(request.authCandidateId, request.authRevision);
+        return { ...await manager.snapshot(), authSelection: await authManager.snapshot(authEnvironment) };
+      }
+      case "auth-cancel-pending": {
+        if (request.authRevision === undefined) throw new Error("CODEX_AUTH_REQUEST_INVALID");
+        await authManager.cancelPending(request.authRevision);
+        return { ...await manager.snapshot(), authSelection: await authManager.snapshot(authEnvironment) };
+      }
+      case "auth-remove-api-key": case "auth-logout-profile": {
+        if (!request.authProfileId || request.authRevision === undefined || request.authRemovalConfirmed !== true) {
+          throw new Error("CODEX_AUTH_REMOVAL_CONFIRMATION_REQUIRED");
+        }
+        await this.assertRuntimeChangeSafe();
+        await this.assertPersistedAuthChangeSafe(true);
+        if (request.action === "auth-remove-api-key") {
+          const selection = await manager.resolve();
+          await authManager.removeApiKey(request.authProfileId, request.authRevision,
+            selection.command, authEnvironment);
+        } else {
+          const selection = await manager.resolve();
+          await authManager.logoutOwnedChatGpt(request.authProfileId, request.authRevision,
+            selection.command, authEnvironment);
+        }
+        return { ...await manager.snapshot(), authSelection: await authManager.snapshot(authEnvironment) };
+      }
       case "select":
         if (!request.selectionId) throw new Error("CODEX_SELECTION_REQUIRED: Choose an installation.");
         return manager.select(request.selectionId);
@@ -753,55 +1062,89 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     }
   }
 
-  async authStatus(): Promise<CodexLoginStatus> {
-    const environment = commandEnvironment(this.envFile);
-    const selected = await this.selectedCliManager().resolve(environment.CODEX_MCP_BRIDGE_CODEX || environment.CODEX_GPT_BRIDGE_CODEX).catch(() => null);
-    if (!selected) return { installed: false, authenticated: false, summary: "Choose or install Codex in the bridge settings." };
-    const account = await this.selectedCodexService().readAccount("app-server");
-    return { installed: true, authenticated: account?.authenticated === true,
-      resolvedAuthMode: account && account.authMode !== "unknown" ? account.authMode : null,
-      summary: account?.authenticated ? "Codex login is available." : "Codex login is required." };
+  private async reconcileStoppedAuthActivation(request: CodexRuntimeAction): Promise<CliRuntimeSnapshot> {
+    const activationId = request.authActivationId;
+    const revision = request.authRevision;
+    if (!activationId || revision === undefined || request.authResolutionConfirmed !== true) {
+      throw new Error("CODEX_AUTH_RECONCILIATION_CONFIRMATION_REQUIRED");
+    }
+    return this.exclusive(async () => {
+      await this.finishPendingProcessCleanup();
+      this.reconcileManagedRuntime();
+      const authManager = this.authSelectionManager();
+      const current = await authManager.snapshot({});
+      if (current.revision !== revision || current.activation?.id !== activationId) {
+        throw new Error("CODEX_AUTH_ACTIVATION_CHANGED");
+      }
+      if (this.isManagedRuntimeRunning() || isChildRunning(this.child)) {
+        throw new Error("CODEX_AUTH_RUNTIME_STILL_RUNNING");
+      }
+      const configuration = inspectRuntimeEnvFile(this.envFile);
+      if (!configuration.valid) {
+        throw new Error("CODEX_AUTH_ENVIRONMENT_INVALID: Repair the runtime environment before reconciling authentication.");
+      }
+      // Holding the launcher lock prevents another managed runtime from starting
+      // between the stopped-process inspection and the state transition.
+      const lock = acquireRuntimeLock(this.runtimeLockDirectory);
+      try {
+        const legacyOwner = this.legacyRuntimeLockDirectory === this.runtimeLockDirectory
+          ? null : readRuntimeLockOwner(this.legacyRuntimeLockDirectory);
+        if (legacyOwner && processIsAlive(legacyOwner.pid) ||
+            await readCompanionHello(this.bridgeSocketPath)) {
+          throw new Error("CODEX_AUTH_RUNTIME_STILL_RUNNING");
+        }
+        const status = readManagedRuntimeStatus(this.runtimeStatusFile);
+        if (status?.launcherPid && processIsAlive(status.launcherPid)) {
+          throw new Error("CODEX_AUTH_RUNTIME_STILL_RUNNING");
+        }
+        await this.assertPersistedAuthChangeSafe(true);
+        await authManager.resolveStoppedActivation(activationId, revision);
+      } finally { lock.release(); }
+      const manager = this.requestedCliManager();
+      return { ...await manager.snapshot(), authSelection: await authManager.snapshot({}) };
+    });
   }
 
-  startLogin(_kind?: "cli"): Promise<{ started: true }> {
-    return this.exclusive(async () => {
-      if (isChildRunning(this.loginProcess)) {
-        this.appendLog("helper", "The existing Codex browser login is still in progress.");
-        return { started: true };
+  async authStatus(): Promise<CodexLoginStatus> {
+    const { manager, service } = this.selectedCliContext();
+    try { await manager.resolve(); }
+    catch (error) {
+      if (error instanceof Error && error.message.startsWith("CODEX_SELECTION_REQUIRED:")) {
+        return { installed: false, authenticated: false, summary: "Choose or install Codex in the bridge settings." };
       }
+      throw error;
+    }
+    if (service.environment.CODEX_MCP_BRIDGE_AUTH_DISCONNECTED === "1") {
+      return { installed: true, authenticated: false, summary: "Bridge authentication is disconnected." };
+    }
+    const account = await service.readAccount("app-server");
+    // A signed-out App Server still projects an account snapshot with
+    // authenticated=false. Null means the inspection failed or was invalidated.
+    if (!account) {
+      const failure = service.accountReadFailure("app-server");
+      const detail = failure === null
+        ? "The account probe returned no current snapshot."
+        : safeErrorMessage(failure);
+      if (detail !== this.authStatusFailure) {
+        this.authStatusFailure = detail;
+        this.appendLog("helper", `Codex login status check failed: ${detail}`);
+      }
+      throw new Error("CODEX_AUTH_STATUS_UNAVAILABLE: Codex login status could not be checked.");
+    }
+    if (this.authStatusFailure !== undefined) {
+      this.authStatusFailure = undefined;
+      this.appendLog("helper", "Codex login status check recovered.");
+    }
+    return { installed: true, authenticated: account.authenticated,
+      resolvedAuthMode: account.authMode !== "unknown" ? account.authMode : null,
+      summary: account.authenticated ? "Codex login is available." : "Codex login is required." };
+  }
 
-      const environment = commandEnvironment(this.envFile);
-      const { selection: selected, release } = await this.selectedCliManager().acquire(environment.CODEX_MCP_BRIDGE_CODEX || environment.CODEX_GPT_BRIDGE_CODEX);
-      const command = selected.command;
-      const child = spawn(command, ["login"], {
-        detached: true,
-        env: environment,
-        stdio: "ignore"
-      });
-      this.loginProcess = child;
-      child.once("exit", () => {
-        void release();
-        if (this.loginProcess === child) this.loginProcess = undefined;
-        this.changed("auth");
-      });
-      try {
-        await new Promise<void>((resolve, reject) => {
-          child.once("spawn", () => {
-            child.unref();
-            resolve();
-          });
-          child.once("error", reject);
-        });
-      } catch (error) {
-        await release();
-        if (this.loginProcess === child) this.loginProcess = undefined;
-        this.lastError = safeErrorMessage(error);
-        this.appendLog("helper", `Codex login could not start: ${this.lastError}`);
-        throw error;
-      }
-      this.appendLog("helper", "Codex browser login was requested.");
-      return { started: true };
-    });
+  async startLogin(_kind?: "cli"): Promise<{ started: true }> {
+    // Keep the legacy RPC for older clients, but never invoke `codex login`
+    // against the active home: the CLI clears its existing login before the
+    // browser flow completes, which can sign out the Codex desktop app.
+    throw new Error("CODEX_SHARED_LOGIN_DISABLED: Choose a separate ChatGPT profile in Codex settings.");
   }
 
   private lifecycle(): RuntimeLifecycleCoordinator {
@@ -822,13 +1165,32 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
           }
           if (request.configuration) prepareRuntimeEnvUpdate(this.envFile, request.configuration);
           const changesRuntime = ["start", "restart", "repair", "configure", "helper-replace"].includes(request.kind);
-          const cli = changesRuntime ? await this.selectedCliManager().activationTarget() : undefined;
-          return { request, target: { cli, helperInstance: this.helperInstance,
-            ...(request.configuration ? { environmentFingerprint: this.environmentFingerprint() } : {}) }, description: cli?.description };
+          // A start request is a no-op when this helper can adopt the running launcher.
+          // Its requested environment may be broken, but that must not prevent adoption.
+          if (request.kind === "start") {
+            this.reconcileManagedRuntime();
+            if (!this.isManagedRuntimeRunning()) await this.adoptExistingRuntime();
+          }
+          const existingRun = request.kind === "start" ? this.lifecycleRunIdentity() : null;
+          const cli = changesRuntime && !existingRun ? await this.requestedCliManager().activationTarget() : undefined;
+          let inspection: ReturnType<typeof inspectStateDatabase> | null = null;
+          if (request.kind === "start" && !existingRun) {
+            const stateFile = configuredStateDatabaseFile(this.envFile);
+            if (existsSync(stateFile)) inspection = inspectStateDatabase(stateFile);
+          }
+          const startupRecoveryProtected = inspection !== null &&
+            ((inspection.schemaVersion !== null && inspection.schemaVersion !== CURRENT_STATE_DATABASE_SCHEMA) || inspection.pendingMigrationId !== null);
+          return { request, target: { cli, helperInstance: this.helperInstance, bootId: this.startupBoot.id, startupRecoveryProtected,
+            ...(existingRun ? { existingRun } : {}),
+            ...(changesRuntime && (!existingRun || request.configuration !== undefined)
+              ? { environmentFingerprint: this.environmentFingerprint() } : {}) }, description: cli?.description };
         },
         inspect: record => this.inspectLifecycle(record),
         execute: async (record, reportPhase, recoveryAction) => {
-          this.lifecyclePhaseReporter = reportPhase;
+          this.lifecyclePhaseReporter = (phase, progress) => {
+            reportPhase(phase, progress);
+            this.diagnoseInitialStartup(record);
+          };
           this.executingLifecycle = record;
           try {
             if (recoveryAction === "activate-helper") {
@@ -852,7 +1214,13 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
           } finally { this.lifecyclePhaseReporter = undefined; this.executingLifecycle = undefined; }
         },
         reconcile: record => this.reconcileLifecycle(record),
-        changed: () => { this.watchHandoffReceipt(); this.changed("runtime"); },
+        changed: () => {
+          this.watchHandoffReceipt(); this.synchronizeInitialStartupDeadline();
+          const latest = this.lifecycleManager?.latest;
+          if (latest?.startup?.retrySuppressed) this.manualStop = true;
+          if (latest?.startup && ["failed", "cancelled"].includes(latest.phase) && !this.isManagedRuntimeRunning()) this.phase = "stopped";
+          this.changed("runtime");
+        },
         error: error => safeErrorMessage(error),
         watch: async (changed, signal) => {
           let revision: string | undefined;
@@ -872,10 +1240,29 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
             }
           }
         }
-      }, { intervalMs: this.lifecycleIntervalMs }
+      }, { intervalMs: this.lifecycleIntervalMs, bootId: this.startupBoot.id }
     );
     this.watchHandoffReceipt();
     return this.lifecycleManager;
+  }
+
+  private diagnoseInitialStartup(record: LifecycleRecord): void {
+    if (!record.startup || process.env.CODEX_MCP_BRIDGE_STARTUP_DIAGNOSTICS !== "1") return;
+    const { stage, attempts, startedAt } = record.startup;
+    const key = `${record.request.requestId}:${attempts}:${stage}`;
+    if (key === this.startupDiagnosticKey) return;
+    this.startupDiagnosticKey = key;
+    const cpu = process.cpuUsage();
+    this.appendLog("helper", `[bridge-startup] ${JSON.stringify({ role: "helper", stage,
+      pid: process.pid, attempt: attempts, elapsedMs: Math.max(0, Date.now() - startedAt),
+      cpuUserMs: Math.round(cpu.user / 100) / 10, cpuSystemMs: Math.round(cpu.system / 100) / 10 })}`);
+  }
+
+  private synchronizeInitialStartupDeadline(): void {
+    const record = this.executingLifecycle;
+    if (!record?.startup?.owner || !this.child?.connected || record.startup.owner.pid !== this.child.pid) return;
+    this.child.send({ type: "initial-start-deadline", requestId: record.request.requestId,
+      token: record.startup.owner.token, deadlineAt: record.startup.deadlineAt - INITIAL_START_CLEANUP_MS }, () => {});
   }
 
   private watchHandoffReceipt(): void {
@@ -898,6 +1285,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   }
 
   private async inspectLifecycle(record: LifecycleRecord): Promise<{ run: string | null; reasons: LifecycleReason[] }> {
+    if (record.startup && record.startup.attempts > 0) await this.assertInitialStartupCleanup(record);
     this.reconcileManagedRuntime();
     if (!this.isManagedRuntimeRunning()) await this.adoptExistingRuntime();
     await this.validateLifecycleTarget(record);
@@ -909,11 +1297,29 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     const reasons: LifecycleReason[] = [];
     for (const [code, count] of [
       ["active-jobs", impact.activeJobs], ["pending-admissions", impact.pendingAdmissions],
-      ["pending-interactions", impact.pendingInteractions], ["memory-only-threads", impact.memoryOnlyThreads],
+      ["pending-interactions", impact.pendingInteractions],
+      ["memory-only-threads", protectedMemoryOnlyThreadCount(impact)],
       ["background-processes", impact.backgroundProcesses]
     ] as const) if ((count || 0) > 0) reasons.push({ code, count });
     if (impact.backgroundProcessState !== "confirmed" || impact.backgroundProcessUnknownAgents > 0) reasons.push({ code: "background-state-unknown" });
     return { run, reasons };
+  }
+
+  private async assertInitialStartupCleanup(record: LifecycleRecord): Promise<void> {
+    const startup = record.startup!;
+    const owner = readRuntimeLockOwner(this.runtimeLockDirectory);
+    if (owner && (owner.token !== startup.owner?.token || owner.pid !== startup.owner?.pid || processIsAlive(owner.pid))) {
+      throw new InitialStartupFailure("STARTUP_OWNERSHIP_CONFLICT", false);
+    }
+    if (startup.owner?.pid) {
+      const rows = await readProcessTable(startup.deadlineAt, this.processInspectorSpawn);
+      if (rows.some(row => row.pid === startup.owner!.pid || row.processGroupId === startup.owner!.pid)) {
+        throw new InitialStartupFailure("STARTUP_CLEANUP_UNCONFIRMED", false);
+      }
+    } else if (startup.attempts > 0 && startup.cleanup !== "clear") {
+      throw new InitialStartupFailure("STARTUP_CLEANUP_UNCONFIRMED", false);
+    }
+    if (owner) releaseStoppedRuntimeLock(this.runtimeLockDirectory, { pid: owner.pid, token: startup.owner!.token });
   }
 
   private lifecycleRunIdentity(): string | null {
@@ -923,22 +1329,63 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   }
 
   private async validateLifecycleTarget(record: LifecycleRecord): Promise<void> {
+    if (record.target.existingRun && record.target.existingRun !== this.lifecycleRunIdentity()) {
+      throw new Error("LIFECYCLE_TARGET_CHANGED: The running bridge changed after this start was accepted.");
+    }
     const expectedCli = record.target.cli as { revision: number; command: string | null } | undefined;
     if (expectedCli) {
-      const cli = await this.selectedCliManager().activationTarget();
+      const cli = await this.requestedCliManager().activationTarget();
       if (cli.revision !== expectedCli.revision || cli.command !== expectedCli.command) {
         throw new Error("LIFECYCLE_TARGET_CHANGED: The selected CLI changed. Submit a reservation for the current selection.");
       }
     }
-    if (record.request.configuration && record.target.environmentFingerprint !== this.environmentFingerprint()) {
+    if ((record.request.configuration || record.startup) && record.target.environmentFingerprint !== this.environmentFingerprint()) {
       throw new Error("LIFECYCLE_TARGET_CHANGED: Runtime settings changed after this reservation was accepted.");
     }
   }
 
   private async reconcileLifecycle(record: LifecycleRecord): Promise<LifecycleReconciliation> {
     if (["waiting", "blocked"].includes(record.phase)) return "retry";
+    if (record.startup) {
+      const startup = record.startup;
+      if (startup.bootId && this.startupBoot.id && startup.bootId !== this.startupBoot.id) {
+        throw new InitialStartupFailure("STARTUP_REENTRY_BOOT_CHANGED", false);
+      }
+      const owner = readRuntimeLockOwner(this.runtimeLockDirectory);
+      if (owner && owner.token !== startup.owner?.token) throw new InitialStartupFailure("STARTUP_OWNERSHIP_CONFLICT", false);
+      const pid = owner?.pid ?? startup.owner?.pid;
+      if (!pid) throw new InitialStartupFailure("STARTUP_CLEANUP_UNCONFIRMED", false);
+      if (startup.owner?.pid && startup.owner.pid !== pid) throw new InitialStartupFailure("STARTUP_OWNERSHIP_CONFLICT", false);
+      const status = readManagedRuntimeStatus(this.runtimeStatusFile);
+      const matching = Boolean(status && status.startup && status.launcherPid === pid && status.runtimeBuildId === BRIDGE_BUILD_INFO.id &&
+        status.startup.token === startup.owner?.token && status.startup.requestId === record.request.requestId &&
+        status.startup.attempt === startup.attempts);
+      if (processIsAlive(pid)) {
+        if (!owner) throw new InitialStartupFailure("STARTUP_OWNERSHIP_UNCONFIRMED", false);
+        await this.validateLifecycleTarget(record);
+        if (matching && status!.phase === "running" && !status!.stale) {
+          if (Date.now() >= startup.deadlineAt && (!status!.startup?.readyAt || status!.startup.readyAt > startup.deadlineAt - INITIAL_START_CLEANUP_MS)) {
+            throw new InitialStartupFailure("STARTUP_BUDGET_EXHAUSTED", false, undefined, "ready");
+          }
+          await this.adoptExistingRuntime();
+          const snapshot = await this.health();
+          if (snapshot.bridge.connected && snapshot.tunnel.connected) return "completed";
+        }
+        // Observe the same owned attempt without spending another attempt or
+        // granting a new deadline. A recovered helper never kills an unknown tree.
+        return "startup-pending";
+      }
+      await this.assertInitialStartupCleanup(record);
+      throw new InitialStartupFailure(matching && status!.startup?.failureCode || "STARTUP_CHILD_EXITED", true,
+        matching && status!.startup?.causeCode || undefined, matching ? status!.startup!.stage : "launching");
+    }
     let receipt: { requestId?: string; outcome?: string; failureCode?: string } | undefined;
-    try { receipt = JSON.parse(readPrivateFile(path.join(path.dirname(this.runtimeLockDirectory), "lifecycle-handoff.json"), { encoding: "utf8" })); }
+    try {
+      receipt = parseJsonUtf8Strict(
+        readPrivateFile(path.join(path.dirname(this.runtimeLockDirectory), "lifecycle-handoff.json")),
+        "lifecycle handoff receipt"
+      );
+    }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     if (receipt?.requestId === record.request.requestId && receipt.outcome === "failed") {
       const code = typeof receipt.failureCode === "string" && /^[A-Z][A-Z0-9_]{2,79}$/.test(receipt.failureCode)
@@ -1002,7 +1449,27 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     if (recovering || coordinator.active ||
         (["stop", "shutdown", "mode-switch"].includes(coordinator.latest?.kind || "") && coordinator.latest?.phase === "completed") ||
         ["cancelled", "failed"].includes(coordinator.latest?.phase || "")) return this.snapshot();
-    return this.start();
+    if (this.isManagedRuntimeRunning() || await this.adoptExistingRuntime()) {
+      if (coordinator.latest?.startup?.retrySuppressed) this.manualStop = true;
+      return this.snapshot();
+    }
+    if (coordinator.latest?.startup?.retrySuppressed) { this.manualStop = true; return this.snapshot(); }
+    const latest = coordinator.latest;
+    const knownOtherBoot = this.startupBoot.id && coordinator.latestBootId && this.startupBoot.id !== coordinator.latestBootId;
+    const olderThanBoot = this.startupBoot.startedAt !== undefined && latest && Date.parse(latest.updatedAt) < this.startupBoot.startedAt;
+    if (latest && !knownOtherBoot && !olderThanBoot) {
+      const sameBoot = this.startupBoot.id && coordinator.latestBootId === this.startupBoot.id ||
+        this.startupBoot.startedAt !== undefined && Date.parse(latest.updatedAt) >= this.startupBoot.startedAt;
+      if (sameBoot) this.scheduleAutomaticRestart();
+      else {
+        this.phase = "safe-mode";
+        this.lastError = "STARTUP_BOOT_UNCONFIRMED: Open the app to establish a fresh start intent.";
+      }
+      return this.snapshot();
+    }
+    await coordinator.submit({ requestId: randomUUID(), kind: "start", force: false }, undefined, "helper-launch");
+    await coordinator.settled();
+    return this.snapshot();
   }
 
   private async legacyLifecycle(request: Omit<LifecycleRequest, "requestId">, timeoutMs: number): Promise<MacOSHelperStatus> {
@@ -1063,12 +1530,22 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
 
   private restartImmediate(options: { mode: "drain" | "force"; timeoutMs: number }): Promise<MacOSHelperStatus> {
     return this.exclusive(async () => {
-      const cli = await this.selectedCliManager().snapshot();
-      const protectMemory = !!(cli.operation?.phase === "pending" || cli.pendingSelection);
+      const cli = await this.requestedCliManager().snapshot({ selectInitial: false });
+      const authChoice = await this.authSelectionManager().snapshot(this.authSelectionEnvironment());
+      const authPending = authChoice.pending !== null;
+      if (authPending && authChoice.pending?.kind !== "disconnected") {
+        const selection = await this.requestedCliManager().resolve();
+        await this.authSelectionManager().revalidatePending(selection.command,
+          this.requestedCliManager().appliedContextFingerprint(), this.authSelectionEnvironment());
+      }
+      if (authPending && options.mode === "force") {
+        throw new Error("CODEX_AUTH_APPLY_REQUIRES_DRAIN: Apply the authentication change after current work has drained.");
+      }
+      const protectMemory = authPending || this.cliEnvironmentPending() || !!(cli.operation?.phase === "pending" || cli.pendingSelection);
       if (protectMemory && options.mode === "drain") {
         await this.assertRuntimeChangeSafe();
       }
-      await this.stopUnlocked(options);
+      await this.stopUnlocked({ ...options, protectMemory });
       return this.startUnlocked(true);
     });
   }
@@ -1077,8 +1554,26 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     if (!this.isManagedRuntimeRunning()) return;
     const impact = await readBridgeAdmission(this.bridgeSocketPath);
     if (!impact) throw new Error("CODEX_APPLY_PENDING: The running bridge could not be inspected. Its environment was preserved.");
-    if ((impact.memoryOnlyThreads || 0) > 0) throw new Error("CODEX_MEMORY_THREADS_ACTIVE: Memory-only conversations still require the running environment. Wait for their connections to release or use force after reviewing the Dashboard. The current environment was preserved.");
+    if (protectedMemoryOnlyThreadCount(impact) > 0) throw new Error("CODEX_MEMORY_THREADS_ACTIVE: Memory-only conversations with unfinished work still require the running environment. Wait for their work to finish or use force after reviewing the Dashboard. The current environment was preserved.");
     if ((impact.pendingInteractions || 0) > 0) throw new Error("CODEX_INTERACTIONS_PENDING: Resolve the pending approvals or questions before applying a runtime change.");
+  }
+
+  private async assertPersistedAuthChangeSafe(checkWithoutPending = false): Promise<void> {
+    if (!checkWithoutPending && !(await this.authSelectionManager().snapshot(this.authSelectionEnvironment())).pending) return;
+    const file = configuredStateDatabaseFile(this.envFile);
+    if (!existsSync(file)) return;
+    assertRegularStateFile(file);
+    let store: BridgeStateStore | undefined;
+    try {
+      store = new BridgeStateStore({ file, readOnly: true });
+      // Result-retention holds protect stored answers and delivery receipts.
+      // They do not keep an executor alive or need the old credentials; exact
+      // result reads remain bound to their original conversation after restart.
+      if (store.listJobs().some(job => isActiveActivityJobStatus(job.status) ||
+          Array.isArray(job.pendingInteractions) && job.pendingInteractions.length > 0)) {
+        throw new Error("CODEX_AUTH_WORK_PENDING: Unfinished work or pending input still belongs to the current authentication connection.");
+      }
+    } finally { store?.close(); }
   }
 
   private repairImmediate(options: { mode: "drain" | "force"; timeoutMs: number }): Promise<MacOSHelperStatus> {
@@ -1112,7 +1607,10 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     if (this.stabilityTimer) clearTimeout(this.stabilityTimer);
     await this.exclusive(async () => {
       if (options.runtime === "force-stop") await this.prepareShutdownUnlocked({ mode: "force", timeoutMs: 5_000 });
-      else await this.stopLoginProcessUnlocked();
+      else {
+        await this.stopLoginProcessUnlocked();
+        if (this.child?.connected) this.child.disconnect();
+      }
     });
   }
 
@@ -1164,9 +1662,13 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
 
   private async startUnlocked(manualAttempt: boolean): Promise<MacOSHelperStatus> {
     if (this.closed) throw new Error("LIFECYCLE_CLOSED: The helper is shutting down.");
-    await this.finishPendingProcessCleanup();
+    await this.finishPendingProcessCleanup(this.executingLifecycle?.startup?.deadlineAt);
     this.reconcileManagedRuntime();
-    if (this.isManagedRuntimeRunning()) return this.snapshot();
+    if (this.executingLifecycle?.target.existingRun) await this.validateLifecycleTarget(this.executingLifecycle);
+    if (this.isManagedRuntimeRunning()) {
+      if (manualAttempt && !this.executingLifecycle?.startup?.retrySuppressed) this.manualStop = false;
+      return this.snapshot();
+    }
     if (this.restartTimer) {
       clearTimeout(this.restartTimer);
       this.restartTimer = undefined;
@@ -1181,7 +1683,11 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     }
     if (await this.adoptExistingRuntime()) return this.snapshot();
 
-    await this.selectedCliManager().applyPending(this.executingLifecycle?.target.cli as { revision: number; command: string | null } | undefined);
+    if ((await this.authSelectionManager().snapshot({})).activation) {
+      throw new Error("CODEX_AUTH_ACTIVATION_UNCERTAIN: The previous authentication launch requires reconciliation before another runtime starts.");
+    }
+
+    await this.requestedCliManager().applyPending(this.executingLifecycle?.target.cli as { revision: number; command: string | null } | undefined);
 
     await this.assertEnvironmentLocation();
     const configuration = inspectRuntimeEnvFile(this.envFile);
@@ -1193,6 +1699,19 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     }
     if (!existsSync(path.join(this.bridgeRoot, "dist", "cli.js"))) {
       throw new Error("BRIDGE_RUNTIME_MISSING: Built HTTP runtime is not installed.");
+    }
+    let authActivationId: string | null = null;
+    if (this.executingLifecycle?.request.kind === "restart") {
+      await this.assertPersistedAuthChangeSafe();
+      const authChoice = await this.authSelectionManager().snapshot({});
+      if (authChoice.pending?.kind === "disconnected") {
+        authActivationId = await this.authSelectionManager().beginActivation("", "", this.authSelectionEnvironment());
+      } else if (authChoice.pending) {
+        const manager = this.requestedCliManager();
+        const selection = await manager.resolve();
+        authActivationId = await this.authSelectionManager().beginActivation(selection.command,
+          manager.appliedContextFingerprint(), this.authSelectionEnvironment());
+      }
     }
 
     this.manualStop = false;
@@ -1217,12 +1736,43 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       MACOS_MANAGED_TUNNEL_PROFILE
     ];
     if (!existsSync(this.profileRebuildMarker)) launcherArguments.push("--reuse-profile");
-    const child = spawn(process.execPath, launcherArguments, {
-      cwd: this.bridgeRoot,
-      env: runtimeEnvironment(this.envFile, this.bridgeSocketPath),
-      detached: process.platform !== "win32",
-      stdio: ["ignore", "pipe", "pipe"]
-    });
+    let launchEnvironment: NodeJS.ProcessEnv;
+    try {
+      launchEnvironment = runtimeEnvironment(this.envFile, this.bridgeSocketPath);
+      delete launchEnvironment.CODEX_MCP_BRIDGE_AUTH_ACTIVATION_ID;
+      if (authActivationId) {
+        delete launchEnvironment.CODEX_HOME;
+        delete launchEnvironment.CODEX_MCP_BRIDGE_AUTH_SOURCE;
+        delete launchEnvironment.CODEX_MCP_BRIDGE_AUTH_GENERATION;
+        delete launchEnvironment.CODEX_MCP_BRIDGE_AUTH_DISCONNECTED;
+        launchEnvironment.CODEX_MCP_BRIDGE_AUTH_ACTIVATION_ID = authActivationId;
+      }
+    } catch (error) {
+      if (authActivationId) await this.authSelectionManager().failActivation(authActivationId, true);
+      throw error;
+    }
+    const startupAttempt = this.executingLifecycle?.startup;
+    const attemptDeadline = startupAttempt ? startupAttempt.deadlineAt - INITIAL_START_CLEANUP_MS : undefined;
+    for (const name of Object.keys(launchEnvironment)) {
+      if (name.startsWith("CODEX_MCP_BRIDGE_INITIAL_START_")) delete launchEnvironment[name];
+    }
+    if (startupAttempt && attemptDeadline !== undefined) {
+      if (Date.now() >= attemptDeadline) throw new InitialStartupFailure("STARTUP_BUDGET_EXHAUSTED", true);
+      launchEnvironment.CODEX_MCP_BRIDGE_INITIAL_START_REQUEST = this.executingLifecycle!.request.requestId;
+      launchEnvironment.CODEX_MCP_BRIDGE_INITIAL_START_TOKEN = startupAttempt.owner!.token;
+      launchEnvironment.CODEX_MCP_BRIDGE_INITIAL_START_ATTEMPT = String(startupAttempt.attempts);
+      launchEnvironment.CODEX_MCP_BRIDGE_INITIAL_START_DEADLINE = String(attemptDeadline);
+    }
+    let child: ChildProcess;
+    try {
+      child = spawn(process.execPath, launcherArguments, {
+        cwd: this.bridgeRoot, env: launchEnvironment,
+        detached: process.platform !== "win32", stdio: startupAttempt ? ["ignore", "pipe", "pipe", "ipc"] : ["ignore", "pipe", "pipe"]
+      });
+    } catch (error) {
+      if (authActivationId) await this.authSelectionManager().failActivation(authActivationId, true);
+      throw error;
+    }
     const outputCapture = createRuntimeOutputCapture();
     this.child = child;
     this.managedPid = child.pid;
@@ -1242,14 +1792,30 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     child.once("exit", (code, signal) => this.observeExit(child, code, signal));
 
     try {
+      if (startupAttempt && child.pid) this.lifecyclePhaseReporter?.("reconnecting", {
+        stage: "launching", owner: { pid: child.pid, token: startupAttempt.owner!.token }
+      });
       await waitForManagedRuntime(
         this.bridgeSocketPath,
         this.runtimeStatusFile,
         child,
         BRIDGE_BUILD_INFO.id,
-        this.startTimeoutMs,
-        this.envFile
+        startupAttempt ? Math.max(1, startupAttempt.deadlineAt - INITIAL_START_CLEANUP_MS - Date.now()) : this.startTimeoutMs,
+        this.envFile,
+        startupAttempt ? { deadline: () => Math.min(attemptDeadline!, this.executingLifecycle!.startup!.deadlineAt - INITIAL_START_CLEANUP_MS),
+          requestId: this.executingLifecycle!.request.requestId, token: startupAttempt.owner!.token,
+          stage: stage => { if (this.executingLifecycle?.startup?.stage !== stage) this.lifecyclePhaseReporter?.("reconnecting", { stage }); } } : undefined
       );
+      if (authActivationId) {
+        const observed = readManagedRuntimeStatus(this.runtimeStatusFile);
+        if (!observed || observed.launcherPid !== child.pid || observed.phase !== "running") {
+          throw new Error("CODEX_AUTH_ACTIVATION_UNCONFIRMED: The new runtime did not report its authentication context.");
+        }
+        await this.authSelectionManager().completeActivation(authActivationId,
+          observed.codexEnvironment?.CODEX_MCP_BRIDGE_AUTH_SOURCE || "",
+          observed.codexEnvironment?.CODEX_MCP_BRIDGE_AUTH_GENERATION || "",
+          observed.codexEnvironment?.CODEX_HOME);
+      }
       if (this.child === child && isChildRunning(child)) {
         this.phase = "running";
         removePrivateMarker(this.profileRebuildMarker);
@@ -1260,6 +1826,91 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       this.lastError = safeErrorMessage(error);
       this.appendLog("helper", this.lastError);
       this.manualStop = true;
+      if (startupAttempt && this.executingLifecycle) {
+        const record = this.executingLifecycle;
+        const failedStage = error instanceof InitialStartupFailure && error.stage || record.startup!.stage;
+        this.lifecyclePhaseReporter?.("reconnecting", { stage: "cleanup" });
+        let drainMayHaveStarted = false;
+        try {
+          const owner = readRuntimeLockOwner(this.runtimeLockDirectory);
+          if (owner && (owner.token !== startupAttempt.owner!.token || owner.pid !== child.pid)) {
+            throw new InitialStartupFailure("STARTUP_OWNERSHIP_CONFLICT", false);
+          }
+          // A dead launcher does not prove that its bridge/state-owner children
+          // exited. Inspect the owned group, and query its surviving service
+          // before any signal, even when the launcher itself is already gone.
+          const captured = child.pid ? (await readProcessTable(record.startup!.deadlineAt, this.processInspectorSpawn)).filter(row => row.processGroupId === child.pid) : [];
+          if (captured.length > 0) {
+            if (!owner) throw new InitialStartupFailure("STARTUP_OWNERSHIP_UNCONFIRMED", false);
+            // Closing admission precedes the protection snapshot in the existing
+            // beginDrain contract. A read-only idle snapshot is not a fence.
+            const drainTimeout = initialCleanupRpcTimeout(record.startup!.deadlineAt);
+            drainMayHaveStarted = true;
+            const impact = await bridgeRequest<RuntimeAdmissionSnapshot>(this.bridgeSocketPath,
+              "runtime.beginDrain", { inspectBackgroundProcesses: true,
+                expectedRuntime: { launcherPid: child.pid, token: startupAttempt.owner!.token,
+                  requestId: record.request.requestId, attempt: startupAttempt.attempts, deadlineAt: record.startup!.deadlineAt } },
+              drainTimeout).catch(() => null);
+            if (!impact || impact.acceptingNewJobs !== false || ![impact.activeJobs, impact.pendingAdmissions, impact.memoryOnlyThreads,
+                impact.protectedMemoryOnlyThreads ?? impact.memoryOnlyThreads,
+                impact.pendingInteractions ?? 0, impact.backgroundProcesses, impact.backgroundProcessUnknownAgents]
+                .every(count => Number.isSafeInteger(count) && count! >= 0) ||
+                impact.backgroundProcessState !== "confirmed" || impact.backgroundProcessUnknownAgents > 0) {
+              throw new InitialStartupFailure("STARTUP_RUNTIME_STATE_UNCONFIRMED", false);
+            }
+            if (impact.activeJobs > 0 || impact.pendingAdmissions > 0 || (impact.pendingInteractions ?? 0) > 0 ||
+                protectedMemoryOnlyThreadCount(impact) > 0 || impact.backgroundProcesses > 0) {
+              throw new InitialStartupFailure("STARTUP_WORK_PROTECTED", false);
+            }
+            // The protection RPC yields: do not signal if ownership changed
+            // while observing the surviving service.
+            const currentOwner = readRuntimeLockOwner(this.runtimeLockDirectory);
+            if (!currentOwner || currentOwner.pid !== child.pid || currentOwner.token !== startupAttempt.owner!.token) {
+              throw new InitialStartupFailure("STARTUP_OWNERSHIP_UNCONFIRMED", false);
+            }
+          } else if (isChildRunning(child)) {
+            throw new InitialStartupFailure("STARTUP_CLEANUP_UNCONFIRMED", false);
+          }
+          await terminateManagedProcessTree(captured, record.startup!.deadlineAt, () => {
+            assertProcessCleanupBudget(record.startup!.deadlineAt);
+            const currentOwner = readRuntimeLockOwner(this.runtimeLockDirectory);
+            if (!currentOwner || currentOwner.pid !== child.pid || currentOwner.token !== startupAttempt.owner!.token) {
+              throw new InitialStartupFailure("STARTUP_OWNERSHIP_UNCONFIRMED", false);
+            }
+          }, this.processInspectorSpawn);
+          await this.assertInitialStartupCleanup(record);
+          drainMayHaveStarted = false;
+        } catch (cleanupError) {
+          const code = cleanupError instanceof InitialStartupFailure ? cleanupError.code : "STARTUP_CLEANUP_UNCONFIRMED";
+          let drainFailure: string | undefined;
+          if (drainMayHaveStarted) {
+            try {
+              // A lost beginDrain response may still have closed admission.
+              // Restore the preserved service only while exact ownership and
+              // remaining budget are confirmed; never reopen a foreign one.
+              const currentOwner = readRuntimeLockOwner(this.runtimeLockDirectory);
+              if (!currentOwner || currentOwner.pid !== child.pid || currentOwner.token !== startupAttempt.owner!.token) {
+                throw new Error("STARTUP_OWNERSHIP_UNCONFIRMED");
+              }
+              await bridgeRequest(this.bridgeSocketPath, "runtime.cancelDrain", {
+                expectedRuntime: { launcherPid: child.pid, token: startupAttempt.owner!.token,
+                  requestId: record.request.requestId, attempt: startupAttempt.attempts, deadlineAt: record.startup!.deadlineAt }
+              },
+                initialCleanupRpcTimeout(record.startup!.deadlineAt));
+            } catch {
+              drainFailure = "STARTUP_DRAIN_CANCEL_UNCONFIRMED";
+            }
+          }
+          const cause = [error instanceof InitialStartupFailure ? error.code : undefined,
+            error instanceof InitialStartupFailure ? error.causeCode : undefined, drainFailure].filter(Boolean).join(": ");
+          throw new InitialStartupFailure(code, false, cause || undefined, failedStage);
+        }
+        if (this.child === child) this.child = undefined;
+        if (this.managedPid === child.pid) this.managedPid = undefined;
+        this.startedAt = null;
+        this.phase = "backoff";
+        throw error instanceof InitialStartupFailure ? new InitialStartupFailure(error.code, true, error.causeCode, failedStage) : error;
+      }
       if (isChildRunning(child)) {
         child.kill("SIGTERM");
         const exited = await waitForExit(child, MANAGED_LAUNCHER_SHUTDOWN_TIMEOUT_MS);
@@ -1272,6 +1923,10 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       if (this.managedPid === child.pid) this.managedPid = undefined;
       this.phase = "stopped";
       this.startedAt = null;
+      if (authActivationId) {
+        await this.authSelectionManager().failActivation(authActivationId, !child.pid);
+        throw new Error("CODEX_AUTH_ACTIVATION_UNCERTAIN: The new runtime did not become ready. Its authentication result needs reconciliation.");
+      }
       throw error;
     }
     return this.snapshot();
@@ -1343,8 +1998,8 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
           { inspectBackgroundProcesses: true },
           15_000
         );
-        if (options.protectMemory && ((impact.memoryOnlyThreads || 0) > 0 || (impact.pendingInteractions || 0) > 0)) {
-          throw new Error("CODEX_APPLY_PENDING: Memory-only conversations or pending interactions still require the running environment. Wait for their connections to release or resolve the interactions before applying this change.");
+        if (options.protectMemory && (protectedMemoryOnlyThreadCount(impact) > 0 || (impact.pendingInteractions || 0) > 0)) {
+          throw new Error("CODEX_APPLY_PENDING: Memory-only conversations with unfinished work or pending interactions still require the running environment. Wait for the work to finish or resolve the interactions before applying this change.");
         }
         if (
           impact.backgroundProcessState !== "confirmed" ||
@@ -1359,6 +2014,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
             `BACKGROUND_PROCESSES_ACTIVE: ${impact.backgroundProcesses} background process(es) across ${impact.backgroundProcessAgents} agent(s) would be interrupted. Use force only after reviewing the global status card.`
           );
         }
+        if (options.protectMemory) await this.assertPersistedAuthChangeSafe();
       } else if (options.protectMemory) {
         await this.assertRuntimeChangeSafe();
       }
@@ -1438,10 +2094,10 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     return this.snapshot();
   }
 
-  private async finishPendingProcessCleanup(): Promise<void> {
+  private async finishPendingProcessCleanup(deadlineAt = Infinity): Promise<void> {
     if (this.pendingProcessCleanup.length === 0) return;
     try {
-      await terminateManagedProcessTree(this.pendingProcessCleanup);
+      await terminateManagedProcessTree(this.pendingProcessCleanup, deadlineAt);
       this.pendingProcessCleanup = [];
     } catch (error) {
       this.phase = "safe-mode";
@@ -1495,6 +2151,18 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       throw new Error(
         `RUNTIME_OWNERSHIP_CONFLICT: Runtime pid ${owner.pid} holds the per-user lock but cannot be safely adopted. Stop the previous bridge process, then retry.`
       );
+    }
+
+    const activation = (await this.authSelectionManager(runtime?.codexEnvironment?.CODEX_MCP_BRIDGE_RUNTIME_HOME).snapshot({})).activation;
+    if (activation) {
+      if (runtime?.codexEnvironment?.CODEX_MCP_BRIDGE_AUTH_SOURCE !== activation.to.kind ||
+          runtime.codexEnvironment.CODEX_MCP_BRIDGE_AUTH_GENERATION !== String(activation.generation)) {
+        throw new Error("CODEX_AUTH_ACTIVATION_UNCERTAIN: The recovered runtime did not prove the staged authentication context.");
+      }
+      await this.authSelectionManager(runtime.codexEnvironment.CODEX_MCP_BRIDGE_RUNTIME_HOME).completeActivation(activation.id,
+        runtime.codexEnvironment.CODEX_MCP_BRIDGE_AUTH_SOURCE,
+        runtime.codexEnvironment.CODEX_MCP_BRIDGE_AUTH_GENERATION,
+        runtime.codexEnvironment.CODEX_HOME);
     }
 
     this.child = undefined;
@@ -1551,6 +2219,12 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     this.lastExit = { at: new Date().toISOString(), code, signal };
     this.changed("runtime");
     this.appendLog("runtime", `Managed runtime exited (${code ?? signal ?? "unknown"}).`);
+    if (this.executingLifecycle?.startup?.owner?.pid === child.pid) {
+      // Initial-start cleanup owns the fresh protection/ownership checks and
+      // durable retry decision. Ordinary crash cleanup must not preempt it.
+      this.lifecycleManager?.signal();
+      return;
+    }
     if (this.manualStop) {
       this.phase = "stopped";
       return;
@@ -1651,7 +2325,14 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
 
   private appendRuntimeLogLine(line: Buffer): void {
     const withoutCarriageReturn = line.at(-1) === 0x0d ? line.subarray(0, -1) : line;
-    const message = redactRuntimeText(withoutCarriageReturn.toString("utf8"));
+    let decoded: string;
+    try {
+      decoded = decodeUtf8Strict(withoutCarriageReturn, "Managed runtime log");
+    } catch {
+      this.appendLog("runtime", "Runtime log line omitted because it is not valid UTF-8.");
+      return;
+    }
+    const message = redactRuntimeText(decoded);
     if (message) this.appendLog("runtime", message);
   }
 
@@ -1696,6 +2377,7 @@ async function dispatchHelperLine(
   let decoded: unknown;
   try {
     decoded = JSON.parse(line);
+    assertJsonTextIntegrity(decoded, "macOS helper request");
   } catch {
     return helperError(null, -32700, "Invalid JSON.");
   }
@@ -1730,8 +2412,7 @@ async function dispatchHelperLine(
             "helper.prepare-shutdown",
             "setup.discovery.import",
             "setup.dotenv.atomic-apply",
-            "setup.dotenv.repair-permissions",
-            "auth.codex-browser-login"
+            "setup.dotenv.repair-permissions"
           ],
           status: await controller.snapshot()
         };
@@ -1836,11 +2517,41 @@ type RuntimeAdmissionSnapshot = {
   pendingAdmissions: number;
   pendingInteractions?: number;
   memoryOnlyThreads?: number;
+  protectedMemoryOnlyThreads?: number;
+  discardableMemoryOnlyThreads?: number;
   backgroundProcessState: "confirmed" | "unknown";
   backgroundProcesses: number;
   backgroundProcessAgents: number;
   backgroundProcessUnknownAgents: number;
+  stateService?: {
+    status: string;
+    activeOperation?: {
+      access: "read" | "write";
+      phase: string;
+      observedAt: number;
+    };
+    lastCommitAt?: number;
+    storageError?: "busy" | "full" | "io" | "corrupt" | "read-only";
+    storageErrorObservedAt?: number;
+  };
+  readService?: {
+    status: string;
+    activeOperation?: {
+      phase: string;
+      observedAt: number;
+    };
+    lastSnapshotAt?: number;
+  };
+  telemetryService?: {
+    status: string;
+    dropped: number;
+    failed: number;
+  };
 };
+
+function protectedMemoryOnlyThreadCount(impact: RuntimeAdmissionSnapshot): number {
+  return impact.protectedMemoryOnlyThreads ?? impact.memoryOnlyThreads ?? 0;
+}
 
 type CompanionHello = z.infer<typeof companionHelloSchema>;
 
@@ -1874,6 +2585,7 @@ function normalizeTunnelStatus(
     doctorPassed: current && tunnel.doctorPassed,
     processRunning: current && tunnel.processRunning,
     connected: current && tunnel.processRunning && tunnel.connected,
+    ...(current && tunnel.observation ? { observation: tunnel.observation } : {}),
     lastCheckedAt: tunnel.lastCheckedAt,
     lastError: current
       ? tunnel.lastError && safeErrorMessage(tunnel.lastError)
@@ -2038,23 +2750,31 @@ async function waitForManagedRuntime(
   child: ChildProcess,
   expectedBuildId: string,
   timeoutMs: number,
-  envFile: string
+  envFile: string,
+  initial?: { deadline: () => number; requestId: string; token: string; stage: (stage: "launching" | "state-owner" | "http" | "tunnel" | "ready") => void }
 ): Promise<void> {
   const startedAt = Date.now();
   let deadline = startedAt + timeoutMs;
   const migrationDeadline = startedAt + MAX_MIGRATION_START_TIMEOUT_MS;
   const stateDatabaseFile = configuredStateDatabaseFile(envFile);
-  while (Date.now() < deadline) {
+  while (Date.now() < Math.min(deadline, initial?.deadline() ?? Infinity)) {
+    const runtime = readManagedRuntimeStatus(runtimeStatusFile);
+    const matching = Boolean(initial && runtime && runtime.startup && child.pid && runtime.launcherPid === child.pid && runtime.runtimeBuildId === expectedBuildId &&
+      runtime.startup.token === initial.token && runtime.startup.requestId === initial.requestId);
+    if (matching) initial!.stage(runtime!.startup!.stage);
     if (child.exitCode !== null || child.signalCode !== null) {
+      if (initial) throw new InitialStartupFailure(matching && runtime!.startup?.failureCode || "STARTUP_CHILD_EXITED", false,
+        matching && runtime!.startup?.causeCode || undefined, matching ? runtime!.startup!.stage : "launching");
       throw new Error("RUNTIME_READINESS_EXITED: Managed runtime exited before the bridge and tunnel became ready.");
     }
-    const bridge = await readBridgeAdmission(socketPath, 2_000);
+    const remaining = Math.min(deadline, initial?.deadline() ?? Infinity) - Date.now();
+    const bridge = await readBridgeAdmission(socketPath, Math.max(1, Math.min(2_000, remaining)));
     const tunnel = normalizeTunnelStatus(
       readManagedRuntimeStatus(runtimeStatusFile),
       child.pid || null,
       expectedBuildId
     );
-    if (bridge && tunnel.connected) return;
+    if (bridge && tunnel.connected && Date.now() < Math.min(deadline, initial?.deadline() ?? Infinity)) return;
     const migration = readStateMigrationStatus(stateDatabaseFile);
     if (stateMigrationExtendsStartupDeadline(stateDatabaseFile, migration)) {
       deadline = Math.min(
@@ -2062,7 +2782,12 @@ async function waitForManagedRuntime(
         Math.max(deadline, Date.now() + MIGRATION_PROGRESS_GRACE_MS)
       );
     }
-    await delay(250);
+    await delay(Math.max(1, Math.min(250, Math.min(deadline, initial?.deadline() ?? Infinity) - Date.now())));
+  }
+  if (initial) {
+    const last = readManagedRuntimeStatus(runtimeStatusFile);
+    const matching = last?.launcherPid === child.pid && last?.startup?.token === initial.token;
+    throw new InitialStartupFailure("STARTUP_ATTEMPT_TIMEOUT", false, undefined, matching ? last!.startup!.stage : "launching");
   }
   throw new Error("RUNTIME_READINESS_TIMEOUT: Timed out waiting for the bridge companion and Secure MCP Tunnel readiness.");
 }
@@ -2077,7 +2802,7 @@ function bridgeRequest<T = unknown>(
   return new Promise((resolve, reject) => {
     const socket = createConnection(socketPath);
     const requestId = `helper-${process.pid}-${Date.now()}-${++bridgeRequestSequence}`;
-    let buffer = "";
+    let buffer = Buffer.alloc(0);
     let settled = false;
     let timer: NodeJS.Timeout;
     const finish = (error?: Error, value?: T) => {
@@ -2093,10 +2818,9 @@ function bridgeRequest<T = unknown>(
     if (signal?.aborted) { abort(); return; }
     signal?.addEventListener("abort", abort, { once: true });
     timer = setTimeout(
-      () => finish(new Error("Bridge companion request timed out.")),
+      () => finish(new BridgeCompanionRequestTimeoutError()),
       timeoutMs
     );
-    socket.setEncoding("utf8");
     socket.once("connect", () => {
       socket.write(`${JSON.stringify({
         jsonrpc: "2.0",
@@ -2105,21 +2829,25 @@ function bridgeRequest<T = unknown>(
         params
       })}\n`);
     });
-    socket.on("data", (chunk: string) => {
-      buffer += chunk;
-      if (Buffer.byteLength(buffer, "utf8") > HELPER_MAX_RESPONSE_BYTES) {
+    socket.on("data", (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      if (buffer.length > HELPER_MAX_RESPONSE_BYTES) {
         finish(new Error("Bridge companion response is too large."));
         return;
       }
-      const newline = buffer.indexOf("\n");
+      const newline = buffer.indexOf(0x0a);
       if (newline < 0) return;
       try {
-        const response = JSON.parse(buffer.slice(0, newline)) as {
+        const response = JSON.parse(decodeUtf8Strict(
+          buffer.subarray(0, newline),
+          "Bridge companion response"
+        )) as {
           jsonrpc?: unknown;
           id?: unknown;
           result?: T;
           error?: { message?: string; code?: number };
         };
+        assertJsonTextIntegrity(response, "Bridge companion response");
         if (response.jsonrpc !== "2.0" || response.id !== requestId) {
           finish(new Error("Bridge companion response identity did not match the request."));
         } else if (response.error) finish(Object.assign(new Error(response.error.message || "Bridge companion request failed."), { code: response.error.code }));
@@ -2173,6 +2901,16 @@ function processIsAlive(pid: number): boolean {
   }
 }
 
+function initialCleanupRpcTimeout(deadlineAt: number): number {
+  const remaining = deadlineAt - Date.now();
+  if (remaining <= 0) throw new InitialStartupFailure("STARTUP_BUDGET_EXHAUSTED", false);
+  return Math.min(2_000, remaining);
+}
+
+function assertProcessCleanupBudget(deadlineAt: number): void {
+  if (Date.now() >= deadlineAt) throw new Error("PROCESS_CLEANUP_DEADLINE: Process cleanup could not be confirmed within its budget.");
+}
+
 async function snapshotManagedProcessTree(rootPid: number): Promise<ManagedProcessIdentity[]> {
   if (process.platform === "win32") {
     return [{ pid: rootPid, parentPid: 0, processGroupId: rootPid }];
@@ -2203,22 +2941,34 @@ async function snapshotManagedProcessTree(rootPid: number): Promise<ManagedProce
   return managed;
 }
 
-async function terminateManagedProcessTree(
-  captured: readonly ManagedProcessIdentity[]
+export async function terminateManagedProcessTree(
+  captured: readonly ManagedProcessIdentity[],
+  deadlineAt = Infinity,
+  beforeSignal?: () => void,
+  spawnInspector: typeof spawn = spawn
 ): Promise<void> {
   if (captured.length === 0) return;
-  let running = await matchingManagedProcesses(captured);
+  let running = await matchingManagedProcesses(captured, deadlineAt, spawnInspector);
   if (running.length === 0) return;
+  assertProcessCleanupBudget(deadlineAt);
+  beforeSignal?.();
   signalManagedProcessGroups(running, "SIGTERM");
   running = await waitForManagedProcesses(
     captured,
-    MANAGED_PROCESS_TREE_TERM_TIMEOUT_MS
+    Math.max(0, Math.min(MANAGED_PROCESS_TREE_TERM_TIMEOUT_MS, deadlineAt - Date.now())),
+    deadlineAt, spawnInspector
   );
   if (running.length === 0) return;
+  // Reinspect before escalation. Timeout/partial output is not an exit proof.
+  running = await matchingManagedProcesses(captured, deadlineAt, spawnInspector);
+  if (running.length === 0) return;
+  assertProcessCleanupBudget(deadlineAt);
+  beforeSignal?.();
   signalManagedProcessGroups(running, "SIGKILL");
   running = await waitForManagedProcesses(
     captured,
-    MANAGED_PROCESS_TREE_KILL_TIMEOUT_MS
+    Math.max(0, Math.min(MANAGED_PROCESS_TREE_KILL_TIMEOUT_MS, deadlineAt - Date.now())),
+    deadlineAt, spawnInspector
   );
   if (running.length > 0) {
     throw new Error(
@@ -2229,13 +2979,16 @@ async function terminateManagedProcessTree(
 }
 
 async function matchingManagedProcesses(
-  captured: readonly ManagedProcessIdentity[]
+  captured: readonly ManagedProcessIdentity[],
+  deadlineAt = Infinity,
+  spawnInspector: typeof spawn = spawn
 ): Promise<ManagedProcessIdentity[]> {
+  assertProcessCleanupBudget(deadlineAt);
   if (process.platform === "win32") {
     return captured.filter((entry) => processIsAlive(entry.pid));
   }
   const current = new Map(
-    (await readProcessTable()).map((entry) => [entry.pid, entry] as const)
+    (await readProcessTable(deadlineAt, spawnInspector)).map((entry) => [entry.pid, entry] as const)
   );
   return captured.filter((entry) => {
     const observed = current.get(entry.pid);
@@ -2245,13 +2998,27 @@ async function matchingManagedProcesses(
 
 async function waitForManagedProcesses(
   captured: readonly ManagedProcessIdentity[],
-  timeoutMs: number
+  timeoutMs: number,
+  deadlineAt = Infinity,
+  spawnInspector: typeof spawn = spawn
 ): Promise<ManagedProcessIdentity[]> {
-  const deadline = Date.now() + timeoutMs;
-  let running = await matchingManagedProcesses(captured);
+  const deadline = Math.min(deadlineAt, Date.now() + timeoutMs);
+  let running = await matchingManagedProcesses(captured, deadlineAt, spawnInspector);
   while (running.length > 0 && Date.now() < deadline) {
-    await delay(50);
-    running = await matchingManagedProcesses(captured);
+    await delay(Math.max(0, Math.min(50, deadline - Date.now())));
+    if (Date.now() >= deadline) break;
+    try {
+      running = await matchingManagedProcesses(captured, deadline, spawnInspector);
+    } catch (error) {
+      if (deadline < deadlineAt && Date.now() >= deadline &&
+          error instanceof Error && error.message.startsWith("PROCESS_TABLE_TIMEOUT:")) {
+        // Expiry of this TERM/KILL wait is not evidence of exit. Retain the
+        // last running set; the caller must reobserve within the absolute
+        // cleanup budget and reauthorize before escalation.
+        break;
+      }
+      throw error;
+    }
   }
   return running;
 }
@@ -2283,50 +3050,79 @@ function signalManagedProcessGroups(
   }
 }
 
-function readProcessTable(): Promise<ManagedProcessIdentity[]> {
+// Internal export permits isolated subprocess/timer regressions without making
+// a process-table operation or command configurable through helper RPC.
+export function readProcessTable(deadlineAt = Infinity, spawnInspector: typeof spawn = spawn): Promise<ManagedProcessIdentity[]> {
   return new Promise((resolve, reject) => {
-    const child = spawn("/bin/ps", ["-axo", "pid=,ppid=,pgid="], {
+    const inspectionDeadline = Math.min(Date.now() + PROCESS_TABLE_TIMEOUT_MS, deadlineAt);
+    const timeoutMs = inspectionDeadline - Date.now();
+    if (timeoutMs <= 0) { reject(new Error("PROCESS_TABLE_TIMEOUT: No process inspection budget remains.")); return; }
+    const child = spawnInspector("/bin/ps", ["-axo", "pid=,ppid=,pgid="], {
       stdio: ["ignore", "pipe", "pipe"]
     });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     let outputBytes = 0;
+    let settled = false;
+    const finish = (error?: unknown, rows?: ManagedProcessIdentity[]): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (!error && Date.now() >= inspectionDeadline) error = new Error("PROCESS_TABLE_TIMEOUT: Process inspection completed after its deadline.");
+      if (error) reject(error); else resolve(rows!);
+    };
+    const fail = (error: Error): void => {
+      if (settled) return;
+      finish(error);
+      // Only this inspection subprocess is signalled, never the runtime group.
+      try { child.kill("SIGKILL"); } catch { /* The failed observation stays unknown. */ }
+    };
+    const timer = setTimeout(() => fail(new Error("PROCESS_TABLE_TIMEOUT: Process inspection did not finish within its budget.")), timeoutMs);
     const capture = (target: Buffer[], chunk: Buffer): void => {
+      if (settled) return;
       outputBytes += chunk.length;
       if (outputBytes > PROCESS_TABLE_MAX_BYTES) {
-        child.kill("SIGKILL");
+        fail(new Error("Process table output exceeded the private helper limit."));
         return;
       }
       target.push(chunk);
     };
     child.stdout?.on("data", (chunk: Buffer) => capture(stdout, chunk));
     child.stderr?.on("data", (chunk: Buffer) => capture(stderr, chunk));
-    child.once("error", reject);
+    child.on("error", error => fail(error));
     child.once("close", (code) => {
-      if (outputBytes > PROCESS_TABLE_MAX_BYTES) {
-        reject(new Error("Process table output exceeded the private helper limit."));
-        return;
-      }
+      if (settled) return;
+      if (Date.now() >= inspectionDeadline) { fail(new Error("PROCESS_TABLE_TIMEOUT: Process inspection completed after its deadline.")); return; }
       if (code !== 0) {
-        const detail = Buffer.concat(stderr).toString("utf8").trim();
-        reject(new Error(detail || `/bin/ps exited with status ${code ?? "unknown"}.`));
+        let detail = "";
+        try {
+          detail = decodeUtf8Strict(Buffer.concat(stderr), "Process table stderr").trim();
+        } catch {
+          finish(new Error("Process table emitted invalid UTF-8 diagnostics."));
+          return;
+        }
+        finish(new Error(detail || `/bin/ps exited with status ${code ?? "unknown"}.`));
         return;
       }
       try {
-        const rows = Buffer.concat(stdout).toString("utf8")
+        const rows = decodeUtf8Strict(Buffer.concat(stdout), "Process table stdout")
           .split("\n")
           .map((line) => line.trim())
           .filter(Boolean)
-          .map((line) => line.split(/\s+/).map(Number))
-          .map(([pid, parentPid, processGroupId]) => ({ pid, parentPid, processGroupId }))
-          .filter((row): row is ManagedProcessIdentity =>
-            Number.isSafeInteger(row.pid) && row.pid > 0 &&
-            Number.isSafeInteger(row.parentPid) && row.parentPid >= 0 &&
-            Number.isSafeInteger(row.processGroupId) && row.processGroupId > 0
-          );
-        resolve(rows);
+          .map(line => {
+            const values = line.split(/\s+/).map(Number);
+            const [pid, parentPid, processGroupId] = values;
+            if (values.length !== 3 || !Number.isSafeInteger(pid) || pid <= 0 ||
+                !Number.isSafeInteger(parentPid) || parentPid < 0 ||
+                !Number.isSafeInteger(processGroupId) || processGroupId < 0) {
+              throw new Error("Process table row format is invalid.");
+            }
+            return { pid, parentPid, processGroupId };
+          });
+        if (rows.length === 0) throw new Error("Process table observation is empty and unconfirmed.");
+        finish(undefined, rows);
       } catch (error) {
-        reject(error);
+        finish(error);
       }
     });
   });
@@ -2362,6 +3158,25 @@ function killManagedRuntimeGroup(child: ChildProcess, signal: NodeJS.Signals): v
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
   }
+}
+
+let systemBoot: { id?: string; startedAt?: number } | undefined;
+function currentSystemBoot(): { id?: string; startedAt?: number } {
+  if (systemBoot) return systemBoot;
+  try {
+    let id: string, startedAt: number;
+    if (process.platform === "darwin") {
+      const output = execFileSync("/usr/sbin/sysctl", ["-n", "kern.bootsessionuuid", "kern.boottime"],
+        { encoding: "utf8", timeout: 1000, stdio: ["ignore", "pipe", "ignore"] });
+      id = output.split("\n")[0].trim();
+      startedAt = Number(/sec\s*=\s*(\d+)/.exec(output)?.[1]) * 1000;
+    } else if (process.platform === "linux") {
+      id = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+      startedAt = Number(/^btime (\d+)$/m.exec(readFileSync("/proc/stat", "utf8"))?.[1]) * 1000;
+    } else return systemBoot = {};
+    return systemBoot = { ...(z.string().uuid().safeParse(id).success ? { id } : {}),
+      ...(Number.isSafeInteger(startedAt) && startedAt > 0 ? { startedAt } : {}) };
+  } catch { return systemBoot = {}; }
 }
 
 function runtimeEnvironment(envFile: string, bridgeSocketPath: string): NodeJS.ProcessEnv {
@@ -2406,28 +3221,13 @@ function commandEnvironment(envFile?: string): NodeJS.ProcessEnv {
     "LC_ALL",
     "LC_CTYPE",
     "XDG_CONFIG_HOME",
-    "XDG_STATE_HOME",
-    "CODEX_HOME",
-    "CODEX_MCP_BRIDGE_RUNTIME_HOME",
-    "CODEX_MCP_BRIDGE_CODEX",
-    "CODEX_GPT_BRIDGE_CODEX"
+    "XDG_STATE_HOME"
   ];
   const environment: NodeJS.ProcessEnv = {};
   for (const name of names) {
     if (process.env[name] !== undefined) environment[name] = process.env[name];
   }
-  if (envFile) {
-    const fileValues = readRuntimeEnvSubset(envFile, [
-      "CODEX_HOME",
-      "CODEX_MCP_BRIDGE_CODEX",
-      "CODEX_GPT_BRIDGE_CODEX"
-    ]);
-    for (const [name, value] of Object.entries(fileValues)) {
-      if (environment[name] === undefined && process.env[name] === undefined) {
-        environment[name] = value;
-      }
-    }
-  }
+  Object.assign(environment, codexChildEnvironment(envFile, process.env));
   const home = process.env.HOME || "";
   const pathEntries = [
     process.env.PATH,
@@ -2446,54 +3246,24 @@ function commandEnvironment(envFile?: string): NodeJS.ProcessEnv {
   return environment;
 }
 
-function resolveCommand(command: string, environment: NodeJS.ProcessEnv): string {
-  const configured = environment.CODEX_MCP_BRIDGE_CODEX || environment.CODEX_GPT_BRIDGE_CODEX;
-  return configured && command === "codex"
-    ? configured
-    : command;
+function cliEnvironmentSummary(
+  manager: CodexRuntimeManager,
+  service: CodexService,
+  snapshot?: CliRuntimeSnapshot
+): CliEnvironmentSummary {
+  const environment = service.environment;
+  return {
+    runtimeHome: manager.root,
+    codexHome: environment.CODEX_HOME || path.join(environment.HOME || homedir(), ".codex"),
+    configuredCommand: snapshot?.configuredCommand || environment.CODEX_MCP_BRIDGE_CODEX || environment.CODEX_GPT_BRIDGE_CODEX || null,
+    selection: snapshot?.selection || null
+  };
 }
 
-function runCommandStatus(
-  command: string,
-  args: string[],
-  environment: NodeJS.ProcessEnv,
-  timeoutMs: number
-): Promise<{ installed: boolean; exitCode: number | null }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      env: environment,
-      stdio: "ignore"
-    });
-    let settled = false;
-    const finish = (result: { installed: boolean; exitCode: number | null }) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(result);
-    };
-    const timer = setTimeout(() => {
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        // The timeout result is authoritative even if the process exited in
-        // the narrow window before the signal was delivered.
-      }
-      if (settled) return;
-      settled = true;
-      reject(new Error("Codex login status check timed out."));
-    }, timeoutMs);
-    timer.unref();
-    child.once("error", (error) => {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        finish({ installed: false, exitCode: null });
-      } else if (!settled) {
-        settled = true;
-        clearTimeout(timer);
-        reject(error);
-      }
-    });
-    child.once("exit", (code) => finish({ installed: true, exitCode: code }));
-  });
+function requestedContextProblem(error: unknown): StatusProblem {
+  const message = safeErrorMessage(error);
+  return statusProblem(message.startsWith("CODEX_STATE_INVALID:")
+    ? "codex-requested-state-invalid" : "codex-requested-state-unavailable");
 }
 
 function readRegisteredProjectRoots(
@@ -2503,40 +3273,7 @@ function readRegisteredProjectRoots(
   const stateDatabaseFile = configuredStateDatabaseFile(envFile, options);
   if (existsSync(stateDatabaseFile)) {
     assertRegularStateFile(stateDatabaseFile);
-    const inspection = inspectStateDatabase(stateDatabaseFile);
-    const schemaVersion = inspection.schemaVersion;
-    if (schemaVersion === null || !SUPPORTED_STATE_SCHEMA_VERSIONS.has(schemaVersion)) {
-      throw new Error(
-        `Project registry is unavailable while state schema ${String(schemaVersion)} ` +
-        `is outside the helper's supported state schemas through ${CURRENT_STATE_DATABASE_SCHEMA}.`
-      );
-    }
-    // The UUID project registry was introduced by schema 8. Supported older
-    // schemas intentionally discard their legacy project JSON during upgrade,
-    // so they have no authoritative project roots for the helper to guard.
-    if (schemaVersion < 8) return [];
-    const database = new Database(stateDatabaseFile, {
-      readonly: true,
-      fileMustExist: true
-    });
-    try {
-      const columns = database.pragma("table_info(projects)") as Array<{ name?: unknown }>;
-      if (!columns.some((column) => column.name === "cwd")) {
-        throw new Error("Project registry table is unavailable.");
-      }
-      const hasDeletedAt = columns.some((column) => column.name === "deleted_at");
-      const rows = database.prepare(
-        hasDeletedAt
-          ? "SELECT cwd FROM projects WHERE deleted_at IS NULL"
-          : "SELECT cwd FROM projects"
-      ).all() as Array<{ cwd?: unknown }>;
-      if (rows.some((row) => typeof row.cwd !== "string" || !path.isAbsolute(row.cwd))) {
-        throw new Error("Project registry contains an invalid folder path.");
-      }
-      return [...new Set(rows.map((row) => row.cwd as string))];
-    } finally {
-      database.close();
-    }
+    return inspectRegisteredProjectRoots(stateDatabaseFile);
   }
   return [];
 }

@@ -1,0 +1,26 @@
+{
+  "exitCode": 1,
+  "records": [
+    {
+      "elapsed": 14.2,
+      "pid": "25256",
+      "ppid": "25163",
+      "age": "00:01",
+      "kind": "launcher"
+    },
+    {
+      "elapsed": 15.8,
+      "pid": "25315",
+      "ppid": "25256",
+      "age": "00:01",
+      "kind": "bridge"
+    },
+    {
+      "elapsed": 20.6,
+      "pid": "25315",
+      "ppid": "25256",
+      "age": "00:06",
+      "kind": "bridge"
+    }
+  ]
+}

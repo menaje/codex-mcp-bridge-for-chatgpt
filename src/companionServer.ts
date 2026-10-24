@@ -1,4 +1,5 @@
-import { dashboardHistoryRuntimeInput } from "./workHistory.js";
+import { dashboardHistoryActionInput } from "./workHistory.js";
+import { dashboardExecutionDetailInputSchema } from "./tools.js";
 import { problemActionSchema, problemQuerySchema } from "./problemReview.js";
 import {
   chmodSync,
@@ -15,21 +16,34 @@ import {
 } from "node:net";
 import path from "node:path";
 import * as z from "zod/v4";
+import { runtimeDrainTargetSchema } from "./runtimeDrain.js";
 import { DASHBOARD_STATUS_FILTERS } from "./dashboardPresentation.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { ChangeSignal, changeWaitParamsSchema } from "./changeSignal.js";
 import { PRODUCT_INFO } from "./productInfo.js";
+import { BRIDGE_SKILL_LIMITS } from "./skillLibrary.js";
+import { BRIDGE_SKILL_PACKAGE_LIMITS } from "./skillPackage.js";
 import type {
   BridgeApplicationService,
   BridgeSettingsMutationInput
 } from "./tools.js";
 import { localizeSettingsView } from "./settingsLocalization.js";
+import {
+  assertJsonTextIntegrity,
+  decodeUtf8Strict,
+  hasAtMostUnicodeScalars,
+  parseJsonTextStrict,
+} from "./textIntegrity.js";
 
 export const COMPANION_PROTOCOL_NAME = "codex-mcp-bridge-companion";
-export const COMPANION_PROTOCOL_VERSION = 2;
-export const COMPANION_MAX_REQUEST_BYTES = 1024 * 1024;
-export const COMPANION_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
-const COMPANION_MAX_CLIENTS = 8;
+/** v12 adds the experimental direct-result Settings field. */
+export const COMPANION_PROTOCOL_VERSION = 12;
+export const COMPANION_MAX_REQUEST_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;
+// Source-preserved 3 MiB Markdown content can JSON-escape sixfold.
+export const COMPANION_MAX_RESPONSE_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;
+const COMPANION_MAX_CLIENTS = 16;
+const COMPANION_ORDINARY_REQUESTS = 8;
+const COMPANION_PRIORITY_CLASSIFY_BYTES = 256 * 1024;
 const MAX_UNIX_SOCKET_PATH_BYTES = 100;
 
 const requestIdSchema = z.union([
@@ -44,11 +58,33 @@ const requestSchema = z.strictObject({
     "companion.hello",
     "changes.wait",
     "dashboard.snapshot",
+    "dashboard.history-detail",
+    "dashboard.execution-detail",
     "dashboard.history",
     "dashboard.problem",
     "thread.handoff",
     "settings.snapshot",
+    "settings.model-description-history",
     "settings.update",
+    "skills.snapshot",
+    "skills.read",
+    "skills.read-file",
+    "skills.versions",
+    "skills.create",
+    "skills.update",
+    "skills.restore",
+    "skills.set-enabled",
+    "skills.delete",
+    "skills.package-upload.begin",
+    "skills.package-upload.chunk",
+    "skills.package-upload.inspect",
+    "skills.package.create",
+    "skills.package.update",
+    "skills.package.export",
+    "completion.claim",
+    "completion.availability",
+    "completion.delivered",
+    "completion.release",
     "runtime.snapshot",
     "runtime.health",
     "runtime.beginDrain",
@@ -63,25 +99,152 @@ const requestSchema = z.strictObject({
 
 const emptyParamsSchema = z.strictObject({});
 const dashboardParamsSchema = z.strictObject({
+  historyMode:z.enum(["agents","jobs"]).optional(),
   problems: problemQuerySchema.optional(),
   statusFilter: z.enum(DASHBOARD_STATUS_FILTERS).optional(),
   limit: z.number().int().min(5).max(50).optional(),
+  backgroundOffset:z.number().int().min(0).max(1_000_000_000).optional(),
+  statusOffset:z.number().int().min(0).max(1_000_000_000).optional(),
   terminalOffset: z.number().int().min(0).max(1_000_000_000).optional(),
   idleOffset: z.number().int().min(0).max(1_000_000_000).optional(),
   enrich: z.boolean().optional(),
   includeHistory: z.boolean().optional()
 });
+const dashboardHistoryDetailParamsSchema = z.strictObject({
+  historyCursor:z.string().max(2048).optional(),
+  rowKey: z.string().regex(/^[0-9a-f]{32}$/)
+});
 const settingsSnapshotParamsSchema = z.strictObject({
   refreshModels: z.boolean().optional(),
   locale: z.string().min(1).max(100).optional()
 });
+const modelDescriptionHistoryParamsSchema = z.strictObject({
+  modelId: z.string().min(1).max(200),
+  beforeVersion: z.number().int().positive().optional()
+});
+const bridgeSkillReferenceSchema = z.strictObject({
+  skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/),
+  source: z.literal("bridge"),
+  version: z.string().regex(/^[1-9]\d*$/)
+});
+const bridgeSkillMutationRequestIdSchema = z.string().uuid();
+const bridgeSkillFilePathSchema = z.string().min(1).max(BRIDGE_SKILL_LIMITS.filePathMaxBytes);
+// Zod's string max counts UTF-16 code units. Keep the absolute two-unit-per-
+// scalar transport ceiling, then enforce the shared Node/Swift scalar policy.
+const bridgeSkillNameSchema = z.string().min(1)
+  .max(BRIDGE_SKILL_LIMITS.nameMaxCharacters * 2)
+  .refine((value) => hasAtMostUnicodeScalars(
+    value, BRIDGE_SKILL_LIMITS.nameMaxCharacters, "Bridge skill name"
+  ));
+const bridgeSkillDescriptionSchema = z.string()
+  .max(BRIDGE_SKILL_LIMITS.descriptionMaxCharacters * 2)
+  .refine((value) => hasAtMostUnicodeScalars(
+    value, BRIDGE_SKILL_LIMITS.descriptionMaxCharacters, "Bridge skill description"
+  ));
+const bridgeSkillFileSchema = z.strictObject({
+  path: bridgeSkillFilePathSchema,
+  content: z.string().max(BRIDGE_SKILL_LIMITS.fileMaxBytes)
+    .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.fileMaxBytes)
+});
+const bridgeSkillReadFileParamsSchema = bridgeSkillReferenceSchema.extend({
+  path: bridgeSkillFilePathSchema
+});
+const bridgeSkillVersionsParamsSchema = z.strictObject({
+  skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/)
+});
+const bridgeSkillCreateParamsSchema = z.strictObject({
+  requestId: bridgeSkillMutationRequestIdSchema,
+  name: bridgeSkillNameSchema,
+  description: bridgeSkillDescriptionSchema.optional(),
+  content: z.string().min(1).max(BRIDGE_SKILL_LIMITS.contentMaxBytes)
+    .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.contentMaxBytes, {
+      message: `Skill content must be at most ${BRIDGE_SKILL_LIMITS.contentMaxBytes} UTF-8 bytes.`
+    })
+    .refine((value) => !value.includes("\u0000"), { message: "Skill content cannot contain NUL characters." }),
+  files: z.array(bridgeSkillFileSchema).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional()
+});
+const bridgeSkillUpdateParamsSchema = z.strictObject({
+  requestId: bridgeSkillMutationRequestIdSchema,
+  skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/),
+  expectedVersion: z.string().regex(/^[1-9]\d*$/),
+  name: bridgeSkillNameSchema.optional(),
+  description: bridgeSkillDescriptionSchema.optional(),
+  content: z.string().min(1).max(BRIDGE_SKILL_LIMITS.contentMaxBytes)
+    .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.contentMaxBytes, {
+      message: `Skill content must be at most ${BRIDGE_SKILL_LIMITS.contentMaxBytes} UTF-8 bytes.`
+    })
+    .refine((value) => !value.includes("\u0000"), { message: "Skill content cannot contain NUL characters." })
+    .optional(),
+  files: z.strictObject({
+    upsert: z.array(bridgeSkillFileSchema).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional(),
+    remove: z.array(bridgeSkillFilePathSchema).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional()
+  }).optional()
+}).refine((value) => value.name !== undefined || value.description !== undefined || value.content !== undefined || value.files !== undefined, {
+  message: "Provide at least one bridge skill field to update."
+});
+const bridgeSkillRestoreParamsSchema = z.strictObject({
+  requestId: bridgeSkillMutationRequestIdSchema,
+  skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/),
+  expectedVersion: z.string().regex(/^[1-9]\d*$/),
+  sourceVersion: z.string().regex(/^[1-9]\d*$/)
+});
+const bridgeSkillSetEnabledParamsSchema = z.strictObject({
+  requestId: bridgeSkillMutationRequestIdSchema,
+  skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/),
+  expectedVersion: z.string().regex(/^[1-9]\d*$/),
+  enabled: z.boolean()
+});
+const bridgeSkillDeleteParamsSchema = z.strictObject({
+  requestId: bridgeSkillMutationRequestIdSchema,
+  skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/),
+  expectedVersion: z.string().regex(/^[1-9]\d*$/)
+});
+const bridgeSkillPackageUploadParamsSchema = z.strictObject({ uploadId: z.string().uuid() });
+const bridgeSkillPackageChunkParamsSchema = bridgeSkillPackageUploadParamsSchema.extend({
+  chunkIndex: z.number().int().nonnegative(),
+  data: z.string().min(1).max(Math.ceil(BRIDGE_SKILL_PACKAGE_LIMITS.uploadChunkMaxBytes * 4 / 3) + 4)
+});
+const bridgeSkillPackageCreateParamsSchema = z.strictObject({
+  requestId: bridgeSkillMutationRequestIdSchema,
+  name: bridgeSkillNameSchema,
+  description: bridgeSkillDescriptionSchema.optional(),
+  uploadId: z.string().uuid(),
+  mainPath: bridgeSkillFilePathSchema,
+  includePaths: z.array(bridgeSkillFilePathSchema).min(1).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional()
+});
+const bridgeSkillPackageUpdateParamsSchema = z.strictObject({
+  requestId: bridgeSkillMutationRequestIdSchema,
+  skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/),
+  expectedVersion: z.string().regex(/^[1-9]\d*$/),
+  uploadId: z.string().uuid(),
+  mainPath: bridgeSkillFilePathSchema.nullable(),
+  includePaths: z.array(bridgeSkillFilePathSchema).min(1).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional()
+});
+const completionClaimParamsSchema = z.strictObject({
+  leaseOwner: z.string().uuid(),
+  limit: z.number().int().min(1).max(20).optional()
+});
+const completionMutationParamsSchema = z.strictObject({
+  leaseOwner: z.string().uuid(),
+  outboxIds: z.array(z.number().int().positive()).min(1).max(20)
+});
 const runtimeSnapshotParamsSchema = z.strictObject({
   inspectBackgroundProcesses: z.boolean().optional()
 });
+const runtimeDrainParamsSchema = z.strictObject({
+  inspectBackgroundProcesses: z.boolean().optional(), expectedRuntime: runtimeDrainTargetSchema.optional()
+});
+const runtimeCancelDrainParamsSchema = z.strictObject({ expectedRuntime: runtimeDrainTargetSchema.optional() });
 const remoteConfigureParamsSchema = z.strictObject({
   enabled: z.boolean(),
   endpoint: z.string().min(1).max(2_048),
-  displayName: z.string().min(1).max(120)
+  displayName: z.string().min(1).max(120),
+  expectedConfiguration: z.strictObject({
+    serverId: z.string().uuid(),
+    enabled: z.boolean(),
+    endpoint: z.string().max(2_048).nullable(),
+    displayName: z.string().min(1).max(120)
+  }).optional()
 });
 const remotePairingParamsSchema = z.strictObject({
   expiresInSeconds: z.number().int().min(60).max(900).optional()
@@ -141,6 +304,7 @@ export type RemoteCompanionControl = {
     enabled: boolean;
     endpoint: string;
     displayName: string;
+    expectedConfiguration?: { serverId: string; enabled: boolean; endpoint: string | null; displayName: string };
   }): Promise<RemoteCompanionStatus>;
   beginPairing(expiresInSeconds?: number): Promise<RemotePairingInvitation>;
   revokeDevice(deviceId: string): Promise<RemoteCompanionStatus>;
@@ -149,10 +313,28 @@ export type RemoteCompanionControl = {
 export const REMOTE_COMPANION_APPLICATION_METHODS = new Set([
   "companion.hello",
   "dashboard.snapshot",
+  "dashboard.history-detail",
+    "dashboard.execution-detail",
   "dashboard.history",
   "dashboard.problem",
   "settings.snapshot",
+  "settings.model-description-history",
   "settings.update",
+  "skills.snapshot",
+  "skills.read",
+  "skills.read-file",
+  "skills.versions",
+  "skills.create",
+  "skills.update",
+  "skills.restore",
+  "skills.set-enabled",
+  "skills.delete",
+  "skills.package-upload.begin",
+  "skills.package-upload.chunk",
+  "skills.package-upload.inspect",
+  "skills.package.create",
+  "skills.package.update",
+  "skills.package.export",
   "runtime.snapshot"
 ]);
 
@@ -162,6 +344,7 @@ export type PrivateJsonLineServerOptions = {
   maxResponseBytes: number;
   maxClients?: number;
   dispatch(line: string, signal?: AbortSignal): Promise<Record<string, unknown>>;
+  reserveDispatch?(line: string): () => void;
   requestTooLarge(): Record<string, unknown>;
   internalError(error: unknown): Record<string, unknown>;
 };
@@ -174,13 +357,27 @@ export type PrivateJsonLineServerOptions = {
 export async function startBridgeCompanionServer(
   options: BridgeCompanionServerOptions
 ): Promise<BridgeCompanionServer> {
-  const changes = new ChangeSignal(["dashboard", "settings", "enrichment"]);
+  const changes = new ChangeSignal(["dashboard", "settings", "enrichment", "completion-outbox-ready"]);
   const unsubscribe = options.applicationService.subscribeChanges?.(topic => changes.notify(topic));
+  let ordinaryRequests = 0;
   const server = await startPrivateJsonLineServer({
     socketPath: options.socketPath,
     maxRequestBytes: COMPANION_MAX_REQUEST_BYTES,
     maxResponseBytes: COMPANION_MAX_RESPONSE_BYTES,
     maxClients: COMPANION_MAX_CLIENTS,
+    reserveDispatch: line => {
+      if (isPriorityCompanionRequest(line)) return () => {};
+      if (ordinaryRequests >= COMPANION_ORDINARY_REQUESTS) {
+        throw new Error("COMPANION_CAPACITY: Ordinary native requests are at capacity.");
+      }
+      ordinaryRequests += 1;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        ordinaryRequests -= 1;
+      };
+    },
     dispatch: (line, signal) => dispatchLine(
       line,
       options.applicationService,
@@ -229,29 +426,53 @@ export async function startPrivateJsonLineServer(
 }
 
 function serveClient(socket: Socket, options: PrivateJsonLineServerOptions): void {
-  socket.setEncoding("utf8");
-  let buffer = "";
+  let fragments: Buffer[] = [];
+  let pendingBytes = 0;
   let requestQueue = Promise.resolve();
   const cancellation = new AbortController();
   socket.once("close", () => cancellation.abort());
 
-  socket.on("data", (chunk: string) => {
-    buffer += chunk;
-    if (Buffer.byteLength(buffer, "utf8") > options.maxRequestBytes) {
+  socket.on("data", (chunk: Buffer) => {
+    if (pendingBytes + chunk.length > options.maxRequestBytes) {
+      fragments = [];
+      pendingBytes = 0;
       writeResponse(socket, options.requestTooLarge(), options.maxResponseBytes);
       socket.destroy();
       return;
     }
-    while (true) {
-      const newline = buffer.indexOf("\n");
-      if (newline < 0) break;
-      const line = buffer.slice(0, newline);
-      buffer = buffer.slice(newline + 1);
+    let offset = 0;
+    while (offset < chunk.length) {
+      const newline = chunk.indexOf(0x0a, offset);
+      if (newline < 0) {
+        fragments.push(chunk.subarray(offset));
+        pendingBytes += chunk.length - offset;
+        break;
+      }
+      const end = chunk.subarray(offset, newline);
+      // Join a fragmented frame once, rather than copying and rescanning the
+      // entire pending request for every socket chunk (up to 72 MiB).
+      const lineBytes = fragments.length === 0 ? end : Buffer.concat([...fragments, end], pendingBytes + end.length);
+      fragments = [];
+      pendingBytes = 0;
+      offset = newline + 1;
+      let line: string;
+      try {
+        line = decodeUtf8Strict(lineBytes, "Companion request");
+      } catch (error) {
+        writeResponse(socket, options.internalError(error), options.maxResponseBytes);
+        socket.destroy();
+        return;
+      }
       if (!line.trim()) continue;
       requestQueue = requestQueue
-        .then(() => {
+        .then(async () => {
           if (cancellation.signal.aborted) throw new Error("CONNECTION_CLOSED");
-          return options.dispatch(line, cancellation.signal);
+          const release = options.reserveDispatch?.(line);
+          try {
+            return await options.dispatch(line, cancellation.signal);
+          } finally {
+            release?.();
+          }
         })
         .then((response) => writeResponse(socket, response, options.maxResponseBytes))
         .catch((error) => {
@@ -260,6 +481,24 @@ function serveClient(socket: Socket, options: PrivateJsonLineServerOptions): voi
     }
   });
   socket.on("error", () => undefined);
+}
+
+function isPriorityCompanionRequest(line: string): boolean {
+  if (Buffer.byteLength(line, "utf8") > COMPANION_PRIORITY_CLASSIFY_BYTES) return false;
+  try {
+    const parsed: unknown = JSON.parse(line);
+    const request = requestSchema.safeParse(parsed);
+    if (!request.success) return false;
+    const { method, params } = request.data;
+    if (["completion.claim", "completion.availability", "completion.delivered", "completion.release",
+      "runtime.health", "runtime.beginDrain", "runtime.cancelDrain"].includes(method)) return true;
+    if (method === "dashboard.problem" && params && typeof params === "object" &&
+        !Array.isArray(params) && (params as Record<string, unknown>).action === "retry-stop") return true;
+    return Boolean(method === "thread.handoff" && params && typeof params === "object" &&
+      !Array.isArray(params) && (params as Record<string, unknown>).action === "cancel");
+  } catch {
+    return false;
+  }
 }
 
 async function dispatchLine(
@@ -271,7 +510,7 @@ async function dispatchLine(
 ): Promise<Record<string, unknown>> {
   let decoded: unknown;
   try {
-    decoded = JSON.parse(line);
+    decoded = parseJsonTextStrict(line, "Companion request");
   } catch {
     return errorResponse(null, -32700, "Invalid JSON.");
   }
@@ -297,7 +536,7 @@ export async function dispatchCompanionPayload(
           const params = changeWaitParamsSchema.parse(request.params || {});
           return changes.wait(params.after, params.waitMs, signal);
         })()
-      : await dispatchRequest(request, applicationService, remoteManagement);
+      : await dispatchRequest(request, applicationService, remoteManagement, signal);
     return { jsonrpc: "2.0", id: request.id, result };
   } catch (error) {
     return errorResponse(request.id, -32602, safeErrorMessage(error));
@@ -307,7 +546,8 @@ export async function dispatchCompanionPayload(
 async function dispatchRequest(
   request: CompanionRequest,
   applicationService: BridgeApplicationService,
-  remoteManagement?: RemoteCompanionControl
+  remoteManagement?: RemoteCompanionControl,
+  signal?: AbortSignal
 ): Promise<unknown> {
   switch (request.method) {
     case "companion.hello":
@@ -329,6 +569,25 @@ async function dispatchRequest(
           ...(applicationService.problemAction ? ["dashboard.problems"] : []),
           "settings.read",
           "settings.write",
+          ...(applicationService.skillLibrarySnapshot && applicationService.readBridgeSkill &&
+            applicationService.readBridgeSkillFile && applicationService.listBridgeSkillVersions
+            ? ["skills.read"]
+            : []),
+          ...(applicationService.createBridgeSkill && applicationService.updateBridgeSkill &&
+            applicationService.restoreBridgeSkill && applicationService.setBridgeSkillEnabled &&
+            applicationService.deleteBridgeSkill
+            ? ["skills.write"]
+            : []),
+          ...(applicationService.beginBridgeSkillPackageUpload && applicationService.appendBridgeSkillPackageUpload &&
+            applicationService.inspectBridgeSkillPackageUpload && applicationService.createBridgeSkillFromPackage &&
+            applicationService.updateBridgeSkillFromPackage && applicationService.exportBridgeSkillPackage
+            ? ["skills.package"]
+            : []),
+          ...(applicationService.claimNativeCompletionNotifications &&
+            applicationService.markNativeCompletionNotificationsDelivered &&
+            applicationService.releaseNativeCompletionNotifications
+            ? ["completion-notifications.local-delivery"]
+            : []),
           "runtime.drain",
           ...(applicationService.threadHandoff ? ["thread.handoff"] : []),
           ...(remoteManagement
@@ -342,7 +601,20 @@ async function dispatchRequest(
       };
     case "dashboard.history": {
       if (!applicationService.historyAction) throw new Error("HISTORY_UNSUPPORTED");
-      return applicationService.historyAction(dashboardHistoryRuntimeInput.parse(request.params));
+      return applicationService.historyAction(dashboardHistoryActionInput.parse(request.params));
+    }
+    case "dashboard.execution-detail": {
+      if (!applicationService.dashboardExecutionDetail) throw new Error("DASHBOARD_EXECUTION_DETAIL_UNSUPPORTED");
+      return applicationService.dashboardExecutionDetail(dashboardExecutionDetailInputSchema.parse(request.params),{signal,deadlineAt:Date.now()+4500});
+    }
+    case "dashboard.history-detail": {
+      if (!applicationService.dashboardHistoryDetail) {
+        throw new Error("DASHBOARD_HISTORY_DETAIL_UNSUPPORTED");
+      }
+      return applicationService.dashboardHistoryDetail(
+        dashboardHistoryDetailParamsSchema.parse(request.params),
+        { signal, deadlineAt: Date.now() + 4_500 }
+      );
     }
     case "dashboard.problem": {
       if (!applicationService.problemAction) throw new Error("PROBLEMS_UNSUPPORTED");
@@ -358,29 +630,125 @@ async function dispatchRequest(
     case "dashboard.snapshot": {
       const params = dashboardParamsSchema.parse(request.params || {});
       return applicationService.dashboardSnapshot({
+        historyMode:params.historyMode,
         problems: params.problems,
         statusFilter: params.statusFilter,
         limit: params.limit,
         terminalOffset: params.terminalOffset,
+        statusOffset:params.statusOffset,
+        backgroundOffset:params.backgroundOffset,
         idleOffset: params.idleOffset,
         // Older native clients omit enrich and retain their prior all-in-one
         // snapshot behavior. The current client sends false explicitly.
         inspectRuntime: params.enrich !== false,
         includeHistory: params.includeHistory !== false
-      });
+      }, { signal, deadlineAt: Date.now() + (params.enrich !== false ? 9_000 : params.problems ? 2_500 : 1_500) });
     }
     case "settings.snapshot": {
       const params = settingsSnapshotParamsSchema.parse(request.params || {});
       const view = await applicationService.settingsSnapshot({
         refreshModels: params.refreshModels
-      });
+      }, { signal, deadlineAt: Date.now() + 10_000 });
       return localizeSettingsView(view, params.locale);
     }
-    case "settings.update": {
-      const view = await applicationService.updateSettings(
-        request.params as BridgeSettingsMutationInput
+    case "settings.model-description-history":
+      return applicationService.modelDescriptionHistory(
+        modelDescriptionHistoryParamsSchema.parse(request.params || {})
       );
-      return localizeSettingsView(view);
+    case "settings.update": {
+      const { mutation, locale } = splitSettingsMutationPresentation(request.params);
+      const view = await applicationService.updateSettings(mutation);
+      return localizeSettingsView(view, locale);
+    }
+    case "skills.snapshot":
+      emptyParamsSchema.parse(request.params || {});
+      return requireSkillLibrary(applicationService).skillLibrarySnapshot();
+    case "skills.read":
+      return requireSkillLibrary(applicationService).readBridgeSkill(
+        bridgeSkillReferenceSchema.parse(request.params || {})
+      );
+    case "skills.read-file": {
+      const params = bridgeSkillReadFileParamsSchema.parse(request.params || {});
+      return requireSkillLibrary(applicationService).readBridgeSkillFile(params, params.path);
+    }
+    case "skills.versions":
+      return requireSkillLibrary(applicationService).listBridgeSkillVersions(
+        bridgeSkillVersionsParamsSchema.parse(request.params || {})
+      );
+    case "skills.create":
+      return requireSkillLibrary(applicationService).createBridgeSkill(
+        bridgeSkillCreateParamsSchema.parse(request.params || {})
+      );
+    case "skills.update":
+      return requireSkillLibrary(applicationService).updateBridgeSkill(
+        bridgeSkillUpdateParamsSchema.parse(request.params || {})
+      );
+    case "skills.restore":
+      return requireSkillLibrary(applicationService).restoreBridgeSkill(
+        bridgeSkillRestoreParamsSchema.parse(request.params || {})
+      );
+    case "skills.set-enabled":
+      return requireSkillLibrary(applicationService).setBridgeSkillEnabled(
+        bridgeSkillSetEnabledParamsSchema.parse(request.params || {})
+      );
+    case "skills.delete":
+      return requireSkillLibrary(applicationService).deleteBridgeSkill(
+        bridgeSkillDeleteParamsSchema.parse(request.params || {})
+      );
+    case "skills.package-upload.begin":
+      emptyParamsSchema.parse(request.params || {});
+      return requireSkillPackages(applicationService).beginBridgeSkillPackageUpload();
+    case "skills.package-upload.chunk":
+      return requireSkillPackages(applicationService).appendBridgeSkillPackageUpload(
+        bridgeSkillPackageChunkParamsSchema.parse(request.params || {})
+      );
+    case "skills.package-upload.inspect": {
+      const params = bridgeSkillPackageUploadParamsSchema.parse(request.params || {});
+      return requireSkillPackages(applicationService).inspectBridgeSkillPackageUpload(params.uploadId);
+    }
+    case "skills.package.create":
+      return requireSkillPackages(applicationService).createBridgeSkillFromPackage(
+        bridgeSkillPackageCreateParamsSchema.parse(request.params || {})
+      );
+    case "skills.package.update":
+      return requireSkillPackages(applicationService).updateBridgeSkillFromPackage(
+        bridgeSkillPackageUpdateParamsSchema.parse(request.params || {})
+      );
+    case "skills.package.export":
+      return requireSkillPackages(applicationService).exportBridgeSkillPackage(
+        bridgeSkillReferenceSchema.parse(request.params || {})
+      );
+    case "completion.availability": {
+      emptyParamsSchema.parse(request.params || {});
+      if (!applicationService.nativeCompletionAvailability) throw new Error("CHANGES_UNSUPPORTED");
+      return applicationService.nativeCompletionAvailability();
+    }
+    case "completion.claim": {
+      if (!applicationService.claimNativeCompletionNotifications) {
+        throw new Error("COMPLETION_NOTIFICATIONS_UNAVAILABLE");
+      }
+      const params = completionClaimParamsSchema.parse(request.params || {});
+      return {
+        events: await applicationService.claimNativeCompletionNotifications(params)
+      };
+    }
+    case "completion.delivered": {
+      if (!applicationService.markNativeCompletionNotificationsDelivered) {
+        throw new Error("COMPLETION_NOTIFICATIONS_UNAVAILABLE");
+      }
+      await applicationService.markNativeCompletionNotificationsDelivered(
+        completionMutationParamsSchema.parse(request.params || {})
+      );
+      return { ok: true };
+    }
+    case "completion.release": {
+      if (!applicationService.releaseNativeCompletionNotifications) {
+        throw new Error("COMPLETION_NOTIFICATIONS_UNAVAILABLE");
+      }
+      await applicationService.releaseNativeCompletionNotifications(
+        completionMutationParamsSchema.parse(request.params || {})
+      );
+      return { ok: true };
     }
     case "runtime.health":
       emptyParamsSchema.parse(request.params || {});
@@ -392,11 +760,12 @@ async function dispatchRequest(
       );
     case "runtime.beginDrain":
       return applicationService.beginDrain(
-        runtimeSnapshotParamsSchema.parse(request.params || {})
+        runtimeDrainParamsSchema.parse(request.params || {})
       );
-    case "runtime.cancelDrain":
-      emptyParamsSchema.parse(request.params || {});
-      return applicationService.cancelDrain();
+    case "runtime.cancelDrain": {
+      const params = runtimeCancelDrainParamsSchema.parse(request.params || {});
+      return params.expectedRuntime ? applicationService.cancelDrain(params) : applicationService.cancelDrain();
+    }
     case "remote.status":
       emptyParamsSchema.parse(request.params || {});
       return requireRemoteManagement(remoteManagement).status();
@@ -417,11 +786,80 @@ async function dispatchRequest(
   }
 }
 
+/**
+ * `locale` is presentation-only companion metadata. It must never be handed
+ * to the strict, shared settings mutation contract or persisted as a bridge
+ * setting. Keeping this adapter at the transport boundary also lets older
+ * native clients omit it without changing their mutation shape.
+ */
+function splitSettingsMutationPresentation(input: unknown): {
+  mutation: BridgeSettingsMutationInput;
+  locale?: string;
+} {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("Invalid settings mutation.");
+  }
+  const record = input as Record<string, unknown>;
+  const locale = record.locale;
+  if (locale !== undefined && (typeof locale !== "string" || !locale.trim() || locale.length > 100)) {
+    throw new Error("Invalid settings presentation locale.");
+  }
+  const { locale: _presentationLocale, ...mutation } = record;
+  return {
+    mutation: mutation as BridgeSettingsMutationInput,
+    ...(typeof locale === "string" ? { locale } : {})
+  };
+}
+
 function requireRemoteManagement(
   controller: RemoteCompanionControl | undefined
 ): RemoteCompanionControl {
   if (!controller) throw new Error("REMOTE_MANAGEMENT_UNAVAILABLE");
   return controller;
+}
+
+function requireSkillLibrary(applicationService: BridgeApplicationService): Required<Pick<
+  BridgeApplicationService,
+  "skillLibrarySnapshot" | "readBridgeSkill" | "readBridgeSkillFile" | "listBridgeSkillVersions" |
+  "createBridgeSkill" | "updateBridgeSkill" | "restoreBridgeSkill" | "setBridgeSkillEnabled" |
+  "deleteBridgeSkill"
+>> {
+  if (
+    !applicationService.skillLibrarySnapshot ||
+    !applicationService.readBridgeSkill ||
+    !applicationService.readBridgeSkillFile ||
+    !applicationService.listBridgeSkillVersions ||
+    !applicationService.createBridgeSkill ||
+    !applicationService.updateBridgeSkill ||
+    !applicationService.restoreBridgeSkill ||
+    !applicationService.setBridgeSkillEnabled ||
+    !applicationService.deleteBridgeSkill
+  ) {
+    throw new Error("SKILL_LIBRARY_UNAVAILABLE");
+  }
+  return applicationService as Required<Pick<
+    BridgeApplicationService,
+    "skillLibrarySnapshot" | "readBridgeSkill" | "readBridgeSkillFile" | "listBridgeSkillVersions" |
+    "createBridgeSkill" | "updateBridgeSkill" | "restoreBridgeSkill" | "setBridgeSkillEnabled" |
+    "deleteBridgeSkill"
+  >>;
+}
+
+function requireSkillPackages(applicationService: BridgeApplicationService): Required<Pick<
+  BridgeApplicationService,
+  "beginBridgeSkillPackageUpload" | "appendBridgeSkillPackageUpload" | "inspectBridgeSkillPackageUpload" |
+  "createBridgeSkillFromPackage" | "updateBridgeSkillFromPackage" | "exportBridgeSkillPackage"
+>> {
+  if (!applicationService.beginBridgeSkillPackageUpload || !applicationService.appendBridgeSkillPackageUpload ||
+    !applicationService.inspectBridgeSkillPackageUpload || !applicationService.createBridgeSkillFromPackage ||
+    !applicationService.updateBridgeSkillFromPackage || !applicationService.exportBridgeSkillPackage) {
+    throw new Error("SKILL_PACKAGE_UNAVAILABLE");
+  }
+  return applicationService as Required<Pick<
+    BridgeApplicationService,
+    "beginBridgeSkillPackageUpload" | "appendBridgeSkillPackageUpload" | "inspectBridgeSkillPackageUpload" |
+    "createBridgeSkillFromPackage" | "updateBridgeSkillFromPackage" | "exportBridgeSkillPackage"
+  >>;
 }
 
 function writeResponse(
@@ -430,7 +868,13 @@ function writeResponse(
   maxResponseBytes: number
 ): void {
   if (socket.destroyed || !socket.writable) return;
-  let serialized = JSON.stringify(response);
+  let serialized: string;
+  try {
+    assertJsonTextIntegrity(response, "Companion response");
+    serialized = JSON.stringify(response);
+  } catch {
+    serialized = JSON.stringify(errorResponse(null, -32603, "Companion response has invalid Unicode text."));
+  }
   if (Buffer.byteLength(serialized, "utf8") > maxResponseBytes) {
     serialized = JSON.stringify(
       errorResponse(response.id as JsonRpcId, -32603, "Companion response is too large.")

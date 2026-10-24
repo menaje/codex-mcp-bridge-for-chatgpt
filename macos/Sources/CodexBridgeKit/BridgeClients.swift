@@ -11,6 +11,47 @@ public struct BridgeCompanionClient: Sendable {
         try await rpc.call("thread.handoff", params: ThreadHandoffParameters(rowKey: rowKey, codexThreadUrl: codexThreadUrl, action: action))
     }
 
+    public func claimCompletionNotifications(
+        leaseOwner: String,
+        limit: Int = 10
+    ) async throws -> [NativeCompletionNotification] {
+        let response: CompletionNotificationClaimResponse = try await rpc.call(
+            "completion.claim",
+            params: CompletionNotificationClaimParameters(leaseOwner: leaseOwner, limit: limit)
+        )
+        return response.events
+    }
+
+    public func completionAvailability() async throws -> NativeCompletionAvailability {
+        try await rpc.call("completion.availability", params: EmptyParameters())
+    }
+
+    public func markCompletionNotificationsDelivered(
+        outboxIDs: [Int],
+        leaseOwner: String
+    ) async throws {
+        let _: CompletionNotificationMutationResponse = try await rpc.call(
+            "completion.delivered",
+            params: CompletionNotificationMutationParameters(
+                leaseOwner: leaseOwner,
+                outboxIds: outboxIDs
+            )
+        )
+    }
+
+    public func releaseCompletionNotifications(
+        outboxIDs: [Int],
+        leaseOwner: String
+    ) async throws {
+        let _: CompletionNotificationMutationResponse = try await rpc.call(
+            "completion.release",
+            params: CompletionNotificationMutationParameters(
+                leaseOwner: leaseOwner,
+                outboxIds: outboxIDs
+            )
+        )
+    }
+
     public func waitForChanges(after: String?) async throws -> ChangeNotice {
         try await rpc.call("changes.wait", params: ChangeWaitParameters(after: after), timeout: 30)
     }
@@ -50,8 +91,185 @@ public struct BridgeCompanionClient: Sendable {
         try await rpc.call("settings.update", params: mutation, timeout: 30)
     }
 
+    public func modelDescriptionHistory(modelID: String, beforeVersion: Int? = nil) async throws -> ModelDescriptionHistoryPage {
+        try await rpc.call("settings.model-description-history",
+                           params: ModelDescriptionHistoryParameters(modelId: modelID, beforeVersion: beforeVersion),
+                           timeout: 20)
+    }
+
+    public func skillLibrary() async throws -> BridgeSkillLibrarySnapshot {
+        try await rpc.call("skills.snapshot", params: EmptyParameters(), timeout: 20)
+    }
+
+    public func readBridgeSkill(
+        _ reference: BridgeSkillReference
+    ) async throws -> BridgeSkill {
+        try await rpc.call("skills.read", params: reference, timeout: 20)
+    }
+
+    public func readBridgeSkillFile(
+        _ reference: BridgeSkillReference,
+        path: String
+    ) async throws -> BridgeSkillFile {
+        try await rpc.call(
+            "skills.read-file",
+            params: BridgeSkillFileReadRequest(reference: reference, path: path),
+            timeout: 20
+        )
+    }
+
+    public func bridgeSkillVersions(skillId: String) async throws -> BridgeSkillVersionList {
+        try await rpc.call("skills.versions", params: BridgeSkillVersionsParameters(skillId: skillId), timeout: 20)
+    }
+
+    public func createBridgeSkill(
+        _ request: BridgeSkillCreateRequest
+    ) async throws -> BridgeSkillSummary {
+        try await rpc.call("skills.create", params: request, timeout: 30)
+    }
+
+    public func updateBridgeSkill(
+        _ request: BridgeSkillUpdateRequest
+    ) async throws -> BridgeSkillSummary {
+        try await rpc.call("skills.update", params: request, timeout: 30)
+    }
+
+    public func restoreBridgeSkill(
+        _ request: BridgeSkillRestoreRequest
+    ) async throws -> BridgeSkillSummary {
+        try await rpc.call("skills.restore", params: request, timeout: 30)
+    }
+
+    public func setBridgeSkillEnabled(
+        _ request: BridgeSkillSetEnabledRequest
+    ) async throws -> BridgeSkillSummary {
+        try await rpc.call("skills.set-enabled", params: request, timeout: 30)
+    }
+
+    public func deleteBridgeSkill(
+        _ request: BridgeSkillDeleteRequest
+    ) async throws -> BridgeSkillDeletion {
+        try await rpc.call("skills.delete", params: request, timeout: 30)
+    }
+
+    public func uploadBridgeSkillPackage(_ archive: Data) async throws -> BridgeSkillPackageInspection {
+        guard !archive.isEmpty else { throw NSError(domain: "SKILL_PACKAGE_EMPTY", code: 1) }
+        guard archive.count <= bridgeSkillPackageCompressedMaxBytes else {
+            throw NSError(domain: "SKILL_PACKAGE_COMPRESSED_TOO_LARGE", code: 1)
+        }
+        let started: BridgeSkillPackageUploadStarted = try await rpc.call(
+            "skills.package-upload.begin", params: EmptyParameters(), timeout: 20
+        )
+        var offset = 0
+        var chunkIndex = 0
+        while offset < archive.count {
+            let end = min(offset + started.chunkMaxBytes, archive.count)
+            let data = archive.subdata(in: offset..<end).base64EncodedString()
+            let _: BridgeSkillPackageUploadProgress = try await rpc.call(
+                "skills.package-upload.chunk",
+                params: BridgeSkillPackageUploadChunk(uploadId: started.uploadId, chunkIndex: chunkIndex, data: data),
+                timeout: 30
+            )
+            offset = end
+            chunkIndex += 1
+        }
+        return try await rpc.call(
+            "skills.package-upload.inspect",
+            params: BridgeSkillPackageUploadReference(uploadId: started.uploadId),
+            timeout: 30
+        )
+    }
+
+    public func uploadBridgeSkillPackage(at archiveURL: URL) async throws -> BridgeSkillPackageInspection {
+        let values = try archiveURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+        guard values.isRegularFile == true, let size = values.fileSize, size > 0 else {
+            throw NSError(domain: "SKILL_PACKAGE_EMPTY", code: 1)
+        }
+        guard size <= bridgeSkillPackageCompressedMaxBytes else {
+            throw NSError(domain: "SKILL_PACKAGE_COMPRESSED_TOO_LARGE", code: 1)
+        }
+        let started: BridgeSkillPackageUploadStarted = try await rpc.call(
+            "skills.package-upload.begin", params: EmptyParameters(), timeout: 20
+        )
+        let handle = try FileHandle(forReadingFrom: archiveURL)
+        defer { try? handle.close() }
+        var chunkIndex = 0
+        while let chunk = try handle.read(upToCount: started.chunkMaxBytes), !chunk.isEmpty {
+            let _: BridgeSkillPackageUploadProgress = try await rpc.call(
+                "skills.package-upload.chunk",
+                params: BridgeSkillPackageUploadChunk(
+                    uploadId: started.uploadId,
+                    chunkIndex: chunkIndex,
+                    data: chunk.base64EncodedString()
+                ),
+                timeout: 30
+            )
+            chunkIndex += 1
+        }
+        return try await rpc.call(
+            "skills.package-upload.inspect",
+            params: BridgeSkillPackageUploadReference(uploadId: started.uploadId),
+            timeout: 30
+        )
+    }
+
+    public func createBridgeSkillPackage(
+        _ request: BridgeSkillPackageCreateRequest
+    ) async throws -> BridgeSkillSummary {
+        try await rpc.call("skills.package.create", params: request, timeout: 30)
+    }
+
+    public func updateBridgeSkillPackage(
+        _ request: BridgeSkillPackageUpdateRequest
+    ) async throws -> BridgeSkillSummary {
+        try await rpc.call("skills.package.update", params: request, timeout: 30)
+    }
+
+    public func exportBridgeSkillPackage(
+        _ reference: BridgeSkillReference
+    ) async throws -> BridgeSkillPackageExport {
+        try await rpc.call("skills.package.export", params: reference, timeout: 30)
+    }
+
     public func historyAction(_ action: HistoryAction) async throws -> HistoryActionResult {
         try await rpc.call("dashboard.history", params: action, timeout: 15)
+    }
+
+    public func dashboardJobs(limit: Int, terminalOffset: Int, statusOffset: Int?, enrich: Bool, statusFilter: DashboardStatusFilter, problems: ProblemQuery, includeHistory: Bool) async throws -> DashboardSnapshot {
+        var params = DashboardParameters(limit: limit, terminalOffset: terminalOffset, enrich: enrich, statusFilter: statusFilter, includeHistory: includeHistory, problems: problems)
+        params.historyMode = "jobs"; params.statusOffset = statusOffset
+        do { return try await rpc.call("dashboard.snapshot", params: params, timeout: enrich ? 10 : 3) }
+        catch LocalRPCError.remote(code: let code, message: let message) where code == -32602 && message.contains("historyMode") {
+            params.historyMode = nil
+            return try await rpc.call("dashboard.snapshot", params: params, timeout: enrich ? 10 : 3)
+        }
+    }
+    public func dashboardExecutionDetail(_ target: DashboardExecutionDetailParameters) async throws -> DashboardExecutionDetail {
+        try await rpc.call("dashboard.execution-detail", params: target, timeout: 5)
+    }
+
+    public func dashboardBackgroundPage(limit: Int, offset: Int) async throws -> DashboardSnapshot {
+        var params = DashboardParameters(limit: limit, enrich: true, statusFilter: .all, includeHistory: false)
+        params.historyMode = "jobs"; params.backgroundOffset = offset
+        return try await rpc.call("dashboard.snapshot", params: params, timeout: 10)
+    }
+
+    public func dashboardStatusPage(limit: Int, offset: Int) async throws -> DashboardSnapshot {
+        var params = DashboardParameters(limit: limit, statusFilter: .running, includeHistory: false)
+        params.statusOffset = offset
+        return try await rpc.call("dashboard.snapshot", params: params, timeout: 5)
+    }
+
+    public func dashboardHistoryDetail(rowKey: String) async throws -> DashboardHistoryDetail {
+        try await dashboardHistoryDetail(rowKey: rowKey, historyCursor: nil)
+    }
+
+    public func dashboardHistoryDetail(rowKey: String, historyCursor: String?) async throws -> DashboardHistoryDetail {
+        try await rpc.call(
+            "dashboard.history-detail",
+            params: DashboardHistoryDetailParameters(rowKey: rowKey, historyCursor: historyCursor),
+            timeout: 5
+        )
     }
 
     public func dashboardWithProblems(limit: Int, terminalOffset: Int, idleOffset: Int, enrich: Bool,
@@ -91,6 +309,24 @@ private struct ThreadHandoffParameters: Encodable, Sendable {
     let action: String
 }
 
+private struct CompletionNotificationClaimParameters: Encodable, Sendable {
+    let leaseOwner: String
+    let limit: Int
+}
+
+private struct CompletionNotificationMutationParameters: Encodable, Sendable {
+    let leaseOwner: String
+    let outboxIds: [Int]
+}
+
+private struct CompletionNotificationClaimResponse: Decodable, Sendable {
+    let events: [NativeCompletionNotification]
+}
+
+private struct CompletionNotificationMutationResponse: Decodable, Sendable {
+    let ok: Bool
+}
+
 public struct MacOSHelperClient: Sendable {
     private let rpc: UnixSocketRPCClient
 
@@ -98,8 +334,8 @@ public struct MacOSHelperClient: Sendable {
         self.rpc = UnixSocketRPCClient(socketPath: socketPath)
     }
 
-    public func hello() async throws -> HelperHello {
-        try await rpc.call("helper.hello", params: EmptyParameters())
+    public func hello(timeout: TimeInterval = 10) async throws -> HelperHello {
+        try await rpc.call("helper.hello", params: EmptyParameters(), timeout: timeout)
     }
 
     public func probe() async throws {
@@ -160,12 +396,9 @@ public struct MacOSHelperClient: Sendable {
         let operation: RuntimeLifecycleOperation
         do { operation = try await rpc.call("lifecycle.request", params: request, timeout: 20) }
         catch let error as LocalRPCError {
-            switch error {
-            case .connectionFailed, .writeFailed, .emptyResponse:
-                try Task.checkCancellation()
-                operation = try await rpc.call("lifecycle.request", params: request, timeout: 20)
-            default: throw error
-            }
+            guard error.allowsLifecycleReceiptReplay else { throw error }
+            try Task.checkCancellation()
+            operation = try await rpc.call("lifecycle.request", params: request, timeout: 20)
         }
         // Application startup may observe the newer/pending operation that
         // supersedes its intent. Explicit controls still require their own ID.

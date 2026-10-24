@@ -2,19 +2,23 @@ import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/server/validators/ajv";
 import type { BackendCapabilities } from "./modelPolicy.js";
+import { parseJsonUtf8Strict } from "./textIntegrity.js";
 
 export type CliProtocolSupport = {
   compatible: boolean;
   missingCore: string[];
   capabilities: BackendCapabilities;
   unsupported: Record<string, string[]>;
+  /** Newer CLIs can resume/fork without returning the retained transcript. */
+  historyOmission?: { resume: boolean; fork: boolean };
 };
 
 export const UNVERIFIED_APP_SERVER_CAPABILITIES: BackendCapabilities = Object.freeze({
   selectionScope: "turn", supportsModelOverrideOnContinue: false,
   supportsEffortOverrideOnContinue: false, supportsServiceTierOverrideOnContinue: false,
+  supportsPerTurnServiceTier: false, supportedPerTurnServiceTiers: [], supportsThreadArchive: false, supportsThreadUnarchive: false,
   supportsFork: false, supportsSteering: false, supportsPreciseCancellation: false,
   supportsEphemeralThreads: false, supportsThreadInspection: false, supportsBackgroundTerminals: false
 });
@@ -30,10 +34,13 @@ export async function inspectCliProtocol(command: string, environment: NodeJS.Pr
   try {
     await generateSchema(command, directory, environment, timeoutMs);
     const [requests, config] = await Promise.all([
-      readFile(path.join(directory, "ClientRequest.json"), "utf8"),
-      readFile(path.join(directory, "v2", "ConfigReadResponse.json"), "utf8")
+      readFile(path.join(directory, "ClientRequest.json")),
+      readFile(path.join(directory, "v2", "ConfigReadResponse.json"))
     ]);
-    return inspectClientRequestContract(JSON.parse(requests), JSON.parse(config));
+    return inspectClientRequestContract(
+      parseJsonUtf8Strict(requests, "App Server ClientRequest schema"),
+      parseJsonUtf8Strict(config, "App Server ConfigReadResponse schema")
+    );
   } catch {
     throw new Error("CODEX_PROTOCOL_UNVERIFIED: Could not inspect the selected CLI's App Server request contract. Choose or repair an installation with a working schema generator.");
   } finally {
@@ -101,8 +108,6 @@ export function inspectClientRequestContract(schema: Schema, configSchema?: Sche
     { ...turn, approvalPolicy, approvalsReviewer, permissions: ":read-only" }
   ])));
   checks.set("models", check("model/list", [{ cursor: null, limit: 100, includeHidden: false }]));
-  checks.set("archive", check("thread/archive", [{ threadId: "bridge-contract-check" }]));
-  checks.set("restore", check("thread/unarchive", [{ threadId: "bridge-contract-check" }]));
   const unsupported: Record<string, string[]> = {};
   const supports = (name: string, errors: string[]): boolean => {
     if (errors.length) unsupported[name] = errors;
@@ -113,6 +118,21 @@ export function inspectClientRequestContract(schema: Schema, configSchema?: Sche
     supportsModelOverrideOnContinue: supports("supportsModelOverrideOnContinue", checks.get("turn")!),
     supportsEffortOverrideOnContinue: supports("supportsEffortOverrideOnContinue", checks.get("turn")!),
     supportsServiceTierOverrideOnContinue: supports("supportsServiceTierOverrideOnContinue", checks.get("turn")!),
+    // Omitting serviceTier preserves the conversation setting. The separate
+    // per-turn field must accept both explicit Standard and inheritance.
+    supportsPerTurnServiceTier: supports("supportsPerTurnServiceTier", check("turn/start", [
+      ...[undefined, null, "default"].map(serviceTierForTurn => {
+        const { serviceTier: _persistentTier, ...inherited } = turn;
+        return { ...inherited, permissions: ":read-only",
+          ...(serviceTierForTurn !== undefined ? { serviceTierForTurn } : {}) };
+      })
+    ])),
+    supportsThreadArchive: supports("supportsThreadArchive", check("thread/archive", [{ threadId: "bridge-contract-check" }])),
+    supportedPerTurnServiceTiers: ["default", "fast", "priority", "ultrafast"].filter(serviceTierForTurn => {
+      const { serviceTier: _persistentTier, ...inherited } = turn;
+      return check("turn/start", [{ ...inherited, permissions: ":read-only", serviceTierForTurn }]).length === 0;
+    }),
+    supportsThreadUnarchive: supports("supportsThreadUnarchive", check("thread/unarchive", [{ threadId: "bridge-contract-check" }])),
     supportsFork: supports("supportsFork", check("thread/fork", policies.map(policy => ({ ...policy, threadId: "bridge-contract-check", ephemeral: false })))),
     supportsSteering: supports("supportsSteering", check("turn/steer", [{ threadId: "bridge-contract-check", expectedTurnId: "turn", input: turn.input }])),
     supportsPreciseCancellation: supports("supportsPreciseCancellation", check("turn/interrupt", [{ threadId: "bridge-contract-check", turnId: "turn" }])),
@@ -128,7 +148,11 @@ export function inspectClientRequestContract(schema: Schema, configSchema?: Sche
     ])
   };
   const missingCore = [...checks.values()].flat().concat(configSchema ? inspectConnectorApprovalConfig(configSchema) : []);
-  return { compatible: missingCore.length === 0, missingCore, capabilities, unsupported };
+  const historyOmission = {
+    resume: check("thread/resume", policies.map(policy => ({ ...policy, threadId: "bridge-contract-check", excludeTurns: true }))).length === 0,
+    fork: check("thread/fork", policies.map(policy => ({ ...policy, threadId: "bridge-contract-check", ephemeral: false, excludeTurns: true }))).length === 0
+  };
+  return { compatible: missingCore.length === 0, missingCore, capabilities, unsupported, historyOmission };
 }
 
 /** `config` accepts arbitrary keys on the wire. Its presence alone does not
@@ -160,4 +184,13 @@ export function requireCliProtocol(support: CliProtocolSupport, contextMode: "fr
   const missing = [...support.missingCore,
     ...(contextMode === "fork" ? support.unsupported.supportsFork || [] : [])];
   if (missing.length) throw new Error(`CODEX_PROTOCOL_UNSUPPORTED: The selected CLI cannot execute ${contextMode}: ${[...new Set(missing)].join(", ")}. Choose a compatible installation. No Codex task was started.`);
+}
+
+export function requireCliCapability(
+  support: CliProtocolSupport,
+  capability: "supportsThreadArchive" | "supportsThreadUnarchive" | "supportsPerTurnServiceTier"
+): void {
+  if (support.capabilities[capability] === true) return;
+  throw new Error(`CODEX_FEATURE_UNSUPPORTED: The selected CLI does not support ${capability}: ${
+    (support.unsupported[capability] || ["unverified contract"]).join(", ")}. No request for this feature was sent.`);
 }

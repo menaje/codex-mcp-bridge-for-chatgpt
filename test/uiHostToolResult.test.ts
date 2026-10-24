@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   hostToolResultMetadata,
-  normalizeHostToolResult
+  normalizeHostToolResult,
+  parseUiJsonTextStrict,
+  uiJsonTextIsWellFormed
 } from "../src/uiHostToolResult.js";
 
 describe("ChatGPT host tool-result normalization", () => {
@@ -69,5 +71,20 @@ describe("ChatGPT host tool-result normalization", () => {
 
     expect(normalizeHostToolResult(wrapped)).toBe(wrapped);
     expect(hostToolResultMetadata(wrapped)).toBe(wrapped);
+  });
+
+  it("rejects malformed host text rather than rendering an escaped surrogate", () => {
+    const malformedResult = {
+      structuredContent: { title: "\ud800" }
+    };
+    const encodedMalformedResult = {
+      call_tool_result: '{"result":{"structuredContent":{"title":"\\ud800"}}}'
+    };
+
+    expect(uiJsonTextIsWellFormed(malformedResult)).toBe(false);
+    expect(parseUiJsonTextStrict('{"title":"\\ud800"}')).toBeUndefined();
+    expect(normalizeHostToolResult(malformedResult)).toBeUndefined();
+    expect(normalizeHostToolResult(encodedMalformedResult)).toBe(encodedMalformedResult);
+    expect(hostToolResultMetadata(encodedMalformedResult)).toBe(encodedMalformedResult);
   });
 });

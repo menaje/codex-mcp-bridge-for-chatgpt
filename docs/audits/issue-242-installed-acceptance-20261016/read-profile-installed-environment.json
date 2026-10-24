@@ -1,0 +1,23 @@
+{
+  "measurements": [
+    {
+      "method": "dashboardSnapshot",
+      "queueMs": 0.09899999999998954,
+      "configMs": 0.6158330000000092,
+      "databaseOpenMs": 0,
+      "sessionsMs": 12.918166999999983,
+      "jobsMs": 242.00345800000002,
+      "settingsMs": 9.149084000000016,
+      "facadeMs": 1.8605829999999628,
+      "projectionMs": 90.88799999999998,
+      "cleanupMs": 0.05058300000007421,
+      "jsonPreflightMs": 0.18704200000001947,
+      "responseBytes": 64742,
+      "sqlStatements": 112,
+      "selectStatements": 110,
+      "endToEndMs": 359.102834,
+      "callerAbandoned": false
+    }
+  ],
+  "selectedKeys": []
+}

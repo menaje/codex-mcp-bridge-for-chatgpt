@@ -1,230 +1,168 @@
 # Input schema contracts
 
-Issue #69 current contract: [Card tools and migration](card-tools.md). The current contract has 12 model tools and 5 app-only tools, plus 12 app-only compatibility descriptors during migration (29 discovered in total). Activity presentation, watch, rehydration and handoff contracts below apply only to cached pre-consolidation cards during the migration window; they are not instructions to open Activity for new work.
+All current bridge tools publish JSON Schema 2020-12 object-root input schemas.
+Objects are closed unless the schema explicitly declares a keyed map. Unknown
+fields, obsolete aliases, and mismatched union branches are rejected before an
+operation reaches bridge state or Codex.
 
-ChatGPT is the normative model client for the bridge. A published
-`inputSchema` tells ChatGPT which arguments it may construct; the runtime Zod
-schema remains the fail-closed parser and the bridge state remains the
-authorization source.
+The runtime validates the same current contract that `tools/list` advertises.
+There is no hidden parser for a previous tool generation.
 
-## Published boundary
+## Task admission
 
-All bridge tools publish an object root. A single-shape contract sets
-`additionalProperties: false`; a union has closed object branches, each with
-`additionalProperties: false`, and no free-form fallback. Nested objects with named properties are also
-closed. This applies to both model-visible and app-only tools: an obsolete,
-misspelled, or invented top-level field must fail input parsing instead of
-being silently discarded.
+`codex_task` uses input contract version 6. A new logical task needs:
 
-Every `const` or `enum` leaf in a model-visible input declares its primitive
-JSON Schema `type`. This includes the stable Task contract/envelope constants
-and operation and query discriminators. The explicit type is redundant in
-general JSON Schema semantics but is retained as a ChatGPT discovery
-compatibility guard, matching the model-visible output policy.
+```json
+{
+  "requestId": "a UUID for this logical task",
+  "taskContractVersion": "6",
+  "executionEnvelopeRef": "the exact 64-hex value from tools/list",
+  "prompt": "the user's requested work",
+  "project": {
+    "name": "registered project name",
+    "projectRef": "current opaque project ref",
+    "projectRevision": 4
+  }
+}
+```
 
-Static collection limits are published and enforced at runtime. In particular,
-the App Server normalizes at most three user-input questions, and
-`codex_interaction_respond.response.answers` publishes and enforces that same
-three-property maximum.
+The project selector is required for fresh work and is checked again at
+admission. Continuations use the retained Agent context and its admission-time
+project. `requestId` is durable idempotency state for the logical work; reuse it
+only for an identical retry. It is distinct from the MCP request ID. If the
+admission response is lost, recover the receipt with
+`codex_status({"query":{"kind":"request","requestId":"..."}})` in the same
+scope. Reusing the ID with different task input is a conflict.
 
-`codex_status` publishes two exact-Job query variants:
+For an ordinary already approved follow-up turn, retain its own `requestId` when the
+parent Job result is read again or its admission response is lost. First query
+that ID to recover an uncertain admission; do not create a replacement ID for
+the same logical turn. A new branch, revision, or expressly requested rerun is
+a new logical turn with its own ID. The bridge does not infer follow-up identity
+from matching prompts or the Agent's thread. For an unbound ordinary turn, two new request IDs cannot prove the same step.
+For dynamic event-driven B, use the persisted binding below instead of creating
+a new ordinary turn after a repeated event.
+Do not treat `HANDLE_UNAVAILABLE` as proof that an old request was never admitted.
 
-- immediate lookup accepts only `kind` and `id`;
-- bounded waiting additionally requires `waitFor`, with optional `waitMs`.
+For an exact step approved before its predecessor starts, the optional
+`approvedFollowups: [{"prompt":"the exact approved B prompt"}]` declares that
+authorization on predecessor admission. The bridge returns opaque `followupId`
+and canonical `requestId` references in declaration order. Recover those same
+values from the predecessor's exact Job/request read after lost responses or
+restart; GPT must not name or recreate a stage ID. After reviewing its completed
+exact result, use that requestId and same prompt with
+`followup: {"followupId":"the bridge-issued reference","reviewedVersion":2}`
+and omit project and selection. Use the actual version from the exact read.
+Different caller UUIDs and resumed GPT runs using the same issued reference
+converge to one admission. A different prompt, changed context/model, unavailable
+result, unapproved step or occupied canonical ID is rejected. The exact result
+offer and the caller's review assertion do not prove private GPT review.
+See the [delivery transition](issue-221-delivery-transition.md) for legacy followup recovery.
+Old caller `stepId` inputs are rejected. Retained v1 receipts keep their canonical
+IDs and admitted Jobs, exposed through current system-issued references.
 
-The runtime retains the explicit `waitMs`/`waitFor` check as defense against a
-stale or non-validating MCP caller.
+For a dynamic B defined after exact result review, `relayFollowup` supplies the
+current `eventId`, one stable logical `step` and `reviewedVersion`. Retain the
+original Activity and an authorized Agent. Atomic admission binds this reference
+to an issued `followupId`, canonical request ID and immutable execution envelope.
+Different caller IDs converge; changed payload conflicts; distinct parallel steps
+remain independent. Recover existing receipts with exact status or paged
+`codex_status` kind `followups`, using the returned `after` cursor. An admitted
+step replays without a new review assertion; unavailable originals never authorize
+recreation. This is within original approvals, not a requirement to predeclare
+every dynamic prompt. See [relay admission](relay-delivery.md).
 
-`codex_task` publishes execution fields only and has no Activity UI binding.
-`codex_status` adds the closed `{kind: "input", jobId, afterCursor?, waitMs?}`
-query. Its input cursor and wait remain separate from ordinary Job progress.
-`codex_cancel` selects `{kind: "job" | "activity", id}` in `target`, with a
-unique requestId, exact expectedVersion, reason and optional impact acknowledgment.
-The old Job shape remains runtime-only compatibility.
+All new work uses one asynchronous admission path. The bridge persists the Job,
+request receipt, versions, and requery handles before returning. It does not wait
+for Codex completion in the task call, and losing the MCP or HTTP connection does
+not cancel the admitted Job. Read progress and the terminal result with
+`codex_status`; use `codex_cancel` only for explicit stop intent.
 
-`codex_models` accepts optional `contractVersion: "2"`. This explicitly requests
-the closed v2 catalog result with `selectionMode: "fixed" | "automatic"` from
-the same settings snapshot as the allowed model/effort list. Omission keeps the
-exact legacy catalog-only result for cached clients. Fixed mode requires omitting
-Task `selection`; automatic mode requires a permitted pair for fresh work.
-One returned model does not identify the policy mode. This read does not open a
-card or change policy; admission still rechecks current settings.
+Each new ordinary admission snapshots `completionDeliveryPolicy="relay-card"` and
+automatically associates the blank Relay through task/answer UI metadata. It
+requires no activation or delivery setting. Historical Job policies, hashes and
+approvals remain immutable. Older running Jobs may be explicitly enrolled without
+rewriting them; historical terminal Jobs are not backfilled. Exact status and
+internal relay responses do not create UI. No task result automatically opens
+Dashboard. See [the relay protocol and host lifetime limits](relay-delivery.md).
 
-Current Task model-policy failures return executable
-`codex_models({"contractVersion":"2","refresh":true})` recovery in the existing
-string `nextActions` contract. The resulting mode determines whether Task must
-omit or provide `selection`; an empty or unavailable catalog does not authorize
-changing saved settings. A fixed-policy per-call override instead instructs
-omitting `selection`. An unsupported retained-thread override uses the current
-nested `agent.context` field for an explicitly chosen fresh context. Retained
-pre-v2 callers keep their existing error guidance and response schema.
+Events admission, tools, instructions, schemas, and controller startup require the explicit `CODEX_MCP_BRIDGE_EXPERIMENTAL_PROFILE=events` profile together with its enable flag and authentication configuration. Ordinary discovery has no Events inputs or output metadata. Historical Events policy remains readable, but gives no new ordinary execution permission. See the separate [experiment](mcp-events.md).
 
-`codex_user_answer.responseRef` distinguishes two existing operations: omission
-lists up to 20 unread references without bodies or consumption, while an exact
-reference returns the body and marks that response seen. Neither sends an answer
-to Codex. GPT owns that separate decision.
+An exact Job/request `codex_status` wait is a bounded read. `waitFor="change"`
+wakes on a Job version change; `waitFor="terminal"` uses a lifecycle-only signal
+and does not wake for ordinary progress. The model-visible default is 20 seconds
+and the maximum remains 60 seconds. Timeout or host abort returns or aborts only
+the read request; neither path creates cancellation provenance, calls upstream
+interrupt, or changes the Job lifecycle.
 
-Contract v2 publishes one generic closed `project: { name, projectRef,
-projectRevision }` shape. It does not embed registry values, private UUIDs or
-paths. Resolve unknown selectors with read-only `codex_status` query
-`{ kind: "project", name }`. This creates no Activity, Agent, Job, session,
-filesystem mutation, or upstream turn. `projectRef` is opaque public identity and `projectRevision`
-changes on effective rename, relocate, archive, or restore transactions for
-that project. External availability is rechecked separately. The global
-`registryRevision` remains a Settings CAS generation, not a Task selector. The
-legacy `{ name, registryRevision }` selector is bounded runtime compatibility
-for cached pre-v2 calls only.
+The bridge owns access policy, the permitted execution envelope, project
+authorization, and any App Server capability checks. Callers cannot pass a
+sandbox, approval policy, working directory, raw thread ID, presentation
+identity, or other permission override.
 
-The Task root requires `taskContractVersion: "2"` and the descriptor's exact
-64-hex `executionEnvelopeRef`. This opaque installation-keyed HMAC binds the
-stable input generation and operator-owned maximum/static execution envelope:
-prompt bound, command/backend, allowed roots, sandbox capabilities, approval
-policy, model ceiling, and secret preflight. It deliberately excludes saved
-user settings, projects, project availability, and the live model catalog.
-Those values are runtime authority, so changing them does not change the public
-descriptor or require connection Refresh. An operator/static mismatch returns
-`EXECUTION_ENVELOPE_CHANGED` before side effects and requires Refresh.
+### Bridge documents are independent
 
-For every new v2 call the bridge privately captures an exact mutable execution
-policy reference over saved access/model/priority/thread-visibility/concurrency settings and
-the resolved admission catalog. It rechecks that reference across asynchronous
-and serialized admission boundaries. A concurrent settings race returns
-retryable `EXECUTION_POLICY_CHANGED` without side effects; v2 retries the same
-stable contract with a new `requestId` and no connection Refresh. Exact admitted
-v7 replays return their retained result before current policy/project resolution.
-Cached pre-v2 calls retain the public `executionPolicyRef` compatibility check
-and must Refresh once to migrate to v2 when that ref is stale.
+`bridge_skill` reads Bridge-owned reusable Markdown documents. A read does
+not add data to `codex_task`, change the task descriptor, or deliver a document
+to Codex. Apply a document only when it is relevant to the user's request;
+start a local task independently through the ordinary `codex_task` contract.
 
-The stable input-plus-output Task contract is capped at 9,500 bytes and the
-complete serialized descriptor remains capped at 128 KiB. Overflow fails
-deterministically with `CODEX_TASK_DESCRIPTOR_TOO_LARGE`.
+## Model selection
 
-The current Task output schema is static. The MCP SDK validates output only
-after an asynchronous handler returns, so the coordinator rejects a different
-output schema while any descriptor binding is live with
-`DYNAMIC_OUTPUT_SCHEMA_CHANGE_REQUIRES_VERSIONED_CONTRACT`. A future transition
-must use an additive compatibility union with captured contract generation or a
-versioned/reinitialized tool boundary; it cannot mutate the live validator.
-Regression coverage holds a real tool handler in flight, attempts the transition,
-and proves that the old result is still validated against the admitted output
-contract before any reinitialized boundary may install the new schema.
+Read `codex_models` first when a model choice is needed:
 
-The saved `always`, `background-only`, or `never` visibility policy remains a
-runtime authority. Presentation identity cannot bypass it or alter Task replay.
+```json
+{ "refresh": true }
+```
 
-`codex_ui_read` (`view: "dashboard"`) accepts `terminalOffset` and `idleOffset` for the
-current status-first card. `projectOffset` and `conversationOffset` remain
-optional compatibility inputs only because immutable generation-4–6 cards
-still send them; their presence asks the server to add the older grouped
-projection, while generation 7 omits them and receives the smaller row-only
-snapshot. Current cards explicitly send `enrich: false`, producing a structural
-snapshot without App Server or usage calls, render it, and then make a second
-read-only request with `enrich: true`; runtime work is limited to
-active/attention/currently visible rows. Omission preserves the enriched
-all-in-one behavior expected by immutable older Dashboard cards.
+The input has no contract-version switch. Its single response contains
+`selectionMode` and the allowed model/reasoning pairs from one settings
+snapshot. In fixed mode, omit `selection` from `codex_task`. In automatic mode,
+send an exact `{ "model", "reasoningEffort" }` pair where the task contract
+requires one. A later policy change is rechecked at admission.
 
-`codex_activity_snapshot` uses the same optional `enrich` split. The structural
-call and long poll retain their exact card proof, widget lease, cursor, and
-scope-version semantics. A separate `enrich: true` call may add bounded runtime
-and usage evidence, but cannot broaden control authority or resume an unloaded
-historical App Server thread. Omission remains enriched for retained Activity
-cards; generation 20 sends `false` explicitly on structural reads and watches.
+## Read, mutation, and card inputs
 
-`codex_ui_read` (`view: "settings"`) is an app-private read-only call with one optional
-`refreshModels` boolean. The current Settings card calls it unconditionally on
-cold mount and after revision conflicts. Its default reads current persisted
-settings and project-registry state while using the normal short-lived catalog
-cache; the contextual catalog retry sets `refreshModels: true`.
+`codex_status` has closed query variants for an exact request receipt, Job,
+Activity, thread, project, or bounded input wait.
 
-`codex_steer` publishes exactly four required properties: `requestId`, `jobId`,
-`expectedJobVersion`, and `prompt`. It does not publish conversation scope,
-Activity/Agent/thread/turn/card identifiers, execution settings, lifecycle or
-policy controls, or interaction/approval responses. Those omitted fields are
-not compatibility aliases: attempts to inject them fail strict input parsing.
+An exact Job or request query can return a compact terminal admission receipt
+after the full result is pruned. It confirms that the request already ran and
+gives its Job ID and terminal state, but cannot restore the expired result.
+Such a receipt does not authorize a replacement or a dependent step whose
+required result is absent. Missing and foreign handles remain indistinguishable.
 
-## Runtime-only authority
+Authenticated exact Job/request reads record a result offer. That evidence does not prove GPT received or reviewed the result and does not rewrite historical delivery receipts. The removed completion-receipt query and `codex_ui_completion` return `CARD_DELIVERY_RETIRED` without mutating a Job. Old automatic Dashboard arguments are likewise refused. Refresh discovery, close old cards, and read the retained exact Job instead.
 
-Some conditions cannot safely be frozen into discovery because they depend on
-current bridge state or host evidence. The runtime therefore remains broader
-where it must return an authoritative, recoverable error:
+`codex_cancel` and state-changing tools require their own idempotency UUID and
+exact version. An out-of-date version, a different retry payload, or a
+scope/ownership mismatch is a rejection, not a best-effort mutation.
 
-- ChatGPT conversation scope comes from host metadata; explicit `scopeId` is a
-  compatibility-only input for other MCP hosts.
-- New Activities and fresh Agent contexts require a current exact project. In
-  automatic mode GPT must choose a current exact model/effort pair. Omission
-  fails with `MODEL_SELECTION_REQUIRED` and `codex_models` as its recovery action
-  before execution state or side effects. Existing continue/fork calls may omit
-  selection and inherit their admission-time thread choice unless they
-  deliberately request a runtime-policy-supported model override. If an exact
-  current project selector is unknown, `codex_status` query kind=project resolves
-  it without model selection, execution, or permission input.
-- The selected project's ref/revision/name, active/available state, canonical
-  root, model catalog, and execution policy are checked again during serialized
-  admission even if the client retained a cached descriptor. An unrelated
-  project mutation does not invalidate an unchanged selector, while a changed
-  selector returns read-only project lookup recovery rather than requiring rediscovery.
-- A cross-backend fresh Agent requires an explicit bounded `handoffSummary`;
-  same-backend fresh context forbids it.
-- Cancellation impact sets, optimistic versions, mounted-card leases, and exact
-  interaction question IDs are authoritative runtime state.
-- Public steering derives scope from the host and resolves the exact Job's
-  Activity, Agent, current App Server thread, and active root turn at dispatch
-  time. Job ownership, current assignment, optimistic version, cancellation and
-  terminal state, backend capability, and positive active-turn evidence are all
-  runtime checks. No inactive or future turn queue is admitted.
+App-private tools use card proofs, revisions, and scoped targets where
+applicable. They are current card operations, not public fallback aliases.
+`codex_ui_read` returns the current view selected by a closed `view` enum;
+settings changes use `codex_update_settings` with the required revision checks;
+`codex_dashboard` accepts only an explicit display scope and optional compatibility scope ID. It has no Job/presentation handoff inputs.
 
-These are intentional semantic admission checks, not open schema leaves. They
-must fail before Activity, Agent, Job, session, cancellation, or upstream side
-effects are committed.
+## Host metadata and scope
 
-## Regression audit
+ChatGPT supplies conversation scope through current MCP request metadata. A
+non-ChatGPT host without that metadata may provide one generated `scopeId` and
+must reuse it only for that host context. Scope metadata identifies a caller
+context; it never grants access to another project, Activity, Agent, Job, or
+settings record.
 
-The discovery regression in `test/tools.test.ts` walks every published input
-schema and fails when:
+## Removed inputs
 
-- any tool root or named nested object is open;
-- any model-visible literal lacks its primitive type;
-- the generic project selector or lookup loses its exact closed types;
-- the exact-Job wait variants become ambiguous; or
-- the interaction answer map loses its shared question bound; or
-- `codex_steer` exposes anything other than its four bounded public fields or
-  loses its destructive/idempotent annotations.
+Do not send:
 
-Runtime probes also send unknown fields to the four formerly open roots and an
-oversized interaction-answer map, and inject upstream/card/policy identifiers
-into `codex_steer`, requiring an input error rather than a successful no-op.
-An end-to-end public steering probe starts and steers the same Job with only
-host metadata plus the four published fields, then proves that another host
-session cannot address that Job.
-Stable descriptor equality across settings/catalog/project changes,
-unavailable-project recovery, fixed and automatic runtime model policies, and
-bridge-owned sandbox enforcement remain in the discovery suite.
+- model-catalog `contractVersion`;
+- Task contract versions 2 through 5, a legacy project selector,
+  `projectLookup`, `executionMode`, or other retired execution/UI fields;
+- `requiredSkills` or any Bridge-document reference in `codex_task`;
+- legacy cancellation and Activity-update shapes;
+- a compatibility tool name, card resource URI, or session identifier.
 
-The focused issue-40 discovery delta is checked in at
-`docs/audits/issue-40-tool-schema-delta.json`; the executable full inventory
-snapshot remains in `test/tools.test.ts` so descriptor drift fails the suite.
-
-## GPT question orchestration (#68)
-
-`codex_status` (`query.kind: "input"`) accepts an exact `jobId`, optional `afterCursor`, and `waitMs` bounded to 60 seconds. `codex_answer` accepts `requestId`, `jobId`, the current opaque `questionRef`, and an answer map keyed by the exact question IDs. Scope comes from host metadata; neither tool requires a mounted card or exposes upstream targeting overrides. The question reference binds the worker generation, thread, turn, and question revision independently of unrelated Job progress.
-
-`codex_ask_user` accepts an idempotent `requestId`, title, 1–3 questions, and optional expiry of 1–1440 minutes. `codex_user_answer` accepts an optional `responseRef`; omission discovers unread references without consuming the bodies. App-only `codex_ui_read` (`view: "question"`) and `codex_question_action` require the scoped question ID, revision, and private presentation token. The action's closed `submit`, `claim`, and `ack` branches preserve separate storage and delivery states. The previous `codex_question_card`, `codex_question_submit`, and `codex_question_notify` names are retained compatibility calls. See [the complete lifecycle](gpt-questions.md).
-
-### Bridge-owned permissions and project reads (#69 follow-up)
-
-Current `codex_task` has no `sandbox` or approval-policy input. The bridge
-uses saved access settings and operator limits; the retained adaptive value
-means the configured bridge default for fresh work. Continue/fork preserve the
-thread policy and recheck operator limits. The execution-envelope generation
-was advanced so unadmitted cached calls cannot silently acquire new authority.
-The runtime accepts the retired field only to identify old calls: exact admitted
-replays remain available, while new admissions return
-`TASK_PERMISSION_INPUT_RETIRED`. No requested-versus-saved conflict exists in
-the current execution path.
-
-Resolve a project using `codex_status` with
-`query: {kind: "project", name: "<exact user-visible name>"}`. It returns the
-opaque current selector without admitting work, loading a model, configuring
-permissions, or opening a card. The previous `codex_task.projectLookup` stays
-runtime-only for cached clients. Invalid or unavailable names do not select a
-fallback. No new tool is registered.
+The bridge rejects these inputs without falling back to an earlier contract.
+See [the migration guide](mcp-2026-07-28-migration.md) for connector refresh
+steps and [Card tools](card-tools.md) for the current inventory.

@@ -1,0 +1,84 @@
+# Independent verification of Issue #242 exact integration candidate
+
+**PASS for independent code and automated verification. No blocking product defect found.** Safe to integrate the reviewed code into the reviewed remote-dev base, subject to installed-app acceptance. This does not close Issue #242 or prove installed/production acceptance. Production 502 root cause remains unresolved.
+
+Reviewed branch: `codex/issue-242-integration-review`.
+Exact tested commit: `de037d99d82aa42c5a792c1d3bd9c88afb45b173`.
+Exact tested tree: `b7c4cee8d90725dd4fa554cb777b201af50e899a`.
+Parent implementation: `e1cc5aea23da3fb8464301d00c0e905cca1b7bb7`.
+The verifier did not implement the candidate and made no candidate code/test/audit edits. Candidate checkout was clean before and after. [Receipt](receipt.json) records the bounded verdict and acceptance status.
+
+This separate audit branch, `codex/issue-242-independent-20261008`, starts at the tested commit. Its receipt commit changes only this directory; its later SHA/tree is audit-only and is returned separately in the handoff. Obtain that identity with `git show -s --format='%H %P %T' codex/issue-242-independent-20261008`. Neither candidate nor audit was merged or pushed. Repository independent-audit practice is demonstrated by the #240/#225/#222 audit records; a separate receipt keeps the requested candidate immutable.
+
+Latest [Issue #242](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/242) body was read and rechecked unchanged at `updatedAt=2026-10-07T09:46:56Z`; it exactly matches the saved P0 snapshot. Latest bodies for #143/#185/#191/#193/#200/#240/#241 were also read. [Authority](authority.json) binds source links and body hashes; the candidate already retains the complete #242 body.
+
+Remote `dev` is still `264fa5c99ca1c8edeef50af247614204c8f3df53`, an ancestor of the candidate. Local `dev` remains `ea8f93e2acbb9f4b6deca113165d27e8c9c23857`, tree `95edd8c9911404f01812b3cfef2eccabb75dd3fd`, clean, with 23 local-only / 17 remote-only commits. The unrelated local composition is preserved and was not integrated or tested with this candidate; reconciliation needs its own validation. All original refs/worktree identities remain unchanged. [Preservation](preservation.json) records start/final readbacks. Installed app, operational state/settings, production/hosted tunnel and conversations were untouched; no GitHub Actions or remote mutation occurred. The audit branch/worktree is retained; its integration and safe cleanup remain pending under the explicit hold.
+
+| Fresh verification at the exact reviewed SHA/tree | Result |
+| --- | --- |
+| Build, no-emit TypeScript, validate:fast | PASS; unchanged CLI 0.153.3 schemas, 416 JSON / 827 TypeScript |
+| Unfiltered full Node | **1,493 passed / 0 failed / 0 skipped; 135 files**, 773.45s |
+| Full native macos:check, strict concurrency/warnings as errors | **244 passed / 0 failed / 2 live opt-in skips; 246 total** |
+| Characterization 1,200 Jobs, completion count, tunnel compare, harness typecheck | PASS |
+| Additional cancellation during active synchronous SQL | PASS; one scenario; physical slot remains 1 after caller cancellation, becomes 0 only after 558.572ms actual settlement; fresh read recovers 40 unchanged Jobs |
+| Additional populated status/history/detail | PASS; 100 samples each; zero deadline failures; physical read capacity returns to 0 |
+
+[Validation](validation.json) retains exact commands, source identities, environment overrides, times and exit codes. Complete [Node](node-full.log) and [native](native-full.log) stdout is retained, with [Node summary](node-summary.json) and [native summary](native-summary.json). The larger raw Node/proxy JSONs are bounded to summaries here with their original hashes and temporary paths. Dependencies were APFS-cloned; no install/lockfile change. Stages were serialized under `taskpolicy -a`, Vitest one worker, fresh owned TMPDIR, no live opt-ins or operational CODEX_HOME. No test timeout, product deadline, capacity or established expectation was increased/weakened. The pinned Go opt-in runs a synthetic local dev proxy only.
+
+The first verifier-owned timing helper incorrectly expected 120 status rows from the stock fixture whose latest Job per Agent is completed. The established status summary omits completed terminal rows; history includes them. `dashboardPresentation.ts` is blob-identical at remote dev and candidate. The red assertion and exact helper are retained in [failure classification](failure-classification.json). Only the external supplementary fixture changed each latest Job to failed (30% failed overall) to populate all 120 status rows; the 120-row/history-page/equality assertions remained. Final helper passed. This is a verifier fixture error, not a candidate repair or concealed failure. Full Node/native gates had no failures.
+
+| Supplemental populated synthetic workload (milliseconds) | n | p50 | p95 | p99 | SELECT maximum |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| native-status-summary-120 | 100 | 22.494 | 33.201 | 37.892 | 36 |
+| history-page-12 | 100 | 22.684 | 28.429 | 31.341 | 36 |
+| detail | 100 | 2.325 | 3.516 | 6.252 | 27 |
+
+These after-only measurements meet the provisional synthetic p95<1s/p99<2s target. They do not establish installed latency or a new same-condition before/after improvement. Nine-byte results, one fixture scope, fresh registries per physical read, uncontrolled OS cache/host load and after-only population changes bound interpretation. [Read samples](read-samples.json), [original characterization](characterization-1200.json) and the saved candidate exact-base comparison preserve their distinct workloads. Original list characterization has legacy empty non-history rows; it is not mislabeled as a populated native summary. The extra active-SQL check instruments only the owned compiled read child's statement call with a 500ms synchronous hold. Sync SQL/decode cannot be preempted; physical accounting and publication fencing hold.
+
+[Completion counts](completion-counts.json) independently reproduce 20 empty claims and 20 availability checks as SELECT-only, no writer transactions or changed rows. 400 progress events yield 400 Dashboard notices, zero readiness/claim wake or mutation. The native real-socket test independently proves no progress-triggered claim/availability after startup and drains 25 durable events as 10/10/5 with three claims/ACKs; the direct harness adds one final empty claim. Atomic preflight race, stable ID, durable owner/lease, ack loss/restart, event loss/duplicates/order/epoch, permission denial/revocation, bounded backoff and per-batch debounce pass. Release/ordinary changes do not emit readiness.
+
+[Tunnel compare](tunnel-cost.json) reproduces direct polling with zero repetitive health subprocesses; 700ms yields complete endpoint health and fresh external poll, 3s exceeds the 2s observation deadline while explicitly preserving only recent confirmed external evidence. Process existence, endpoints and external poll are separate. Fresh startup requires a complete first snapshot; PID/locator identity is fenced before/after. 20s status-file freshness, 75s poll evidence, 5s write cadence with file and directory fsync, protocol-1 compatibility and independent recovery/liveness policies remain. Tests cover stale/negative evidence, actual daemon exit and restart; hosted failures and installed hang remain pending.
+
+[Proxy summary](proxy-summary.json) independently checks all 33 captured results: one ingress cleanup, one first observed termination, zero request/byte capacity afterward, one generated correlation ID and at most 32 private phase records. Complete late-request-error/late-response-error/late-timeout responses, pre/post-header reset, deadlines, caller-first detach, loop stall, reuse/close and actual supervised child/application phases pass. Private records expose no auth, URL/path, SQL, MCP IDs or payload; caller-supplied trace headers are stripped and no diagnostic response header is emitted. Observer failure is inert. The inspected SDK adapter enumerates request headers after stripping. Local finish proves framing/settlement, not remote receipt or result review.
+
+The saved R502 red fixture proves an injected bridge response lifecycle race: upstream end settles allocation before a delayed downstream finish, then a late request error incorrectly destroyed framing in the old implementation. Candidate guards preserve that complete response and exact-once capacity. This establishes the bridge race only. [Pinned local Go matrix](tunnel-matrix.json) distinguishes direct reset 502, bridge pre-header/idle structured 503 unknown, and incomplete post-header 502; it does not establish which path caused the production 502. No operational correlation trace was collected or root cause asserted.
+
+[Provenance](provenance.json) independently verifies W1 original/replay identical tree/changed lines, W2 direct ancestry, W3/W4/R502 replay trailers/parents/changed lines and all 106 original audit blob IDs. W4 replays only its diff above `8474165…`; it does not replace W1/W2 with that old tree. The overlapping `runtimeProcess.ts`, native `AppModel.swift`, helper models and composed tests retain W1/W2 generations and physical accounting, W3 readiness/backoff and R502 lifecycle/correlation. The `c830788…` harness change adapts obsolete immediate retry assertions to persisted W3 deadlines; `e1cc5ae…` awaits child cleanup plus response completion within the original wait bound. Both corrections preserve required identity, integrity and timeout assertions. All 85 integration-manifest artifacts match SHA256 and byte counts ([verification](artifact-verification.json)).
+
+| Existing contract | Independent preservation evidence |
+| --- | --- |
+| #143 | Supervisor responsive without operational SQLite ownership; execution/state-read split, unhealthy storage vs process liveness, per-worker isolation, helper unknown observation. runtimeProcess DB-lock/read-health and native observation suites. |
+| #185 | Observation timeout/detach/heartbeat failure does not stop or replay active Job/turn. executionRecovery, executionRuntime, runtimeProcess and no duplicate result/admission contracts. |
+| #191 | Physical slots held until child completion/exit; proxy exact-once cleanup and request/byte capacity; exact recovery/control requests reserved; structured unknown/unavailable vs partial transport loss preserved. |
+| #193 | Bounded/coalesced read lane, 1,200-Agent small recovery pages, bounded recovery budgets/backoff and control priority; maintenanceScheduler/scopeFairQueue/automaticRecovery/worker-isolation suites. |
+| #200 | Execution owner, command journal, auth/access, exact response replay and result ACK remain authoritative; owner/journal/access blobs unchanged; full permission/scope/replay/dedup regressions. |
+| #240 | Archive/delete CAS and retry/restart/exact receipts, cleanup intents/termination-failed, shared peer and actual stop, no late callback resurrection, new same-cwd UUID, FK/integrity regressions. Core lifecycle/schema/registry blobs unchanged. |
+| #241 | Merged PR head ef65c84ed1e68b0794a0102a6b3c98dce1cee77d is ancestor; native and backend project lifecycle/host tests passed including lost delete response and same-cwd identity replacement. |
+
+[Contract evidence](contracts.json) includes 14 unchanged owner/access/journal/recovery/lifecycle/schema/registry/maintenance blobs versus remote dev. Full regression results supplement identity checks: observation/read failures cannot authorize cancellation/failure or execution replay, duplicate Jobs/turns, lost result identity, or control starvation. Recovery budgets and physical capacity remain distinct from caller waiting.
+
+The following numbers follow the 17 authoritative acceptance bullets. “Fixture proven” is an automated boundary, not installed acceptance.
+
+| Criterion | Status | Proven boundary and remaining scope |
+| --- | --- | --- |
+| 1 | PARTIAL | Fresh exact-candidate phased 1,200-Job characterization; independently inspected saved exact-base comparison and hashes; supplementary 100-sample populated status/history/detail. Installed realistic payload/distribution and population tails pending. |
+| 2 | FIXTURE PROVEN | Indexed/batched SQL, bounded small-page formatting, counts/filter/order/offset and detail revision/result equality; issue242Reads and complete Dashboard regressions. |
+| 3 | FIXTURE PROVEN | Coalescing A cancel/B survive; queued abandonment; physical capacity after timeout/last cancel; committed-write/generation fence and fresh retry. Additional compiled-child 500ms active synchronous SQL slice remains charged until actual completion. |
+| 4 | FIXTURE PROVEN | IPC queue absolute deadline/cancel forwarding and native no-response/partial-response/decode absolute deadlines, cancellation and mismatch taxonomy; no execution cancel. Sync SQL/decode remains nonpreemptible; publication fenced. |
+| 5 | FIXTURE PROVEN | Retained confirmed observation/list/detail/time across helper RPC/probe failure beyond grace; recovery, first failure, Task cancellation, actual stop, generation and Settings/Skills fixtures. Installed flow pending. |
+| 6 | FIXTURE PROVEN | Backend and native A pending -> archive/delete -> same-cwd B new UUID -> late A rejection; deleted exact management stays PROJECT_MANAGEMENT_ENDED. |
+| 7 | FIXTURE PROVEN | 400 ordinary progress notices: no readiness/SQL/mutation/claim wake; native real-socket counts separate from direct counts; 60s event-supported and 10s legacy recovery preserved. Installed rates pending. |
+| 8 | FIXTURE PROVEN | Empty/deferred availability/claim preflight SELECT-only with zero writer transactions; concurrent lost-race claim atomically revalidated; denied/revoked permission prevents claim. |
+| 9 | FIXTURE PROVEN | 100ms per-batch debounce, singleflight, ten-item cap; durable retry 5s bounded to 300s; release emits no readiness and does not loop. |
+| 10 | FIXTURE PROVEN | Stable event ID and owner/lease rules; ack loss/restart/lease expiry/retry deadline; event loss/duplicates/order, reconnect/epoch, legacy unsupported fallback and 25-item backlog. |
+| 11 | PARTIAL | Call/SELECT/mutation/transaction/changed-row/WAL-length and subprocess/file-fsync measurements distinct; mandatory event/lease/attempt/receipt persistence retained. Physical IO/WAL-frame writes and SQL lock-wait/duration remain unmeasured. |
+| 12 | FIXTURE PROVEN | Direct 700ms and 3s timeout probes, process vs endpoint vs external-poll, abort/actual exit/stale poll/negative endpoint, PID/locator fences, startup/restart and singleflight; protocol1,20s file/75s evidence freshness,5s fsync cadence preserved. Hosted external-failure acceptance pending. |
+| 13 | PRESERVATION PROVEN | Independent liveness/probe/watchdog/drain protections and 30s gap/60s recovery policy inspected and regression suites green. Event availability does not disable liveness polling. Combined installed event-live/bridge-hang acceptance pending; no installed fault injection. |
+| 14 | FIXTURE PROVEN | Observation/read/disconnect faults never authorize Job cancellation/failure/replay; same request/Job/result recovered, owner isolation and no duplicate turn; stale heartbeat, unknown vs not-observed and control reservation regressions green. |
+| 15 | PARTIAL | Saved red synthetic bridge response-framing race independently inspected; fresh late error/response-error/timeout, pre/post headers/caller detach, exact-once cleanup/capacity/private correlation and local Go classifications green. Production 502 cause unresolved; Issue remains open. |
+| 16 | FIXTURE PROVEN | All Node/native regressions green; explicit cross-contract map below and unchanged owner/schema/lifecycle blobs plus #241 ancestor verified. |
+| 17 | PARTIAL | Full automated gates kept original deadlines, capacities, records, liveness polling and heartbeat; installed bundle/artifact-bound user flow pending. No issue closure or production readiness asserted. |
+
+No blocking product defect was found. Full candidate `git diff --check` reports eight existing new-blank-at-EOF findings in preserved W1/W2 transcripts; product-source/test/script/native diffs pass. Those nonblocking audit-format findings are recorded and the candidate remains exact. Installed artifact-bound acceptance, realistic payload/population tails, SQL duration/lock waits/physical IO, hosted external failures and production 502 cause remain pending. No issue closure or production readiness is asserted.
+
+The retained runners/helpers contain the exact execution paths; adapt checkout/output/TMPDIR paths before reproduction. Raw test outputs may contain generated synthetic fixture identifiers and local temporary paths only. [Artifact hashes](artifact-sha256.json) bind the bounded retained receipt files.

@@ -19,6 +19,7 @@ const configuration = path.join(root, "codex-mcp-bridge");
 const run = path.join(configuration, "run");
 const socket = path.join(run, "helper.sock");
 const environmentFile = path.join(configuration, ".env");
+const stateDatabaseFile = path.join(root, "state.sqlite");
 const startsFile = path.join(root, "starts.jsonl");
 await mkdir(path.join(root, "tmp"), { recursive: true });
 await mkdir(path.join(runtime, "scripts"), { recursive: true });
@@ -26,6 +27,7 @@ await cp(path.join(repository, "dist"), path.join(runtime, "dist"), { recursive:
 await cp(path.join(repository, "scripts"), path.join(runtime, "scripts"), { recursive: true });
 await cp(path.join(repository, "package.json"), path.join(runtime, "package.json"));
 await cp(path.join(repository, "release-manifest.json"), path.join(runtime, "release-manifest.json"));
+await cp(path.join(repository, "state-migrations.json"), path.join(runtime, "state-migrations.json"));
 await symlink(path.join(repository, "node_modules"), path.join(runtime, "node_modules"), "dir");
 const build = JSON.parse(await readFile(path.join(runtime, "dist/build-info.json"), "utf8"));
 const launcher = path.join(runtime, "scripts/start-codex-mcp-bridge.mjs");
@@ -35,8 +37,33 @@ await writeFile(launcher, (await readFile(launcher, "utf8")).replaceAll('"develo
 updateRuntimeEnvFile(environmentFile, {
   apiKey: "sk-native-acceptance-1234567890123456", tunnelId: "tunnel_oooooooooooooooooooooooooooooooo"
 });
+await writeFile(environmentFile, (await readFile(environmentFile, "utf8")) +
+  `CODEX_MCP_BRIDGE_STATE_DATABASE_FILE=${stateDatabaseFile}\n`);
 const codex = path.join(root, "fixture-codex");
 await writeFile(codex, '#!/bin/sh\nprintf "codex-cli 0.153.3\\n"\n', { mode: 0o700 });
+// Delay the first real helper process, not a substituted readiness response.
+// Keep this opt-in acceptance scenario at its actual 90-second requirement.
+const coldHelper = process.env.CODEX_MCP_BRIDGE_TEST_COLD_HELPER === "1";
+const coldHelperMarker = path.join(root, "cold-helper-delay-started");
+let nodeExecutable = process.execPath;
+if (coldHelper) {
+  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+  nodeExecutable = path.join(root, "fixture-node");
+  const marker = quote(coldHelperMarker);
+  await writeFile(nodeExecutable, `#!/bin/sh
+for argument in "$@"; do
+  case "$argument" in
+    */dist/macosHelper.js)
+      if [ ! -e ${marker} ]; then
+        /usr/bin/touch ${marker}
+        /bin/sleep 90
+      fi
+      ;;
+  esac
+done
+exec ${quote(process.execPath)} "$@"
+`, { mode: 0o700 });
+}
 execFileSync("swift", ["build", "--package-path", "macos", "--product", "CodexBridgeMenuBar",
   "-Xswiftc", "-strict-concurrency=complete", "-Xswiftc", "-warnings-as-errors"], { cwd: repository, stdio: "inherit" });
 const bin = execFileSync("swift", ["build", "--package-path", "macos", "--show-bin-path"], { cwd: repository, encoding: "utf8" }).trim();
@@ -57,9 +84,12 @@ const events: unknown[] = [];
 const launch = () => {
   const child = spawn(executable, [], { cwd: runtime, detached: true, stdio: ["ignore", "pipe", "pipe"], env: {
     ...process.env, TMPDIR: path.join(root, "tmp"), XDG_CONFIG_HOME: root, XDG_STATE_HOME: path.join(root, "state"),
-    CODEX_MCP_BRIDGE_ROOT: runtime, CODEX_MCP_BRIDGE_NODE: process.execPath,
+    CODEX_MCP_BRIDGE_ROOT: runtime, CODEX_MCP_BRIDGE_NODE: nodeExecutable,
     CODEX_MCP_BRIDGE_ENV_FILE: environmentFile, CODEX_MCP_BRIDGE_DISABLE_LAUNCH_AGENT: "1",
     CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "cli"), CODEX_MCP_BRIDGE_CODEX: codex,
+    // The helper checks inherited process values before its .env file.
+    CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: stateDatabaseFile,
+    CODEX_GPT_BRIDGE_STATE_DATABASE_FILE: stateDatabaseFile,
   } });
   child.stdout?.on("data", data => process.stdout.write(data));
   child.stderr?.on("data", data => process.stderr.write(data));
@@ -76,7 +106,9 @@ async function ready() {
     status = await rpc("helper.health");
     return status.phase === "running" && status.pid && status.bridge.connected && status.tunnel.connected &&
       status.lifecycle?.phase === "completed";
-  }, "native app did not automatically prepare the runtime");
+  // The observer must cover the 150-second helper connection budget followed
+  // by the original 300-second initial-start budget, without shortening either.
+  }, "native app did not automatically prepare the runtime", 450_000);
   runtimePids.add(status.pid);
   events.push({ event: "runtime-ready", pid: status.pid, at: new Date().toISOString(), lifecycle: status.lifecycle });
   return status;
@@ -92,8 +124,14 @@ async function shutdown(child: ChildProcess) {
   return request.requestId;
 }
 try {
+  const initialLaunchAt = Date.now();
   const first = launch();
   const firstStatus = await ready();
+  const initialReadinessElapsedMs = Date.now() - initialLaunchAt;
+  if (coldHelper) {
+    await readFile(coldHelperMarker);
+    assert.ok(initialReadinessElapsedMs >= 90_000, "the real helper delay must not be bypassed");
+  }
   assert.equal((await starts()).length, 1);
   const duplicate = launch();
   await until(async () => duplicate.exitCode === 0, "duplicate app did not exit");
@@ -118,7 +156,9 @@ try {
   assert.equal((await starts()).length, 2);
   events.push({ event: "manual-stop-stayed-stopped", at: new Date().toISOString() });
   await shutdown(second);
-  const report = { passed: true, root, runtimeBuild: build.id, nativeEntryPoint: "CodexBridgeMenuBarApp",
+  const report = { passed: true, root, runtimeBuild: build.id, helperPreparationDelaySeconds: coldHelper ? 90 : 0,
+    initialReadinessElapsedMs,
+    nativeEntryPoint: "CodexBridgeMenuBarApp",
     scope: "real native application and helper; synthetic launcher/Tunnel/workload and CLI; no menu interaction", events };
   await writeFile(path.join(root, "report.json"), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
@@ -134,8 +174,8 @@ try {
   }
 }
 
-async function until(predicate: () => Promise<unknown>, message: string) {
-  const end = Date.now() + 30000;
+async function until(predicate: () => Promise<unknown>, message: string, timeoutMs = 30000) {
+  const end = Date.now() + timeoutMs;
   let error: unknown;
   while (Date.now() < end) {
     try { if (await predicate()) return; } catch (caught) { error = caught; }

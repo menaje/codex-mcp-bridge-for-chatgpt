@@ -1,19 +1,20 @@
 import { validateInitializeResponse } from "./runtimeCompatibility.js";
+import { selectionSpeedArguments, wireSpeedArguments } from "./processingSpeed.js";
 import type { ThreadPersistence, ThreadReleaseEvidence, ThreadReleaseOptions, ThreadReleaseResult } from "./threadConnections.js";
 import { elicitationResponse, readElicitationInput } from "./mcpElicitation.js";
-import { inspectCliProtocol, requireCliProtocol, UNVERIFIED_APP_SERVER_CAPABILITIES, type CliProtocolSupport } from "./cliProtocol.js";
+import { inspectCliProtocol, requireCliProtocol, requireCliCapability, UNVERIFIED_APP_SERVER_CAPABILITIES, type CliProtocolSupport } from "./cliProtocol.js";
 import {
   executionAccessArguments, executionAccessEvidence, executionAccessRequest,
   threadAccessParams, turnAccessParams, verifyExecutionAccess,
   type ExecutionAccessRequest, type VerifiedExecutionAccess
 } from "./executionAccess.js";
-import { projectCodexAccount, type CodexAccountSnapshot } from "./codexAccount.js";
+import { localCodexAccountLabels, projectCodexAccount, type CodexAccountSnapshot } from "./codexAccount.js";
 import { randomUUID } from "node:crypto";
 import { TOKEN_KEYS, tokenCounts, TurnUsageMeter, type TokenCounts } from "./tokenUsage.js";
 import { execFile } from "node:child_process";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
-import type { Progress } from "@modelcontextprotocol/sdk/types.js";
+import type { Progress } from "@modelcontextprotocol/server";
 import {
   DEFAULT_CODEX_VERSION_CHECK_TIMEOUT_MS,
   probeCodexCliVersion,
@@ -30,6 +31,7 @@ import {
   type JsonRpcTerminationResult
 } from "./jsonRpcProcess.js";
 import { PRODUCT_INFO } from "./productInfo.js";
+import { stableCodexWorkingDirectory } from "./codexService.js";
 import { MCP_APPROVAL_ROUTING_FEATURE, questionOrigin } from "./questionRouting.js";
 import type { BackendCapabilities, ModelSelection } from "./modelPolicy.js";
 import {
@@ -65,6 +67,7 @@ const REASONING_NOTIFICATIONS = [
 ];
 
 const DEFAULT_APP_SERVER_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_THREAD_INITIALIZATION_TIMEOUT_MS = 60_000;
 const DEFAULT_APP_SERVER_INTERRUPT_TIMEOUT_MS = 5_000;
 export const CODEX_WEEKLY_WINDOW_MINUTES = 7 * 24 * 60;
 export const ACCOUNT_RATE_LIMITS_CACHE_TTL_MS = 60_000;
@@ -88,6 +91,8 @@ export type CodexAppServerProtocolOptions = {
   requestTimeoutMs?: number;
   /** Defaults to requestTimeoutMs when omitted. */
   initializeTimeoutMs?: number;
+  /** Thread start/fork/resume includes shell snapshot setup. Defaults to at least 60 seconds. */
+  threadInitializationTimeoutMs?: number;
   /** Per-stage deadline for the interrupt acknowledgement and completion confirmation. */
   interruptTimeoutMs?: number;
   /**
@@ -95,15 +100,23 @@ export type CodexAppServerProtocolOptions = {
    * payloads must be sanitized before logging or persistence.
    */
   onLateResponse?: (response: CodexAppServerLateResponse) => void;
+  /** Records the owned spawn before protocol initialization; ps is not an admission gate. */
+  onWorkerProcessStarted?: (identity: JsonRpcProcessIdentity) => Promise<void> | void;
+  /** Resolves after cleanup of the retained owned tree; reserves only this worker until then. */
+  onWorkerProcessExited?: (identity: JsonRpcProcessIdentity) => Promise<void> | void;
 };
 
 type ResolvedCodexAppServerProtocolOptions = {
+  historyOmission?: CliProtocolSupport["historyOmission"];
   environment?: NodeJS.ProcessEnv;
   versionCheckTimeoutMs: number;
   requestTimeoutMs: number;
   initializeTimeoutMs: number;
+  threadInitializationTimeoutMs: number;
   interruptTimeoutMs: number;
   onLateResponse?: (response: CodexAppServerLateResponse) => void;
+  onWorkerProcessStarted?: (identity: JsonRpcProcessIdentity) => Promise<void> | void;
+  onWorkerProcessExited?: (identity: JsonRpcProcessIdentity) => Promise<void> | void;
 };
 
 export type CodexAppServerDependencies = {
@@ -275,8 +288,8 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
         { name: "codex", description: "Start a Codex App Server thread and turn." },
         { name: "codex-reply", description: "Resume a Codex App Server thread and start a turn." },
         ...(this.capabilities().supportsFork ? [{ name: "thread/fork", description: "Fork a persisted Codex thread and start a turn." }] : []),
-        { name: "thread/archive", description: "Archive a persisted Codex thread." },
-        { name: "thread/unarchive", description: "Restore an archived Codex thread." },
+        ...(this.capabilities().supportsThreadArchive ? [{ name: "thread/archive", description: "Archive a persisted Codex thread." }] : []),
+        ...(this.capabilities().supportsThreadUnarchive ? [{ name: "thread/unarchive", description: "Restore an archived Codex thread." }] : []),
         ...(this.capabilities().supportsSteering ? [{ name: "turn/steer", description: "Steer an active Codex App Server turn." }] : []),
         ...(this.capabilities().supportsPreciseCancellation ? [{ name: "turn/interrupt", description: "Interrupt an active Codex App Server turn." }] : [])
       ],
@@ -350,6 +363,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     return this.callTool(
       "codex",
       requestArguments(input.prompt, input.selection, {
+        ...(input.executionContext ? { executionContext: input.executionContext } : {}),
         ...executionAccessArguments(input),
         ephemeral: input.ephemeral === true
       }),
@@ -367,6 +381,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
       "codex-reply",
       requestArguments(input.prompt, input.selection, {
         threadId: input.threadId,
+        ...(input.executionContext ? { executionContext: input.executionContext } : {}),
         ...(input.cwd ? executionAccessArguments(input) : {})
       }),
       onProgress,
@@ -385,9 +400,11 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     try {
       const connection = await this.connectionFor(worker);
       requireCliProtocol(await this.inspectProtocol(), "fork");
+      requireTurnSpeed(this.protocolSupport!, input.selection ? selectionSpeedArguments(input.selection) : {});
       const result = await connection.forkThreadAndTurn(
         input.threadId,
         requestArguments(input.prompt, input.selection, {
+          ...(input.executionContext ? { executionContext: input.executionContext } : {}),
           ...executionAccessArguments(input.cwd ? input : this.requireThreadAccess(input.threadId)),
           ephemeral: input.ephemeral === true
         }),
@@ -413,12 +430,14 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   }
 
   async archiveThread(threadId: string): Promise<void> {
+    requireCliCapability(await this.inspectProtocol(), "supportsThreadArchive");
     await this.withThreadWorker(threadId, (connection) => connection.archiveThread(threadId));
     this.threadWorkers.delete(threadId);
     this.threadResumeEvidence.set(threadId, false);
   }
 
   async restoreThread(threadId: string): Promise<void> {
+    requireCliCapability(await this.inspectProtocol(), "supportsThreadUnarchive");
     await this.withThreadWorker(threadId, (connection) => connection.restoreThread(threadId));
     this.threadResumeEvidence.set(threadId, true);
   }
@@ -447,19 +466,29 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
           if ((error as NodeJS.ErrnoException).code === "ESRCH") return { phase: "released", evidence: "worker-exited" };
         }
       }
+      if (options.retireContext && !options.previousWorkerPid && await options.canRelease(threadId)) {
+        this.detachedThreads.add(threadId);
+        return {phase:"released",evidence:"connection-absent"};
+      }
       return { phase: "blocked", reason: "ownership-unconfirmed" };
     }
-    await worker.maintenance;
+    while (worker.maintenance) await worker.maintenance;
     const connection = worker.connection;
     if (!connection || connection.exited || this.closing) return { phase: "blocked", reason: "connection-changed" };
     if (!this.capabilities().supportsThreadUnsubscribe) return { phase: "blocked", reason: "unsupported" };
+    const canRelease = async (id: string): Promise<boolean> =>
+      Boolean(await options.canRelease(id));
+    const allCanRelease = async (ids: readonly string[]): Promise<boolean> => {
+      for (const id of ids) if (!(await canRelease(id))) return false;
+      return true;
+    };
     let unlock!: () => void;
     const maintenance = worker.maintenance = new Promise<void>(resolve => { unlock = resolve; });
     try {
-      if (!options.canRelease(threadId)) return { phase: "blocked", reason: "active-work" };
-      const safety = await connection.releaseSafety(threadId);
+      if (!(await canRelease(threadId))) return { phase: "blocked", reason: "active-work" };
+      const safety = await connection.releaseSafety(threadId,options.retireContext);
       if (!safety.safe) return { phase: "blocked", reason: safety.reason };
-      if (!options.canRelease(threadId)) return { phase: "blocked", reason: "active-work" };
+      if (!(await canRelease(threadId))) return { phase: "blocked", reason: "active-work" };
       this.detachedThreads.add(threadId);
       const acknowledgement = await connection.unsubscribeThread(threadId);
       if (acknowledgement === "notLoaded") {
@@ -473,17 +502,19 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
       }
       // Retire only a completely eligible worker. An unknown child thread,
       // pending request, ephemeral context or another admission prevents it.
-      if (worker.activeCalls === 0 && loaded.every(id => options.eligibleThreadIds.includes(id) && options.canRelease(id))) {
+      if (worker.activeCalls === 0 &&
+          loaded.every(id => options.eligibleThreadIds.includes(id)) &&
+          await allCanRelease(loaded)) {
         for (const id of loaded) {
-          if (!(await connection.releaseSafety(id)).safe) return { phase: "unsubscribed", reason: "shared-worker-protected" };
+          if (!(await connection.releaseSafety(id,options.retireContext)).safe) return { phase: "unsubscribed", reason: "shared-worker-protected" };
         }
-        if (worker.activeCalls === 0 && loaded.every(options.canRelease)) {
+        if (worker.activeCalls === 0 && await allCanRelease(loaded)) {
           for (const id of loaded) {
-            if (!options.canRelease(id) || worker.activeCalls > 0) return { phase: "unsubscribed", reason: "shared-worker-protected" };
+            if (!(await canRelease(id)) || worker.activeCalls > 0) return { phase: "unsubscribed", reason: "shared-worker-protected" };
             await connection.unsubscribeThread(id);
             this.detachedThreads.add(id);
           }
-          if (worker.activeCalls === 0 && loaded.every(options.canRelease)) {
+          if (worker.activeCalls === 0 && await allCanRelease(loaded)) {
             await connection.close();
             if (connection.exited) {
               for (const id of loaded) this.releaseEvidence.set(id, "worker-exited");
@@ -497,6 +528,13 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
       if (worker.maintenance === maintenance) worker.maintenance = undefined;
       unlock();
     }
+  }
+
+  async listLoadedThreadIds(): Promise<string[]> {
+    return [...new Set(this.workers.flatMap(worker => {
+      const connection = worker.connection && !worker.connection.exited ? worker.connection : worker.startingConnection;
+      return connection && !connection.exited ? connection.loadedThreadIds() : [];
+    }))];
   }
 
   async listLoadedBackgroundTerminals(
@@ -537,6 +575,11 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   }
 
   async readAccountSnapshot(): Promise<CodexAccountSnapshot | null> {
+    return (await this.readAccountDetails()).snapshot;
+  }
+
+  /** Account email is returned only to local authentication management. */
+  async readAccountDetails(): Promise<{ snapshot: CodexAccountSnapshot; email: string | null; workspaceName: string | null }> {
     const worker = this.leastBusyWorker();
     worker.activeCalls += 1;
     try {
@@ -544,8 +587,27 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
       const account = await connection.readAccount();
       const limits = projectCodexAccount(account, null).authMode === "chatgpt"
         ? await connection.readAccountRateLimits().catch(() => null) : null;
-      return projectCodexAccount(account, limits);
+      const { email, workspaceName } = localCodexAccountLabels(account);
+      return { snapshot: projectCodexAccount(account, limits), email, workspaceName };
     } finally { worker.activeCalls -= 1; }
+  }
+
+  async readAuthenticationPolicy(): Promise<{ config: unknown; requirements: unknown }> {
+    const worker = this.leastBusyWorker();
+    worker.activeCalls += 1;
+    try {
+      const connection = await this.connectionFor(worker);
+      const config = await connection.readConfiguration();
+      const requirements = await connection.readConfigurationRequirements();
+      return { config, requirements };
+    } finally { worker.activeCalls -= 1; }
+  }
+
+  async logoutAccount(): Promise<void> {
+    const worker = this.leastBusyWorker();
+    worker.activeCalls += 1;
+    try { await (await this.connectionFor(worker)).logoutAccount(); }
+    finally { worker.activeCalls -= 1; }
   }
 
   async readAccountRateLimits(): Promise<CodexWeeklyUsage | null> {
@@ -621,6 +683,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     try {
       const connection = await this.connectionFor(worker);
       requireCliProtocol(await this.inspectProtocol(), name === "codex" ? "fresh" : "continue");
+      requireTurnSpeed(this.protocolSupport!, args);
       const assigned = (assignment: UpstreamWorkerAssignment) => {
         if (assignment.threadId) {
           this.threadWorkers.set(assignment.threadId, worker.index);
@@ -663,19 +726,38 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     assignment: UpstreamWorkerAssignment,
     correlation: WorkerTerminationCorrelation,
     graceMs?: number,
-    options?: { interruptOnly: true }
+    options?: { interruptOnly?: true; retirementThreadIds?: readonly string[]; canTerminateWorker?: () => boolean }
   ): Promise<JsonRpcTerminationResult> {
     assertWorkerTerminationCorrelation(correlation);
     const worker = this.workers.find((candidate) => `app-${candidate.index}` === assignment.workerId);
     if (!worker || !worker.connection || worker.generation !== assignment.workerGeneration) {
       throw new Error("The selected App Server worker generation is no longer active.");
     }
-    const result = await worker.connection.interruptOrTerminate(assignment, correlation, graceMs, options);
+    while (worker.maintenance) await worker.maintenance;
+    if (!worker.connection || worker.generation !== assignment.workerGeneration) {
+      throw new Error("The selected App Server worker generation changed during maintenance.");
+    }
+    const connection=worker.connection;
+    let unlock: (()=>void)|undefined;
+    const maintenance=options?.retirementThreadIds ? worker.maintenance=new Promise<void>(resolve=>{unlock=resolve;}) : undefined;
+    let result: JsonRpcTerminationResult;
+    try {
+      result = await connection.interruptOrTerminate(assignment,correlation,graceMs,options?.retirementThreadIds
+        ? {...options,canTerminateWorker:()=>worker.activeCalls === connection.activeTurnCount} : options);
+    } finally { if (maintenance && worker.maintenance === maintenance) worker.maintenance=undefined; unlock?.(); }
+
     if (result.workerExited) {
       worker.connection = undefined;
       this.forgetWorkerThreads(worker.index);
     }
     return result;
+  }
+
+  ownsActiveExecution(_jobId: string, assignment: UpstreamWorkerAssignment): boolean {
+    const worker = this.workers.find(candidate => `app-${candidate.index}` === assignment.workerId);
+    return Boolean(worker?.connection && worker.generation === assignment.workerGeneration &&
+      assignment.threadId && assignment.upstreamRequestId &&
+      worker.connection.hasExactTurn(assignment.threadId, assignment.upstreamRequestId));
   }
 
   private requireThreadAccess(threadId: string): ExecutionAccessRequest {
@@ -742,7 +824,9 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   }
 
   private leastBusyWorker(): AppWorker {
-    return this.workers.reduce((selected, candidate) =>
+    const available = this.workers.filter(worker => !worker.maintenance);
+    if (!available.length) throw new Error("CODEX_WORKER_CAPACITY: All worker slots are reserved for unconfirmed cleanup.");
+    return available.reduce((selected, candidate) =>
       candidate.activeCalls < selected.activeCalls ||
       (candidate.activeCalls === selected.activeCalls && candidate.index < selected.index)
         ? candidate
@@ -786,7 +870,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   }
 
   private async connectionFor(worker: AppWorker): Promise<AppServerConnection> {
-    await worker.maintenance;
+    while (worker.maintenance) await worker.maintenance;
     if (this.closing) throw new Error("Codex App Server upstream is closed.");
     if (worker.connection && !worker.connection.exited) return worker.connection;
     if (!worker.connecting) {
@@ -803,9 +887,10 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
           generation,
           {
             ...this.protocolOptions,
+            historyOmission: this.protocolSupport?.historyOmission,
             onLateResponse: (response) => this.onWorkerLateResponse(worker, response)
           },
-          (observation) => this.onWorkerExit(worker, observation),
+          (observation) => this.onWorkerExit(worker, connection, observation),
           () => this.invalidateAccountRateLimits(),
           (threadId) => this.onThreadClosed(worker, connection, threadId)
         );
@@ -879,13 +964,28 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     this.protocolOptions.onLateResponse?.(response);
   }
 
-  private onWorkerExit(worker: AppWorker, observation: WorkerExitObservation): void {
+  private onWorkerExit(
+    worker: AppWorker,
+    connection: AppServerConnection,
+    observation: WorkerExitObservation
+  ): void {
     if (worker.generation !== observation.generation) return;
     if (!observation.expected && !this.closing) {
       worker.crashCount += 1;
       worker.lastCrashAt = Date.now();
     }
-    if (worker.connection?.exited) worker.connection = undefined;
+    const previousMaintenance = worker.maintenance;
+    const cleanup = Promise.resolve(previousMaintenance)
+      .then(() => connection.waitForSupervisionRelease())
+      .then(() => {
+        if (worker.connection === connection) worker.connection = undefined;
+        if (worker.startingConnection === connection) worker.startingConnection = undefined;
+        if (worker.maintenance === cleanup) worker.maintenance = undefined;
+      });
+    worker.maintenance = cleanup;
+    // A failed cleanup reserves this worker slot. Other workers remain usable;
+    // only verified cleanup may release capacity for a replacement generation.
+    void cleanup.catch(() => undefined);
     this.forgetWorkerThreads(worker.index);
   }
 
@@ -912,6 +1012,7 @@ class AppServerConnection {
   private readonly activeTurns = new Map<string, TurnContext>();
   private readonly threadTurns = new Map<string, string>();
   private readonly loadedThreads = new Set<string>();
+
   private readonly subscribedThreads = new Set<string>();
   private readonly threadPersistence = new Map<string, ThreadPersistence>();
   private readonly threadAccess = new Map<string, VerifiedExecutionAccess>();
@@ -925,6 +1026,8 @@ class AppServerConnection {
   private configWarningCount = 0;
   private closeRequested = false;
   private terminationRequested = false;
+  private registeredWorkerIdentity?: JsonRpcProcessIdentity;
+  private supervisionRelease: Promise<void> = Promise.resolve();
 
   private constructor(
     command: string,
@@ -939,6 +1042,7 @@ class AppServerConnection {
       command,
       args: ["app-server", "--listen", "stdio://", "-c", `features.${MCP_APPROVAL_ROUTING_FEATURE}=true`],
       ...(protocolOptions.environment ? { env: protocolOptions.environment } : {}),
+      cwd: stableCodexWorkingDirectory(protocolOptions.environment),
       debugLabel: `codex-app:${workerId}:g${generation}`,
       omitJsonRpcHeader: true,
       onNotification: (method, params) => this.onNotification(method, params),
@@ -978,6 +1082,9 @@ class AppServerConnection {
 
   async initializeForAdmission(): Promise<AppServerConnection> {
     try {
+      const identity = await this.rpc.start();
+      this.registeredWorkerIdentity = identity;
+      await this.protocolOptions.onWorkerProcessStarted?.(identity);
       await this.initialize();
       return this;
     } catch (error) {
@@ -1001,6 +1108,10 @@ class AppServerConnection {
 
   get identity(): JsonRpcProcessIdentity | undefined {
     return this.rpc.identity;
+  }
+
+  waitForSupervisionRelease(): Promise<void> {
+    return this.supervisionRelease;
   }
 
   get initializationHealth(): AppServerInitializationHealth {
@@ -1064,11 +1175,11 @@ class AppServerConnection {
       {
         ...threadAccessParams(expectedAccess, isRecord(args.config) ? args.config : undefined),
         model: optionalString(args.model) || null,
-        serviceTier: optionalString(args.serviceTier) || null,
+        ...wireSpeedArguments(args, "thread"),
         experimentalRawEvents: false,
         ephemeral: args.ephemeral === true
       },
-      { timeoutMs: this.protocolOptions.requestTimeoutMs }
+      { timeoutMs: this.protocolOptions.threadInitializationTimeoutMs }
     );
     const thread = isRecord(response.thread) ? response.thread : undefined;
     const threadId = requiredString(thread?.id, "thread/start thread.id");
@@ -1130,9 +1241,10 @@ class AppServerConnection {
     const expectedAccess = executionAccessRequest(args);
     const response = await this.rpc.request<Record<string, unknown>>(
       "thread/fork",
-      { threadId: sourceThreadId, ephemeral: args.ephemeral === true, ...threadAccessParams(expectedAccess) },
+      { threadId: sourceThreadId, ...(this.protocolOptions.historyOmission?.fork ? { excludeTurns: true } : {}),
+        ephemeral: args.ephemeral === true, ...threadAccessParams(expectedAccess) },
       {
-        timeoutMs: this.protocolOptions.requestTimeoutMs,
+        timeoutMs: this.protocolOptions.threadInitializationTimeoutMs,
         lateResponseContext: { sourceThreadId }
       }
     );
@@ -1192,6 +1304,8 @@ class AppServerConnection {
     return this.listMaterializedBackgroundTerminals(threadId);
   }
 
+  loadedThreadIds(): string[] { return [...this.loadedThreads]; }
+
   async listLoadedBackgroundTerminals(
     threadId: string
   ): Promise<CodexBackgroundTerminal[] | null> {
@@ -1199,8 +1313,8 @@ class AppServerConnection {
     return this.listMaterializedBackgroundTerminals(threadId);
   }
 
-  async releaseSafety(threadId: string): Promise<{ safe: boolean; reason?: string }> {
-    if (this.threadPersistence.get(threadId) !== "persistent") return { safe: false, reason: "persistence-unknown" };
+  async releaseSafety(threadId: string, retireContext = false): Promise<{ safe: boolean; reason?: string }> {
+    if (!retireContext && this.threadPersistence.get(threadId) !== "persistent") return { safe: false, reason: "persistence-unknown" };
     if (this.threadTurns.has(threadId) || [...this.pendingInteractions.values()].some(request => request.threadId === threadId)) {
       return { safe: false, reason: "active-work" };
     }
@@ -1319,7 +1433,8 @@ class AppServerConnection {
       return { state: "unknown", reason: "unsupported", threadId, retryable: true };
     } catch (error) {
       if (isMissingThreadError(error)) {
-        return { state: "orphaned", reason: "missing", threadId, retryable: false };
+        // Absence in the selected home does not prove deletion from its original store.
+        return { state: "unknown", reason: "storage-unavailable", threadId, retryable: true };
       }
       if (isUnsupportedThreadReadError(error)) {
         return { state: "unknown", reason: "unsupported", threadId, retryable: true };
@@ -1342,9 +1457,12 @@ class AppServerConnection {
     this.threadTokenTotals.delete(threadId);
     const response = await this.rpc.request<Record<string, unknown>>(
       "thread/resume",
-      { threadId, ...(expectedAccess ? threadAccessParams(expectedAccess) : {}) },
+      // Resume the existing conversation without copying its retained transcript
+      // onto the JSON-RPC wire. Long histories can exceed the wire-size limit.
+      { threadId, ...(this.protocolOptions.historyOmission?.resume ? { excludeTurns: true } : {}),
+        ...(expectedAccess ? threadAccessParams(expectedAccess) : {}) },
       {
-        timeoutMs: this.protocolOptions.requestTimeoutMs,
+        timeoutMs: this.protocolOptions.threadInitializationTimeoutMs,
         lateResponseContext: { threadId, loadRevision }
       }
     );
@@ -1381,6 +1499,18 @@ class AppServerConnection {
 
   async readAccount() { return this.rpc.request("account/read", { refreshToken: false }, { timeoutMs: this.protocolOptions.requestTimeoutMs }); }
 
+  async readConfiguration() {
+    return this.rpc.request("config/read", { includeLayers: false }, { timeoutMs: this.protocolOptions.requestTimeoutMs });
+  }
+
+  async readConfigurationRequirements() {
+    return this.rpc.request("configRequirements/read", {}, { timeoutMs: this.protocolOptions.requestTimeoutMs });
+  }
+
+  async logoutAccount() {
+    return this.rpc.request("account/logout", {}, { timeoutMs: this.protocolOptions.requestTimeoutMs });
+  }
+
   async readAccountRateLimits(): Promise<Record<string, unknown>> {
     return this.rpc.request<Record<string, unknown>>(
       "account/rateLimits/read",
@@ -1409,6 +1539,10 @@ class AppServerConnection {
 
   hasActiveTurn(threadId: string): boolean {
     return this.threadTurns.has(threadId);
+  }
+
+  hasExactTurn(threadId: string, turnId: string): boolean {
+    return this.threadTurns.get(threadId) === turnId;
   }
 
   interactionInput(interactionId: string): CodexInteractionInput | undefined {
@@ -1476,11 +1610,13 @@ class AppServerConnection {
     return true;
   }
 
+  get activeTurnCount(): number { return this.activeTurns.size; }
+
   async interruptOrTerminate(
     assignment: UpstreamWorkerAssignment,
     correlation: WorkerTerminationCorrelation,
     graceMs = 1_500,
-    options?: { interruptOnly: true }
+    options?: { interruptOnly?: true; retirementThreadIds?: readonly string[]; canTerminateWorker?: () => boolean }
   ): Promise<JsonRpcTerminationResult> {
     assertWorkerTerminationCorrelation(correlation);
     const identity = this.rpc.identity;
@@ -1493,6 +1629,16 @@ class AppServerConnection {
     }
     const turnId = assignment.upstreamRequestId;
     const context = turnId ? this.activeTurns.get(turnId) : undefined;
+    if (turnId && this.terminalTurns.has(turnId)) {
+      // Completion can win the race while its receipt is still crossing the
+      // control link. That is never permission to kill other turns on this worker.
+      return { ...identity, exited: true, escalated: false, signal: null,
+        mode: "already-completed", workerExited: false };
+    }
+    if (turnId && !context) {
+      const code = options?.interruptOnly ? "PRECISE_INTERRUPTION_UNCONFIRMED" : "TURN_OWNERSHIP_UNCONFIRMED";
+      throw new Error(`${code}: The exact turn is not active on this worker; no process termination was authorized.`);
+    }
     if (turnId && context) {
       try {
         this.emit(context, {
@@ -1546,8 +1692,18 @@ class AppServerConnection {
     if (options?.interruptOnly) {
       throw new Error("PRECISE_INTERRUPTION_UNCONFIRMED: The original turn could not be confirmed stopped; shared worker termination was not authorized.");
     }
+    if (options?.retirementThreadIds) {
+      const allowed=new Set(options.retirementThreadIds);
+      const loaded=await this.listLoadedThreads();
+      if (!loaded.every(thread=>allowed.has(thread)) || ![...this.activeTurns.values()].every(turn=>allowed.has(turn.threadId)) ||
+          [...this.loadedThreads].some(thread=>!allowed.has(thread)) || options.canTerminateWorker?.() !== true) {
+        throw new Error("PROJECT_ARCHIVE_SHARED_WORKER: Worker termination would affect another or unassigned context.");
+      }
+    }
     this.terminationRequested = true;
-    return this.rpc.forceTerminate(graceMs);
+    const result = await this.rpc.forceTerminate(graceMs);
+    if (result.workerExited) await this.waitForSupervisionRelease();
+    return result;
   }
 
   async close(): Promise<void> {
@@ -1558,6 +1714,7 @@ class AppServerConnection {
     }
     this.pendingInteractions.clear();
     await this.rpc.close();
+    await this.waitForSupervisionRelease();
   }
 
   private async initialize(): Promise<void> {
@@ -1592,16 +1749,22 @@ class AppServerConnection {
     if (!executionAccess) throw new Error("EXECUTION_ACCESS_REQUIRED: The thread policy has not been verified.");
     const inputRoutingVerified = await this.verifyInputRouting(threadId);
     const usage = new TurnUsageMeter(this.threadTokenTotals.get(threadId));
+    const sent = {
+      threadId,
+      ...turnAccessParams(executionAccess),
+      input: [
+        { type: "text", text: prompt, text_elements: [] },
+        ...(optionalString(args.executionContext)
+          ? [{ type: "text", text: args.executionContext as string, text_elements: [] }]
+          : [])
+      ],
+      model: optionalString(args.model) || null,
+      effort: modelReasoningEffort(args.config) || null,
+      ...wireSpeedArguments(args, "turn")
+    };
     const response = await this.rpc.request<Record<string, unknown>>(
       "turn/start",
-      {
-        threadId,
-        ...turnAccessParams(executionAccess),
-        input: [{ type: "text", text: prompt, text_elements: [] }],
-        model: optionalString(args.model) || null,
-        effort: modelReasoningEffort(args.config) || null,
-        serviceTier: optionalString(args.serviceTier) || null
-      },
+      sent,
       {
         timeoutMs: this.protocolOptions.requestTimeoutMs,
         lateResponseContext: { threadId }
@@ -1672,6 +1835,9 @@ class AppServerConnection {
         turnId,
         executionAccess: executionAccessEvidence(executionAccess),
         questionRouting: inputRoutingVerified ? "verified-mcp-elicitation" : "unverified",
+        evidenceVersion: 1,
+        sent: { model: sent.model, reasoningEffort: sent.effort, ...wireSpeedArguments(args, "turn") },
+        serviceTierScope: args.serviceTierScope === "turn" ? "turn" : "conversation",
         selection: {
           model: optionalString(args.model) || null,
           reasoningEffort: modelReasoningEffort(args.config) || null,
@@ -1760,6 +1926,7 @@ class AppServerConnection {
       (isRecord(params.turn) ? optionalString(params.turn.id) : undefined) ||
       (threadId ? this.threadTurns.get(threadId) : undefined);
     const context = turnId ? this.activeTurns.get(turnId) : undefined;
+    if (context && threadId && context.threadId !== threadId) return;
     const protocolEvent = publicNotificationEvent(method, params);
     if (method === "thread/tokenUsage/updated" && threadId && isRecord(params.tokenUsage)) {
       const total = tokenCounts(params.tokenUsage.total);
@@ -2050,6 +2217,21 @@ class AppServerConnection {
   }
 
   private onProcessExit(error: Error): void {
+    const registeredIdentity = this.registeredWorkerIdentity;
+    if (registeredIdentity) {
+      const release = Promise.resolve()
+        .then(() => this.protocolOptions.onWorkerProcessExited?.(registeredIdentity))
+        .then(() => {
+          if (this.registeredWorkerIdentity === registeredIdentity) {
+            this.registeredWorkerIdentity = undefined;
+          }
+        });
+      this.supervisionRelease = release;
+      // The pool also holds this promise as its replacement fence. Attach a
+      // handler here so a failed independent cleanup never becomes an
+      // unhandled rejection while the executor transitions to fail-closed.
+      void release.catch(() => undefined);
+    }
     const expected = this.closeRequested || this.terminationRequested;
     const terminalError = expected
       ? error
@@ -2069,6 +2251,7 @@ class AppServerConnection {
   }
 
   private emit(context: TurnContext, publicEvent: CodexPublicEvent): void {
+    publicEvent.details = { ...publicEvent.details, threadId: context.threadId, turnId: context.turnId };
     context.eventSequence += 1;
     context.onProgress?.({
       progress: context.eventSequence,
@@ -2083,10 +2266,18 @@ export const APP_SERVER_CAPABILITIES: BackendCapabilities = {
   supportsModelOverrideOnContinue: true,
   supportsEffortOverrideOnContinue: true,
   supportsServiceTierOverrideOnContinue: true,
+  supportsPerTurnServiceTier: true, supportedPerTurnServiceTiers: ["default", "fast", "priority", "ultrafast"],
   supportsFork: true,
   supportsSteering: true, supportsPreciseCancellation: true, supportsEphemeralThreads: true,
   supportsThreadInspection: true, supportsBackgroundTerminals: true
 };
+
+function requireTurnSpeed(support: CliProtocolSupport, args: Record<string, unknown>): void {
+  if (args.serviceTierScope !== "turn") return;
+  requireCliCapability(support, "supportsPerTurnServiceTier");
+  const tier = optionalString(args.serviceTier);
+  if (tier && !support.capabilities.supportedPerTurnServiceTiers?.includes(tier)) throw new Error(`PROCESSING_SPEED_UNSUPPORTED: Per-turn tier '${tier}' is not supported by the selected CLI. No turn was started.`);
+}
 
 function metricAggregate(values: number[]): {
   samples: number;
@@ -2207,11 +2398,21 @@ function resolveProtocolOptions(
       options.initializeTimeoutMs ?? requestTimeoutMs,
       "initializeTimeoutMs"
     ),
+    threadInitializationTimeoutMs: positiveTimeout(
+      options.threadInitializationTimeoutMs ?? Math.max(DEFAULT_THREAD_INITIALIZATION_TIMEOUT_MS, requestTimeoutMs),
+      "threadInitializationTimeoutMs"
+    ),
     interruptTimeoutMs: positiveTimeout(
       options.interruptTimeoutMs ?? DEFAULT_APP_SERVER_INTERRUPT_TIMEOUT_MS,
       "interruptTimeoutMs"
     ),
-    ...(options.onLateResponse ? { onLateResponse: options.onLateResponse } : {})
+    ...(options.onLateResponse ? { onLateResponse: options.onLateResponse } : {}),
+    ...(options.onWorkerProcessStarted
+      ? { onWorkerProcessStarted: options.onWorkerProcessStarted }
+      : {}),
+    ...(options.onWorkerProcessExited
+      ? { onWorkerProcessExited: options.onWorkerProcessExited }
+      : {})
   };
 }
 
@@ -2255,7 +2456,7 @@ function requestArguments(
       ? {
           model: selection.model,
           config: { model_reasoning_effort: selection.reasoningEffort },
-          ...(selection.serviceTier ? { serviceTier: selection.serviceTier } : {})
+          ...selectionSpeedArguments(selection)
         }
       : {})
   };
@@ -2367,6 +2568,7 @@ function publicNotificationEvent(
     const reason = optionalString(params.reason)?.slice(0, 200) || "unspecified";
     return event("model", "updated", `Model rerouted from ${fromModel} to ${toModel}.`, {
       kind: "rerouted",
+      serverCorrelation: optionalString(params.threadId) && optionalString(params.turnId) && optionalString(params.toModel) ? "explicit" : "unconfirmed",
       fromModel,
       toModel,
       reason

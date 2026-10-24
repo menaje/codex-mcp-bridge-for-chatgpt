@@ -1,11 +1,27 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { hasTrackedSourceChanges } from "../scripts/build-fingerprint.mjs";
+import { computeSourceHash, hasTrackedSourceChanges } from "../scripts/build-fingerprint.mjs";
 
 describe("build provenance worktree state", () => {
+  it("includes authored localization inputs in the source fingerprint", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "codex-build-locales-"));
+    for (const directory of ["src", "scripts", "locales"]) {
+      mkdirSync(path.join(root, directory), { recursive: true });
+      writeFileSync(path.join(root, directory, "fixture.txt"), `${directory}\n`);
+    }
+    for (const file of [
+      "release-manifest.json", "release-manifest.schema.json", "ui-release-catalog.json",
+      "state-migrations.json", "package.json", "package-lock.json", "tsconfig.json"
+    ]) writeFileSync(path.join(root, file), `${file}\n`);
+
+    const before = computeSourceHash(root);
+    writeFileSync(path.join(root, "locales", "fixture.txt"), "changed translation\n");
+    expect(computeSourceHash(root)).not.toBe(before);
+  });
+
   it("ignores untracked user files but detects tracked source changes", () => {
     const root = mkdtempSync(path.join(tmpdir(), "codex-build-dirty-"));
     git(root, ["init"]);

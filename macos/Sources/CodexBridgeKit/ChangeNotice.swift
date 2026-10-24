@@ -3,6 +3,8 @@ import Foundation
 public struct ChangeNotice: Decodable, Sendable {
     public let revision: String
     public let topics: [String]
+    public let supportedTopics: [String]?
+    public let topicRevisions: [String: String]?
 }
 
 struct ChangeWaitParameters: Encodable {

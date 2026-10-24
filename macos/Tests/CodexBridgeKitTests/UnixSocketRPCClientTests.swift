@@ -4,6 +4,184 @@ import XCTest
 @testable import CodexBridgeKit
 
 final class UnixSocketRPCClientTests: XCTestCase {
+    func testNumericFailureEvidenceAndLifecycleReplayBoundary() async throws {
+        let path = "/tmp/cb-missing-\(UUID().uuidString.prefix(8)).sock"
+        do {
+            let _: EmptyParameters = try await UnixSocketRPCClient(socketPath: path)
+                .call("helper.health", params: EmptyParameters())
+            XCTFail("Missing fixture socket must fail")
+        } catch {
+            let evidence = RPCObservationFailure(error)
+            XCTAssertEqual(evidence.phase, .connect)
+            XCTAssertEqual(evidence.posixCode, ENOENT)
+            XCTAssertEqual(evidence.kind, .refused)
+            XCTAssertTrue(try XCTUnwrap(error as? LocalRPCError).allowsLifecycleReceiptReplay)
+        }
+        for phase: LocalRPCPhase in [.connect, .send, .receive] {
+            XCTAssertTrue(LocalRPCError.transport(phase: phase, code: ETIMEDOUT).allowsLifecycleReceiptReplay)
+            XCTAssertTrue(LocalRPCError.deadlineExceeded(phase: phase).allowsLifecycleReceiptReplay)
+        }
+        for error: LocalRPCError in [.invalidSocketPath, .peerIdentityMismatch, .responseTooLarge,
+                                    .malformedResponse("contract"), .remote(code: -32000, message: "timeout"),
+                                    .transport(phase: .decode, code: ETIMEDOUT),
+                                    .transport(phase: .queued, code: EINVAL),
+                                    .deadlineExceeded(phase: .queued), .deadlineExceeded(phase: .decode)] {
+            XCTAssertFalse(error.allowsLifecycleReceiptReplay)
+        }
+    }
+
+    func testReceiptReplayUsesSameLifecycleIDAndExactPayloadAfterResponseLoss() async throws {
+        let path = "/tmp/cb-replay-\(UUID().uuidString.prefix(8)).sock"
+        let received = LifecycleReplayRequests()
+        let server = try NativeRPCFixture(path: path, requestReply: { _, params in
+            let count = received.append(params)
+            if count == 1 { return NativeFixtureReply(body: "") }
+            return NativeFixtureReply(body: #"{"result":{"requestId":"same-receipt","kind":"start","force":false,"phase":"waiting","createdAt":"2026-10-08T00:00:00Z","updatedAt":"2026-10-08T00:00:00Z","reasons":[],"error":null,"cancellable":true}}"#)
+        })
+        defer { server.stop() }
+        let request = RuntimeLifecycleRequest(requestId: "same-receipt", kind: "start", force: false)
+        let receipt = try await MacOSHelperClient(socketPath: path).requestLifecycle(request)
+        XCTAssertEqual(receipt.requestId, request.requestId)
+        let payloads = received.values
+        XCTAssertEqual(payloads.count, 2)
+        let first = try JSONSerialization.jsonObject(with: Data(payloads[0].utf8)) as? NSDictionary
+        let second = try JSONSerialization.jsonObject(with: Data(payloads[1].utf8)) as? NSDictionary
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(first?["requestId"] as? String, "same-receipt")
+    }
+
+    func testDefaultTransportReadsMaximumBridgeSkillContentEnvelope() async throws {
+        struct SkillResult: Decodable { let content: String }
+        // C0 control characters are valid source text (except NUL) but use
+        // JSON's six-byte escape form, exercising the true transport bound.
+        let content = String(repeating: "\u{0001}", count: 3 * 1_024 * 1_024)
+        let body = String(
+            decoding: try JSONSerialization.data(withJSONObject: [
+                "result": ["content": content]
+            ]),
+            as: UTF8.self
+        )
+        XCTAssertGreaterThan(body.lengthOfBytes(using: .utf8), 8 * 1_024 * 1_024)
+        XCTAssertLessThanOrEqual(body.lengthOfBytes(using: .utf8), bridgeSkillTransportEnvelopeMaxBytes)
+        let path = "/tmp/cb-rpc-large-skill-\(UUID().uuidString.prefix(8)).sock"
+        let server = try NativeRPCFixture(path: path) { _ in NativeFixtureReply(body: body) }
+        defer { server.stop() }
+
+        let client = UnixSocketRPCClient(socketPath: path)
+        XCTAssertEqual(client.maximumResponseBytes, bridgeSkillTransportEnvelopeMaxBytes)
+        // This is a byte-envelope test. Debug Foundation decoding of 18 MiB
+        // takes longer than the ordinary deadline; deadline behavior is tested separately.
+        let result: SkillResult = try await client.call("skills.read", params: EmptyParameters(), timeout: 60)
+        XCTAssertEqual(result.content, content)
+    }
+
+    func testIssue242StructuralFailureCategories() {
+        for (code, kind) in [(EAGAIN, RPCFailureKind.timeout), (ECONNREFUSED, .refused),
+                             (ECONNRESET, .peerClosed), (EPIPE, .peerClosed), (EPERM, .permissionDenied)] {
+            let failure = RPCObservationFailure(LocalRPCError.transport(phase: .receive, code: code))
+            XCTAssertEqual(failure.kind, kind)
+            XCTAssertEqual(failure.phase, .receive)
+            XCTAssertEqual(failure.posixCode, code)
+        }
+        XCTAssertEqual(RPCObservationFailure(CancellationError()).kind, .cancelled)
+        XCTAssertEqual(RPCObservationFailure(LocalRPCError.malformedResponse("test")).kind, .contractMismatch)
+    }
+
+    func testIssue242CancellationDuringDecodeRemainsCancellation() async throws {
+        struct CancelledResult: Decodable {
+            init(from decoder: Decoder) throws { throw CancellationError() }
+        }
+        let path = "/tmp/cb-242-decode-cancel-\(UUID().uuidString.prefix(8)).sock"
+        let server = try NativeRPCFixture(path: path) { _ in NativeFixtureReply(body: #"{"result":{}}"#) }
+        defer { server.stop() }
+        do {
+            let _: CancelledResult = try await UnixSocketRPCClient(socketPath: path).call("test", params: EmptyParameters())
+            XCTFail("Cancelled decoder must not publish a value")
+        } catch { XCTAssertEqual(RPCObservationFailure(error).kind, .cancelled) }
+    }
+
+    func testIssue242DecoderCannotPublishAfterAbsoluteDeadline() async throws {
+        struct SlowResult: Decodable {
+            init(from decoder: Decoder) throws { Thread.sleep(forTimeInterval: 2) }
+        }
+        let path = "/tmp/cb-242-decode-deadline-\(UUID().uuidString.prefix(8)).sock"
+        let server = try NativeRPCFixture(path: path) { _ in NativeFixtureReply(body: #"{"result":{}}"#) }
+        defer { server.stop() }
+        do {
+            let _: SlowResult = try await UnixSocketRPCClient(socketPath: path, timeout: 1).call("test", params: EmptyParameters())
+            XCTFail("A synchronous decoder cannot publish after its deadline")
+        } catch {
+            XCTAssertEqual(RPCObservationFailure(error).kind, .timeout)
+            XCTAssertEqual(RPCObservationFailure(error).phase, .decode)
+        }
+    }
+
+    func testIssue242RefusalPeerCloseAndMissingResultStayDistinct() async throws {
+        let path = "/tmp/cb-242-errors-\(UUID().uuidString.prefix(8)).sock"
+        do {
+            let _: EmptyParameters = try await UnixSocketRPCClient(socketPath: path).call("test", params: EmptyParameters())
+            XCTFail("Missing listener must refuse the connection")
+        } catch { XCTAssertEqual(RPCObservationFailure(error).kind, .refused) }
+        let replies = ["test.close": "", "test.contract": "{}"]
+        let server = try NativeRPCFixture(path: path) { NativeFixtureReply(body: replies[$0] ?? "") }
+        defer { server.stop() }
+        for (method, kind) in [("test.close", RPCFailureKind.peerClosed), ("test.contract", .contractMismatch)] {
+            do {
+                let _: EmptyParameters = try await UnixSocketRPCClient(socketPath: path).call(method, params: EmptyParameters())
+                XCTFail("Fixture must fail")
+            } catch { XCTAssertEqual(RPCObservationFailure(error).kind, kind) }
+        }
+    }
+
+    func testIssue242PartialResponseCannotExtendAbsoluteDeadline() async throws {
+        let path = "/tmp/cb-242-partial-\(UUID().uuidString.prefix(8)).sock"
+        let listener = try makeListener(at: path)
+        defer { Darwin.close(listener); unlink(path) }
+        let server = Task.detached {
+            let client = Darwin.accept(listener, nil, nil)
+            guard client >= 0 else { return }
+            defer { Darwin.close(client) }
+            var noSignal: Int32 = 1
+            _ = setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout<Int32>.size))
+            var input = [UInt8](repeating: 0, count: 4096)
+            _ = Darwin.read(client, &input, input.count)
+            var byte: UInt8 = 0x20
+            for _ in 0..<30 {
+                if Darwin.write(client, &byte, 1) != 1 { break }
+                try? await Task.sleep(for: .milliseconds(30))
+            }
+        }
+        let started = Date()
+        do {
+            let _: EmptyParameters = try await UnixSocketRPCClient(socketPath: path, timeout: 0.2).call("test", params: EmptyParameters())
+            XCTFail("Partial response must miss its total deadline")
+        } catch {
+            XCTAssertEqual(RPCObservationFailure(error).kind, .timeout)
+            XCTAssertEqual(RPCObservationFailure(error).phase, .receive)
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.7)
+        await server.value
+    }
+
+    func testContractDecodeFailureIsNotReportedAsPersistentDataLoss() async throws {
+        struct RequiredResult: Decodable { let value: String }
+        let path = "/tmp/cb-rpc-contract-\(UUID().uuidString.prefix(8)).sock"
+        let server = try NativeRPCFixture(path: path) { _ in
+            NativeFixtureReply(body: #"{"result":{}}"#)
+        }
+        defer { server.stop() }
+
+        do {
+            let _: RequiredResult = try await UnixSocketRPCClient(socketPath: path).call(
+                "test.contract",
+                params: EmptyParameters()
+            )
+            XCTFail("A response missing the required value should fail decoding.")
+        } catch LocalRPCError.malformedResponse(let message) {
+            XCTAssertEqual(message, "BRIDGE_RESPONSE_CONTRACT_MISMATCH")
+        }
+    }
+
     func testPendingChangeWaitDoesNotDelayIndependentHealthRead() async throws {
         let path = "/tmp/cb-rpc-independent-\(UUID().uuidString.prefix(8)).sock"
         let connected = expectation(description: "change wait received")
@@ -95,6 +273,13 @@ final class UnixSocketRPCClientTests: XCTestCase {
         )
         try await server.value
     }
+}
+
+private final class LifecycleReplayRequests: @unchecked Sendable {
+    private let lock = NSLock()
+    private var payloads: [String] = []
+    func append(_ value: String) -> Int { lock.withLock { payloads.append(value); return payloads.count } }
+    var values: [String] { lock.withLock { payloads } }
 }
 
 private func makeListener(at socketPath: String) throws -> Int32 {

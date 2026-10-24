@@ -12,6 +12,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { defaultRuntimeEnvFile } from "./runtime-env.mjs";
+import { parseJsonUtf8Strict } from "./text-integrity.mjs";
 
 export function defaultRuntimeLockDirectory(options = {}) {
   return resolve(dirname(defaultRuntimeEnvFile(options)), "run", "launcher.lock");
@@ -54,12 +55,16 @@ export function acquireRuntimeLock(
   lockDirectory = defaultRuntimeLockDirectory(),
   {
     pid = process.pid,
+    token = randomUUID(),
     startedAt = new Date().toISOString(),
     processAlive = defaultProcessAlive,
     platform = process.platform,
     uid = typeof process.getuid === "function" ? process.getuid() : undefined
   } = {}
 ) {
+  if (typeof token !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token)) {
+    throw new Error("Runtime lock owner token is invalid.");
+  }
   const resolved = resolve(lockDirectory);
   ensurePrivateParent(dirname(resolved), { platform, uid });
   try {
@@ -70,7 +75,6 @@ export function acquireRuntimeLock(
     mkdirSync(resolved, { mode: 0o700 });
   }
   assertPrivateDirectory(resolved, { platform, uid });
-  const token = randomUUID();
   const ownerFile = resolve(resolved, "owner.json");
   writeFileSync(ownerFile, `${JSON.stringify({ pid, token, startedAt })}\n`, {
     encoding: "utf8",
@@ -103,6 +107,20 @@ export function acquireRuntimeLock(
   };
 }
 
+/** Release only a stopped initial-start attempt's exact private owner. */
+export function releaseStoppedRuntimeLock(lockDirectory, expectedOwner, { processAlive = defaultProcessAlive } = {}) {
+  const owner = readRuntimeLockOwner(lockDirectory);
+  if (!owner) return;
+  if (owner.pid !== expectedOwner.pid || owner.token !== expectedOwner.token || processAlive(owner.pid)) {
+    throw new Error("Stopped runtime lock ownership could not be confirmed.");
+  }
+  reclaimStaleRuntimeLock(resolve(lockDirectory), {
+    processAlive, platform: process.platform,
+    uid: typeof process.getuid === "function" ? process.getuid() : undefined,
+    expectedOwner
+  });
+}
+
 function reclaimStaleRuntimeLock(lockDirectory, options) {
   assertPrivateDirectory(lockDirectory, options);
   const entries = readdirSync(lockDirectory);
@@ -126,6 +144,9 @@ function reclaimStaleRuntimeLock(lockDirectory, options) {
     }
   }
   const owner = readOwner(ownerFile);
+  if (options.expectedOwner && (owner.pid !== options.expectedOwner.pid || owner.token !== options.expectedOwner.token)) {
+    throw new Error("Stopped runtime lock owner changed; refusing cleanup.");
+  }
   if (options.processAlive(owner.pid)) {
     throw new Error(
       `Another Codex MCP Bridge runtime is already running (pid ${owner.pid}).`
@@ -156,7 +177,7 @@ function assertPrivateDirectory(directory, { platform, uid }) {
 }
 
 function readOwner(ownerFile) {
-  const parsed = JSON.parse(readFileSync(ownerFile, "utf8"));
+  const parsed = parseJsonUtf8Strict(readFileSync(ownerFile), "Runtime lock owner metadata");
   if (
     !parsed ||
     typeof parsed !== "object" ||

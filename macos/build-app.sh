@@ -91,6 +91,8 @@ xcrun xcstringstool compile \
   "$script_directory/Resources/Localization/Localizable.xcstrings" \
   --output-directory "$resources_directory" \
   --serialization-format text
+node "$repository_root/scripts/check-macos-localizations.mjs" \
+  --compiled-directory "$resources_directory"
 
 swift "$script_directory/generate-app-icons.swift" --iconset "$app_iconset_directory"
 /usr/bin/iconutil -c icns "$app_iconset_directory" -o "$resources_directory/AppIcon.icns"
@@ -103,6 +105,10 @@ cp "$repository_root/release-manifest.schema.json" "$runtime_directory/"
 cp "$repository_root/ui-release-catalog.json" "$runtime_directory/"
 cp "$repository_root/state-migrations.json" "$runtime_directory/"
 cp "$repository_root/scripts/build-fingerprint.mjs" "$runtime_directory/scripts/"
+cp "$repository_root/scripts/auth-selection.mjs" "$runtime_directory/scripts/"
+cp "$repository_root/scripts/auth-selection.d.mts" "$runtime_directory/scripts/"
+cp "$repository_root/scripts/execution-storage.mjs" "$runtime_directory/scripts/"
+cp "$repository_root/scripts/execution-storage.d.mts" "$runtime_directory/scripts/"
 cp "$repository_root/scripts/child-shutdown.mjs" "$runtime_directory/scripts/"
 cp "$repository_root/scripts/launcher-options.mjs" "$runtime_directory/scripts/"
 cp "$repository_root/scripts/managed-file.mjs" "$runtime_directory/scripts/"
@@ -112,6 +118,9 @@ cp "$repository_root/scripts/runtime-lock.mjs" "$runtime_directory/scripts/"
 cp "$repository_root/scripts/runtime-status.mjs" "$runtime_directory/scripts/"
 cp "$repository_root/scripts/runtime-status.d.mts" "$runtime_directory/scripts/"
 cp "$repository_root/scripts/start-codex-mcp-bridge.mjs" "$runtime_directory/scripts/"
+cp "$repository_root/scripts/text-integrity.mjs" "$runtime_directory/scripts/"
+cp "$repository_root/scripts/text-integrity.d.mts" "$runtime_directory/scripts/"
+cp "$repository_root/scripts/tunnel-health.mjs" "$runtime_directory/scripts/"
 cp "$repository_root/scripts/tunnel-profile.mjs" "$runtime_directory/scripts/"
 
 package_version="$(node -p "require('./package.json').version")"
@@ -150,6 +159,10 @@ fi
     } finally {
       database.close();
     }
+  '
+  node --input-type=module -e '
+    await import("./dist/macosHelperServer.js");
+    console.log("Validated packaged macOS helper module imports.");
   '
 )
 

@@ -1,0 +1,73 @@
+- main [ref=f1e2]:
+  - generic [ref=f1e4]:
+    - heading "Codex MCP Bridge for ChatGPT" [level=1] [ref=f1e5]
+    - paragraph [ref=f1e6]: 이 브리지 연결을 사용하는 모든 대화에 공유됩니다.
+  - status [ref=f1e7]:
+    - generic [ref=f1e8]: 모델 카탈로그 정상
+  - generic [ref=f1e9]:
+    - generic [ref=f1e10]:
+      - generic [ref=f1e11]:
+        - generic [ref=f1e12]: 접근 전략
+        - combobox "접근 전략 모든 새 작업을 읽기 전용으로 고정합니다." [ref=f1e13]:
+          - option "항상 읽기 전용" [selected]
+          - option "브리지 기본값"
+        - generic [ref=f1e14]: 모든 새 작업을 읽기 전용으로 고정합니다.
+      - generic [ref=f1e15]:
+        - generic [ref=f1e16]: 실행 모델 정책
+        - combobox "실행 모델 정책" [ref=f1e17]:
+          - option "고정" [selected]
+          - option "자동 선택"
+      - generic [ref=f1e18]:
+        - generic [ref=f1e19]:
+          - checkbox "Ultra 추론 허용" [checked] [ref=f1e20]
+          - generic [ref=f1e21]: Ultra 추론 허용
+        - paragraph [ref=f1e22]: Ultra에는 자동 작업 위임이 포함됩니다. 끄면 저장된 선택을 포함해 GPT가 실행할 수 있는 조합에서 Ultra가 제외됩니다. 다른 추론 수준이나 에이전트 기능은 이 설정의 제어 대상이 아닙니다.
+      - generic [ref=f1e23]:
+        - generic [ref=f1e24]: 처리 속도
+        - combobox "처리 속도" [disabled] [ref=f1e25]
+        - text: 속도를 선택하기 전까지 현재 설정을 유지합니다.속도 변경은 새 작업부터 적용합니다. 빠른 속도는 사용량이나 요금에 영향을 줄 수 있습니다. Ultrafast는 계정과 워크스페이스 사용 권한이 확인된 경우에만 표시합니다.
+      - generic [ref=f1e26]:
+        - generic [ref=f1e27]:
+          - generic [ref=f1e28]:
+            - generic [ref=f1e29]: 모델
+            - combobox "모델 활성 백엔드 카탈로그의 정확한 식별자입니다." [ref=f1e30]:
+              - option "GPT-5.6 Sol" [selected]
+            - generic [ref=f1e31]: 활성 백엔드 카탈로그의 정확한 식별자입니다.
+          - generic [ref=f1e32]:
+            - generic [ref=f1e33]: 추론 에포트
+            - combobox "추론 에포트 추론 깊이와 응답 시간의 균형을 맞춥니다." [ref=f1e34]:
+              - option "medium" [selected]
+            - generic [ref=f1e35]: 추론 깊이와 응답 시간의 균형을 맞춥니다.
+        - generic [ref=f1e36]: 저장 이후 접수되는 Codex turn에는 이 exact selection이 강제됩니다. 이미 실행 중인 turn은 접수 시점 결정을 유지합니다.
+      - region [ref=f1e37]:
+        - generic [ref=f1e38]:
+          - generic [ref=f1e39]:
+            - heading "프로젝트" [level=2] [ref=f1e40]
+            - generic [ref=f1e41]: Codex가 작업을 시작할 폴더를 등록하세요. 이 PC의 서로 다른 위치에 있는 폴더를 여러 개 추가할 수 있으며 내부 ID는 자동으로 관리됩니다.
+          - button "첫 프로젝트 등록" [ref=f1e42] [cursor=pointer]
+        - paragraph [ref=f1e43]: 먼저 프로젝트를 등록하세요. Codex가 작업을 시작할 폴더가 필요합니다. 이 PC의 서로 다른 위치에 있는 폴더를 여러 개 추가할 수 있습니다.
+      - generic [ref=f1e44]:
+        - generic [ref=f1e45]: 대화 저장
+        - combobox "대화 저장" [ref=f1e46]:
+          - option "재시작 후에도 저장" [selected]
+          - option "메모리에만 저장"
+      - generic [ref=f1e47]:
+        - generic [ref=f1e48]:
+          - checkbox "브리지 스레드를 Codex 앱에 표시" [checked] [ref=f1e49]
+          - generic [ref=f1e50]: 브리지 스레드를 Codex 앱에 표시
+        - text: 대화 저장과 Codex 앱에서 열기는 별개입니다. 앱에서 열려면 원본 저장소에 접근하고 현재 실행 연결을 해제해야 합니다. Bridge 전용 저장소는 앱에 자동 공유되지 않습니다.
+      - generic [ref=f1e51]:
+        - generic [ref=f1e52]: 인터페이스 언어
+        - combobox "인터페이스 언어 자동은 호스트 앱의 언어를 따릅니다." [ref=f1e53]:
+          - option "자동"
+          - option "English"
+          - option "한국어" [selected]
+        - generic [ref=f1e54]: 자동은 호스트 앱의 언어를 따릅니다.
+      - generic [ref=f1e55]:
+        - generic [ref=f1e56]: 최대 동시 작업 수
+        - spinbutton "최대 동시 작업 수" [ref=f1e57]: "2"
+    - generic [ref=f1e58]:
+      - button "설정 저장" [ref=f1e59] [cursor=pointer]
+      - button "일반 설정 기본값 복원" [ref=f1e60] [cursor=pointer]
+      - status
+    - generic [ref=f1e61]: 접근, 모델, Codex 앱 목록 표시, 인터페이스와 동시 작업 수 설정을 복원합니다. 프로젝트와 순서는 유지됩니다. 모델 설명 버전 기록도 유지됩니다.

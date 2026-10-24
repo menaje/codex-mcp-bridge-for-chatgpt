@@ -1,26 +1,23 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { CodexAppServerUpstreamPool } from "../src/appServerUpstream.js";
 import type { CodexPendingInteraction } from "../src/upstream.js";
+import { independentTestCodexHome } from "./independent-test-auth.js";
 
 // Opt-in feasibility probe: actual CLI/model, programmatic synthetic answer,
 // no ChatGPT widget or parent-model integration is claimed by this script.
 const commands = process.argv.slice(2).filter(argument => argument !== "--run-authenticated");
 assert.ok(process.argv.includes("--run-authenticated") && commands.length && commands.every(path.isAbsolute),
   "Pass --run-authenticated followed by absolute CLI paths.");
-const loginFile = path.join(process.env.CODEX_HOME || path.join(homedir(), ".codex"), "auth.json");
-const auth = JSON.parse(await readFile(loginFile, "utf8"));
-assert.ok(auth.auth_mode === "chatgpt" && typeof auth.tokens?.access_token === "string",
-  "An existing file-based ChatGPT login is required.");
+const isolatedHome = await independentTestCodexHome();
 const reports: Record<string, unknown>[] = [];
 
 for (const command of commands) {
   const directory = await mkdtemp(path.join(tmpdir(), "bridge-question-feasibility-"));
   await chmod(directory, 0o700);
-  const isolatedHome = path.join(directory, "home");
   const project = path.join(directory, "synthetic-project");
   const report: Record<string, unknown> = {
     version: execFileSync(command, ["--version"], { encoding: "utf8", timeout: 5_000 }).trim(),
@@ -45,12 +42,7 @@ for (const command of commands) {
     console.log(JSON.stringify({ stage: name, version: report.version }));
   };
   try {
-    await mkdir(isolatedHome, { mode: 0o700 });
     await mkdir(project);
-    await copyFile(loginFile, path.join(isolatedHome, "auth.json"));
-    await chmod(path.join(isolatedHome, "auth.json"), 0o600);
-    await writeFile(path.join(isolatedHome, "config.toml"),
-      'cli_auth_credentials_store = "file"\nmodel_reasoning_effort = "low"\n');
     pool = new CodexAppServerUpstreamPool(command, 1, { environment: {
       ...process.env, CODEX_HOME: isolatedHome, OPENAI_API_KEY: undefined, CODEX_API_KEY: undefined
     } });
@@ -134,7 +126,7 @@ for (const command of commands) {
     report.elapsedMs = Date.now() - started;
     report.stages = stages;
     report.eventCounts = eventCounts;
-    report.temporaryHomeRemoved = true;
+    report.temporaryProjectRemoved = true;
   }
   console.log(JSON.stringify({ stage: "finished", ...report }));
 }

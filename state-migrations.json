@@ -1,7 +1,7 @@
 {
   "catalogVersion": 1,
   "immutabilityPolicy": "append-only-after-release-v1",
-  "currentSchema": 19,
+  "currentSchema": 32,
   "supportedSourceSchemas": [
     3,
     4,
@@ -18,7 +18,20 @@
     15,
     16,
     17,
-    18
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31
   ],
   "unsupportedSourceSchemas": [
     1,
@@ -157,6 +170,110 @@
       "implementation": "migrateV18ToV19",
       "introducedCommit": "848d56510a7871b0d182955fba6838e8306a09d5",
       "sha256": "a4db1fb8dc0476a8c2906dc11b47abdca8a4f05a12129a31511becdc3af124ad"
+    },
+    {
+      "id": "bridge-state-19-to-20",
+      "fromSchema": 19,
+      "toSchema": 20,
+      "implementation": "migrateV19ToV20",
+      "introducedCommit": "7e7b0c53fc553afe2e3d3297b127a44e77246460",
+      "sha256": "222930aeebb1d123777b3b614bccac9b0ecedd58634b4861056ed5a6ce68ac81"
+    },
+    {
+      "id": "bridge-state-20-to-21",
+      "fromSchema": 20,
+      "toSchema": 21,
+      "implementation": "migrateV20ToV21",
+      "introducedCommit": "129ac0a3e4e368bd00d71d92905b2507e5b36a04",
+      "sha256": "779549234164d275635d5a5d5a3b2aa0df07dc0981035636795d110e5dd5b48a"
+    },
+    {
+      "id": "bridge-state-21-to-22",
+      "fromSchema": 21,
+      "toSchema": 22,
+      "implementation": "migrateV21ToV22",
+      "introducedCommit": "7d3d1dd2e9173e74636ceb9bf0582a4ed793ba6a",
+      "sha256": "1b022cc80df65683a68f6ba6f07913e428c33a38c99506dae1646e90fd36e4ef"
+    },
+    {
+      "id": "bridge-state-22-to-23",
+      "fromSchema": 22,
+      "toSchema": 23,
+      "implementation": "migrateV22ToV23",
+      "introducedCommit": "100a85d569150138fed8c51f96d5d619f2d634c9",
+      "sha256": "dbbb01350e3668acfeea64f9f4d113a5455ec51ef472cfd617acc62cd88696ea"
+    },
+    {
+      "id": "bridge-state-23-to-24",
+      "fromSchema": 23,
+      "toSchema": 24,
+      "implementation": "migrateV23ToV24",
+      "introducedCommit": "b1e897a04e6d90128eb01ffc4071783f8d067731",
+      "sha256": "96731d77c7829f4b0c3cd889959a1f8214d09537b8651526b774979903fa81b6"
+    },
+    {
+      "id": "bridge-state-24-to-25",
+      "fromSchema": 24,
+      "toSchema": 25,
+      "implementation": "migrateV24ToV25",
+      "introducedCommit": "b763dba44d802483e4aad16fad9cc8df478b26a7",
+      "sha256": "c986fe17318acecf7ba1acc7b6f5ccf0187b7de10ed6137bdd0f366d5b4d53dc"
+    },
+    {
+      "id": "bridge-state-25-to-26",
+      "fromSchema": 25,
+      "toSchema": 26,
+      "implementation": "migrateV25ToV26",
+      "introducedCommit": "f38129dcd64c4b90acc18e01416b7a2d210acf89",
+      "sha256": "2a5344eeadab373102669451dc01080292964600aa0c9c02146a09a7d7cf4510"
+    },
+    {
+      "id": "bridge-state-26-to-27",
+      "fromSchema": 26,
+      "toSchema": 27,
+      "implementation": "migrateV26ToV27",
+      "introducedCommit": "9c97bde23da6533cf51c56e40a38b37650577a2f",
+      "sha256": "d978f84e6ae660cf674a0a1a89e12d113740ac56c1c075c8d53b995cb9ad422a"
+    },
+    {
+      "id": "bridge-state-27-to-28",
+      "fromSchema": 27,
+      "toSchema": 28,
+      "implementation": "migrateV27ToV28",
+      "introducedCommit": "4c82f267886df895c06b425b7f349c6ff5534fd9",
+      "sha256": "feacf67a87491a8d444ecadedb42e906ddbc3ddfb6ed39bd0af1a3cf7001d63a"
+    },
+    {
+      "id": "bridge-state-28-to-29",
+      "fromSchema": 28,
+      "toSchema": 29,
+      "implementation": "migrateV28ToV29",
+      "introducedCommit": "830eec5cc696c607f550b8df189130ffb30655d2",
+      "sha256": "14cf1ace8c8a653b9d7d340abdf2fed0d58d7d20a1cb20133955f3c428aa3e46"
+    },
+    {
+      "id": "bridge-state-29-to-30",
+      "fromSchema": 29,
+      "toSchema": 30,
+      "implementation": "migrateV29ToV30",
+      "introducedCommit": "2a177a258ace53624a6c6b839f803bf24e028ad5",
+      "sha256": "f6862dc149a02e081d57017adab76a36d1ba2cef26edaad66e68c53231fb38b4"
+    },
+    {
+      "id": "bridge-state-30-to-31",
+      "fromSchema": 30,
+      "toSchema": 31,
+      "implementation": "migrateV30ToV31",
+      "introducedCommit": "cce99c5fdfeaafe2e50861d826dffd15cdd0f6b1",
+      "sha256": "19374d8451fa6e8c43cc8cdf3b4ea419a4650230af1ee3ae326081507162c3c6"
+    },
+    {
+      "id": "bridge-state-31-to-32",
+      "fromSchema": 31,
+      "toSchema": 32,
+      "implementation": "migrateV31ToV32",
+      "introducedCommit": "6c1b3974c5218b8e7c0b1612ef1c08904cdce3da",
+      "sha256": "41c79184b87ec9c39572634c93cb81332db0a250d1839fbf2dc646856400ba5d"
     }
   ],
   "fixtures": [
@@ -260,6 +377,84 @@
       "kind": "derived-migration-checkpoint",
       "sourceFixtureSchema": 16,
       "afterMigrationId": "bridge-state-16-to-17"
+    },
+    {
+      "schema": 19,
+      "kind": "derived-migration-checkpoint",
+      "sourceFixtureSchema": 18,
+      "afterMigrationId": "bridge-state-18-to-19"
+    },
+    {
+      "schema": 20,
+      "kind": "derived-migration-checkpoint",
+      "sourceFixtureSchema": 18,
+      "afterMigrationId": "bridge-state-19-to-20"
+    },
+    {
+      "schema": 21,
+      "kind": "derived-migration-checkpoint",
+      "sourceFixtureSchema": 18,
+      "afterMigrationId": "bridge-state-20-to-21"
+    },
+    {
+      "schema": 22,
+      "kind": "derived-migration-checkpoint",
+      "sourceFixtureSchema": 18,
+      "afterMigrationId": "bridge-state-21-to-22"
+    },
+    {
+      "schema": 23,
+      "kind": "derived-migration-checkpoint",
+      "sourceFixtureSchema": 18,
+      "afterMigrationId": "bridge-state-22-to-23"
+    },
+    {
+      "schema": 24,
+      "kind": "derived-migration-checkpoint",
+      "sourceFixtureSchema": 18,
+      "afterMigrationId": "bridge-state-23-to-24"
+    },
+    {
+      "schema": 25,
+      "kind": "derived-migration-checkpoint",
+      "sourceFixtureSchema": 18,
+      "afterMigrationId": "bridge-state-24-to-25"
+    },
+    {
+      "schema": 26,
+      "kind": "derived-migration-checkpoint",
+      "sourceFixtureSchema": 18,
+      "afterMigrationId": "bridge-state-25-to-26"
+    },
+    {
+      "schema": 27,
+      "kind": "derived-migration-checkpoint",
+      "sourceFixtureSchema": 18,
+      "afterMigrationId": "bridge-state-26-to-27"
+    },
+    {
+      "schema": 28,
+      "kind": "derived-migration-checkpoint",
+      "sourceFixtureSchema": 18,
+      "afterMigrationId": "bridge-state-27-to-28"
+    },
+    {
+      "schema": 29,
+      "kind": "derived-migration-checkpoint",
+      "sourceFixtureSchema": 18,
+      "afterMigrationId": "bridge-state-28-to-29"
+    },
+    {
+      "schema": 30,
+      "kind": "derived-migration-checkpoint",
+      "sourceFixtureSchema": 18,
+      "afterMigrationId": "bridge-state-29-to-30"
+    },
+    {
+      "schema": 31,
+      "kind": "derived-migration-checkpoint",
+      "sourceFixtureSchema": 18,
+      "afterMigrationId": "bridge-state-30-to-31"
     }
   ]
 }

@@ -1,0 +1,24 @@
+{
+  "snapshotBytes": 31219712,
+  "schemaVersion": "32",
+  "counts": {
+    "jobs": 1425,
+    "agents": 807,
+    "sessions": 831,
+    "job_result_bodies": 49,
+    "job_events": 14164,
+    "job_completion_deliveries": 682
+  },
+  "archivedJobRows": 1395,
+  "jobPayloadBytes": {
+    "minimum": 22,
+    "mean": 252.3719298245614,
+    "maximum": 17777,
+    "total": 359630
+  },
+  "eventPayloadBytes": {
+    "total": 13129558,
+    "maximum": 10516
+  },
+  "boundary": "Read-only SQLite backup from active operational service. Only aggregates published; snapshot contains private user data and remains local. Archived database rows and Dashboard retained execution counts are different populations."
+}

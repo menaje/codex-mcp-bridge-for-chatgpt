@@ -1,0 +1,276 @@
+[
+  {
+    "id": "build",
+    "source": "c83078898053470fb9b7e96e1760ab009addb790 73e92d36100b2da192394d90bdd095d723945c32 fe411f1f4214f9adc1b2482e46bb00ea01547390",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "npm",
+      "run",
+      "build"
+    ],
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review",
+    "tmpdir": "/tmp/cb242-int-tswwmblu",
+    "envOverrides": {},
+    "startedAt": "2026-10-07T18:30:11.735Z",
+    "code": 0,
+    "signal": null,
+    "durationMs": 4318,
+    "finishedAt": "2026-10-07T18:30:16.066Z"
+  },
+  {
+    "id": "tsc-noemit",
+    "source": "c83078898053470fb9b7e96e1760ab009addb790 73e92d36100b2da192394d90bdd095d723945c32 fe411f1f4214f9adc1b2482e46bb00ea01547390",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/.bin/tsc",
+      "--noEmit",
+      "-p",
+      "tsconfig.json"
+    ],
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review",
+    "tmpdir": "/tmp/cb242-int-tswwmblu",
+    "envOverrides": {},
+    "startedAt": "2026-10-07T18:30:16.068Z",
+    "code": 0,
+    "signal": null,
+    "durationMs": 2399,
+    "finishedAt": "2026-10-07T18:30:18.468Z"
+  },
+  {
+    "id": "validate-fast",
+    "source": "c83078898053470fb9b7e96e1760ab009addb790 73e92d36100b2da192394d90bdd095d723945c32 fe411f1f4214f9adc1b2482e46bb00ea01547390",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "npm",
+      "run",
+      "validate:fast"
+    ],
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review",
+    "tmpdir": "/tmp/cb242-int-tswwmblu",
+    "envOverrides": {
+      "CODEX_MCP_BRIDGE_CODEX": "/tmp/codex-cli-0.153.3/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex"
+    },
+    "startedAt": "2026-10-07T18:30:18.475Z",
+    "code": 0,
+    "signal": null,
+    "durationMs": 1368,
+    "finishedAt": "2026-10-07T18:30:19.846Z"
+  },
+  {
+    "id": "focused-242",
+    "source": "c83078898053470fb9b7e96e1760ab009addb790 73e92d36100b2da192394d90bdd095d723945c32 fe411f1f4214f9adc1b2482e46bb00ea01547390",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/.bin/vitest",
+      "run",
+      "test/issue242Characterization.test.ts",
+      "test/issue242Completion.test.ts",
+      "test/issue242ProxyCharacterization.test.ts",
+      "test/issue242ReadTransport.test.ts",
+      "test/issue242R502.test.ts",
+      "test/issue242R502Tunnel.test.ts",
+      "test/httpDiagnostics.test.ts",
+      "test/tunnelHealth.test.ts",
+      "test/runtimeStatus.test.ts",
+      "test/runtimeProcess.test.ts",
+      "test/stateReadProcess.test.ts",
+      "test/companionServer.test.ts",
+      "test/macosHelperServer.test.ts",
+      "test/launcherLifecycle.integration.test.ts",
+      "--maxWorkers=1",
+      "--reporter=default",
+      "--reporter=json",
+      "--outputFile.json=/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/focused-242.json"
+    ],
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review",
+    "tmpdir": "/tmp/cb242-int-tswwmblu",
+    "envOverrides": {
+      "ISSUE_242_TUNNEL_CLIENT": "/opt/homebrew/bin/tunnel-client",
+      "ISSUE_242_R502_REPORT": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/focused-242-proxy.json",
+      "ISSUE_242_R502_TUNNEL_REPORT": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/focused-242-tunnel.json"
+    },
+    "startedAt": "2026-10-07T18:30:19.848Z",
+    "code": 1,
+    "signal": null,
+    "durationMs": 282576,
+    "finishedAt": "2026-10-07T18:35:02.425Z",
+    "counts": {
+      "suites": 29,
+      "passed": 171,
+      "failed": 1,
+      "skipped": 1,
+      "total": 173,
+      "files": 14,
+      "failedFiles": 1
+    }
+  },
+  {
+    "id": "lifecycle-capacity-db",
+    "source": "c83078898053470fb9b7e96e1760ab009addb790 73e92d36100b2da192394d90bdd095d723945c32 fe411f1f4214f9adc1b2482e46bb00ea01547390",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/.bin/vitest",
+      "run",
+      "test/projectLifecycle.test.ts",
+      "test/projectLifecycleHost.test.ts",
+      "test/projectRegistry.test.ts",
+      "test/projectRecovery.test.ts",
+      "test/currentSelectorReplay.test.ts",
+      "test/cancellation.test.ts",
+      "test/executionRecovery.test.ts",
+      "test/executionRuntime.test.ts",
+      "test/executionJournal.test.ts",
+      "test/executionServiceProcess.test.ts",
+      "test/runtimeLifecycle.test.ts",
+      "test/runtimeLifecycleRecovery.test.ts",
+      "test/automaticRecovery.test.ts",
+      "test/stateServiceProcess.test.ts",
+      "test/stateStore.test.ts",
+      "test/stateDatabaseLifecycle.test.ts",
+      "test/stateSchemaMigration.test.ts",
+      "test/stateRecovery.test.ts",
+      "test/tools.test.ts",
+      "--maxWorkers=1",
+      "--reporter=default",
+      "--reporter=json",
+      "--outputFile.json=/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/lifecycle-capacity-db.json"
+    ],
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review",
+    "tmpdir": "/tmp/cb242-int-tswwmblu",
+    "envOverrides": {
+      "ISSUE_242_TUNNEL_CLIENT": "/opt/homebrew/bin/tunnel-client",
+      "ISSUE_242_R502_REPORT": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/lifecycle-capacity-db-proxy.json",
+      "ISSUE_242_R502_TUNNEL_REPORT": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/lifecycle-capacity-db-tunnel.json"
+    },
+    "startedAt": "2026-10-07T18:35:02.434Z",
+    "code": 0,
+    "signal": null,
+    "durationMs": 246070,
+    "finishedAt": "2026-10-07T18:39:08.505Z",
+    "counts": {
+      "suites": 35,
+      "passed": 251,
+      "failed": 0,
+      "skipped": 0,
+      "total": 251,
+      "files": 19,
+      "failedFiles": 0
+    }
+  },
+  {
+    "id": "characterization-1200",
+    "source": "c83078898053470fb9b7e96e1760ab009addb790 73e92d36100b2da192394d90bdd095d723945c32 fe411f1f4214f9adc1b2482e46bb00ea01547390",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/.bin/tsx",
+      "scripts/issue-242-characterization.ts",
+      "1200"
+    ],
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review",
+    "tmpdir": "/tmp/cb242-int-tswwmblu",
+    "envOverrides": {},
+    "startedAt": "2026-10-07T18:39:08.510Z",
+    "code": 0,
+    "signal": null,
+    "durationMs": 3963,
+    "finishedAt": "2026-10-07T18:39:12.474Z"
+  },
+  {
+    "id": "completion-counts",
+    "source": "c83078898053470fb9b7e96e1760ab009addb790 73e92d36100b2da192394d90bdd095d723945c32 fe411f1f4214f9adc1b2482e46bb00ea01547390",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/.bin/tsx",
+      "scripts/issue-242-completion.ts"
+    ],
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review",
+    "tmpdir": "/tmp/cb242-int-tswwmblu",
+    "envOverrides": {},
+    "startedAt": "2026-10-07T18:39:12.475Z",
+    "code": 0,
+    "signal": null,
+    "durationMs": 572,
+    "finishedAt": "2026-10-07T18:39:13.048Z"
+  },
+  {
+    "id": "tunnel-cost",
+    "source": "c83078898053470fb9b7e96e1760ab009addb790 73e92d36100b2da192394d90bdd095d723945c32 fe411f1f4214f9adc1b2482e46bb00ea01547390",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "node",
+      "scripts/issue-242-runtime-cost.mjs",
+      "compare",
+      "/opt/homebrew/bin/tunnel-client"
+    ],
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review",
+    "tmpdir": "/tmp/cb242-int-tswwmblu",
+    "envOverrides": {},
+    "startedAt": "2026-10-07T18:39:13.049Z",
+    "code": 0,
+    "signal": null,
+    "durationMs": 10235,
+    "finishedAt": "2026-10-07T18:39:23.285Z"
+  },
+  {
+    "id": "native-full",
+    "source": "c83078898053470fb9b7e96e1760ab009addb790 73e92d36100b2da192394d90bdd095d723945c32 fe411f1f4214f9adc1b2482e46bb00ea01547390",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "npm",
+      "run",
+      "macos:check"
+    ],
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review",
+    "tmpdir": "/tmp/cb242-int-tswwmblu",
+    "envOverrides": {},
+    "startedAt": "2026-10-07T18:39:23.289Z",
+    "code": 0,
+    "signal": null,
+    "durationMs": 108549,
+    "finishedAt": "2026-10-07T18:41:11.839Z"
+  },
+  {
+    "id": "node-full",
+    "source": "c83078898053470fb9b7e96e1760ab009addb790 73e92d36100b2da192394d90bdd095d723945c32 fe411f1f4214f9adc1b2482e46bb00ea01547390",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/.bin/vitest",
+      "run",
+      "--maxWorkers=1",
+      "--reporter=default",
+      "--reporter=json",
+      "--outputFile.json=/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/node-full.json"
+    ],
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review",
+    "tmpdir": "/tmp/cb242-int-tswwmblu",
+    "envOverrides": {
+      "ISSUE_242_TUNNEL_CLIENT": "/opt/homebrew/bin/tunnel-client",
+      "ISSUE_242_R502_REPORT": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/node-full-proxy.json",
+      "ISSUE_242_R502_TUNNEL_REPORT": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/node-full-tunnel.json"
+    },
+    "startedAt": "2026-10-07T18:41:11.852Z",
+    "code": 1,
+    "signal": null,
+    "durationMs": 755881,
+    "finishedAt": "2026-10-07T18:53:47.734Z",
+    "counts": {
+      "suites": 263,
+      "passed": 1490,
+      "failed": 2,
+      "skipped": 1,
+      "total": 1493,
+      "files": 135,
+      "failedFiles": 2
+    }
+  }
+]

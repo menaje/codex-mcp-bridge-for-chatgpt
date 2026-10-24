@@ -1,0 +1,26 @@
+
+ RUN  v4.1.11 /Volumes/Data/Dev/codex-mcp-bridge-issue-242-p0-w0
+
+ ❯ test/tools.test.ts (55 tests | 1 failed | 54 skipped) 17564ms
+     × preserves saved ultrafast through old-client saves and refuses unverified new execution 17526ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > preserves saved ultrafast through old-client saves and refuses unverified new execution
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:290:40
+    288|   });
+    289|
+    290|   it.each(["future-tier", "ultrafast"])("preserves saved %s through ol…
+       |                                        ^
+    291|     settings.update({ processingSpeed: speed }, settings.current.setti…
+    292|     await client.close(); await new Promise<void>(resolve => server.cl…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 54 skipped (55)
+   Start at  21:57:04
+   Duration  59.26s (transform 30.59s, setup 0ms, import 38.91s, tests 17.56s, environment 0ms)

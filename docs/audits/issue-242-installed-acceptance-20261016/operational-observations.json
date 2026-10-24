@@ -1,0 +1,54 @@
+{
+  "shorterCompatibilityPath": {
+    "problemsOmitted": true,
+    "serverDeadlineMs": 1500,
+    "samples": 2,
+    "failures": 2,
+    "elapsedMs": [
+      1508.432,
+      1506.357
+    ]
+  },
+  "nativeEquivalentPreliminarySuccesses": {
+    "serverDeadlineMs": 2500,
+    "elapsedMs": [
+      1523.802,
+      1252.882,
+      942.136
+    ],
+    "notIncludedInLaterFixedSample": true
+  },
+  "laterNativeEquivalentRawRequest": {
+    "elapsedMs": 2517.762375,
+    "code": -32602,
+    "message": "STATE_READ_STALE: Observation deadline expired; retain the last confirmed view."
+  },
+  "completionAvailability": {
+    "samples": 2,
+    "available": [
+      false,
+      false
+    ],
+    "elapsedMs": [
+      7.583,
+      1076.313333
+    ]
+  },
+  "uiAccess": {
+    "installedAppSelection": "Native CUA getApp(full installed path) timed out twice; no popover/window could be selected. Finder AX access succeeded.",
+    "installedVisualAcceptance": "unverified"
+  },
+  "tunnelObservation": {
+    "launcherPhase": "running",
+    "tunnelPhase": "connected",
+    "healthz": 200,
+    "readyz": 200,
+    "externalPollFresh": true
+  },
+  "production502": {
+    "originalIssueReportedOccurrences": 5,
+    "newlyCapturedCorrelatedFailures": 0,
+    "privateProxyDiagnosticsEnabledByNormalCLI": false,
+    "followup": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/262"
+  }
+}

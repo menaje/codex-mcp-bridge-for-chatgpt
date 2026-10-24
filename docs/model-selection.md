@@ -2,7 +2,7 @@
 
 ## Information sources
 
-`codex_models({"contractVersion":"2"})` returns the current selection mode and
+`codex_models({"refresh":true})` requests a fresh current selection mode and
 policy-allowed model/effort choices. Model names, model descriptions, effort
 descriptions and service-tier descriptions come from the selected Codex
 installation's catalog. In automatic mode, a saved user description replaces
@@ -29,7 +29,43 @@ conversation, its existing knowledge, and instructions from its host. The
 absence of a bridge recommendation table does not guarantee that GPT reasons
 only from the catalog.
 
+## Selecting models and reasoning
+
+In automatic mode, **Only models and efforts I choose** presents separate
+**Models to use** and **Reasoning levels to use** lists in both Settings editors.
+A reasoning checkbox applies to all selected models that support that effort,
+within operator limits. Only supported exact pairs are saved; the execution
+policy, wire format and fixed-mode selectors are unchanged. Selecting a model
+with no saved reasoning choice shows a warning and prevents saving that policy.
+The summary counts executable pairs, so retained disabled Ultra choices do not
+inflate it.
+
+Both model and effort changes recompute the complete set of supported pairs from
+one common effort list. There are no per-model effort overrides or partial
+checkboxes. An effort is shown only when at least one selected model supports it
+within operator limits. Removing its last supporting model hides that effort and
+removes it from the common selection. A selected effort unsupported by another
+selected model produces a notice naming the model and its excluded efforts;
+those combinations are absent from executable discovery and policy enforcement.
+The notice uses catalog support, so operator restrictions do not falsely describe
+an effort as unsupported by a model.
+
+Existing per-model selections are converted using the union of their saved
+efforts, then projected onto supported pairs. The Settings card persists this
+conversion with its next Settings save. The native app autosaves a valid converted
+policy when loading Settings. A conversion with a selected model that has no
+supported selected effort waits for the user to choose another common effort or
+remove that model. The persisted policy remains the existing exact-pair format.
+Disabled Ultra stays saved and inactive until re-enabled, as before.
+
 ## User model descriptions
+
+Model descriptions default to currently executable allowed models. **Show all
+models** includes the remaining catalog and retained descriptions/history.
+Descriptions follow the model chooser's catalog order, with removed model IDs
+appended in alphabetical order. An open description edit remains visible when
+its model is deselected. Display filters and disclosure state are local to the
+editor and never change saved model descriptions or execution policy.
 
 In automatic mode, the native app and Settings card show **Model descriptions**.
 Each model initially shows its official catalog description. **Edit** starts with
@@ -39,8 +75,15 @@ description** and **Use official description** alongside it. Clearing the
 text also restores the official description. Saving untouched official text
 does not create a saved copy.
 
-Shared settings persist only `modelDescriptionOverrides: { [modelId]: text }`.
-The full Settings catalog remains official data. In automatic mode, an overridden
+Shared settings persist the currently active descriptions in
+`modelDescriptionOverrides: { [modelId]: text }`. A separate, per-model database
+history records each real change. **Version history** loads up to 20 entries at a
+time when opened in either editor. Each entry shows its save time, or **Imported
+description** for an override saved before history existed. The editor compares
+the selected version with the current text and the latest official catalog text.
+Applying an older version creates a new version so the change can be undone.
+Saving unchanged text creates no version. The full Settings catalog remains
+official data. In automatic mode, an overridden
 `codex_models.models[]` entry has `descriptionSource: "user"`; otherwise its shape
 and official description remain unchanged. User text is selection guidance, not
 a verified capability claim, and cannot expand the executable choices or alter
@@ -55,11 +98,14 @@ the comparison for modified models. Restoring uses the current catalog result,
 not a copy saved when editing began.
 
 Fixed mode retains user descriptions but ignores them. A model removed from the
-catalog keeps its saved text and remains visible in the editor for editing or
-restoration; that does not make the model executable. Settings reset removes all
-user descriptions. Older saved settings without the map load as an empty map,
-and a new native app hides the editor when connected to an older server that
-does not expose it.
+catalog keeps its saved text and history and remains available under **Show all
+models** for editing or restoration; that does not make the model executable. **Use official
+description** and a general Settings reset remove active overrides while retaining
+history. Those changes are also recorded as versions that reference the current
+official description without copying its text. Older saved settings without the
+map load as an empty map. On schema upgrade, each existing active description
+becomes that model's first version; no missing earlier versions are inferred.
+Older bridge builds do not expose the history control in either editor.
 
 Edits allow up to 2,000 UTF-16 code units per description, 100 stored entries, and
 64 KiB of serialized override data. The editors save the description separately
@@ -69,8 +115,8 @@ overwriting each other, and a failed save preserves the text for review and retr
 ## Ultra eligibility
 
 **Allow Ultra reasoning** controls eligibility for the exact `ultra` effort.
-The saved wire field is still `modelPolicy.constraints.allowDelegation` for
-compatibility. This field does not disable all agent features, prevent GPT from
+The persisted setting field is `modelPolicy.constraints.allowDelegation`.
+This field does not disable all agent features, prevent GPT from
 creating multiple bridge Agents, or configure Codex's general subagent tools.
 Ultra's upstream description includes automatic task delegation; that does not
 make this switch a general delegation permission.
@@ -93,10 +139,10 @@ still invalid.
 In fixed mode, turning Ultra off while the fixed effort is Ultra requires the
 user to select another supported effort before saving. Both editors show the
 conflict and preserve the selected value until the user resolves it. This does
-not silently lower the effort or change models. The existing fixed-mode
-compatibility fallback for a model/effort removed from the catalog is a
-different rule; its effective selection and warning remain visible in the
-execution audit.
+not silently lower the effort or change models. If a fixed model/effort is
+removed from the catalog, the bridge preserves the saved choice and refuses new
+admission until the user selects a supported choice. It never substitutes another
+model or effort. A catalog refresh does not cancel already admitted work.
 
 Already admitted turns keep their immutable execution decision. Changed settings
 apply to later admission and do not cancel an active turn or alter an exact
@@ -120,8 +166,9 @@ Its report, snapshots and screenshots are written to `output/playwright/ultra-po
 The [dated completion review](audits/2026-09-09-ultra-policy.md) records acceptance
 criteria, executed checks and the limits of runtime verification.
 
-Model-description tests cover persistence, legacy settings, current-catalog
-restoration, fixed-mode behavior, unchanged execution references and concurrent
-edits. Run `npm run test:model-descriptions-browser` for the card flow against
+Model-description tests cover persistence, migration and backup, paged history,
+rollback, reset, failed writes, current-catalog restoration, fixed-mode behavior,
+unchanged execution references and concurrent edits. Run
+`npm run test:model-descriptions-browser` for the card flow against
 the real in-memory MCP settings path and a simulated upstream catalog. It writes
 its report and screenshots to `output/playwright/model-descriptions/`.

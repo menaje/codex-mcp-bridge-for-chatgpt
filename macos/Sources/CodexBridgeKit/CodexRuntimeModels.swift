@@ -53,6 +53,7 @@ public struct CodexRuntimeActions: Codable, Sendable, Equatable {
 public struct CodexRuntimeSnapshot: Codable, Sendable, Equatable {
     public let billing: CodexAccountUsage.Billing.Costs?
     public let account: CodexAccountUsage?
+    public let authSelection: CodexAuthSelection?
     public let knownVersions: [String]?
     public struct ManagedVersion: Codable, Sendable, Equatable {
         public let version: String
@@ -66,6 +67,11 @@ public struct CodexRuntimeSnapshot: Codable, Sendable, Equatable {
     public let candidates: [CodexInstallation]
     public let selectionRequired: Bool
     public let configuredCommand: String?
+    public let environmentPending: Bool?
+    public let appliedEnvironment: CodexRuntimeEnvironment?
+    public let runningEnvironment: CodexRuntimeEnvironment?
+    public let requestedEnvironment: CodexRuntimeEnvironment?
+    public let requestedEnvironmentProblem: BridgeStatusProblem?
     public let pendingSelection: CodexInstallation?
     public let installedVersion: String?
     public let runningVersions: [String]
@@ -90,6 +96,69 @@ public struct CodexRuntimeSnapshot: Codable, Sendable, Equatable {
     }
 }
 
+public struct CodexAuthConnection: Codable, Sendable, Equatable {
+    public let kind: String
+    public let profileId: String?
+    public let homeId: String?
+}
+
+public struct CodexAuthCandidate: Codable, Sendable, Equatable {
+    public let id: String
+    public let connection: CodexAuthConnection
+    public let reused: Bool?
+    public let status: String
+    public let accountKey: String?
+    public let accountEmail: String?
+    public let workspaceName: String?
+    public let workspaceKey: String?
+    public let billingTarget: String?
+    public let verifiedCli: String?
+    public let verifiedAt: String?
+}
+
+public struct CodexAuthSelection: Codable, Sendable, Equatable {
+    public struct Activation: Codable, Sendable, Equatable {
+        public let id: String
+        public let to: CodexAuthConnection
+        public let generation: Int
+        public let status: String
+    }
+    public struct OwnedProfile: Codable, Sendable, Equatable, Identifiable {
+        public let id: String
+        public let kind: String
+        public let status: String
+    }
+    public struct KnownHome: Codable, Sendable, Equatable, Identifiable {
+        public let id: String
+        public let home: String
+        public let canonicalHome: String
+    }
+    public let revision: Int
+    public let applied: CodexAuthConnection
+    public let appliedAccountEmail: String?
+    public let appliedWorkspaceName: String?
+    public let appliedWorkspaceKey: String?
+    public let appliedBillingTarget: String?
+    public let pending: CodexAuthConnection?
+    public let pendingAccountEmail: String?
+    public let pendingWorkspaceName: String?
+    public let pendingWorkspaceKey: String?
+    public let pendingBillingTarget: String?
+    public let candidate: CodexAuthCandidate?
+    public let activation: Activation?
+    public let profiles: [OwnedProfile]?
+    public let knownHomes: [KnownHome]?
+    public let overrideActive: Bool
+    public let effective: CodexAuthConnection
+}
+
+public struct CodexRuntimeEnvironment: Codable, Sendable, Equatable {
+    public let runtimeHome: String
+    public let codexHome: String
+    public let configuredCommand: String?
+    public let selection: CodexInstallation?
+}
+
 public struct CodexRuntimeRequest: Encodable, Sendable {
     public var includeAccount: Bool?
     public var billing: CodexBillingInput?
@@ -98,8 +167,24 @@ public struct CodexRuntimeRequest: Encodable, Sendable {
     public let action: String
     public var selectionId: String?
     public var preferences: CodexRuntimePreferences?
+    public var authKind: String?
+    public var authCandidateId: String?
+    public var authProfileId: String?
+    public var authHomeId: String?
+    public var authActivationId: String?
+    public var authRevision: Int?
+    public var authApiKey: String?
+    public var authBillingConfirmed: Bool?
+    public var authRemovalConfirmed: Bool?
+    public var authResolutionConfirmed: Bool?
 
-    public init(action: String, kind: String? = nil, includeAccount: Bool? = nil, version: String? = nil, billing: CodexBillingInput? = nil, selectionId: String? = nil, preferences: CodexRuntimePreferences? = nil) {
+    public init(action: String, kind: String? = nil, includeAccount: Bool? = nil, version: String? = nil, billing: CodexBillingInput? = nil, selectionId: String? = nil, preferences: CodexRuntimePreferences? = nil,
+                authKind: String? = nil, authCandidateId: String? = nil, authProfileId: String? = nil,
+                authHomeId: String? = nil,
+                authActivationId: String? = nil,
+                authRevision: Int? = nil, authApiKey: String? = nil,
+                authBillingConfirmed: Bool? = nil, authRemovalConfirmed: Bool? = nil,
+                authResolutionConfirmed: Bool? = nil) {
         self.includeAccount = includeAccount
         self.billing = billing
         self.version = version
@@ -107,6 +192,16 @@ public struct CodexRuntimeRequest: Encodable, Sendable {
         self.kind = kind
         self.selectionId = selectionId
         self.preferences = preferences
+        self.authKind = authKind
+        self.authCandidateId = authCandidateId
+        self.authProfileId = authProfileId
+        self.authHomeId = authHomeId
+        self.authActivationId = authActivationId
+        self.authRevision = authRevision
+        self.authApiKey = authApiKey
+        self.authBillingConfirmed = authBillingConfirmed
+        self.authRemovalConfirmed = authRemovalConfirmed
+        self.authResolutionConfirmed = authResolutionConfirmed
     }
 }
 
@@ -119,8 +214,7 @@ public struct CodexAccountUsage: Codable, Sendable, Equatable {
         public let windowDurationMins: Double
         public let resetsAt: Double?
         public var id: String { "\(limitId):\(windowDurationMins)" }
-        public var isSpark: Bool { limitId == "codex_bengalfox" }
-        public var displayName: String? { isSpark ? "GPT-5.3-Codex-Spark" : limitName ?? (limitId == "codex" ? "Codex" : nil) }
+        public var displayName: String? { limitName ?? (limitId == "codex" ? "Codex" : nil) }
     }
     public struct Credits: Codable, Sendable, Equatable {
         public let hasCredits: Bool
@@ -141,29 +235,31 @@ public struct CodexAccountUsage: Codable, Sendable, Equatable {
             public let endTime: Double?
         }
         public let actualCosts: Costs?
+        public let kind: String?
     }
     public let billing: Billing?
     public let authMode: String
     public let authenticated: Bool
     public let accountKey: String?
+    public let ownershipKey: String?
+    public let workspaceKey: String?
     public let planType: String?
-    public let windows: [Window]
-    public let credits: Credits?
-    public let resetCredits: ResetCredits?
+    public var windows: [Window]
+    public var credits: Credits?
+    public var resetCredits: ResetCredits?
     public let observedAt: Double
+    public var usageStatus: String? = nil
+    public var usageObservedAt: Double? = nil
 
     public var weeklyUsage: WeeklyUsage? {
-        guard authMode == "chatgpt", let window = windows.first(where: { $0.limitId == "codex" && $0.windowDurationMins == 10080 }) else { return nil }
+        guard authMode == "chatgpt",
+              let checkedAt = usageObservedAt ?? (usageStatus == nil ? observedAt : nil),
+              let window = windows.first(where: { $0.limitId == "codex" && $0.windowDurationMins == 10080 }) else { return nil }
         let formatter = ISO8601DateFormatter()
         return WeeklyUsage(source: "codex-account", limitId: window.limitId, usedPercent: window.usedPercent,
             remainingPercent: window.remainingPercent, windowDurationMins: 10080,
             resetsAt: window.resetsAt.map { formatter.string(from: Date(timeIntervalSince1970: $0)) },
-            observedAt: formatter.string(from: Date(timeIntervalSince1970: observedAt / 1000)))
-    }
-    public var menuSparkWindows: [Window] {
-        guard authMode == "chatgpt" else { return [] }
-        return windows.filter { $0.isSpark && $0.remainingPercent < 100 }
-            .sorted { $0.windowDurationMins > $1.windowDurationMins }
+            observedAt: formatter.string(from: Date(timeIntervalSince1970: checkedAt / 1000)))
     }
     /// Balance is not a spend ledger. Surface it only when a plan window is exhausted.
     public var menuCreditBalance: String? {
@@ -173,8 +269,24 @@ public struct CodexAccountUsage: Codable, Sendable, Equatable {
         return balance
     }
     public func sharesKnownAccount(with other: Self) -> Bool {
-        guard let accountKey, !accountKey.isEmpty else { return false }
-        return authMode == other.authMode && accountKey == other.accountKey
+        guard let ownershipKey, !ownershipKey.isEmpty else { return false }
+        return authMode == other.authMode && ownershipKey == other.ownershipKey
+    }
+
+    public func retainingUnavailableUsage(from previous: Self) -> Self {
+        guard usageStatus == "unavailable", sharesKnownAccount(with: previous),
+              planType == previous.planType else { return self }
+        let previousCheckedAt = previous.usageObservedAt ??
+            (previous.usageStatus == nil ? previous.observedAt : nil)
+        guard let previousCheckedAt, previousCheckedAt.isFinite, previousCheckedAt > 0 else { return self }
+        if let usageObservedAt, usageObservedAt.isFinite,
+           usageObservedAt > 0, usageObservedAt >= previousCheckedAt { return self }
+        var result = self
+        result.windows = previous.windows
+        result.credits = previous.credits
+        result.resetCredits = previous.resetCredits
+        result.usageObservedAt = previousCheckedAt
+        return result
     }
 }
 

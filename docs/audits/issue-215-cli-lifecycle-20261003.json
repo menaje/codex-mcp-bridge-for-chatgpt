@@ -1,0 +1,631 @@
+{
+  "checkedAt": "2026-10-03T09:53:14.854Z",
+  "sourceCommit": "6c7fbe2904c8734695e0fb3f7a196334cad7dbf0",
+  "sourceHash": "3086b1864baf9411d44cc07d57af856fc55652597597deb45feae074976b51d9",
+  "node": "v22.20.0",
+  "nodeAbi": "127",
+  "platform": "darwin",
+  "arch": "arm64",
+  "samples": [
+    {
+      "version": "codex-cli 0.153.3",
+      "executableSha256": "0e1f892695844ad0798dab8895955846450a9e7663476ebf24615814dd377216",
+      "configuredTier": "fast",
+      "provider": "synthetic-loopback-responses",
+      "configVerified": true,
+      "commercialInference": "not-run",
+      "accountEntitlement": "not-queried",
+      "networkGuard": "external proxy requests denied",
+      "blockedExternalAttempts": [],
+      "turns": [
+        {
+          "scenario": "new-inherit",
+          "threadId": "01a1012e-95e9-75d3-9886-35c6e8309d4b",
+          "turnId": "01a1012e-95fa-7d62-8319-2c687b89ac29",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTierForTurn": null
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTier": "priority"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "persistent-fast",
+          "threadId": "01a1012e-95e9-75d3-9886-35c6e8309d4b",
+          "turnId": "01a1012e-9620-77e0-ac19-4a80d65e3264",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTier": "priority"
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTier": "priority"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "turn-standard",
+          "threadId": "01a1012e-95e9-75d3-9886-35c6e8309d4b",
+          "turnId": "01a1012e-9632-7fd1-9fd5-5b592a524a1d",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTierForTurn": "default"
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "continue-inherit",
+          "threadId": "01a1012e-95e9-75d3-9886-35c6e8309d4b",
+          "turnId": "01a1012e-9644-7443-94d2-d17363be8a21",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTierForTurn": null
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTier": "priority"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "legacy-false",
+          "threadId": "01a1012e-95e9-75d3-9886-35c6e8309d4b",
+          "turnId": "01a1012e-9655-7341-a5d2-bdd9ec66e59b",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTier": null
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "new-legacy-false",
+          "threadId": "01a1012e-9666-76a0-b2f3-d4f6a2e2ee2d",
+          "turnId": "01a1012e-968b-78a3-a49a-fcd81bc859cc",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTier": null
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "fork-turn-standard",
+          "threadId": "01a1012e-969f-7880-93be-3028f219e6e6",
+          "turnId": "01a1012e-96c8-74a3-bc9b-a8b41134e60d",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTierForTurn": "default"
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        }
+      ]
+    },
+    {
+      "version": "codex-cli 0.153.3",
+      "executableSha256": "0e1f892695844ad0798dab8895955846450a9e7663476ebf24615814dd377216",
+      "configuredTier": "unset",
+      "provider": "synthetic-loopback-responses",
+      "configVerified": true,
+      "commercialInference": "not-run",
+      "accountEntitlement": "not-queried",
+      "networkGuard": "external proxy requests denied",
+      "blockedExternalAttempts": [],
+      "turns": [
+        {
+          "scenario": "new-inherit",
+          "threadId": "01a1012e-97e1-76d0-9832-94a18b991149",
+          "turnId": "01a1012e-97ee-7790-8953-ad940a4a75d4",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTierForTurn": null
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "persistent-fast",
+          "threadId": "01a1012e-97e1-76d0-9832-94a18b991149",
+          "turnId": "01a1012e-980d-76a0-ba96-1c0558e4436c",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTier": "priority"
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTier": "priority"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "turn-standard",
+          "threadId": "01a1012e-97e1-76d0-9832-94a18b991149",
+          "turnId": "01a1012e-981f-71d3-8bea-35383fb25022",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTierForTurn": "default"
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "continue-inherit",
+          "threadId": "01a1012e-97e1-76d0-9832-94a18b991149",
+          "turnId": "01a1012e-9831-7860-a138-d68bf335ba47",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTierForTurn": null
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTier": "priority"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "legacy-false",
+          "threadId": "01a1012e-97e1-76d0-9832-94a18b991149",
+          "turnId": "01a1012e-9843-7331-9003-108ce1860aa6",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTier": null
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "new-legacy-false",
+          "threadId": "01a1012e-9852-7670-84ea-f168792ba12d",
+          "turnId": "01a1012e-9873-7560-ab7a-3909e7e5885c",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTier": null
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "fork-turn-standard",
+          "threadId": "01a1012e-9888-7180-a86d-7078d124d878",
+          "turnId": "01a1012e-98ab-7691-964f-039f3c74d06b",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTierForTurn": "default"
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        }
+      ]
+    },
+    {
+      "version": "codex-cli 0.160.0",
+      "executableSha256": "112fae7a5a1223e673c8a1791d32338f37df8b527ff1159bb8adac6c4dbf1b4b",
+      "configuredTier": "fast",
+      "provider": "synthetic-loopback-responses",
+      "configVerified": true,
+      "commercialInference": "not-run",
+      "accountEntitlement": "not-queried",
+      "networkGuard": "external proxy requests denied",
+      "blockedExternalAttempts": [],
+      "newModelSample": {
+        "model": "gpt-6.1-sol",
+        "catalogAdvertised": true,
+        "entitlement": "unverified",
+        "fastTier": "priority"
+      },
+      "turns": [
+        {
+          "scenario": "new-inherit",
+          "threadId": "01a1012e-9aa4-7e11-841e-41cbfcd33bcc",
+          "turnId": "01a1012e-9aaf-7950-86d9-280ed0ae010c",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTierForTurn": null
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTier": "priority"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "persistent-fast",
+          "threadId": "01a1012e-9aa4-7e11-841e-41cbfcd33bcc",
+          "turnId": "01a1012e-9ac7-7410-b062-de8e582673bf",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTier": "priority"
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTier": "priority"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "turn-standard",
+          "threadId": "01a1012e-9aa4-7e11-841e-41cbfcd33bcc",
+          "turnId": "01a1012e-9ae1-7e81-8187-756db6343834",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTierForTurn": "default"
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "continue-inherit",
+          "threadId": "01a1012e-9aa4-7e11-841e-41cbfcd33bcc",
+          "turnId": "01a1012e-9af3-71b0-b706-74ee4e495f89",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTierForTurn": null
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTier": "priority"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "legacy-false",
+          "threadId": "01a1012e-9aa4-7e11-841e-41cbfcd33bcc",
+          "turnId": "01a1012e-9b05-7082-acd1-6f77b608cd9e",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTier": null
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "new-legacy-false",
+          "threadId": "01a1012e-9b18-7263-aab5-8d86a6ed15c3",
+          "turnId": "01a1012e-9b34-71c2-a311-27965989d590",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTier": null
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "fork-turn-standard",
+          "threadId": "01a1012e-9b47-7c43-af30-ee4729b7e3d9",
+          "turnId": "01a1012e-9b74-71a3-9e8a-ff7cc402dc0e",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTierForTurn": "default"
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "new-sol-standard",
+          "threadId": "01a1012e-9b86-7571-bf90-6204f6dcebf5",
+          "turnId": "01a1012e-9ba9-70e2-821e-9668714ac155",
+          "sent": {
+            "model": "gpt-6.1-sol",
+            "reasoningEffort": "low",
+            "serviceTierForTurn": "default"
+          },
+          "request": {
+            "model": "gpt-6.1-sol",
+            "reasoningEffort": "low"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "new-sol-fast",
+          "threadId": "01a1012e-9bba-7fe1-aee1-3e27dde69e87",
+          "turnId": "01a1012e-9bde-72e1-b6cd-7a47503c8b35",
+          "sent": {
+            "model": "gpt-6.1-sol",
+            "reasoningEffort": "low",
+            "serviceTierForTurn": "priority"
+          },
+          "request": {
+            "model": "gpt-6.1-sol",
+            "reasoningEffort": "low",
+            "serviceTier": "priority"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        }
+      ]
+    },
+    {
+      "version": "codex-cli 0.160.0",
+      "executableSha256": "112fae7a5a1223e673c8a1791d32338f37df8b527ff1159bb8adac6c4dbf1b4b",
+      "configuredTier": "unset",
+      "provider": "synthetic-loopback-responses",
+      "configVerified": true,
+      "commercialInference": "not-run",
+      "accountEntitlement": "not-queried",
+      "networkGuard": "external proxy requests denied",
+      "blockedExternalAttempts": [],
+      "newModelSample": {
+        "model": "gpt-6.1-sol",
+        "catalogAdvertised": true,
+        "entitlement": "unverified",
+        "fastTier": "priority"
+      },
+      "turns": [
+        {
+          "scenario": "new-inherit",
+          "threadId": "01a1012e-9cfa-7f10-bf8d-9a964cfdefb2",
+          "turnId": "01a1012e-9d06-7c61-a572-f41ab6008f7d",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTierForTurn": null
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "persistent-fast",
+          "threadId": "01a1012e-9cfa-7f10-bf8d-9a964cfdefb2",
+          "turnId": "01a1012e-9d1f-7b51-bba7-81500fe00293",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTier": "priority"
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTier": "priority"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "turn-standard",
+          "threadId": "01a1012e-9cfa-7f10-bf8d-9a964cfdefb2",
+          "turnId": "01a1012e-9d2f-7c21-8886-449346c066f7",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTierForTurn": "default"
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "continue-inherit",
+          "threadId": "01a1012e-9cfa-7f10-bf8d-9a964cfdefb2",
+          "turnId": "01a1012e-9d3f-7bd2-bab4-cb41fbba21bc",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTierForTurn": null
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTier": "priority"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "legacy-false",
+          "threadId": "01a1012e-9cfa-7f10-bf8d-9a964cfdefb2",
+          "turnId": "01a1012e-9d4d-78a3-b0b3-f6abb1e16a36",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTier": null
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "new-legacy-false",
+          "threadId": "01a1012e-9d5a-77f0-8261-b0e1ffe6ce2e",
+          "turnId": "01a1012e-9d7b-7c70-b8fc-3eeec8949e0d",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTier": null
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "fork-turn-standard",
+          "threadId": "01a1012e-9d8b-7651-bf51-6aee3c721af6",
+          "turnId": "01a1012e-9dab-7e72-84bf-3a55ebadcbd7",
+          "sent": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "serviceTierForTurn": "default"
+          },
+          "request": {
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "new-sol-standard",
+          "threadId": "01a1012e-9dbc-7aa3-a4dc-49c1d3f51655",
+          "turnId": "01a1012e-9ddf-7e40-a1fe-180af8b75c79",
+          "sent": {
+            "model": "gpt-6.1-sol",
+            "reasoningEffort": "low",
+            "serviceTierForTurn": "default"
+          },
+          "request": {
+            "model": "gpt-6.1-sol",
+            "reasoningEffort": "low"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        },
+        {
+          "scenario": "new-sol-fast",
+          "threadId": "01a1012e-9def-70b0-80c8-fa2687b6f9ac",
+          "turnId": "01a1012e-9e11-73b2-b0e8-f492ef44511e",
+          "sent": {
+            "model": "gpt-6.1-sol",
+            "reasoningEffort": "low",
+            "serviceTierForTurn": "priority"
+          },
+          "request": {
+            "model": "gpt-6.1-sol",
+            "reasoningEffort": "low",
+            "serviceTier": "priority"
+          },
+          "response": "local-fixture-complete",
+          "terminal": "completed",
+          "appliedProcessingTier": "unconfirmed"
+        }
+      ]
+    }
+  ]
+}

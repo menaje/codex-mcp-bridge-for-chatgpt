@@ -1,9 +1,9 @@
 /**
- * Schema 19 is the complete schema for a new installation. Upgrade code lives
- * in stateStore.ts; fresh databases must never be assembled by replaying old
- * migrations.
+ * Schema 19 remains the immutable released base DDL used by its recorded
+ * migration. Fresh databases apply the v20 through v31 projections below in the
+ * same transaction; older databases follow the append-only migration catalog.
  */
-export const CURRENT_STATE_SCHEMA_VERSION = "19";
+export const CURRENT_STATE_SCHEMA_VERSION = "32";
 
 export const CURRENT_STATE_SCHEMA = `
   CREATE TABLE scopes (
@@ -492,4 +492,250 @@ export const CURRENT_STATE_SCHEMA = `
     active INTEGER NOT NULL CHECK(active IN (0,1)),
     updated_at INTEGER NOT NULL
   ) STRICT;
+`;
+
+/** Remove the retired foreground/background execution choice from durable
+ * current state. Request hashes, results, cancellation provenance, and the
+ * scope/request uniqueness key remain untouched. */
+export const V20_ASYNC_EXECUTION_MIGRATION_SCHEMA = `
+  UPDATE jobs
+     SET payload = json_remove(payload, '$.executionMode')
+   WHERE json_type(payload, '$.executionMode') IS NOT NULL;
+  ALTER TABLE activities DROP COLUMN execution_mode;
+  ALTER TABLE jobs DROP COLUMN execution_mode;
+`;
+
+/**
+ * Exact Job completion delivery is intentionally separate from the Activity
+ * completion_outbox used by the native macOS notification channel. A stable
+ * receipt identifies one terminal Job version but never grants scope access.
+ */
+export const V21_JOB_COMPLETION_DELIVERY_MIGRATION_SCHEMA = `
+  CREATE TABLE job_completion_deliveries (
+    job_id TEXT PRIMARY KEY REFERENCES jobs(job_id) ON DELETE CASCADE,
+    scope_id TEXT NOT NULL REFERENCES scopes(scope_id) ON DELETE CASCADE,
+    terminal_version INTEGER NOT NULL CHECK(terminal_version >= 1),
+    receipt TEXT NOT NULL UNIQUE CHECK(length(receipt) = 75),
+    state TEXT NOT NULL CHECK(state IN (
+      'pending','leased','host-rejected','host-accepted','acceptance-unknown','result-read'
+    )),
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+    next_attempt_at INTEGER,
+    lease_owner TEXT,
+    lease_expires_at INTEGER,
+    last_host_rejected_at INTEGER,
+    last_host_error TEXT,
+    host_accepted_at INTEGER,
+    acceptance_unknown_at INTEGER,
+    result_read_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    CHECK((state = 'leased') = (lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL)),
+    CHECK(state = 'leased' OR (lease_owner IS NULL AND lease_expires_at IS NULL))
+  ) STRICT;
+  CREATE INDEX job_completion_deliveries_claimable
+    ON job_completion_deliveries(scope_id, state, next_attempt_at, created_at);
+`;
+
+/**
+ * Record which model-visible read path consumed an exact Job completion.
+ * Existing schema-21 rows could only reach result-read through the opaque
+ * completion receipt, so the migration can backfill that source without
+ * inferring anything from host timing.
+ */
+export const V22_JOB_COMPLETION_RESULT_SOURCE_MIGRATION_SCHEMA = `
+  ALTER TABLE job_completion_deliveries
+    ADD COLUMN result_read_source TEXT CHECK(result_read_source IN (
+      'completion-receipt','direct-job-query'
+    ));
+  UPDATE job_completion_deliveries
+     SET result_read_source='completion-receipt'
+   WHERE state='result-read';
+`;
+
+/**
+ * A tool result being constructed and returned by the Bridge is not proof that
+ * ChatGPT received it. Preserve the two offer paths separately without changing
+ * the completion delivery state or stealing a live-card lease. Historical
+ * result-read rows are retained and projected as offers; they are never replayed
+ * merely because schema 23 cannot reconstruct the old transport outcome.
+ */
+export const V23_JOB_COMPLETION_RESULT_OFFER_MIGRATION_SCHEMA = `
+  ALTER TABLE job_completion_deliveries
+    ADD COLUMN completion_result_offered_at INTEGER;
+  ALTER TABLE job_completion_deliveries
+    ADD COLUMN direct_result_offered_at INTEGER;
+  UPDATE job_completion_deliveries
+     SET completion_result_offered_at=result_read_at
+   WHERE result_read_at IS NOT NULL AND result_read_source='completion-receipt';
+  UPDATE job_completion_deliveries
+     SET direct_result_offered_at=result_read_at
+   WHERE result_read_at IS NOT NULL AND result_read_source='direct-job-query';
+`;
+
+/** User-authored model descriptions have a durable, per-model history. The
+ * active override remains in user_settings; the catalog text is never copied.
+ * Legacy rows have no reliable description save time, so their time is NULL. */
+export const V26_MODEL_DESCRIPTION_VERSIONS_MIGRATION_SCHEMA = `
+  CREATE TABLE model_description_versions (
+    model_id TEXT NOT NULL,
+    version INTEGER NOT NULL CHECK(version >= 1),
+    description TEXT,
+    created_at INTEGER,
+    PRIMARY KEY(model_id, version)
+  ) STRICT;
+  INSERT INTO model_description_versions(model_id, version, description, created_at)
+    SELECT json_each.key, 1, json_each.value, NULL
+      FROM user_settings, json_each(user_settings.payload, '$.modelDescriptionOverrides')
+     WHERE json_each.type = 'text' AND json_each.value <> '';
+`;
+
+/** The retired GPT–user Decision Card state has no current reader or writer.
+ * Keep schema 24 intact for historical upgrades, then remove its four tables. */
+export const V27_DECISION_CARD_RETIREMENT_MIGRATION_SCHEMA = `
+  DROP TABLE decision_card_requests;
+  DROP TABLE decision_submissions;
+  DROP TABLE decision_card_versions;
+  DROP TABLE decision_cards;
+`;
+
+/** Agent history lookups include archived Jobs; the active-only index cannot serve them. */
+export const V28_JOB_HISTORY_INDEX_MIGRATION_SCHEMA = `
+  CREATE INDEX IF NOT EXISTS jobs_agent_recent_history
+    ON jobs(agent_id, created_at DESC, updated_at DESC, job_id DESC);
+`;
+
+/** Exact recovery and connection peers keep each background slice independent
+ * of the size of the retained incident and connection catalogs. */
+export const V29_BACKGROUND_WORK_INDEX_MIGRATION_SCHEMA = `
+  CREATE INDEX IF NOT EXISTS automatic_recovery_agent_state
+    ON automatic_recovery(agent_id, state, recovery_key);
+  CREATE INDEX IF NOT EXISTS automatic_recovery_interrupted
+    ON automatic_recovery(state, attempts, recovery_key);
+  CREATE INDEX IF NOT EXISTS automatic_recovery_due
+    ON automatic_recovery(state, next_attempt_at, recovery_key);
+  CREATE INDEX IF NOT EXISTS automatic_recovery_retention
+    ON automatic_recovery(updated_at, recovery_key);
+  CREATE INDEX IF NOT EXISTS automatic_recovery_incident_retention
+    ON automatic_recovery_incidents(updated_at, identity_key);
+  CREATE INDEX IF NOT EXISTS jobs_history_retention
+    ON jobs(updated_at, job_id)
+    WHERE archived_at IS NOT NULL AND status IN ('completed','failed','interrupted','cancelled');
+  CREATE INDEX IF NOT EXISTS thread_connections_worker
+    ON thread_connections(worker_pid, thread_id);
+  CREATE INDEX IF NOT EXISTS thread_connections_handoff
+    ON thread_connections(handoff_requested, thread_id);
+  CREATE INDEX IF NOT EXISTS thread_connections_protected
+    ON thread_connections(thread_id)
+    WHERE handoff_requested=1 OR phase!='connected';
+  CREATE INDEX IF NOT EXISTS thread_connections_release_due
+    ON thread_connections(persistence, last_finished_at, thread_id)
+    WHERE phase != 'released';
+`;
+
+/** Older sessions have no proven owner. Keep them null and never assign the
+ * current login retroactively when adding durable ownership. */
+export const V30_SESSION_AUTH_BOUNDARY_MIGRATION_SCHEMA = `
+  ALTER TABLE sessions ADD COLUMN auth_boundary TEXT;
+`;
+
+/** Restartable project retirement. No receipt has a relationship to a folder,
+ * project, Activity, session or Agent: it is only a replay/admission fence. */
+export const V31_PROJECT_LIFECYCLE_MIGRATION_SCHEMA = `
+  ALTER TABLE projects ADD COLUMN archive_state TEXT NOT NULL DEFAULT 'active'
+    CHECK(archive_state IN ('active','processing','unresolved','complete'));
+  ALTER TABLE projects ADD COLUMN archive_revision INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE projects ADD COLUMN archive_requested_at INTEGER;
+  ALTER TABLE projects ADD COLUMN archive_reasons TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(archive_reasons));
+  UPDATE projects SET archive_state='processing',archive_revision=1,
+    archive_requested_at=COALESCE(archived_at,deleted_at),archived_at=NULL
+    WHERE archived_at IS NOT NULL OR deleted_at IS NOT NULL;
+  DROP INDEX projects_active_name;
+  DROP INDEX projects_active_cwd;
+  CREATE UNIQUE INDEX projects_active_name ON projects(name_key)
+    WHERE archive_state='active' AND deleted_at IS NULL;
+  CREATE UNIQUE INDEX projects_active_cwd ON projects(cwd)
+    WHERE archive_state='active' AND deleted_at IS NULL;
+  CREATE INDEX projects_archive_pending ON projects(archive_state,updated_at,project_id);
+  CREATE TABLE retired_requests (
+    namespace TEXT NOT NULL,
+    scope_id TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    subject_id TEXT,
+    request_hash TEXT,
+    hash_version INTEGER,
+    outcome TEXT NOT NULL,
+    retired_at INTEGER NOT NULL,
+    PRIMARY KEY(namespace,scope_id,request_id)
+  ) STRICT;
+  CREATE INDEX retired_requests_subject ON retired_requests(namespace,subject_id);
+  ALTER TABLE codex_question_deliveries ADD COLUMN job_id TEXT;
+  CREATE INDEX codex_question_deliveries_job ON codex_question_deliveries(job_id);
+  CREATE TABLE retired_threads (
+    thread_id TEXT PRIMARY KEY,
+    retired_at INTEGER NOT NULL
+  ) STRICT;
+`;
+
+/** Policy clock is immutable; missing historical details remain explicitly partial. */
+export const V32_HISTORY_POLICY_MIGRATION_SCHEMA = `
+  ALTER TABLE jobs ADD COLUMN problem_summary TEXT;
+  UPDATE jobs SET problem_summary=json_extract(payload,'$.error');
+  ALTER TABLE jobs ADD COLUMN ended_at INTEGER;
+  ALTER TABLE jobs ADD COLUMN ended_at_source TEXT CHECK(ended_at_source IN ('recorded','legacy-estimate'));
+  ALTER TABLE jobs ADD COLUMN detail_availability TEXT NOT NULL DEFAULT 'complete'
+    CHECK(detail_availability IN ('complete','legacy-partial','expired'));
+  UPDATE jobs SET ended_at=updated_at,ended_at_source='legacy-estimate'
+    WHERE status IN ('completed','failed','interrupted','cancelled');
+  UPDATE jobs SET detail_availability='legacy-partial'
+    WHERE archived_at IS NOT NULL OR json_extract(payload,'$.resultOmitted')=1;
+  CREATE INDEX jobs_policy_clock ON jobs(ended_at,job_id);
+  CREATE TABLE job_result_bodies (
+    job_id TEXT PRIMARY KEY REFERENCES jobs(job_id) ON DELETE CASCADE,
+    payload TEXT NOT NULL CHECK(json_valid(payload))
+  ) STRICT;
+  INSERT INTO job_result_bodies SELECT job_id,json_extract(payload,'$.result') FROM jobs
+    WHERE json_type(payload,'$.result')='object' AND COALESCE(json_extract(payload,'$.resultOmitted'),0)=0;
+  CREATE TABLE agent_history_revisions (agent_id TEXT PRIMARY KEY, revision INTEGER NOT NULL DEFAULT 0) STRICT;
+  INSERT INTO agent_history_revisions SELECT agent_id,COUNT(*) FROM jobs WHERE agent_id IS NOT NULL GROUP BY agent_id;
+  CREATE TRIGGER job_history_insert AFTER INSERT ON jobs WHEN NEW.agent_id IS NOT NULL BEGIN
+    INSERT INTO agent_history_revisions VALUES (NEW.agent_id,1)
+      ON CONFLICT(agent_id) DO UPDATE SET revision=revision+1;
+  END;
+  CREATE TRIGGER job_history_change AFTER UPDATE OF status,ended_at,payload,summary,detail_availability ON jobs
+    WHEN NEW.agent_id IS NOT NULL AND (NEW.status<>OLD.status OR NEW.ended_at IS NOT OLD.ended_at
+      OR NEW.detail_availability<>OLD.detail_availability
+      OR NEW.ended_at IS NOT NULL AND (NEW.payload<>OLD.payload OR NEW.summary<>OLD.summary)) BEGIN
+    INSERT INTO agent_history_revisions VALUES (NEW.agent_id,1)
+      ON CONFLICT(agent_id) DO UPDATE SET revision=revision+1;
+  END;
+  CREATE TABLE recovery_controls (
+    recovery_key TEXT PRIMARY KEY, agent_id TEXT NOT NULL, job_id TEXT, attempts INTEGER NOT NULL, state TEXT NOT NULL,
+    history_expired INTEGER NOT NULL DEFAULT 0 CHECK(history_expired IN (0,1))
+  ) STRICT;
+  INSERT INTO recovery_controls SELECT recovery_key,agent_id,job_id,attempts,state,0 FROM automatic_recovery;
+  ALTER TABLE automatic_recovery ADD COLUMN occurred_at INTEGER;
+  ALTER TABLE automatic_recovery ADD COLUMN project_id TEXT;
+  ALTER TABLE automatic_recovery ADD COLUMN activity_id TEXT;
+  ALTER TABLE automatic_recovery ADD COLUMN thread_id TEXT;
+  UPDATE automatic_recovery SET occurred_at=created_at,
+    activity_id=(SELECT activity_id FROM jobs WHERE job_id=automatic_recovery.job_id),
+    project_id=(SELECT a.project_id FROM jobs j JOIN activities a ON a.activity_id=j.activity_id WHERE j.job_id=automatic_recovery.job_id);
+  CREATE TABLE automatic_recovery_steps (
+    step_id INTEGER PRIMARY KEY AUTOINCREMENT, recovery_key TEXT NOT NULL,
+    occurred_at INTEGER NOT NULL, step TEXT NOT NULL, details TEXT NOT NULL CHECK(json_valid(details))
+  ) STRICT;
+  CREATE INDEX recovery_steps_parent ON automatic_recovery_steps(recovery_key,step_id);
+  CREATE INDEX recovery_policy_clock ON automatic_recovery(occurred_at,recovery_key);
+  ALTER TABLE codex_question_deliveries ADD COLUMN occurred_at INTEGER;
+  UPDATE codex_question_deliveries SET occurred_at=created_at;
+  CREATE TABLE question_history (
+    question_id TEXT PRIMARY KEY, scope_id TEXT NOT NULL, occurred_at INTEGER NOT NULL,
+    payload TEXT NOT NULL CHECK(json_valid(payload))
+  ) STRICT;
+  INSERT INTO question_history SELECT question_id,scope_id,
+    COALESCE(json_extract(payload,'$.createdAt'),expires_at),payload FROM user_questions;
+  CREATE INDEX question_history_clock ON question_history(occurred_at,question_id);
+  UPDATE user_settings SET payload=json_set(payload,'$.historyRetentionDays',30)
+    WHERE json_type(payload,'$.historyRetentionDays') IS NULL AND json_extract(payload,'$.schemaVersion')=2;
 `;

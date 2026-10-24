@@ -1,0 +1,69 @@
+{
+  "algorithm": "SHA-256",
+  "files": {
+    "ObserverWatchdog.py.txt": {
+      "bytes": 724,
+      "sha256": "9eaa3ccac54156e0736fa45a39b1c35d25c2eb795c57fa853e80c80938189118"
+    },
+    "ProcessIO.c.txt": {
+      "bytes": 661,
+      "sha256": "577ba3a85ad345c4f5264e0515063465895dc70dc5dc87288edcbae37001e210"
+    },
+    "README.md": {
+      "bytes": 17075,
+      "sha256": "aa1e136b1a4e66ecc536722ea52d70ee06204b0d4c8ab5259624bf9ab52cd8dd"
+    },
+    "RPCObserver.py.txt": {
+      "bytes": 6229,
+      "sha256": "5230be4d8297eaacb16e5a12894196643e379d1737fec87a7d2d7d1ed1f33d99"
+    },
+    "SQLObserver.mjs.txt": {
+      "bytes": 2882,
+      "sha256": "c4025c11dcf461a59e7e25c22be57e651ee4df10dc64094398c032f0598e5319"
+    },
+    "completion.json": {
+      "bytes": 1430,
+      "sha256": "ccf3bff1b43d05277633fbc8d5c760eadbd2e7523f8a3d0946c46497ff43380e"
+    },
+    "identity.json": {
+      "bytes": 1748,
+      "sha256": "ed278d4f07ab983699176e661bc16d865d2bc5b14be719f6583ef4f89241ca15"
+    },
+    "operating-rpc-summary.json": {
+      "bytes": 2684,
+      "sha256": "9291d445d7c0854b04901b80492f60cf41681d9b2fe6025b0e1bc6b17277659e"
+    },
+    "operating-rpc.jsonl": {
+      "bytes": 38958,
+      "sha256": "ae3e9a56e24d16bb264307e8c6303072ea4aac1316d7af4e1659d2ff191caf91"
+    },
+    "operational-sql.json": {
+      "bytes": 14557,
+      "sha256": "a0fa7f6940d07750d6c3737c588fcec8133a3b293d2664f637ac5995a96080e3"
+    },
+    "private-evidence-receipt.json": {
+      "bytes": 5655,
+      "sha256": "d462c84d9c8323010eacfa4f2365c9bc78f8502d229d892968b301542cdf4afa"
+    },
+    "process-io.json": {
+      "bytes": 7847,
+      "sha256": "3a8a0b29c3651963a7abe52d762b5e14f51de9760034033598b968f2a17e43f8"
+    },
+    "proxy-fixture.json": {
+      "bytes": 150,
+      "sha256": "287c3c6ae26414cbb6ee988384c3b4d61d9cab09f252a22e772a6e75e8742304"
+    },
+    "sampled-read-summary.json": {
+      "bytes": 687,
+      "sha256": "65c90096808ce70db9d8e81449d776aabc6ab65086e76f5cb90f33afffa1e7fb"
+    },
+    "sql-wait-observation.json": {
+      "bytes": 1875,
+      "sha256": "fff8ae9143d3f56a09182f31cdb76ac924529505b17eb64751336837b2a00973"
+    },
+    "validation.json": {
+      "bytes": 1459,
+      "sha256": "c88bf35febfd9ddea6dbbd5862b4c1b4f45422382037d472c2ab4ed0d072f8c4"
+    }
+  }
+}

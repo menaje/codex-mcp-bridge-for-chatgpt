@@ -1,0 +1,10 @@
+[
+  {
+    "at": "2026-10-07T18:45:47.822769+00:00",
+    "testWorkers": [
+      " 1279 97139       00:56   0.0 /Users/seongsik/.nvm/versions/node/v24.11.1/bin/node --experimental-import-meta-resolve --require /Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/vitest/suppress-warnings.cjs --conditions node --conditions development /Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/vitest/dist/workers/forks.js",
+      " 2375 92697       00:00   3.0 /Users/seongsik/.nvm/versions/node/v24.11.1/bin/node --experimental-import-meta-resolve --require /Volumes/Data/Dev/codex-mcp-bridge-issue-242-candidate-20261008/node_modules/vitest/suppress-warnings.cjs --conditions node --conditions development /Volumes/Data/Dev/codex-mcp-bridge-issue-242-candidate-20261008/node_modules/vitest/dist/workers/forks.js"
+    ],
+    "note": "A different issue-242-candidate-20261008 checkout began validation concurrently during the full Node run. It is unrelated work and is neither modified nor stopped. This task serializes its own validation children; global host exclusivity cannot be claimed."
+  }
+]

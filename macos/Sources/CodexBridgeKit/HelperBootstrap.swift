@@ -47,6 +47,49 @@ public actor HelperBootstrap: HelperBootstrapping {
     typealias LaunchctlRunner = @Sendable ([String]) async -> LaunchctlResult
     private var developmentProcess: Process?
     private let launchctlRunner: LaunchctlRunner
+    // One budget for this connection attempt, including hello RPCs and rollback
+    // verification. A failed reconnect never silently grants another budget.
+    private var connectionDeadline: Date?
+    static let connectionTimeout: TimeInterval = 150
+
+    enum LaunchDecision: Equatable {
+        case useLoaded, awaitLoaded, replaceLoaded, installMissing
+    }
+
+    static func launchDecision(loaded: Bool, definitionMatches: Bool,
+                               compatible: Bool?) -> LaunchDecision {
+        guard loaded else { return .installMissing }
+        guard let compatible else { return .awaitLoaded }
+        return compatible && definitionMatches ? .useLoaded : .replaceLoaded
+    }
+
+    static func waitForCompatibility(
+        deadline: Date,
+        now: @Sendable () -> Date = { Date() },
+        sleep: @Sendable (TimeInterval) async throws -> Void = { seconds in
+            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+        },
+        read: @Sendable (TimeInterval) async throws -> Bool
+    ) async throws {
+        while now() < deadline {
+            try Task.checkCancellation()
+            do {
+                let compatible = try await read(min(2, deadline.timeIntervalSince(now())))
+                guard now() < deadline else { throw HelperBootstrapError.readinessTimeout }
+                if compatible { return }
+                throw HelperBootstrapError.incompatibleHelper
+            } catch is CancellationError { throw CancellationError() }
+            catch let error as HelperBootstrapError { throw error }
+            catch let error as LocalRPCError {
+                // Failed observation is not proof of a different helper. Contract
+                // failures remain visible rather than authorizing replacement.
+                guard [.timeout, .refused, .peerClosed].contains(RPCObservationFailure(error).kind) else { throw error }
+            } catch { throw error }
+            let remaining = deadline.timeIntervalSince(now())
+            if remaining > 0 { try await sleep(min(0.25, remaining)) }
+        }
+        throw HelperBootstrapError.readinessTimeout
+    }
 
     public init() {
         launchctlRunner = { arguments in
@@ -69,38 +112,51 @@ public actor HelperBootstrap: HelperBootstrapping {
         guard let nodeExecutable = paths.nodeExecutable else {
             throw HelperBootstrapError.nodeMissing
         }
-        let currentHello = try? await client.hello()
+        let deadline = connectionDeadline ?? Date().addingTimeInterval(Self.connectionTimeout)
+        connectionDeadline = deadline
+        guard Date() < deadline else { throw HelperBootstrapError.readinessTimeout }
+        try Task.checkCancellation()
+        let currentHello: HelperHello?
+        do { currentHello = try await client.hello(timeout: min(2, deadline.timeIntervalSinceNow)) }
+        catch is CancellationError { throw CancellationError() }
+        catch let error as LocalRPCError {
+            guard [.timeout, .refused, .peerClosed].contains(RPCObservationFailure(error).kind) else { throw error }
+            currentHello = nil
+        }
         let currentIsCompatible = currentHello.map {
             Self.isCompatible($0, runtimeBuildID: runtimeBuildID)
         } ?? false
-        let helperIsReachable: Bool
-        if currentHello != nil {
-            helperIsReachable = true
-        } else {
-            helperIsReachable = (try? await client.probe()) != nil
-        }
+        let helperIsReachable = currentHello != nil
+        try Task.checkCancellation()
+        guard Date() < deadline else { throw HelperBootstrapError.readinessTimeout }
 
         if paths.isPackagedRuntime {
-            try await installAndStartLaunchAgent(
+            do { try await installAndStartLaunchAgent(
                 nodeExecutable: nodeExecutable,
                 helperScript: helperScript,
                 bridgeRoot: bridgeRoot,
+                workingDirectory: paths.configurationDirectory,
                 environmentFile: paths.environmentFile,
                 helperSocket: paths.helperSocket,
                 bridgeSocket: paths.bridgeSocket,
                 runtimeLockDirectory: paths.runtimeLockDirectory,
                 runtimeBuildID: runtimeBuildID,
-                forceRestart: !currentIsCompatible,
+                forceRestart: currentHello != nil && !currentIsCompatible,
                 client: client,
-                helperIsReachable: helperIsReachable
-            )
+                helperIsReachable: helperIsReachable,
+                deadline: deadline
+            ) } catch HelperBootstrapError.replacementPending {
+                connectionDeadline = nil
+                throw HelperBootstrapError.replacementPending
+            }
         } else {
-            if currentIsCompatible { return }
+            if currentIsCompatible { connectionDeadline = nil; return }
             if currentHello != nil { throw HelperBootstrapError.incompatibleHelper }
             try startDevelopmentHelper(
                 nodeExecutable: nodeExecutable,
                 helperScript: helperScript,
                 bridgeRoot: bridgeRoot,
+                workingDirectory: paths.configurationDirectory,
                 environmentFile: paths.environmentFile,
                 helperSocket: paths.helperSocket,
                 bridgeSocket: paths.bridgeSocket,
@@ -108,14 +164,10 @@ public actor HelperBootstrap: HelperBootstrapping {
             )
         }
 
-        for _ in 0..<40 {
-            if let hello = try? await client.hello(),
-               Self.isCompatible(hello, runtimeBuildID: runtimeBuildID) {
-                return
-            }
-            try await Task.sleep(nanoseconds: 250_000_000)
+        try await Self.waitForCompatibility(deadline: deadline) { timeout in
+            Self.isCompatible(try await client.hello(timeout: timeout), runtimeBuildID: runtimeBuildID)
         }
-        throw HelperBootstrapError.readinessTimeout
+        connectionDeadline = nil
     }
 
     /// Stops the helper for the current login session while preserving its
@@ -204,12 +256,18 @@ public actor HelperBootstrap: HelperBootstrapping {
         nodeExecutable: URL,
         helperScript: URL,
         bridgeRoot: URL,
+        workingDirectory: URL,
         environmentFile: URL,
         helperSocket: URL,
         bridgeSocket: URL,
         runtimeLockDirectory: URL
     ) throws {
         if let process = developmentProcess, process.isRunning { return }
+        try FileManager.default.createDirectory(
+            at: workingDirectory,
+            withIntermediateDirectories: true,
+            attributes: nil
+        )
         let process = Process()
         process.executableURL = nodeExecutable
         process.arguments = helperArguments(
@@ -220,7 +278,7 @@ public actor HelperBootstrap: HelperBootstrapping {
             bridgeSocket: bridgeSocket,
             runtimeLockDirectory: runtimeLockDirectory
         )
-        process.currentDirectoryURL = bridgeRoot
+        process.currentDirectoryURL = workingDirectory
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
@@ -232,10 +290,11 @@ public actor HelperBootstrap: HelperBootstrapping {
         developmentProcess = process
     }
 
-    private func installAndStartLaunchAgent(
+    func installAndStartLaunchAgent(
         nodeExecutable: URL,
         helperScript: URL,
         bridgeRoot: URL,
+        workingDirectory: URL,
         environmentFile: URL,
         helperSocket: URL,
         bridgeSocket: URL,
@@ -243,19 +302,25 @@ public actor HelperBootstrap: HelperBootstrapping {
         runtimeBuildID: String,
         forceRestart: Bool,
         client: MacOSHelperClient,
-        helperIsReachable: Bool
+        helperIsReachable: Bool,
+        deadline: Date,
+        launchAgentDirectory: URL? = nil
     ) async throws {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        let launchAgents = home.appendingPathComponent("Library/LaunchAgents", isDirectory: true)
+        let launchAgents = launchAgentDirectory ?? home.appendingPathComponent("Library/LaunchAgents", isDirectory: true)
         let plistURL = launchAgents.appendingPathComponent("\(Self.launchAgentLabel).plist")
+        try FileManager.default.createDirectory(
+            at: workingDirectory,
+            withIntermediateDirectories: true,
+            attributes: nil
+        )
         try FileManager.default.createDirectory(
             at: launchAgents,
             withIntermediateDirectories: true,
             attributes: nil
         )
-        let plist: [String: Any] = [
-            "Label": Self.launchAgentLabel,
-            "ProgramArguments": [nodeExecutable.path] + helperArguments(
+        let plist = Self.launchAgentPropertyList(
+            programArguments: [nodeExecutable.path] + helperArguments(
                 helperScript: helperScript,
                 bridgeRoot: bridgeRoot,
                 environmentFile: environmentFile,
@@ -263,19 +328,12 @@ public actor HelperBootstrap: HelperBootstrapping {
                 bridgeSocket: bridgeSocket,
                 runtimeLockDirectory: runtimeLockDirectory
             ),
-            "WorkingDirectory": bridgeRoot.path,
-            "RunAtLoad": true,
-            "KeepAlive": true,
-            "ProcessType": "Background",
-            "ThrottleInterval": 10,
-            "ExitTimeOut": 45,
-            "StandardOutPath": "/dev/null",
-            "StandardErrorPath": "/dev/null",
-            "EnvironmentVariables": Self.launchAgentEnvironment(
+            workingDirectory: workingDirectory,
+            environment: Self.launchAgentEnvironment(
                 nodeExecutable: nodeExecutable,
                 home: home
             )
-        ]
+        )
         let data = try PropertyListSerialization.data(
             fromPropertyList: plist,
             format: .xml,
@@ -302,15 +360,38 @@ public actor HelperBootstrap: HelperBootstrapping {
             )
         }
         let loaded = serviceState.status == 0
-        let needsRestart = previous != data || forceRestart
-        if loaded && needsRestart && !helperIsReachable &&
+        var compatible: Bool? = helperIsReachable ? !forceRestart : nil
+        if Self.launchDecision(loaded: loaded, definitionMatches: previous == data,
+                               compatible: compatible) == .awaitLoaded {
+            // RunAtLoad/KeepAlive may already be starting exactly this service.
+            // Neither a missing socket nor a changed plist proves it is safe to
+            // remove the loaded service. Obtain its handshake first.
+            do {
+                try await Self.waitForCompatibility(deadline: deadline) { timeout in
+                    Self.isCompatible(try await client.hello(timeout: timeout), runtimeBuildID: runtimeBuildID)
+                }
+                compatible = true
+            } catch HelperBootstrapError.incompatibleHelper {
+                compatible = false
+            }
+        }
+        let decision = Self.launchDecision(loaded: loaded, definitionMatches: previous == data,
+                                          compatible: compatible)
+        if decision == .useLoaded { return }
+        if !loaded && helperIsReachable {
+            throw HelperBootstrapError.replacementBlocked("LaunchAgent 소유권을 확인할 수 없습니다.")
+        }
+        let needsRestart = decision == .replaceLoaded
+        try Task.checkCancellation()
+        guard Date() < deadline else { throw HelperBootstrapError.readinessTimeout }
+        if loaded && needsRestart && compatible == nil &&
             FileManager.default.fileExists(atPath: runtimeLockDirectory.path) {
             throw HelperBootstrapError.replacementBlocked(
                 "기존 helper에 연결할 수 없어 활성 작업 여부를 확인하지 못했습니다."
             )
         }
         var replacementRequestId: String?
-        if loaded && needsRestart && helperIsReachable {
+        if loaded && needsRestart && compatible != nil {
             do {
                 replacementRequestId = try await client.reserveReplacement(targetBuildID: runtimeBuildID)
             } catch HelperBootstrapError.replacementPending {
@@ -329,14 +410,10 @@ public actor HelperBootstrap: HelperBootstrapping {
                 loaded: loaded,
                 needsRestart: needsRestart,
                 verifyReady: {
-                    for _ in 0..<40 {
-                        if let hello = try? await client.hello(),
-                           Self.isCompatible(hello, runtimeBuildID: runtimeBuildID) {
-                            return true
-                        }
-                        try? await Task.sleep(nanoseconds: 250_000_000)
+                    try await Self.waitForCompatibility(deadline: deadline) { timeout in
+                        Self.isCompatible(try await client.hello(timeout: timeout), runtimeBuildID: runtimeBuildID)
                     }
-                    return false
+                    return true
                 }
             )
         } catch {
@@ -344,7 +421,7 @@ public actor HelperBootstrap: HelperBootstrapping {
                 try? RuntimeLifecycleHandoffStore.write(requestId: replacementRequestId, completed: false, runtimeLockDirectory: runtimeLockDirectory,
                     failureCode: RuntimeLifecycleHandoffStore.failureCode(for: error, fallback: "HELPER_REPLACEMENT_FAILED"))
             }
-            if loaded && needsRestart && helperIsReachable {
+            if loaded && needsRestart && compatible != nil {
                 _ = try? await client.startRuntime()
             }
             throw error
@@ -359,7 +436,7 @@ public actor HelperBootstrap: HelperBootstrapping {
         service: String,
         loaded: Bool,
         needsRestart: Bool,
-        verifyReady: (@Sendable () async -> Bool)? = nil
+        verifyReady: (@Sendable () async throws -> Bool)? = nil
     ) async throws {
         var definitionChanged = false
         var oldServiceBootedOut = false
@@ -397,7 +474,7 @@ public actor HelperBootstrap: HelperBootstrapping {
                     launchctlFailure("kickstart", kickstart.output)
                 )
             }
-            if let verifyReady, !(await verifyReady()) {
+            if let verifyReady, !(try await verifyReady()) {
                 throw HelperBootstrapError.readinessTimeout
             }
         } catch {
@@ -546,6 +623,30 @@ public actor HelperBootstrap: HelperBootstrapping {
         return [
             "HOME": home.path,
             "PATH": path
+        ]
+    }
+
+    static func launchAgentPropertyList(
+        programArguments: [String],
+        workingDirectory: URL,
+        environment: [String: String]
+    ) -> [String: Any] {
+        [
+            "Label": launchAgentLabel,
+            "ProgramArguments": programArguments,
+            // The app bundle is replaced during development and updates. Keep
+            // the long-lived helper on a directory that survives that swap.
+            "WorkingDirectory": workingDirectory.standardizedFileURL.path,
+            "RunAtLoad": true,
+            "KeepAlive": true,
+            // UI and MCP requests depend on this service and its children.
+            // Socket IPC does not provide Adaptive's XPC activity boosts.
+            "ProcessType": "Interactive",
+            "ThrottleInterval": 10,
+            "ExitTimeOut": 45,
+            "StandardOutPath": "/dev/null",
+            "StandardErrorPath": "/dev/null",
+            "EnvironmentVariables": environment
         ]
     }
 

@@ -1,0 +1,49 @@
+Building for debugging...
+[0/5] Write sources
+[1/5] Write swift-version--58304C5D6DBC2206.txt
+[3/5] Emitting module CodexBridgeKitTests
+[4/5] Compiling CodexBridgeKitTests AppPresentationTests.swift
+[4/6] Write Objects.LinkFileList
+[5/6] Linking CodexBridgeMacPackageTests
+Build complete! (157.90s)
+Test Suite 'Selected tests' started at 2026-10-07 22:05:26.291.
+Test Suite 'CodexBridgeMacPackageTests.xctest' started at 2026-10-07 22:05:26.308.
+Test Suite 'AppPresentationTests' started at 2026-10-07 22:05:26.310.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testW3ProgressDoesNotClaimAndReadyDrainsTwentyFiveInDebouncedBatches]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testW3ProgressDoesNotClaimAndReadyDrainsTwentyFiveInDebouncedBatches]' passed (1.964 seconds).
+Test Suite 'AppPresentationTests' passed at 2026-10-07 22:05:28.276.
+	 Executed 1 test, with 0 failures (0 unexpected) in 1.964 (1.966) seconds
+Test Suite 'CompletionNotificationWakeTests' started at 2026-10-07 22:05:28.276.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationWakeTests testDuplicateOutOfOrderReconnectEpochAndAppRestart]' started.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationWakeTests testDuplicateOutOfOrderReconnectEpochAndAppRestart]' passed (0.007 seconds).
+Test Case '-[CodexBridgeKitTests.CompletionNotificationWakeTests testLegacyUnsupportedEventsAndDueRetryOrLease]' started.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationWakeTests testLegacyUnsupportedEventsAndDueRetryOrLease]' passed (0.024 seconds).
+Test Case '-[CodexBridgeKitTests.CompletionNotificationWakeTests testProgressAndSettingsNeverWakeClaimsAndLostEventsUseBoundedRecovery]' started.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationWakeTests testProgressAndSettingsNeverWakeClaimsAndLostEventsUseBoundedRecovery]' passed (0.089 seconds).
+Test Suite 'CompletionNotificationWakeTests' passed at 2026-10-07 22:05:28.402.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.121 (0.127) seconds
+Test Suite 'CompletionNotificationsTests' started at 2026-10-07 22:05:28.403.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testDeferredRetryPreflightDoesNotClaimAndRetainsDeadline]' started.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testDeferredRetryPreflightDoesNotClaimAndRetainsDeadline]' passed (0.019 seconds).
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testDeliveredButAckLostReleasesAndUsesSameIdentifierOnRecovery]' started.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testDeliveredButAckLostReleasesAndUsesSameIdentifierOnRecovery]' passed (0.024 seconds).
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testFailedDeliveryReleasesTheClaimForRetry]' started.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testFailedDeliveryReleasesTheClaimForRetry]' passed (0.044 seconds).
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testIssue242RepeatedEmptyClaimsAndPermissionGate]' started.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testIssue242RepeatedEmptyClaimsAndPermissionGate]' passed (0.032 seconds).
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testPermissionRevokedDuringPreflightDoesNotClaim]' started.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testPermissionRevokedDuringPreflightDoesNotClaim]' passed (0.356 seconds).
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testSingleflightAndGenerationFenceBeforeClaim]' started.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testSingleflightAndGenerationFenceBeforeClaim]' passed (0.175 seconds).
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testSuccessfulDeliveryClaimsAndAcknowledgesOpaqueEvents]' started.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testSuccessfulDeliveryClaimsAndAcknowledgesOpaqueEvents]' passed (0.048 seconds).
+Test Suite 'CompletionNotificationsTests' passed at 2026-10-07 22:05:29.104.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.699 (0.702) seconds
+Test Suite 'CodexBridgeMacPackageTests.xctest' passed at 2026-10-07 22:05:29.104.
+	 Executed 11 tests, with 0 failures (0 unexpected) in 2.784 (2.796) seconds
+Test Suite 'Selected tests' passed at 2026-10-07 22:05:29.104.
+	 Executed 11 tests, with 0 failures (0 unexpected) in 2.784 (2.813) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.

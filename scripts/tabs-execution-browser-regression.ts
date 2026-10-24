@@ -1,0 +1,62 @@
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+import {createServer} from 'node:http';
+import {mkdirSync,writeFileSync} from 'node:fs';
+import {DASHBOARD_CARD_HTML} from '../src/dashboardCard.js';
+import {dashboardView} from './card-browser-fixtures.js';
+const artifacts='output/playwright/tabs-execution';mkdirSync(artifacts,{recursive:true});
+function html(legacy=false,locale='en'){return DASHBOARD_CARD_HTML.replace('</head>',`<script>
+window.__calls=[];window.__errors=[];window.__pending=[];window.__holdProblems=false;window.__omitReasons=false;window.__problemRevision='initial';window.__legacy=${legacy};
+addEventListener('error',e=>__errors.push(e.message));addEventListener('unhandledrejection',e=>__errors.push(String(e.reason)));
+const base=${JSON.stringify(dashboardView('structural'))},scopeId='11111111-1111-4111-8111-111111111111',policy='c'.repeat(64),revision='e'.repeat(64),failureMessage=${JSON.stringify(locale==='ko'?'작업 실행 중 연결이 끊어졌습니다.':'Connection lost while running the task.')},cancellationMessage=${JSON.stringify(locale==='ko'?'사용자 요청으로 취소했습니다.':'Requested by user')};
+function row(status,index){const jobId='internal-job-'+index,active=['running','input-required','approval-required','termination-failed'].includes(status),ended=active?null:new Date(Date.now()-60000).toISOString(),turn={jobId,scopeId,activityId:'shared-activity',agentId:'same-agent',executionKey:String(index+1).padStart(32,'0'),executionRevision:revision,executionName:'New detail name '+index,summary:'Internal summary '+index,error:status==='failed'&&!__omitReasons?failureMessage:null,status,endedAt:ended,startedAt:new Date(Date.now()-3600000).toISOString(),updatedAt:new Date().toISOString(),durationMs:active?null:3540000,execution:{model:'model-'+index,reasoningEffort:'high',isCurrent:false},...(index===4?{cancellation:{reason:__omitReasons?' ':cancellationMessage,targetKind:'job',status:'succeeded',requestedAt:new Date(Date.now()-65000).toISOString()}}:{})};return {...base.terminalRows[0],jobId,scopeId,agentId:'same-agent',rowKey:String(index+1).padStart(32,'0'),activityKey:'a'.repeat(32),agentName:${JSON.stringify(locale==='ko'?'작업 에이전트':'Same Agent')},activityTitle:${JSON.stringify(locale==='ko'?'실행한 작업':'Same Activity')},status,bucket:active?'active':'recent',history:[],historyCount:0,policyRevision:policy,executionRevision:revision,nextExpiryAt:ended?new Date(Date.parse(ended)+30*86400000).toISOString():null,latestTurn:turn}}
+function page(offset,rows,total){return {offset,limit:2,returned:rows.length,total,returnedConversations:1,conversationTotal:1,hasPrevious:offset>0,hasNext:offset+rows.length<total}}
+function response(args){const terminal=['completed','failed','interrupted','cancelled','cancelled'].map(row),running=['running','input-required','approval-required','termination-failed'].map((s,i)=>row(s,i+10)),offset=args.terminalOffset||0,activeOffset=args.statusOffset||0,visible=terminal.slice(offset,offset+2),active=running.slice(activeOffset,activeOffset+2),problemOffset=args.problems?.offset||0,problemRows=terminal.slice(1).map((r,i)=>({problemKey:'problem-'+i,revision:'job-revision',jobId:r.jobId,agentId:r.agentId,source:'execution',kind:r.status,reason:r.latestTurn.error,executionAvailability:'retained',row:r,observedAt:new Date().toISOString()})),selected=problemRows.slice(problemOffset,problemOffset+2),problems={query:{kind:'all',offset:problemOffset},revision:__problemRevision,affectedExecutionCount:4,rows:selected,page:page(problemOffset,selected,4)};return {...base,uiLocalePreference:${JSON.stringify(locale)},executionContractVersion:__legacy?undefined:2,historyModeApplied:__legacy?'agents':'jobs',scope:args.scope==='all'?'bridge-wide':'conversation',filter:{mode:args.scope==='all'?'all':'conversation',conversationAvailable:true},historyPolicy:{retentionDays:30,policyRevision:policy},historyIncluded:args.includeHistory!==false,counts:{...base.counts,progressJobCount:4,executionCount:5,problems:4},activeRows:active,terminalRows:args.includeHistory===false?[]:visible,idleRows:[],statusRows:active,statusPagination:page(activeOffset,active,4),pagination:{...base.pagination,active:page(activeOffset,active,4),terminal:page(offset,visible,5)},problems}}
+window.openai={toolOutput:response({scope:'conversation',includeHistory:false}),toolResponseMetadata:{},locale:${JSON.stringify(locale)},notifyIntrinsicHeight:()=>{},callTool:async(name,args)=>{__calls.push({name,args});if(__legacy&&args.historyMode)return {isError:true,content:[{type:'text',text:'-32602 Unrecognized key: historyMode'}]};if(args.view==='dashboard-execution')throw Error('Removed detail UI made a request');if(__holdProblems&&args.problems?.offset>0)await new Promise(resolve=>__pending.push(resolve));return {structuredContent:response(args)}}};
+</script></head>`)}
+const execute=promisify(execFile),session='tabs-presentation-'+process.pid;
+async function cli(...args:string[]){const r=await execute('npx',['--yes','--package','@playwright/cli@0.1.19','playwright-cli','--session',session,'--raw',...args],{timeout:40000,maxBuffer:3*1024*1024});if(r.stdout.includes('### Error'))throw Error(r.stdout);return r.stdout}
+const server=createServer((req,res)=>{res.setHeader('Content-Type','text/html');res.end(html(req.url==='/legacy',req.url==='/ko'?'ko':'en'))});await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));const url='http://127.0.0.1:'+(server.address() as {port:number}).port;
+try{
+ await cli('open',url);writeFileSync(artifacts+'/initial.txt',await cli('snapshot'));
+ console.log(await cli('run-code',`async page=>{
+ const settled=()=>page.waitForFunction(()=>document.querySelector('main').getAttribute('aria-busy')==='false');
+ await page.waitForFunction(()=>!document.querySelector('#dashboard-content').hidden);await settled();
+ for(const [id,count]of [['running-count','4'],['response-count','5'],['problems-count','4']])if(await page.locator('#'+id).innerText()!==count)throw Error('Wrong '+id);
+ if((await page.locator('[data-status-filter="problems"]').innerText()).match(/System|Unavailable|Events/))throw Error('Problem tab contains diagnostics');
+ await page.locator('[data-status-filter="running"]').click();if(await page.locator('#active-list .execution-record').count()!==2)throw Error('Initial running page');
+ if(await page.locator('#active-more').innerText()!=='Show more')throw Error('Running uses Next');
+ await page.locator('#active-more').click();await settled();if(await page.locator('#active-list .execution-record').count()!==4||await page.locator('#active-list .activity-agent').count()!==1)throw Error('Running did not append/group');
+ await page.locator('[data-status-filter="history"]').click();await settled();if(await page.locator('#active-section').isVisible())throw Error('Running duplicated in history');
+ for(const count of [4,5]){await page.locator('#terminal-more').click();await settled();if(await page.locator('#terminal-list .execution-record').count()!==count)throw Error('History did not append '+count)}
+ if(await page.locator('#terminal-list .activity-agent').count()!==1)throw Error('Same Agent repeated');
+ const history=await page.locator('#terminal-list').innerText();for(let i=0;i<5;i++)if(!history.includes('model-'+i))throw Error('Own execution model missing');
+ if(history.match(/internal-job-|Execution details|Load exact|Recent Activity|New detail name|Internal summary/))throw Error('Unwanted history metadata');
+ await page.screenshot({path:'output/playwright/tabs-execution/history.png'});
+ await page.locator('[data-status-filter="problems"]').click();if(await page.locator('#problem-list .execution-record').count()!==2)throw Error('Initial problem page');
+ await page.locator('#problem-next').click();await settled();if(await page.locator('#problem-list .execution-record').count()!==4||await page.locator('#problem-list .activity-agent').count()!==1)throw Error('Problems did not append/group');
+ const text=await page.locator('#problem-list').innerText();if(text.includes('completed')||text.match(/System|Unavailable|Events|Execution details|Load exact|internal-job-|Error.*unrecorded/i))throw Error('Unwanted problem rows or metadata');
+ if((text.match(/Connection lost while running the task[.]/g)||[]).length!==1||(text.match(/Requested by user/g)||[]).length!==1||/Unrecorded/i.test(text))throw Error('Reason presentation');
+ if(await page.locator('#problem-previous,[data-execution-load],.execution-detail').count())throw Error('Removed controls remain');
+ await page.screenshot({path:'output/playwright/tabs-execution/problems.png'});
+ await page.locator('#refresh').click();await settled();await page.evaluate(()=>__problemRevision='changed');await page.locator('#problem-next').click();await settled();if(await page.locator('#problem-list .execution-record').count()!==2)throw Error('Changed problem list appended stale rows');
+ await page.evaluate(()=>__holdProblems=true);await page.locator('#problem-next').click();await page.waitForFunction(()=>__pending.length===1);await page.locator('#scope-all').click();await settled();await page.evaluate(()=>{__holdProblems=false;__pending.splice(0).forEach(resolve=>resolve())});await page.locator('[data-status-filter="problems"]').click();if(await page.locator('#problem-list .execution-record').count()!==2)throw Error('Late page crossed scope');
+ if((await page.evaluate(()=>__calls.filter(x=>x.args.view==='dashboard-execution'))).length)throw Error('Detail reads remain');
+ if((await page.evaluate(()=>__errors)).length)throw Error(JSON.stringify(await page.evaluate(()=>__errors)));
+ }`));
+ await cli('goto',url+'/legacy');await cli('snapshot');console.log(await cli('run-code',`async page=>{await page.waitForFunction(()=>!document.querySelector('#dashboard-content').hidden);await page.locator('#refresh').click();await page.waitForFunction(()=>document.querySelector('main').getAttribute('aria-busy')==='false');const calls=await page.evaluate(()=>__calls);if(!calls.some(x=>x.args.historyMode==='jobs')||!calls.some(x=>x.args.view==='dashboard'&&!x.args.historyMode))throw Error('Legacy retry absent');if((await page.locator('[data-status-filter="history"]').innerText()).includes('groups'))throw Error('Technical history label');}`));
+ await cli('goto',url+'/ko');await cli('snapshot');console.log(await cli('run-code',`async page=>{
+ const settled=()=>page.waitForFunction(()=>document.querySelector('main').getAttribute('aria-busy')==='false');
+ await page.waitForFunction(()=>!document.querySelector('#dashboard-content').hidden);await settled();
+ await page.locator('[data-status-filter="problems"]').click();if(await page.locator('#problem-next').innerText()!=='더 보기')throw Error('Korean more label');
+ if(!((await page.locator('#problem-list').innerText()).includes('작업 실행 중 연결이 끊어졌습니다.')))throw Error('Korean recorded message missing');
+ await page.screenshot({path:'output/playwright/tabs-execution/problems-ko.png'});
+ await page.evaluate(()=>__omitReasons=true);await page.locator('#refresh').click();await settled();
+ await page.locator('#problem-next').click();await settled();
+ if(await page.locator('#problem-list .execution-record').count()!==4||await page.locator('#problems-count').innerText()!=='4')throw Error('Missing reasons changed Job history or count');
+ if(await page.locator('#problem-list .problem-reason,#problem-list .cancellation').count())throw Error('Missing/blank reasons left a reason block');
+ if((await page.locator('#problem-list').innerText()).match(/미기록|Unrecorded|Recorded failure/))throw Error('Missing-reason placeholder remains');
+ await page.screenshot({path:'output/playwright/tabs-execution/problems-without-reasons-ko.png'});
+ }`));
+ writeFileSync(artifacts+'/report.json',JSON.stringify({passed:true,checks:['Activity → Agent → Job grouping','history restores compact model/status/time presentation','no visible Job IDs, execution details or repeated Recent Activity','Running, History and Problems append with Show more','failed/interrupted/cancelled Jobs only','recorded errors and cancellation reasons without false missing-error labels','changed lists rebase and late problem pages cannot cross scope','no exact detail requests','legacy runtime fallback','Korean labels and Korean recorded-message examples','missing and blank reasons have no reason block or placeholder; Job statuses and counts remain']},null,2));
+}finally{await cli('close').catch(()=>{});await new Promise<void>(resolve=>server.close(()=>resolve()))}

@@ -1,0 +1,25 @@
+
+ RUN  v4.1.11 /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w3-completion
+
+ ❯ test/runtimeProcess.test.ts (27 tests | 1 failed | 26 skipped) 20603ms
+     × forwards W3 committed readiness and read-only availability across the runtime generation boundary 20598ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > forwards W3 committed readiness and read-only availability across the runtime generation boundary
+Error: RUNTIME_START_TIMEOUT: Isolated Bridge runtime did not start within 20000 ms.
+ ❯ Timeout.<anonymous> src/runtimeProcess.ts:1072:28
+    1070|       if (this.child !== child || this.generation !== undefined) retur…
+    1071|       child.kill("SIGKILL");
+    1072|       this.startupReject?.(new Error(
+       |                            ^
+    1073|         `RUNTIME_START_TIMEOUT: Isolated Bridge runtime did not start …
+    1074|         `${startupTimeoutMs} ms.`
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 26 skipped (27)
+   Start at  21:49:35
+   Duration  56.51s (transform 27.70s, setup 0ms, import 34.26s, tests 20.60s, environment 0ms)

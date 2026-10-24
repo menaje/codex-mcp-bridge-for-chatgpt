@@ -1,0 +1,134 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { createServer } from 'node:http';
+import { readFileSync, writeFileSync } from 'node:fs';
+
+// Existing Site authentication is hidden stdin only; it is never forwarded to
+// the loopback handler or persisted. No credential file is read.
+process.stdin.setRawMode(true);
+process.stderr.write('Ready for roundtrip JSON on stdin (input is hidden).\n');
+const input = await new Promise((resolve, reject) => {
+  let text = '';
+  const receive = chunk => {
+    text += chunk;
+    if (text.includes('\u0003')) reject(new Error('Cancelled'));
+    if (text.includes('\n')) {
+      process.stdin.off('data', receive); process.stdin.setRawMode(false); process.stdin.pause();
+      resolve(JSON.parse(text));
+    }
+  };
+  process.stdin.setEncoding('utf8'); process.stdin.on('data', receive); process.stdin.resume();
+});
+const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+const serialize = value => JSON.stringify(value);
+const localFixture = JSON.parse(readFileSync(new URL('../../docs/audits/issue-222-sites-independent-20261003/roundtrip/local-fixture.json', import.meta.url), 'utf8'));
+const fixtureDigest = hash(serialize(localFixture.fixture));
+const trialKey = 'issue-222-pull-roundtrip-20261003';
+const report = { startedAt: new Date().toISOString(), projectId: input.projectId, version: input.version,
+  sourceCommit: input.sourceCommit, transport: 'explicit-one-shot-pull', cloudToLocalPush: false,
+  credentialPersisted: false, fixtureDigest, cloudRequests: [], localRequests: [],
+  localHandlerExecutions: 0, scheduledRuns: 0, pollingLoops: 0, mockRequests: 0,
+  offlineTest: 'not performed', duplicateClaimTest: 'not performed',
+  processPid: process.pid, verdict: 'INCOMPLETE' };
+const localEvents = [];
+const server = createServer(async (request, response) => {
+  const reject = status => { response.writeHead(status, { 'Content-Type': 'application/json' }); response.end('{"accepted":false}'); };
+  if (request.method !== 'POST' || request.url !== '/read-fixture') return reject(404);
+  let raw = '';
+  for await (const chunk of request) { raw += chunk; if (raw.length > 4096) return reject(413); }
+  let value;
+  try { value = JSON.parse(raw); } catch { return reject(400); }
+  const expected = { trialKey, operation: 'read_fixture', fixtureKey: localFixture.key, payloadSha256: fixtureDigest };
+  if (serialize(value.command) !== serialize(expected) || value.commandSha256 !== hash(serialize(value.command)) || Object.keys(value).length !== 2) return reject(400);
+  if (report.localHandlerExecutions !== 0) return reject(409);
+  report.localHandlerExecutions++;
+  const receivedAt = new Date().toISOString();
+  // Read from this one fixed task-owned file, not from the cloud response.
+  const stored = JSON.parse(readFileSync(new URL('../../docs/audits/issue-222-sites-independent-20261003/roundtrip/local-fixture.json', import.meta.url), 'utf8'));
+  const result = { trialKey, operation: 'read_fixture', fixtureKey: stored.key, fixture: stored.fixture,
+    payloadSha256: hash(serialize(stored.fixture)), commandSha256: value.commandSha256, localExecutionCount: report.localHandlerExecutions };
+  const bytes = serialize(result);
+  localEvents.push({ receivedAt, respondedAt: new Date().toISOString(), request: value,
+    requestSha256: hash(raw), response: result, responseSha256: hash(bytes),
+    operation: 'read fixed task-owned fixture file', siteCredentialReceived: false });
+  response.writeHead(200, { 'Content-Type': 'application/json', 'Connection': 'close' }); response.end(bytes);
+});
+async function site(label, path, body) {
+  const startedAt = new Date().toISOString();
+  const bytes = body === undefined ? undefined : serialize(body);
+  const response = await fetch(new URL(path, input.origin), {
+    method: bytes === undefined ? 'GET' : 'POST', redirect: 'manual',
+    headers: { 'OAI-Sites-Authorization': `Bearer ${input.token}`, Accept: 'application/json',
+      'Cache-Control': 'no-store', Connection: 'close', ...(bytes ? { 'Content-Type': 'application/json' } : {}) },
+    body: bytes, signal: AbortSignal.timeout(20000),
+  });
+  const raw = await response.text();
+  const safe = raw.split(input.token).join('[REDACTED]').replace(/https?:\/\/[^\s"<>]*[?&](?:sig|token)=[^\s"<>]*/gi, '[SIGNED_URL_REDACTED]');
+  const receipt = { label, path, method: bytes === undefined ? 'GET' : 'POST', startedAt,
+    completedAt: new Date().toISOString(), status: response.status, responseDate: response.headers.get('date'),
+    requestBody: body ?? null, requestSha256: bytes ? hash(bytes) : null,
+    responseBody: safe, responseSha256: hash(safe) };
+  report.cloudRequests.push(receipt);
+  console.log(serialize({ label, status: response.status, completedAt: receipt.completedAt }));
+  if (response.status === 401 || response.status === 403) throw new Error('AUTH_BOUNDARY_STOP');
+  assert.equal(response.status, 200, `${label}: non-success HTTP status`);
+  return JSON.parse(safe);
+}
+const validFixture = value => value.count === 1 && value.persisted === true && value.key === localFixture.key &&
+  serialize(value.fixture) === serialize(localFixture.fixture) && value.payloadSha256 === fixtureDigest &&
+  value.createdAt === '2026-10-02T23:38:53.750Z';
+try {
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen({ host: '127.0.0.1', port: 0, exclusive: true }, resolve); });
+  report.localReadyAt = new Date().toISOString(); report.loopbackPort = server.address().port;
+  const before = await site('original_fixture_before', '/fixture'); assert(validFixture(before));
+  const queued = await site('enqueue_fixed_command', '/roundtrip/enqueue', {});
+  assert.equal(queued.inserted, true); assert.equal(queued.state, 'queued'); assert.equal(queued.count, 1);
+  const duplicateEnqueue = await site('duplicate_enqueue', '/roundtrip/enqueue', {});
+  assert.equal(duplicateEnqueue.inserted, false); assert.equal(duplicateEnqueue.count, 1);
+  assert.equal(duplicateEnqueue.createdAt, queued.createdAt); assert.equal(duplicateEnqueue.commandSha256, queued.commandSha256);
+  const claimed = await site('single_claim', '/roundtrip/claim', {});
+  assert.equal(claimed.claimed, true); assert.equal(claimed.state, 'claimed');
+  assert.equal(claimed.commandSha256, hash(serialize(claimed.command)));
+  const commandBytes = serialize({ command: claimed.command, commandSha256: claimed.commandSha256 });
+  const localStartedAt = new Date().toISOString();
+  const local = await fetch(`http://127.0.0.1:${report.loopbackPort}/read-fixture`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Connection: 'close' }, body: commandBytes,
+    signal: AbortSignal.timeout(5000),
+  });
+  const localBytes = await local.text();
+  report.localRequests.push({ startedAt: localStartedAt, completedAt: new Date().toISOString(), status: local.status,
+    requestSha256: hash(commandBytes), responseSha256: hash(localBytes), responseBody: localBytes });
+  assert.equal(local.status, 200); assert.equal(report.localHandlerExecutions, 1);
+  assert.equal(localEvents[0].requestSha256, hash(commandBytes)); assert.equal(localEvents[0].responseSha256, hash(localBytes));
+  const localResult = JSON.parse(localBytes);
+  assert.equal(localResult.commandSha256, claimed.commandSha256); assert.equal(localResult.payloadSha256, fixtureDigest);
+  const ack = await site('single_ack', '/roundtrip/ack', { response: localResult });
+  assert.equal(ack.accepted, true); assert.equal(ack.duplicate, false); assert.equal(ack.state, 'acked');
+  const duplicateAck = await site('duplicate_ack', '/roundtrip/ack', { response: localResult });
+  assert.equal(duplicateAck.duplicate, true); assert.equal(duplicateAck.count, 1); assert.equal(duplicateAck.ackedAt, ack.ackedAt);
+  const saved = await site('independent_cloud_result_read', '/roundtrip/status');
+  assert.equal(saved.state, 'acked'); assert.equal(saved.count, 1); assert.equal(saved.responseSha256, hash(localBytes));
+  assert.equal(saved.commandSha256, claimed.commandSha256); assert.deepEqual(saved.response, localResult);
+  const after = await site('original_fixture_after', '/fixture'); assert(validFixture(after));
+  assert.equal(after.createdAt, before.createdAt);
+  assert.equal(after.roundtrip.mode, 'explicit-one-shot-pull'); assert.equal(after.roundtrip.status, 'acked');
+  assert.equal(after.roundtrip.commandId, trialKey); assert.equal(after.roundtrip.requestDigest, claimed.commandSha256);
+  assert.equal(after.roundtrip.responseDigest, hash(localBytes)); assert.equal(after.roundtrip.executionCount, 1);
+  assert.equal(after.roundtrip.resultMatchesFixture, true); assert.equal(after.roundtrip.cloudToLocalPush, false);
+  report.checks = { backendCommandDeliveredByClaim: true, actualLoopbackHandlerExecutedOnce: true,
+    requestAndResponseDigestsMatch: true, actualCloudAckPersisted: true, independentCloudResultRead: true,
+    duplicateEnqueueRetainedOne: true, duplicateAckRetainedOneAndTimestamp: true, originalFixturePreserved: true };
+  report.verdict = 'PASS: actual one-shot pull command/loopback response/cloud acknowledgement; no push';
+} catch (error) {
+  report.verdict = error.message === 'AUTH_BOUNDARY_STOP' ? 'BLOCKED: AUTH boundary; no retries' : 'FAIL or blocked: actual trial incomplete';
+  report.failure = error.message === 'AUTH_BOUNDARY_STOP' ? error.message : 'Trial assertion, networking or storage failed; inspect non-sensitive receipts';
+} finally {
+  server.closeAllConnections();
+  if (server.listening) await new Promise(resolve => server.close(resolve));
+  report.localClosedAt = new Date().toISOString(); report.localServerClosed = !server.listening;
+  report.localEvents = localEvents; report.completedAt = new Date().toISOString();
+  report.cloudRequestCount = report.cloudRequests.length; report.localHttpRequestCount = report.localRequests.length;
+  writeFileSync(input.outputPath, JSON.stringify(report, null, 2) + '\n');
+  console.log(serialize({ verdict: report.verdict, cloudRequests: report.cloudRequestCount,
+    localHandlerExecutions: report.localHandlerExecutions, localServerClosed: report.localServerClosed }));
+}

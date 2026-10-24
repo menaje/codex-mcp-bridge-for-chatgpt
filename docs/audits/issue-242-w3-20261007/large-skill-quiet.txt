@@ -1,0 +1,26 @@
+
+ RUN  v4.1.11 /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w3-completion
+
+ ❯ test/companionServer.test.ts (19 tests | 1 failed | 18 skipped) 20036ms
+     × carries the full worst-case JSON-escaped Bridge skill content over the native socket 20031ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/companionServer.test.ts > native companion server > carries the full worst-case JSON-escaped Bridge skill content over the native socket
+Error: Test timed out in 20000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/companionServer.test.ts:303:3
+    301|   });
+    302|
+    303|   it("carries the full worst-case JSON-escaped Bridge skill content ov…
+       |   ^
+    304|     const socketPath = temporarySocketPath();
+    305|     const service = fakeApplicationService();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 18 skipped (19)
+   Start at  22:14:00
+   Duration  21.87s (transform 977ms, setup 0ms, import 1.33s, tests 20.04s, environment 0ms)

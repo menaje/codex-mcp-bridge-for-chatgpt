@@ -7,6 +7,27 @@ import { describe, expect, it, vi } from "vitest";
 import { BridgeStateStore } from "../src/stateStore.js";
 
 describe("durable question lifecycle", () => {
+  it("persists proven pre-send rejection and retries only the identical request after restart", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "question-pre-send-")), file = path.join(root, "state.sqlite");
+    let store = new BridgeStateStore({ file });
+    try {
+      store.questions.beginDelivery("scope", "request", "question", "same-answer");
+      store.questions.finishDelivery("scope", "request", "not-delivered");
+      store.close();
+      store = new BridgeStateStore({ file });
+      expect(store.questions.delivery("scope", "request", "same-answer")).toBe("not-delivered");
+      expect(() => store.questions.beginDelivery("scope", "other-request", "question", "same-answer"))
+        .toThrow("QUESTION_ALREADY_DISPATCHED");
+      expect(() => store.questions.beginDelivery("scope", "request", "question", "different-answer"))
+        .toThrow("ANSWER_REQUEST_CONFLICT");
+      store.questions.beginDelivery("scope", "request", "question", "same-answer");
+      store.questions.finishDelivery("scope", "request", "delivered");
+      expect(store.questions.delivery("scope", "request", "same-answer")).toBe("delivered");
+      expect(() => store.questions.beginDelivery("scope", "request", "question", "same-answer"))
+        .toThrow("QUESTION_ALREADY_DISPATCHED");
+    } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
+  });
+
   it("recovers user answers and never redispatches a crash-boundary Codex answer", () => {
     const root = mkdtempSync(path.join(tmpdir(), "question-restart-")), file = path.join(root, "state.sqlite");
     let store = new BridgeStateStore({ file });
@@ -72,18 +93,19 @@ describe("durable question lifecycle", () => {
       expect(store.questions.startupMaintenance).toEqual({
         dispatchesMarkedUncertain: 1,
         expiredQuestionsRemoved: 1,
-        deliveredJournalsRemoved: 1
+        deliveredJournalsRemoved: 0
       });
       expect(JSON.parse(store.getMeta("state_startup_maintenance_last")!)).toMatchObject({
         reason: "question-expiry-and-dispatch-recovery",
         dispatchesMarkedUncertain: 1,
         expiredQuestionsRemoved: 1,
-        deliveredJournalsRemoved: 1
+        deliveredJournalsRemoved: 0
       });
       const readOnly = new Database(file, { readonly: true, fileMustExist: true });
       expect(readOnly.prepare(
         "SELECT request_id,status FROM codex_question_deliveries ORDER BY request_id"
       ).all()).toEqual([
+        { request_id: "delivered-request", status: "delivered" },
         { request_id: "dispatching-request", status: "uncertain" },
         { request_id: "uncertain-request", status: "uncertain" }
       ]);

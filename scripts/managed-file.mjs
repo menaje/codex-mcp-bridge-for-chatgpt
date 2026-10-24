@@ -12,11 +12,17 @@ import {
 } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
+import { decodeUtf8Strict } from "./text-integrity.mjs";
 
 export function readPrivateFile(filePath, options = {}) {
   const resolved = resolve(filePath);
   assertPrivateFile(resolved, options);
-  return readFileSync(resolved, options.encoding || null);
+  const contents = readFileSync(resolved);
+  if (!options.encoding) return contents;
+  if (options.encoding === "utf8" || options.encoding === "utf-8") {
+    return decodeUtf8Strict(contents, `Managed file ${resolved}`);
+  }
+  return contents.toString(options.encoding);
 }
 
 export function writePrivateFileAtomic(filePath, contents, options = {}) {

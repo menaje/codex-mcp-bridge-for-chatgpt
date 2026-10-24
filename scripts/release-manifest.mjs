@@ -1,6 +1,15 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
@@ -8,11 +17,11 @@ import {
   UI_COMPATIBILITY_RESOURCE_NAMES,
   UI_RELEASE_CATALOG_FILENAME,
   UI_RESOURCE_NAMES,
-  catalogCompatibilityRevisions,
   loadUiReleaseCatalog,
   uiReleaseCatalogSha256,
   validateUiReleaseCatalog
 } from "./ui-release-catalog.mjs";
+import { decodeUtf8Strict, parseJsonUtf8Strict } from "./text-integrity.mjs";
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MANIFEST_FILENAME = "release-manifest.json";
@@ -20,7 +29,14 @@ const PLUGIN_MANIFEST_FILENAME = ".codex-plugin/plugin.json";
 const APP_MANIFEST_FILENAME = ".app.json";
 const UI_LOCK_FILENAME = "ui-manifest.lock.json";
 const UI_GENERATED_SOURCE = "src/uiManifest.generated.ts";
-const UI_SNAPSHOT_DIRECTORY = "ui-resources";
+const UI_RESOURCE_DIRECTORY = "ui-resources";
+const LEGACY_UI_RESOURCE_DIRECTORIES = Object.freeze([
+  "settings",
+  "activity",
+  "dashboard",
+  "question"
+]);
+const LEGACY_UI_SNAPSHOT_PATTERN = /^[0-9a-f]{64}\.html(?:\.base64)?$/;
 const APP_SERVER_SCHEMA_LOCK = "app-server-schema.lock.json";
 const STATE_MIGRATION_CATALOG = "state-migrations.json";
 const RELEASE_NOTES_DIRECTORY = "docs/releases";
@@ -28,6 +44,8 @@ const REQUIRED_PACKAGE_FILES = new Set([
   "dist",
   "README.md",
   "LICENSE",
+  "scripts/text-integrity.mjs",
+  "scripts/text-integrity.d.mts",
   ".codex-plugin",
   ".app.json",
   "release-manifest.json",
@@ -49,7 +67,7 @@ const RELEASE_ASSET_NAMES = [
   "macos-x64-app",
   "release-checksums"
 ];
-const STATE_SOURCE_SCHEMAS = Array.from({ length: 16 }, (_, index) => index + 3);
+const STATE_SOURCE_SCHEMAS = Array.from({ length: 29 }, (_, index) => index + 3);
 const STATE_MIGRATION_DEFINITIONS = [
   [3, 4, "migrateV3ToV4", "a49f5314925897e254c6f34dd9c956cbf31eb1d8", [
     ["src/stateStore.ts", "stableUuid"], ["src/stateStore.ts", "normalizeOptionalString"],
@@ -102,6 +120,45 @@ const STATE_MIGRATION_DEFINITIONS = [
     ["src/stateStore.ts", "nonNegativeInteger"],
     ["src/stateStore.ts", "optionalNonNegativeInteger"],
     ["src/stateStore.ts", "sqlIdentifier"]
+  ]],
+  [19, 20, "migrateV19ToV20", "7e7b0c53fc553afe2e3d3297b127a44e77246460", [
+    ["src/stateSchema.ts", "V20_ASYNC_EXECUTION_MIGRATION_SCHEMA"]
+  ]],
+  [20, 21, "migrateV20ToV21", "129ac0a3e4e368bd00d71d92905b2507e5b36a04", [
+    ["src/stateSchema.ts", "V21_JOB_COMPLETION_DELIVERY_MIGRATION_SCHEMA"]
+  ]],
+  [21, 22, "migrateV21ToV22", "7d3d1dd2e9173e74636ceb9bf0582a4ed793ba6a", [
+    ["src/stateSchema.ts", "V22_JOB_COMPLETION_RESULT_SOURCE_MIGRATION_SCHEMA"]
+  ]],
+  [22, 23, "migrateV22ToV23", "100a85d569150138fed8c51f96d5d619f2d634c9", [
+    ["src/stateSchema.ts", "V23_JOB_COMPLETION_RESULT_OFFER_MIGRATION_SCHEMA"]
+  ]],
+  [23, 24, "migrateV23ToV24", "b1e897a04e6d90128eb01ffc4071783f8d067731", [
+    ["src/decisionCardStore.ts", "V24_DECISION_CARD_MIGRATION_SCHEMA"]
+  ]],
+  [24, 25, "migrateV24ToV25", "b763dba44d802483e4aad16fad9cc8df478b26a7", [
+    ["src/operationalCommandReceipt.ts", "V25_OPERATIONAL_COMMAND_RECEIPT_MIGRATION_SCHEMA"]
+  ]],
+  [25, 26, "migrateV25ToV26", "f38129dcd64c4b90acc18e01416b7a2d210acf89", [
+    ["src/stateSchema.ts", "V26_MODEL_DESCRIPTION_VERSIONS_MIGRATION_SCHEMA"]
+  ]],
+  [26, 27, "migrateV26ToV27", "9c97bde23da6533cf51c56e40a38b37650577a2f", [
+    ["src/stateSchema.ts", "V27_DECISION_CARD_RETIREMENT_MIGRATION_SCHEMA"]
+  ]],
+  [27, 28, "migrateV27ToV28", "4c82f267886df895c06b425b7f349c6ff5534fd9", [
+    ["src/stateSchema.ts", "V28_JOB_HISTORY_INDEX_MIGRATION_SCHEMA"]
+  ]],
+  [28, 29, "migrateV28ToV29", "830eec5cc696c607f550b8df189130ffb30655d2", [
+    ["src/stateSchema.ts", "V29_BACKGROUND_WORK_INDEX_MIGRATION_SCHEMA"]
+  ]],
+  [29, 30, "migrateV29ToV30", "2a177a258ace53624a6c6b839f803bf24e028ad5", [
+    ["src/stateSchema.ts", "V30_SESSION_AUTH_BOUNDARY_MIGRATION_SCHEMA"]
+  ]],
+  [30, 31, "migrateV30ToV31", "cce99c5fdfeaafe2e50861d826dffd15cdd0f6b1", [
+    ["src/stateSchema.ts", "V31_PROJECT_LIFECYCLE_MIGRATION_SCHEMA"]
+  ]],
+  [31, 32, "migrateV31ToV32", "6c1b3974c5218b8e7c0b1612ef1c08904cdce3da", [
+    ["src/stateSchema.ts", "V32_HISTORY_POLICY_MIGRATION_SCHEMA"]
   ]]
 ];
 const STATE_FIXTURE_DEFINITIONS = [
@@ -114,14 +171,19 @@ const STATE_DERIVED_CHECKPOINTS = [
     const schema = index + 4;
     return [schema, 3, `bridge-state-${schema - 1}-to-${schema}`];
   }),
-  [17, 16, "bridge-state-16-to-17"]
+  [17, 16, "bridge-state-16-to-17"],
+  [19, 18, "bridge-state-18-to-19"],
+  ...Array.from({ length: 12 }, (_, index) => {
+    const schema = index + 20;
+    return [schema, 18, `bridge-state-${schema - 1}-to-${schema}`];
+  })
 ];
 
 export function loadReleaseManifest(repoRoot = DEFAULT_REPO_ROOT) {
   const file = path.join(repoRoot, MANIFEST_FILENAME);
   let parsed;
   try {
-    parsed = JSON.parse(readFileSync(file, "utf8"));
+    parsed = parseJsonUtf8Strict(readFileSync(file), MANIFEST_FILENAME);
   } catch (error) {
     throw new Error(`Could not read ${MANIFEST_FILENAME}: ${errorMessage(error)}`);
   }
@@ -237,7 +299,6 @@ export function validateReleaseManifest(value) {
     [
       "strategy",
       "hashAlgorithm",
-      "hashLength",
       "minimumContractGeneration",
       "resources",
       "activeResources",
@@ -247,11 +308,8 @@ export function validateReleaseManifest(value) {
     ],
     "uiResources"
   );
-  if (uiResources.strategy !== "content-hash") fail("uiResources.strategy must be content-hash");
+  if (uiResources.strategy !== "versioned-uri") fail("uiResources.strategy must be versioned-uri");
   if (uiResources.hashAlgorithm !== "sha256") fail("uiResources.hashAlgorithm must be sha256");
-  if (!Number.isInteger(uiResources.hashLength) || uiResources.hashLength < 12 || uiResources.hashLength > 64) {
-    fail("uiResources.hashLength must be an integer between 12 and 64");
-  }
   const minimumContractGeneration = requiredRecord(
     uiResources.minimumContractGeneration,
     "uiResources.minimumContractGeneration"
@@ -273,7 +331,7 @@ export function validateReleaseManifest(value) {
     UI_RESOURCE_NAMES.some((name) => !uiResources.resources.includes(name)) ||
     new Set(uiResources.resources).size !== uiResources.resources.length
   ) {
-    fail("uiResources.resources must contain settings, activity, dashboard, and question exactly once");
+    fail(`uiResources.resources must contain ${UI_RESOURCE_NAMES.join(", ")} exactly once`);
   }
   if (!sameJson(uiResources.activeResources, UI_ACTIVE_RESOURCE_NAMES)) {
     fail(`uiResources.activeResources must be ${UI_ACTIVE_RESOURCE_NAMES.join(", ")} in that order`);
@@ -308,7 +366,7 @@ export function validateReleaseManifest(value) {
     ],
     "stateCompatibility"
   );
-  if (stateCompatibility.currentSchema !== 19) fail("stateCompatibility.currentSchema must be 19");
+  if (stateCompatibility.currentSchema !== 32) fail("stateCompatibility.currentSchema must be 32");
   if (
     !Array.isArray(stateCompatibility.supportedSourceSchemas) ||
     stateCompatibility.supportedSourceSchemas.length !== STATE_SOURCE_SCHEMAS.length ||
@@ -355,11 +413,11 @@ export function validateReleaseManifest(value) {
     "stateCompatibility.persistentContracts"
   );
   const requiredContracts = {
-    userSettingsSchema: 4,
-    taskInputContract: 2,
+    userSettingsSchema: 8,
+    taskInputContract: 6,
     macosHelperProtocol: 2,
-    localCompanionProtocol: 2,
-    remoteCompanionProtocol: 1
+    localCompanionProtocol: 12,
+    remoteCompanionProtocol: 10
   };
   for (const [name, expected] of Object.entries(requiredContracts)) {
     if (persistentContracts[name] !== expected) {
@@ -613,7 +671,7 @@ export function derivePluginManifests(manifest) {
 }
 
 export function expectedStateMigrationCatalog(repoRoot = DEFAULT_REPO_ROOT) {
-  const stateStoreSource = readFileSync(path.join(repoRoot, "src/stateStore.ts"), "utf8");
+  const stateStoreSource = readTextFile(path.join(repoRoot, "src/stateStore.ts"), "src/stateStore.ts");
   const migrations = STATE_MIGRATION_DEFINITIONS.map(
     ([fromSchema, toSchema, implementation, introducedCommit, dependencies]) => {
       const method = extractPrivateMethod(stateStoreSource, implementation);
@@ -623,7 +681,7 @@ export function expectedStateMigrationCatalog(repoRoot = DEFAULT_REPO_ROOT) {
       for (const [relative, symbol] of dependencies) {
         hash.update(`\0${relative}#${symbol}\0`);
         hash.update(extractNamedDeclaration(
-          readFileSync(path.join(repoRoot, relative), "utf8"),
+          readTextFile(path.join(repoRoot, relative), relative),
           symbol
         ));
       }
@@ -647,7 +705,7 @@ export function expectedStateMigrationCatalog(repoRoot = DEFAULT_REPO_ROOT) {
   return {
     catalogVersion: 1,
     immutabilityPolicy: "append-only-after-release-v1",
-    currentSchema: 19,
+    currentSchema: 32,
     supportedSourceSchemas: [...STATE_SOURCE_SCHEMAS],
     unsupportedSourceSchemas: [1, 2],
     retiredLegacyImports: [
@@ -703,6 +761,12 @@ export function checkStateCompatibility(repoRoot, manifest) {
       /CODEX_TASK_INPUT_CONTRACT_VERSION\s*=\s*["'](\d+)["']/,
       "CODEX_TASK_INPUT_CONTRACT_VERSION"
     ),
+    taskExecutionEnvelopeInputContract: sourceInteger(
+      repoRoot,
+      "src/userSettings.ts",
+      /taskInputContract:\s*(\d+)/,
+      "task execution-envelope input contract"
+    ),
     macosHelperProtocol: sourceInteger(
       repoRoot,
       "src/macosHelperServer.ts",
@@ -735,6 +799,11 @@ export function checkStateCompatibility(repoRoot, manifest) {
     if (runtimeContracts[name] !== manifest.stateCompatibility.persistentContracts[name]) {
       throw new Error(`${name} runtime constant drifted from release-manifest.json.`);
     }
+  }
+  if (runtimeContracts.taskExecutionEnvelopeInputContract !== runtimeContracts.taskInputContract) {
+    throw new Error(
+      "Task execution-envelope input contract drifted from CODEX_TASK_INPUT_CONTRACT_VERSION."
+    );
   }
   return expectedCatalog;
 }
@@ -830,7 +899,7 @@ function extractNamedDeclaration(source, name) {
 }
 
 function sourceInteger(repoRoot, relative, pattern, label) {
-  const source = readFileSync(path.join(repoRoot, relative), "utf8");
+  const source = readTextFile(path.join(repoRoot, relative), relative);
   const match = pattern.exec(source);
   if (!match) throw new Error(`Could not read ${label} from ${relative}.`);
   return Number(match[1]);
@@ -880,7 +949,7 @@ function checkReleaseNotesFile(repoRoot, metadata) {
   if (!existsSync(file) || !statSync(file).isFile()) {
     throw new Error(`Release notes ${metadata.releaseNotesFile} are required for ${metadata.stage} stage.`);
   }
-  const notes = readFileSync(file, "utf8").trim();
+  const notes = readTextFile(file, metadata.releaseNotesFile).trim();
   if (notes.length < 200) {
     throw new Error(`Release notes ${metadata.releaseNotesFile} are incomplete.`);
   }
@@ -968,7 +1037,6 @@ function assertImmutableStateMigrationHistory(previous, next) {
 export function deriveUiResourceManifest(
   manifest,
   rendered,
-  _previous,
   catalog = loadUiReleaseCatalog(DEFAULT_REPO_ROOT)
 ) {
   validateReleaseManifest(manifest);
@@ -980,7 +1048,6 @@ export function deriveUiResourceManifest(
   }
   const resources = {};
   const seenUris = new Set();
-  const catalogEntries = catalogCompatibilityRevisions(catalog);
   for (const name of config.resources) {
     const html = rendered?.resources?.[name]?.html;
     if (typeof html !== "string" || !html.trim()) {
@@ -991,7 +1058,9 @@ export function deriveUiResourceManifest(
       throw new Error(`Rendered UI resource ${name} is missing canonical cache metadata.`);
     }
     const digest = uiResourceDigest(config.hashAlgorithm, html, metadata);
-    const uri = `ui://${manifest.product.runtimeName}/${name}/${digest.slice(0, config.hashLength)}.html`;
+    const contract = catalog.currentContracts[name];
+    const uriVersion = contract.uriVersion;
+    const uri = `ui://${manifest.product.runtimeName}/${name}/v${uriVersion}.html`;
     const minimumContractGeneration = config.minimumContractGeneration[name];
     const currentContractGeneration = uiContractGeneration({ metadata });
     if (currentContractGeneration === undefined) {
@@ -1003,67 +1072,35 @@ export function deriveUiResourceManifest(
         `the supported minimum ${minimumContractGeneration}.`
       );
     }
-    const selected = [];
-    if (config.activeResources.includes(name)) {
-      const contract = catalog.currentContracts[name];
-      mergeSelectedUiRevision(selected, {
-        digest,
-        uri,
-        metadata: structuredClone(metadata),
-        releaseProvenance: {
-          inventories: ["development-current"],
-          sourceIds: ["rendered-current"],
-          presenterTool: contract.presenterTool,
-          requiredTools: [...contract.requiredTools]
-        }
-      });
+    if (!config.activeResources.includes(name)) {
+      throw new Error(`UI resource ${name} is not active in release-manifest.json.`);
     }
-    for (const catalogEntry of catalogEntries.filter((entry) => entry.revision.name === name)) {
-      const revision = catalogEntry.revision;
-      mergeSelectedUiRevision(selected, {
-        digest: revision.digest,
-        uri: revision.uri,
-        metadata: structuredClone(revision.metadata),
-        releaseProvenance: {
-          inventories: [catalogEntry.inventory],
-          sourceIds: [catalogEntry.sourceId],
-          presenterTool: revision.presenterTool,
-          requiredTools: [...revision.requiredTools]
-        }
-      });
-    }
-    if (selected.length === 0) {
-      throw new Error(`UI resource ${name} has no selected release revision.`);
-    }
-    if (config.compatibilityResources.includes(name)) {
-      const compatibility = selected[0];
-      if (compatibility.digest !== digest || compatibility.uri !== uri || !sameJson(compatibility.metadata, metadata)) {
-        throw new Error(
-          `Compatibility-only ${name} renderer changed from its selected deployed revision. ` +
-          `Record and review a new temporary exception before changing its release payload.`
-        );
+    if (seenUris.has(uri)) throw new Error(`UI resource URI collision: ${uri}.`);
+    seenUris.add(uri);
+    resources[name] = {
+      uriVersion,
+      digest,
+      uri,
+      metadata: structuredClone(metadata),
+      releaseProvenance: {
+        inventories: ["development-current"],
+        sourceIds: ["rendered-current"],
+        presenterTool: contract.presenterTool,
+        requiredTools: [...contract.requiredTools]
       }
-    }
-    const [current, ...previousRevisions] = selected;
-    for (const candidateUri of selected.map((entry) => entry.uri)) {
-      if (seenUris.has(candidateUri)) throw new Error(`UI resource URI collision: ${candidateUri}.`);
-      seenUris.add(candidateUri);
-    }
-    resources[name] = { ...current, previous: previousRevisions };
+    };
   }
-  const selected = Object.entries(resources).flatMap(([name, resource]) =>
-    [resource, ...resource.previous].map((revision) => ({
+  const selected = Object.entries(resources).map(([name, revision]) => ({
       name,
+      uriVersion: revision.uriVersion,
       digest: revision.digest,
       uri: revision.uri,
       ...structuredClone(revision.releaseProvenance)
-    }))
-  );
+    }));
   return {
-    manifestVersion: 2,
+    manifestVersion: 3,
     strategy: config.strategy,
     hashAlgorithm: config.hashAlgorithm,
-    hashLength: config.hashLength,
     minimumContractGeneration: structuredClone(config.minimumContractGeneration),
     releaseInventory: {
       catalog: UI_RELEASE_CATALOG_FILENAME,
@@ -1077,59 +1114,55 @@ export function deriveUiResourceManifest(
   };
 }
 
-function mergeSelectedUiRevision(selected, candidate) {
-  const existing = selected.find((entry) => entry.uri === candidate.uri);
-  if (!existing) {
-    if (selected.some((entry) => entry.digest === candidate.digest && !sameJson(entry.metadata, candidate.metadata))) {
-      throw new Error(`UI revision ${candidate.digest} has conflicting cache metadata.`);
-    }
-    selected.push(candidate);
-    return;
-  }
-  if (existing.digest !== candidate.digest || !sameJson(existing.metadata, candidate.metadata)) {
-    throw new Error(`UI resource URI ${candidate.uri} has conflicting immutable content or metadata.`);
-  }
-  if (existing.releaseProvenance.presenterTool !== candidate.releaseProvenance.presenterTool ||
-      !sameJson(existing.releaseProvenance.requiredTools, candidate.releaseProvenance.requiredTools)) {
-    throw new Error(`UI resource URI ${candidate.uri} has conflicting presenter or tool contracts.`);
-  }
-  for (const inventory of candidate.releaseProvenance.inventories) {
-    if (!existing.releaseProvenance.inventories.includes(inventory)) {
-      existing.releaseProvenance.inventories.push(inventory);
-    }
-  }
-  for (const sourceId of candidate.releaseProvenance.sourceIds) {
-    if (!existing.releaseProvenance.sourceIds.includes(sourceId)) {
-      existing.releaseProvenance.sourceIds.push(sourceId);
-    }
-  }
-}
-
 export function syncUiResources(repoRoot = DEFAULT_REPO_ROOT, manifest = loadReleaseManifest(repoRoot)) {
   const rendered = renderUiResources(repoRoot);
   const catalog = loadUiReleaseCatalog(repoRoot);
   const lockFile = path.join(repoRoot, UI_LOCK_FILENAME);
-  const previous = existsSync(lockFile) ? readJson(lockFile) : undefined;
-  const next = deriveUiResourceManifest(manifest, rendered, previous, catalog);
+  const next = deriveUiResourceManifest(manifest, rendered, catalog);
 
   for (const name of manifest.uiResources.resources) {
-    const entry = next.resources[name];
-    const directory = path.join(repoRoot, UI_SNAPSHOT_DIRECTORY, name);
-    mkdirSync(directory, { recursive: true });
-    writeTextAtomically(path.join(directory, `${entry.digest}.html`), rendered.resources[name].html);
-    for (const retained of entry.previous) {
-      if (!uiSnapshotFile(repoRoot, name, retained.digest)) {
-        throw new Error(
-          `Cannot retain previous ${name} UI revision ${retained.digest}: its immutable HTML snapshot is missing.`
-        );
-      }
-    }
+    writeTextAtomically(uiResourceSourceFile(repoRoot, name), rendered.resources[name].html);
   }
+  cleanupLegacyUiResourceSnapshots(repoRoot);
   writeJsonAtomically(lockFile, next);
   writeTextAtomically(path.join(repoRoot, UI_GENERATED_SOURCE), generatedUiManifestSource(next));
-  mkdirSync(path.join(repoRoot, "dist"), { recursive: true });
-  writeJsonAtomically(path.join(repoRoot, "dist/ui-manifest.json"), next);
+  copyUiResourcesToDist(repoRoot, next);
   return next;
+}
+
+export function copyUiResourcesToDist(
+  repoRoot = DEFAULT_REPO_ROOT,
+  resourceManifest = undefined
+) {
+  const selected = resourceManifest ?? readJson(path.join(repoRoot, UI_LOCK_FILENAME));
+  if (selected?.manifestVersion !== 3 || selected?.strategy !== "versioned-uri") {
+    throw new Error(`${UI_LOCK_FILENAME} does not use the current versioned-URI policy.`);
+  }
+  const resourceNames = Object.keys(selected.resources || {});
+  if (!sameJson(resourceNames, UI_ACTIVE_RESOURCE_NAMES)) {
+    throw new Error(`${UI_LOCK_FILENAME} must contain only ${UI_ACTIVE_RESOURCE_NAMES.join(", ")}.`);
+  }
+  const expectedFiles = expectedUiResourceFiles();
+  const actualFiles = listUiResourceFiles(repoRoot);
+  if (!sameJson(actualFiles, expectedFiles)) {
+    throw new Error(
+      `${UI_RESOURCE_DIRECTORY} must contain only ${expectedFiles.join(", ")}; found ${actualFiles.join(", ") || "nothing"}.`
+    );
+  }
+
+  const targetRoot = path.join(repoRoot, "dist", "ui");
+  rmSync(targetRoot, { recursive: true, force: true });
+  mkdirSync(targetRoot, { recursive: true });
+  for (const name of UI_ACTIVE_RESOURCE_NAMES) {
+    const revision = selected.resources[name];
+    const html = readTextFile(uiResourceSourceFile(repoRoot, name), `UI resource ${name}`);
+    if (uiResourceDigest(selected.hashAlgorithm, html, revision.metadata) !== revision.digest) {
+      throw new Error(`Current UI resource digest does not match: ${name}.`);
+    }
+    writeTextAtomically(path.join(targetRoot, `${name}.html`), html);
+  }
+  writeJsonAtomically(path.join(repoRoot, "dist", "ui-manifest.json"), selected);
+  return selected;
 }
 
 export function checkUiResources(repoRoot = DEFAULT_REPO_ROOT, manifest = loadReleaseManifest(repoRoot)) {
@@ -1146,34 +1179,40 @@ export function checkUiResources(repoRoot = DEFAULT_REPO_ROOT, manifest = loadRe
     );
   }
   const rendered = renderUiResources(repoRoot);
-  const expected = deriveUiResourceManifest(manifest, rendered, lock, catalog);
+  const expected = deriveUiResourceManifest(manifest, rendered, catalog);
   const drift = [];
   if (!sameJson(lock, expected)) drift.push(UI_LOCK_FILENAME);
   const generatedFile = path.join(repoRoot, UI_GENERATED_SOURCE);
-  if (!existsSync(generatedFile) || readFileSync(generatedFile, "utf8") !== generatedUiManifestSource(expected)) {
+  if (!existsSync(generatedFile) || readTextFile(generatedFile, UI_GENERATED_SOURCE) !== generatedUiManifestSource(expected)) {
     drift.push(UI_GENERATED_SOURCE);
   }
 
-  const descriptorSource = readFileSync(path.join(repoRoot, "src/tools.ts"), "utf8");
+  const descriptorFiles = ["src/tools.ts", ...UI_RESOURCE_NAMES.map(name => `src/${name}Card.ts`)]
+    .filter((relative) => existsSync(path.join(repoRoot, relative)));
+  const descriptorSource = descriptorFiles.map((relative) =>
+    readTextFile(path.join(repoRoot, relative), relative)
+  ).join("\n");
+  const expectedFiles = expectedUiResourceFiles();
+  const actualFiles = listUiResourceFiles(repoRoot);
+  if (!sameJson(actualFiles, expectedFiles)) drift.push(`${UI_RESOURCE_DIRECTORY} file inventory`);
   for (const name of manifest.uiResources.resources) {
     const entry = expected.resources[name];
     if (rendered.resources[name].uri !== entry.uri) drift.push(`runtime ${name} resource URI`);
-    for (const revision of [entry, ...entry.previous]) {
-      const snapshotFile = uiSnapshotFile(repoRoot, name, revision.digest);
-      if (!snapshotFile) {
-        drift.push(`${name} snapshot ${revision.digest}`);
-        continue;
-      }
-      const html = readUiSnapshot(snapshotFile);
-      if (uiResourceDigest(expected.hashAlgorithm, html, revision.metadata) !== revision.digest) {
-        drift.push(`${name} snapshot digest ${revision.digest}`);
-      }
-      if (revision.digest === entry.digest && html !== rendered.resources[name].html) {
-        drift.push(`${name} current HTML snapshot`);
-      }
+    const sourceFile = uiResourceSourceFile(repoRoot, name);
+    if (!existsSync(sourceFile)) {
+      drift.push(`${name} current HTML file`);
+      continue;
+    }
+    const html = readTextFile(sourceFile, `UI resource ${name}`);
+    if (uiResourceDigest(expected.hashAlgorithm, html, entry.metadata) !== entry.digest) {
+      drift.push(`${name} current HTML digest`);
+    }
+    if (html !== rendered.resources[name].html) {
+      drift.push(`${name} current HTML file`);
     }
   }
-  for (const constant of ["SETTINGS_CARD_URI", "ACTIVITY_CARD_URI", "DASHBOARD_CARD_URI"]) {
+  for (const name of manifest.uiResources.resources) {
+    const constant = `${name.toUpperCase()}_CARD_URI`;
     const escaped = constant.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     if (!new RegExp(`ui:\\s*\\{[\\s\\S]{0,120}?resourceUri:\\s*${escaped}\\b`).test(descriptorSource)) {
       drift.push(`${constant} _meta.ui.resourceUri`);
@@ -1384,7 +1423,7 @@ function validateSchemaFingerprint(value, label) {
 
 function readJson(file) {
   try {
-    return JSON.parse(readFileSync(file, "utf8"));
+    return parseJsonUtf8Strict(readFileSync(file), path.basename(file));
   } catch (error) {
     throw new Error(`Could not read ${path.basename(file)}: ${errorMessage(error)}`);
   }
@@ -1397,14 +1436,14 @@ function renderUiResources(repoRoot) {
     stdout = execFileSync(
       process.execPath,
       ["--import", "tsx", script],
-      { cwd: repoRoot, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 }
+      { cwd: repoRoot, maxBuffer: 10 * 1024 * 1024 }
     );
   } catch (error) {
     throw new Error(`Could not render final UI resources: ${errorMessage(error)}`);
   }
   let rendered;
   try {
-    rendered = JSON.parse(stdout);
+    rendered = parseJsonUtf8Strict(stdout, "UI resource renderer output");
   } catch (error) {
     throw new Error(`UI resource renderer returned invalid JSON: ${errorMessage(error)}`);
   }
@@ -1422,24 +1461,43 @@ function renderUiResources(repoRoot) {
   return rendered;
 }
 
-function uiSnapshotFile(repoRoot, name, digest) {
-  for (const suffix of [".html", ".html.base64"]) {
-    const file = path.join(repoRoot, UI_SNAPSHOT_DIRECTORY, name, `${digest}${suffix}`);
-    if (existsSync(file)) return file;
+function uiResourceSourceFile(repoRoot, name) {
+  return path.join(repoRoot, UI_RESOURCE_DIRECTORY, `${name}.html`);
+}
+
+function expectedUiResourceFiles() {
+  return UI_ACTIVE_RESOURCE_NAMES.map((name) => `${name}.html`).sort();
+}
+
+function listUiResourceFiles(repoRoot) {
+  const root = path.join(repoRoot, UI_RESOURCE_DIRECTORY);
+  if (!existsSync(root)) return [];
+  const files = [];
+  const walk = (directory, prefix) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) walk(path.join(directory, entry.name), relative);
+      else files.push(relative);
+    }
+  };
+  walk(root, "");
+  return files.sort();
+}
+
+function cleanupLegacyUiResourceSnapshots(repoRoot) {
+  const root = path.join(repoRoot, UI_RESOURCE_DIRECTORY);
+  for (const name of LEGACY_UI_RESOURCE_DIRECTORIES) {
+    const directory = path.join(root, name);
+    if (!existsSync(directory)) continue;
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (entry.isFile() && LEGACY_UI_SNAPSHOT_PATTERN.test(entry.name)) {
+        rmSync(path.join(directory, entry.name), { force: true });
+      }
+    }
+    if (readdirSync(directory).length === 0) {
+      rmSync(directory, { recursive: true, force: true });
+    }
   }
-  return undefined;
-}
-
-function readUiSnapshot(file) {
-  const value = readFileSync(file, "utf8");
-  return file.endsWith(".base64") ? Buffer.from(value.trim(), "base64").toString("utf8") : value;
-}
-
-function validUiRevision(value) {
-  return isRecord(value) &&
-    typeof value.digest === "string" && /^[0-9a-f]{64}$/.test(value.digest) &&
-    typeof value.uri === "string" && value.uri.startsWith("ui://") &&
-    (value.metadata === undefined || isRecord(value.metadata));
 }
 
 function uiContractGeneration(revision) {
@@ -1448,10 +1506,6 @@ function uiContractGeneration(revision) {
 }
 
 function uiResourceDigest(algorithm, html, metadata) {
-  if (metadata === undefined) {
-    // Compatibility with the last pre-envelope generation.
-    return createHash(algorithm).update(html).digest("hex");
-  }
   return createHash(algorithm)
     .update(stableJson({ html, metadata }))
     .digest("hex");
@@ -1487,11 +1541,15 @@ function writeJsonAtomically(file, value) {
 
 function writeTextAtomically(file, value) {
   mkdirSync(path.dirname(file), { recursive: true });
-  if (existsSync(file) && readFileSync(file, "utf8") === value) return;
+  if (existsSync(file) && readTextFile(file, path.basename(file)) === value) return;
   const temporary = `${file}.tmp-${process.pid}`;
   const mode = existsSync(file) ? statSync(file).mode & 0o777 : 0o644;
   writeFileSync(temporary, value, { mode });
   renameSync(temporary, file);
+}
+
+function readTextFile(file, field = path.basename(file)) {
+  return decodeUtf8Strict(readFileSync(file), field);
 }
 
 function sameJson(left, right) {

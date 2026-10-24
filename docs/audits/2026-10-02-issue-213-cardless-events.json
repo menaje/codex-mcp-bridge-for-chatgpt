@@ -1,0 +1,66 @@
+{
+  "date": "2026-10-02",
+  "timezone": "Asia/Seoul",
+  "issue": 213,
+  "integrationTarget": "dev",
+  "baseline": "01392e91d3a6d06048d60b8f9450fd2ab185172d",
+  "scope": "OAuth subscription-only delegation and immutable card-free Events completion; local implementation and isolated regression validation",
+  "implementation": {
+    "systemIssuedSubscriptionRef": true,
+    "nativeMissingSessionOnlyDelegation": true,
+    "ordinaryToolScopePreserved": true,
+    "firstCallbackBindingAtomic": true,
+    "grantAndSubscriptionRevocationAtomic": true,
+    "compareRevisionWrites": true,
+    "newDatabaseOrWriter": false,
+    "eventsJobCardClaimsDenied": true,
+    "approvedBInheritsEvents": true,
+    "BRequiresOwnExactSubscription": true,
+    "preSubscriptionTerminalRecoveryHours": 24,
+    "referenceLifetimeHours": 24,
+    "expiredDisableWindowHours": 24,
+    "maxReceiptsPerJob": 8,
+    "maxReceipts": 256
+  },
+  "localSynthetic": {
+    "newRegressionTests": 33,
+    "ordinaryOriginalScopeResultQuery": true,
+    "AExecutions": 1,
+    "preapprovedBExecutions": 1,
+    "duplicateBRequestsConverged": true,
+    "terminalAAndBEvents": true,
+    "automaticDashboardCalls": 0,
+    "uiMessageCalls": 0,
+    "actualGptInvolved": false
+  },
+  "validation": {
+    "node": {
+      "passed": 1246,
+      "failed": 0,
+      "testFiles": 116,
+      "origin": "local Vitest HTTP/JWKS/SQLite and repository tests"
+    },
+    "swift": {
+      "executed": 216,
+      "skipped": 2,
+      "failed": 0,
+      "origin": "local strict-concurrency warnings-as-errors"
+    },
+    "codexCliSchemaVersion": "0.153.3",
+    "releaseCheck": "passed",
+    "independentGitHubCiRun": false
+  },
+  "actualHost": {
+    "nativeCustomArgumentsSubscribeRefreshUnsubscribe": "unverified",
+    "resumedOrdinaryToolOriginalScope": "unverified",
+    "dashboardNeverOpenedAReviewOneBAndBEvent": "unverified",
+    "duplicateEventAndTokenRestartControls": "unverified",
+    "temporaryPublicIssuerAndAuthorizationServiceDurability": "requires verification; product-ledger persistence is not issuer-service persistence",
+    "freshANoApprovalReusedForB": false,
+    "newLiveABExecutedThisTask": false,
+    "operationalConnectionChangedThisTask": false,
+    "openaiInquirySent": false
+  },
+  "issueState": "OPEN",
+  "guarantee": "The original conversation delegated monitoring the exact Job/event to the same OAuth principal. The Bridge does not independently prove callback membership of the original conversation."
+}

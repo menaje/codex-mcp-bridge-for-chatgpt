@@ -1,0 +1,92 @@
+{
+  "unchangedContractFiles": [
+    {
+      "file": "src/executionServiceProcess.ts",
+      "baseBlob": "da30fe5f1d3a24c125e947eacbbde30e94cf585a",
+      "candidateBlob": "da30fe5f1d3a24c125e947eacbbde30e94cf585a",
+      "unchanged": true
+    },
+    {
+      "file": "src/executionRuntime.ts",
+      "baseBlob": "86d64b35f78a0337c61776966157e086c8a8b7b1",
+      "candidateBlob": "86d64b35f78a0337c61776966157e086c8a8b7b1",
+      "unchanged": true
+    },
+    {
+      "file": "src/executionAccess.ts",
+      "baseBlob": "6e5aea041879e680ccf6660ae37c39ddfb341897",
+      "candidateBlob": "6e5aea041879e680ccf6660ae37c39ddfb341897",
+      "unchanged": true
+    },
+    {
+      "file": "src/executionJournal.ts",
+      "baseBlob": "fe730b009bc0929c85fd0b49c994c0d08951257b",
+      "candidateBlob": "fe730b009bc0929c85fd0b49c994c0d08951257b",
+      "unchanged": true
+    },
+    {
+      "file": "src/automaticRecovery.ts",
+      "baseBlob": "fd88e1dea1f8a98c467d3947e4e03de6c3a97dcf",
+      "candidateBlob": "fd88e1dea1f8a98c467d3947e4e03de6c3a97dcf",
+      "unchanged": true
+    },
+    {
+      "file": "src/scopeFairQueue.ts",
+      "baseBlob": "25c726cbf341a0e46b7ccb74553e5abdc4c75772",
+      "candidateBlob": "25c726cbf341a0e46b7ccb74553e5abdc4c75772",
+      "unchanged": true
+    },
+    {
+      "file": "src/projectLifecycle.ts",
+      "baseBlob": "065d632178a99b71bcf93bc0556087893eda078a",
+      "candidateBlob": "065d632178a99b71bcf93bc0556087893eda078a",
+      "unchanged": true
+    },
+    {
+      "file": "src/stateSchema.ts",
+      "baseBlob": "9be176230cf3d3fcc79530ae0627f25025d73795",
+      "candidateBlob": "9be176230cf3d3fcc79530ae0627f25025d73795",
+      "unchanged": true
+    },
+    {
+      "file": "state-migrations.json",
+      "baseBlob": "222fdbac2a6cbff131b0f1e7844f1a60872658b4",
+      "candidateBlob": "222fdbac2a6cbff131b0f1e7844f1a60872658b4",
+      "unchanged": true
+    },
+    {
+      "file": "src/projectRegistry.ts",
+      "baseBlob": "cfcff62dac38e0638f7beef7c970e6b1855b8af5",
+      "candidateBlob": "cfcff62dac38e0638f7beef7c970e6b1855b8af5",
+      "unchanged": true
+    },
+    {
+      "file": "src/maintenanceScheduler.ts",
+      "baseBlob": "de6e7e33aa50009056d3cb22f310d78cf6979074",
+      "candidateBlob": "de6e7e33aa50009056d3cb22f310d78cf6979074",
+      "unchanged": true
+    },
+    {
+      "file": "src/workHistory.ts",
+      "baseBlob": "99aa3c87899b8ceca60c80d3a97e787117f4e523",
+      "candidateBlob": "99aa3c87899b8ceca60c80d3a97e787117f4e523",
+      "unchanged": true
+    },
+    {
+      "file": "test/projectLifecycleHost.test.ts",
+      "baseBlob": "c9ccd2de2a4eeb29192ab81f5d2b47bfed983ce7",
+      "candidateBlob": "c9ccd2de2a4eeb29192ab81f5d2b47bfed983ce7",
+      "unchanged": true
+    },
+    {
+      "file": "test/projectLifecycle.test.ts",
+      "baseBlob": "598b80bd1ec410883e07a5d0d1f3b02868edaf17",
+      "candidateBlob": "598b80bd1ec410883e07a5d0d1f3b02868edaf17",
+      "unchanged": true
+    }
+  ],
+  "pull241Head": "ef65c84ed1e68b0794a0102a6b3c98dce1cee77d",
+  "pull241HeadAncestor": true,
+  "testChangesAreAdditiveOrContractAdaptation": "inspected diff: capacity test uses distinct query arguments; timeout taxonomy expectation STATE_READ_STALE; no runner timeout override; R502 awaits child cleanup and response finish with existing wait bound",
+  "defaultBudgets": "native Dashboard 3s/10s, detail 5s; read child 10s, supervisor/proxy 120s; read capacity 16, RPC capacity 128; tunnel observation 2s, monitor 5s, file 20s, external evidence 75s, operational gap/recovery 30s/60s"
+}

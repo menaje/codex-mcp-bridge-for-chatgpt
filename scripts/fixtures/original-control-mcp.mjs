@@ -1,6 +1,6 @@
 import { appendFileSync } from "node:fs";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { McpServer } from "@modelcontextprotocol/server";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
 
 // Opt-in local acceptance fixture. No network access or user data is involved.
 const server = new McpServer({ name: "original-control-probe", version: "1" });
@@ -25,4 +25,4 @@ server.registerTool("input_probe", {
   }, { timeout: 10 * 60 * 1000 });
   return { content: [{ type: "text", text: `ORIGINAL_INPUT:${response.action}:${response.content?.color || "none"}` }] };
 });
-await server.connect(new StdioServerTransport());
+serveStdio(() => server, { legacy: "reject" });

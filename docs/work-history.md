@@ -1,170 +1,101 @@
 # Execution history and current work
 
-The current dashboard and macOS menu show **Current work**, **Problems**, and
-**Run history**. Problems has **Needs action**, **Failure history**, and **Automatic
-processing** views. Finished failures/interrupted runs enter Failure history
-without requiring user acknowledgement. Needs action contains unresolved runtime
-inspection, disconnection, and termination problems. A probe that has not yet run
-is an inspection notice and is not a failed inspection.
+The macOS menu uses **In progress**, **Execution history**, and **Problem history**.
+The ChatGPT card labels execution history **Run history**. Input and approval
+waits remain distinct states in In progress.
+Execution history contains retained terminal Jobs. Problem history contains one
+entry per retained failed, interrupted, or cancelled Job. Successful Jobs,
+system incidents and extra recovery attempts do not add problem entries.
+It is read-only, with no acknowledgement, recheck, retry-stop or resolution
+workflow. Current service warnings follow current impact independently of
+historical failures.
 
-Current work contains execution, response waits, termination in progress and
-observed background work. Finished runs keep their original status in history.
-Native and card rows use the same time rule: live turns show elapsed work time at
-the last explicit snapshot; terminal turns show recorded duration and relative end time.
-Missing historical timing remains unavailable.
+## Read the lists
 
-## Automatic recovery and original GPT wait
+Select a count to open its list, and select it again to collapse it. In ChatGPT,
+choose **This conversation** or **All conversations** before inspecting the list.
+Each list groups Activity → Agent → individual run. Every run keeps its own
+status, model, reasoning level, speed selection and time. Recorded
+errors or cancellation reasons appear once; missing reasons have no placeholder.
+The lists omit private Job IDs and exact-detail controls. **Show more** appends
+the next page without replacing entries already on screen.
 
-The bridge performs safe maintenance without asking the user to review every
-failed turn. It freshly rechecks unknown/disconnected state without loading a
-thread, releases idle persistent connections after failed/interrupted/cancelled
-work, and retries an already requested exact-turn stop. Attempts are durable,
-limited to three per incident, and spaced by five then thirty seconds. A restart
-preserves the budget and never converts an interrupted attempt into success.
-Each sweep admits at most four incidents; new work admission and shutdown take
-priority. Actual evidence is required before an automatic record becomes resolved.
+<p align="center">
+  <img src="images/macos-execution-history-light-en.png" alt="English native Execution history with multiple runs grouped under Code Review" width="360" valign="top">
+  <img src="images/macos-problem-history-light-en.png" alt="English native Problem history with a recorded failure and a user-requested cancellation" width="360" valign="top">
+</p>
 
-Connection release uses the existing worker maintenance lock, current execution
-and connection revisions, non-loading background inspection, and loaded-thread
-inventory. A shared worker can retire only when all its loaded conversations are
-eligible finished persistent connections and have no active work, pending requests,
-unknown state, or protected background process. Ephemeral or unowned threads prevent
-retirement. Background services are not killed merely because their parent turn
-failed. An automatic stop retry requires the existing failed cancellation intent,
-same Job/thread/turn/worker generation, and exact version; it never falls back to
-process-group termination. Another conversation's running Job remains untouched.
+<p align="center">
+  <img src="images/chatgpt-execution-history-light-en.png" alt="English ChatGPT Run history showing each run's status, model, and relative finish time" width="645">
+</p>
 
-Task-level GPT judgment is returned only while the original foreground
-`codex_task` callback is still open. Its lease binds the conversation, Job, and
-original task request, and a failure must arise while that callback is observing
-running work. Returning or aborting the callback permanently closes its lease.
-The bridge gives safe recovery a bounded first chance before returning the
-failure receipt. Reading the receipt does not resolve the issue or prove success.
+<p align="center">
+  <img src="images/chatgpt-problem-history-light-en.png" alt="English ChatGPT Problem history showing recorded failure and cancellation reasons" width="645">
+</p>
 
-This integration does not receive a reliable GPT response identity or response-ended
-signal. It therefore does not transfer recovery authority between MCP calls.
-Background task results, task replays, all `codex_status` Job/input waits, overview,
-card, audit and historical reads contain ordinary state/results only, with no
-recovery directive. They never acquire a lease even when they run concurrently
-with the original foreground callback. No continuation token is issued;
-`codex_task.waitContext` remains `null` for compatibility. Legacy `waitToken`
-arguments are accepted and ignored, and are omitted from current public discovery.
+Current rows sort by representative run start descending with stable identity ties.
+An old Activity's new run moves to its new position. Activity grouping follows the
+latest displayed run in the group. Progress/usage/observation changes do not reorder
+runs or invalidate unrelated retained-history caches.
 
-There is no queued GPT recovery, generic future-session handoff, or wake mechanism.
-Once the original callback has ended, safe bridge maintenance continues and
-remaining operational issues stay in the native menu and dashboard. Any GPT retry
-must stay within the original user's task authorization and verify its result.
+## Common saved retention policy
 
-A fresh confirmed-to-unknown inspection transition opens a new durable incident,
-even when the Agent, thread and latest Job have not changed. Repeated failed
-inspections preserve that incident's three-attempt budget. Verified recovery closes
-it atomically with its evidence; a later recurrence gets a separate record and
-budget. Restarting preserves both the current incident and older action history.
-The current runtime problem displays only its own incident's automatic result;
-older resolved evidence remains in Automatic processing. A fresh failed inspection
-is actionable immediately, even while older display details remain cached. A confirmed manual or
-display inspection can also close an unresolved inspection incident.
+The actual stored choice is 7, 30, 90 days or numeric zero for unlimited retention.
+The same policy governs run bodies, summaries, diagnostic events, problem/recovery
+records and progression, retained question history, completion-delivery material and
+persistent telemetry. N-day expiry uses a fixed Job end or first incident occurrence;
+observation and metadata updates do not restart it. An absent installation record
+and an explicit schema-2 legacy initialization default to 30. Invalid/missing current
+policy fails without destructive cleanup, preserving numeric zero throughout.
 
-The schema-16-to-17 checkpoint adds persistent incident identities to the
-automatic-action journal. Current upgrades run it under the single private
-pre-schema-19 recovery backup. Existing attempt budgets, failed outcomes and
-cancellation provenance remain unchanged. Automatic records follow history
-retention; unresolved budgets survive while their original work is retained.
+Registry eviction frees bounded execution slots without deleting the durable
+sanitized original. Large result bodies live in `job_result_bodies`; a response
+preview or memory limit is not persistent deletion. Scoped exact reads can recover
+a retained original after eviction/restart. Existing pre-policy missing originals
+are marked legacy-partial and never described as restored. Missing old time evidence
+has a fixed legacy estimate, never a newly stamped current time.
 
-## Optional failure review and manual recovery
+Logical expiry filters counts, pages, summaries and exact details before presentation.
+Actual bounded cleanup removes associated bodies, summaries and diagnostics using a
+fresh policy read in its write transaction. Unlimited policy prevents age deletion.
+The existing scheduler rotates its bounded concerns; the events slice also requests
+cleanup from the existing telemetry owner, which reads policy from state read-only.
+No new cleanup daemon or operational writer is introduced.
 
-Failure history retains all failed/interrupted executions, with optional review
-and undo controls. Needs action has filters for unavailable status, failed
-termination and disconnection. Automatic processing shows action, attempt count,
-current state and evidence. The Problems summary counts unresolved runtime issues,
-and opens this dedicated area. Acknowledgement belongs to each
-execution, so a later success or a different failure on the same Agent cannot
-hide the earlier unreviewed failure. Failures belonging to Agents restored by the
-schema-18 migration remain reviewable. Every retained failure remains available throughout its configured
-retention period; seven days no longer silently removes an unreviewed item in
-current clients.
+Current execution, valid input/approval and cancellation identity are preserved.
+Terminal delivery/uncertainty/hold does not reserve a separate permanent copy of
+history. Minimal request/hash/outcome and exact dispatch/incident-attempt control
+state prevents duplicate execution, automatic replay or a reset recovery budget;
+those controls retain no historical original, reason or evidence. Expiry never
+means delivered, approved, cancelled or recovered. A confirmed incident closure or
+owner retirement ends the relevant retry control. Project archive ends live control
+without removing retained recovery history; explicit project deletion has its
+existing scoped management-ending semantics.
 
-**Acknowledge** records optional review while the failure stays in Failure history
-with its original outcome. **Undo review** removes that review mark. Neither
-changes the Needs action count. The native menu supports individual and
-all-finished-failure review. The card additionally supports selected failures and
-limits bulk review to its chosen conversation/all-work scope. Bulk review collects
-all matching pages before changing anything, then sends at most 100 exact targets
-per atomic request. A changed page revision cancels collection. A changed target
-rejects its whole request, and partial completion across requests is reported.
-Both interfaces read the same durable state. Native clients still subscribe to
-service changes, while Dashboard display data reloads only after its own actions,
-explicit refresh, menu reopening, or a card scope/history request.
+## Bounded summaries, pages and caches
 
-Unavailable runtime state cannot be acknowledged. **Check status again** makes a
-fresh, bounded, non-loading inspection. The problem remains while execution or
-background state is unknown. An orphan can be recorded as resolved only when
-there is no active Job and fresh evidence confirms no loaded turn or background
-process. This preserves the Agent and original outcomes. Changed execution
-identity or a later failed inspection invalidates that resolution.
+Current clients request Job-based history with 12-item pages bound to scope,
+history revision and the applied policy. Opening a list does not request exact
+execution details. Older clients retain the Agent-based projection, including
+up to three recent summaries per visible Agent. Pane switches
+and unrelated progress refreshes reuse valid cache data. New history, expiry,
+policy/security/project/scope changes and late responses use the same identity
+checks. Cache eviction leaves the persistent original available.
 
-**Retry termination** is offered only for failed termination. The confirmation
-shows the exact number and names of affected executions. A changed impact or
-execution revision rejects the action before termination. A retry records durable
-cancellation provenance and remains idempotent. Remote native clients keep their
-existing non-execution authority and do not offer or permit this stop action.
+Recovery records open at the first observed incident, before the first retry.
+Repeated observation/retries keep that identity; confirmed recovery followed by an
+actual recurrence creates a new one. Jobless history never borrows a newer Job or
+project. Read-only problem summaries include recent progression and current impact;
+the original retained steps remain in storage under the same policy. Automatic
+maintenance retains its existing three-attempt authority, exact execution checks
+and shutdown/admission priority. UI reads do not dispatch recovery actions.
 
-The native API uses `dashboard.snapshot.problems` and `dashboard.problem`. Cards
-first read `codex_ui_read` with `view: problem-control`, then send the exact action
-to app-private `codex_ui_problem`. A five-minute proof binds the entire target set,
-revision, action, stop impact, widget, host identity and selected scope. Proofs
-cannot authorize an unrelated action; writes never use a fallback transport or
-automatic replay. Local/native review and remote review use existing authenticated
-companion paths; remote review requires `settings.write`.
+## Verification boundary
 
-## Agent restoration and compatibility
-
-Schema 18 restores every Agent archived by earlier bridge versions before current
-history is served. The migration preserves its identity, Activity/thread/project
-links, retained executions and results, review state, next-run settings and stored
-timestamps. It restores active and waiting state from a retained current Job,
-keeps orphan evidence, and otherwise makes the Agent idle. It performs no work
-replay, thread resume, or Codex conversation load.
-
-Current native and card interfaces have no Agent archive/restore controls, list,
-filter or API schema. `dashboard.history` and app-private `codex_ui_history` now
-support execution acknowledgement only. Their runtime compatibility parsers
-recognize archive/restore requests from retained cards and return
-`AGENT_ARCHIVE_REMOVED` without changing the Agent. Snapshots without the optional
-`problems` query retain the prior seven-day/latest-Agent problem projection for
-compatibility. Clients that send `problems` without `view` retain the earlier
-per-execution Needs action/Reviewed history contract. Current clients send
-`view: actionable`, `history`, or `automatic`.
-
-## Retention
-
-General Settings provides 7, 30, 90 days, or indefinite history retention. The
-default is **30 days**. The settings pane and Run history both disclose the policy
-and the last non-empty cleanup time and count. Changing the policy affects the
-next maintenance pass; increasing it cannot restore already removed history.
-
-After the existing full-result retention has archived a terminal Job, history
-maintenance removes its expired execution/usage/review display summary and
-disposable events. It preserves formal terminal state and timing, a compact
-terminal receipt, and the original
-request reservation to prevent replay. Agent identity, thread linkage, project pins,
-cancellation/delivery journals, original Codex conversations, and project files
-remain intact. Active work, blocking responses, undelivered results, unresolved
-response delivery, pending cancellations, and valid result holds are protected.
-Indefinite history retention does not change the existing full-result or raw
-log retention limits documented in [thread-lifecycle.md](thread-lifecycle.md).
-
-Each transaction scans at most 500 terminal rows. A persisted cursor progresses
-past protected batches. Late snapshots cannot resurrect expired display data.
-Native and card pagination discard cached history pages when cleanup changes the
-removal count. The schema-14-to-15 checkpoint enables these rules under the
-current upgrade's single private recovery backup.
-
-Schema 19 stores the per-Job acknowledgement/expiry sequence in
-`work_history_state` and the global revision, cursor, and cleanup totals in
-`work_history_control`. It removes their dynamic metadata keys and stores the one
-display summary in `jobs.summary`. See [database schema and lifecycle](database-schema.md)
-for the complete ownership and retention matrix.
+Source and isolated synthetic fixtures verify policy, storage, query, cache and UI
+contracts. They do not establish installed-app acceptance, actual GPT resumption,
+or long-running stability. No operational app, database, settings or authentication
+changes are part of this development work. See [the UI response contract](issue-251-display-contract.md).
 
 ## Process inspection
 
@@ -185,6 +116,7 @@ links to macOS notification settings. Repeated requests do not prompt again afte
 authorization. The official model-description disclosure uses the shared full-row
 button and leading-aligned, selectable text.
 
-Current resource generations are Dashboard 29, Settings 21, and Activity 30. Prior published
-resource snapshots remain immutable. The Dashboard HTML budget is 200 KiB, including
-problem review, history actions and policy copy in all nine supported languages.
+Current resource generations are recorded in the generated UI manifest. The
+Dashboard and Settings have one current HTML file each. The Dashboard budget is
+213 KiB across all nine supported languages. Retired Decision Card state remains
+dormant and is not a run-history store.

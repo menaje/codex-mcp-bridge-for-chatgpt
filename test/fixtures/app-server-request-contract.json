@@ -459,6 +459,12 @@
             },
             "threadId": {
               "type": "string"
+            },
+            "serviceTierForTurn": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [

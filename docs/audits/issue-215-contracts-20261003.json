@@ -1,0 +1,250 @@
+{
+  "checkedAt": "2026-10-03T08:36:48.187Z",
+  "samples": [
+    {
+      "version": "codex-cli 0.153.3",
+      "executableSha256": "0e1f892695844ad0798dab8895955846450a9e7663476ebf24615814dd377216",
+      "jsonSchema": {
+        "fileCount": 416,
+        "sha256": "f3a5018e923206d44af954f75db5078f98e574a405d1327f12b67e7021528cc9"
+      },
+      "requestContract": {
+        "compatible": true,
+        "missingCore": [],
+        "capabilities": {
+          "selectionScope": "turn",
+          "supportsModelOverrideOnContinue": true,
+          "supportsEffortOverrideOnContinue": true,
+          "supportsServiceTierOverrideOnContinue": true,
+          "supportsPerTurnServiceTier": true,
+          "supportsThreadArchive": true,
+          "supportsThreadUnarchive": true,
+          "supportsFork": true,
+          "supportsSteering": true,
+          "supportsPreciseCancellation": true,
+          "supportsEphemeralThreads": true,
+          "supportsThreadInspection": true,
+          "supportsThreadUnsubscribe": true,
+          "supportsBackgroundTerminals": true
+        },
+        "unsupported": {}
+      },
+      "samples": [
+        {
+          "wire": {},
+          "schemaValid": true
+        },
+        {
+          "wire": {
+            "serviceTier": null
+          },
+          "schemaValid": true
+        },
+        {
+          "wire": {
+            "serviceTier": "fast"
+          },
+          "schemaValid": true
+        },
+        {
+          "wire": {
+            "serviceTier": "priority"
+          },
+          "schemaValid": true
+        },
+        {
+          "wire": {
+            "serviceTierForTurn": null
+          },
+          "schemaValid": true
+        },
+        {
+          "wire": {
+            "serviceTierForTurn": "default"
+          },
+          "schemaValid": true
+        },
+        {
+          "wire": {
+            "serviceTierForTurn": "fast"
+          },
+          "schemaValid": true
+        },
+        {
+          "wire": {
+            "serviceTierForTurn": "ultrafast"
+          },
+          "schemaValid": true
+        }
+      ],
+      "initialize": "passed",
+      "inference": "not-run",
+      "accountEntitlement": "not-queried",
+      "executableSource": "@openai/codex@0.153.3 darwin-arm64: isolated temporary npm installation"
+    },
+    {
+      "version": "codex-cli 0.159.1",
+      "executableSha256": "ab2ed513b0ae735151799ab57045e05ca721c4730859b5aa2f2a9e9bed287eb8",
+      "jsonSchema": {
+        "fileCount": 440,
+        "sha256": "345a8d9bb98a38f73e3d3b6238501da7f81a09f0ad87432a00b7fdcab8f37577"
+      },
+      "requestContract": {
+        "compatible": true,
+        "missingCore": [],
+        "capabilities": {
+          "selectionScope": "turn",
+          "supportsModelOverrideOnContinue": true,
+          "supportsEffortOverrideOnContinue": true,
+          "supportsServiceTierOverrideOnContinue": true,
+          "supportsPerTurnServiceTier": true,
+          "supportsThreadArchive": true,
+          "supportsThreadUnarchive": true,
+          "supportsFork": true,
+          "supportsSteering": true,
+          "supportsPreciseCancellation": true,
+          "supportsEphemeralThreads": true,
+          "supportsThreadInspection": true,
+          "supportsThreadUnsubscribe": true,
+          "supportsBackgroundTerminals": true
+        },
+        "unsupported": {}
+      },
+      "samples": [
+        {
+          "wire": {},
+          "schemaValid": true
+        },
+        {
+          "wire": {
+            "serviceTier": null
+          },
+          "schemaValid": true
+        },
+        {
+          "wire": {
+            "serviceTier": "fast"
+          },
+          "schemaValid": true
+        },
+        {
+          "wire": {
+            "serviceTier": "priority"
+          },
+          "schemaValid": true
+        },
+        {
+          "wire": {
+            "serviceTierForTurn": null
+          },
+          "schemaValid": true
+        },
+        {
+          "wire": {
+            "serviceTierForTurn": "default"
+          },
+          "schemaValid": true
+        },
+        {
+          "wire": {
+            "serviceTierForTurn": "fast"
+          },
+          "schemaValid": true
+        },
+        {
+          "wire": {
+            "serviceTierForTurn": "ultrafast"
+          },
+          "schemaValid": true
+        }
+      ],
+      "initialize": "passed",
+      "inference": "not-run",
+      "accountEntitlement": "not-queried",
+      "executableSource": "@openai/codex@0.159.1 darwin-arm64: isolated temporary npm installation"
+    },
+    {
+      "version": "codex-cli 0.160.0",
+      "executableSha256": "112fae7a5a1223e673c8a1791d32338f37df8b527ff1159bb8adac6c4dbf1b4b",
+      "jsonSchema": {
+        "fileCount": 440,
+        "sha256": "345a8d9bb98a38f73e3d3b6238501da7f81a09f0ad87432a00b7fdcab8f37577"
+      },
+      "requestContract": {
+        "compatible": true,
+        "missingCore": [],
+        "capabilities": {
+          "selectionScope": "turn",
+          "supportsModelOverrideOnContinue": true,
+          "supportsEffortOverrideOnContinue": true,
+          "supportsServiceTierOverrideOnContinue": true,
+          "supportsPerTurnServiceTier": true,
+          "supportsThreadArchive": true,
+          "supportsThreadUnarchive": true,
+          "supportsFork": true,
+          "supportsSteering": true,
+          "supportsPreciseCancellation": true,
+          "supportsEphemeralThreads": true,
+          "supportsThreadInspection": true,
+          "supportsThreadUnsubscribe": true,
+          "supportsBackgroundTerminals": true
+        },
+        "unsupported": {}
+      },
+      "samples": [
+        {
+          "wire": {},
+          "schemaValid": true
+        },
+        {
+          "wire": {
+            "serviceTier": null
+          },
+          "schemaValid": true
+        },
+        {
+          "wire": {
+            "serviceTier": "fast"
+          },
+          "schemaValid": true
+        },
+        {
+          "wire": {
+            "serviceTier": "priority"
+          },
+          "schemaValid": true
+        },
+        {
+          "wire": {
+            "serviceTierForTurn": null
+          },
+          "schemaValid": true
+        },
+        {
+          "wire": {
+            "serviceTierForTurn": "default"
+          },
+          "schemaValid": true
+        },
+        {
+          "wire": {
+            "serviceTierForTurn": "fast"
+          },
+          "schemaValid": true
+        },
+        {
+          "wire": {
+            "serviceTierForTurn": "ultrafast"
+          },
+          "schemaValid": true
+        }
+      ],
+      "initialize": "passed",
+      "inference": "not-run",
+      "accountEntitlement": "not-queried",
+      "executableSource": "@openai/codex@0.160.0 darwin-arm64: existing Bridge-managed installation"
+    }
+  ],
+  "sourceBase": "616b7806a05c83ab16e2715e8abb6c8a4859c7dd",
+  "scope": "Generated request schemas and existing isolated initialize response probe only. Neither inference nor account entitlement nor installed-artifact acceptance."
+}

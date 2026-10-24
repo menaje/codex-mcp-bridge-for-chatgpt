@@ -1,0 +1,13 @@
+Test Suite 'UnixSocketRPCClientTests' started at 2026-10-07 19:39:29.769.
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testCancellingChangeWaitClosesSocketWithoutWaitingForTimeout]' started.
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testCancellingChangeWaitClosesSocketWithoutWaitingForTimeout]' passed (0.004 seconds).
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testContractDecodeFailureIsNotReportedAsPersistentDataLoss]' started.
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testContractDecodeFailureIsNotReportedAsPersistentDataLoss]' passed (0.004 seconds).
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testDefaultTransportReadsMaximumBridgeSkillContentEnvelope]' started.
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testDefaultTransportReadsMaximumBridgeSkillContentEnvelope]' passed (22.107 seconds).
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testPendingChangeWaitDoesNotDelayIndependentHealthRead]' started.
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testPendingChangeWaitDoesNotDelayIndependentHealthRead]' passed (0.006 seconds).
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testPerCallTimeoutCanOutliveShortClientDefault]' started.
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testPerCallTimeoutCanOutliveShortClientDefault]' passed (0.299 seconds).
+Test Suite 'UnixSocketRPCClientTests' passed at 2026-10-07 19:39:52.189.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 22.419 (22.421) seconds

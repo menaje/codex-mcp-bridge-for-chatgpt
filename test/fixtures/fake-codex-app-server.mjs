@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import "./app-server-schema-fixture.mjs";
-import { readFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import readline from "node:readline";
 import { threadPolicyResponse, assertTurnPolicy } from "./app-server-policy-fixture.mjs";
 
@@ -11,6 +13,21 @@ if (process.argv.includes("--version")) {
   process.exit(0);
 }
 
+if (process.env.CODEX_TEST_APP_SERVER_CWD_OBSERVATION) {
+  writeFileSync(process.env.CODEX_TEST_APP_SERVER_CWD_OBSERVATION, process.cwd());
+}
+if (process.env.CODEX_TEST_APP_SERVER_ENV_OBSERVATION) {
+  writeFileSync(process.env.CODEX_TEST_APP_SERVER_ENV_OBSERVATION, JSON.stringify({
+    stateDatabaseFile: process.env.CODEX_MCP_BRIDGE_STATE_DATABASE_FILE || null,
+    telemetryDatabaseFile: process.env.CODEX_MCP_BRIDGE_TELEMETRY_DATABASE_FILE || null,
+    bridgeToken: process.env.CODEX_MCP_BRIDGE_TOKEN || null,
+    runtimeHome: process.env.CODEX_MCP_BRIDGE_RUNTIME_HOME || null,
+    environmentFile: process.env.CODEX_MCP_BRIDGE_ENV_FILE || null,
+    allowedRoots: process.env.CODEX_MCP_BRIDGE_ROOTS || null,
+    codexHome: process.env.CODEX_HOME || null
+  }));
+}
+
 const lines = readline.createInterface({ input: process.stdin });
 const activeTurns = new Map();
 const pendingServerRequests = new Map();
@@ -18,6 +35,7 @@ const archivedThreads = new Set();
 const knownThreads = new Set();
 const threadLineages = new Map();
 const threadEphemeral = new Map();
+const threadTiers = new Map();
 const loadedThreads = new Set();
 const systemErrorThreads = new Set();
 const backgroundTerminals = new Map();
@@ -30,6 +48,14 @@ let rateLimitsReadCount = 0;
 const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 const sendBatch = (messages) => process.stdout.write(`${messages.map(message => JSON.stringify(message)).join("\n")}\n`);
 const response = (id, result) => send({ id, result });
+const threadResponse = (id, result) => {
+  const delay = Number(process.env.CODEX_TEST_THREAD_INITIALIZATION_DELAY_MS || 0);
+  if (delay > 0) setTimeout(() => response(id, result), delay);
+  else response(id, result);
+};
+const retainedTurns = (params) => process.env.CODEX_TEST_LARGE_THREAD_HISTORY === "1" && params.excludeTurns !== true
+  ? [{ id: "historical-turn", items: [{ type: "agentMessage", text: "x".repeat(9 * 1024 * 1024) }] }]
+  : [];
 const notification = (method, params = {}) => send({ method, params });
 const serverRequest = (id, method, params, accept) => {
   pendingServerRequests.set(String(id), { requestId: id, threadId: params.threadId, accept });
@@ -80,11 +106,35 @@ lines.on("line", (line) => {
     return;
   }
 
+  if (message.method === "config/read") {
+    response(message.id, { config: process.env.CODEX_TEST_AUTH_CONFIG
+      ? JSON.parse(process.env.CODEX_TEST_AUTH_CONFIG) : {}, origins: {} });
+    return;
+  }
+  if (message.method === "configRequirements/read") {
+    response(message.id, { requirements: process.env.CODEX_TEST_AUTH_REQUIREMENTS
+      ? JSON.parse(process.env.CODEX_TEST_AUTH_REQUIREMENTS) : null });
+    return;
+  }
+  if (message.method === "account/logout") {
+    if (process.env.CODEX_TEST_AUTH_LOGOUT_LOST_RESPONSE === "1") {
+      send({ id: message.id, error: { code: -32000, message: "synthetic uncertain logout" } });
+      return;
+    }
+    const file = path.join(process.env.CODEX_HOME || "", "auth.json");
+    if (process.env.CODEX_HOME && existsSync(file)) unlinkSync(file);
+    response(message.id, {});
+    return;
+  }
+
   if (message.method === "account/read") {
     response(message.id, {
       account: process.argv.includes("--api-account") ? { type: "apiKey" }
         : { type: "chatgpt", email: "private-fixture@example.com", planType: "pro" },
-      requiresOpenaiAuth: true
+      requiresOpenaiAuth: true,
+      workspaceRouting: process.env.CODEX_TEST_ACCOUNT_ID
+        ? { chatgptAccountId: process.env.CODEX_TEST_ACCOUNT_ID,
+          backendOrigin: "https://example.invalid", accountRoutingOverride: "NO_CONSTRAINT" } : null
     });
     return;
   }
@@ -92,6 +142,7 @@ lines.on("line", (line) => {
   if (message.method === "account/rateLimits/read") {
     rateLimitsReadCount += 1;
     response(message.id, {
+      ...(process.env.CODEX_TEST_ACCOUNT_ID ? { accountId: process.env.CODEX_TEST_ACCOUNT_ID } : {}),
       rateLimits: {
         limitId: "codex",
         primary: { usedPercent: 7, windowDurationMins: 300, resetsAt: 1_900_000_000 },
@@ -111,8 +162,8 @@ lines.on("line", (line) => {
             resetsAt: 1_900_604_800
           }
         },
-        codex_spark: {
-          limitId: "codex_spark",
+        other_limit: {
+          limitId: "other_limit",
           primary: { usedPercent: 99, windowDurationMins: 10_080, resetsAt: 1_900_604_800 },
           secondary: null
         }
@@ -178,12 +229,20 @@ lines.on("line", (line) => {
       send({ id: message.id, error: { code: -32602, message: "raw events must be disabled" } });
       return;
     }
-    const id = `fake-thread-${++threadSequence}`;
+    const sequence = ++threadSequence;
+    const processScope = process.env.CODEX_TEST_PROCESS_SCOPED_THREAD_IDS === "1"
+      ? `${process.pid}-`
+      : "";
+    const id = `fake-thread-${processScope}${sequence}`;
     knownThreads.add(id);
-    threadLineages.set(id, { sessionId: `fake-session-${threadSequence}`, forkedFromId: null });
+    threadLineages.set(id, {
+      sessionId: `fake-session-${processScope}${sequence}`,
+      forkedFromId: null
+    });
     threadEphemeral.set(id, message.params.ephemeral === true);
+    threadTiers.set(id, Object.hasOwn(message.params, "serviceTier") ? message.params.serviceTier : process.env.CODEX_TEST_DEFAULT_TIER || null);
     loadedThreads.add(id);
-    response(message.id, { ...threadPolicyResponse(message.method, message.params, id), thread: { id, ephemeral: threadEphemeral.get(id), ...threadLineages.get(id) } });
+    threadResponse(message.id, { ...threadPolicyResponse(message.method, message.params, id), thread: { id, ephemeral: threadEphemeral.get(id), ...threadLineages.get(id) } });
     return;
   }
   if (message.method === "thread/resume") {
@@ -193,7 +252,7 @@ lines.on("line", (line) => {
       return;
     }
     loadedThreads.add(threadId);
-    response(message.id, { ...threadPolicyResponse(message.method, message.params, threadId), thread: { id: threadId, ephemeral: threadEphemeral.get(threadId), ...threadLineages.get(threadId) } });
+    threadResponse(message.id, { ...threadPolicyResponse(message.method, message.params, threadId), thread: { id: threadId, ephemeral: threadEphemeral.get(threadId), ...threadLineages.get(threadId), turns: retainedTurns(message.params) } });
     return;
   }
   if (message.method === "thread/unsubscribe") {
@@ -244,7 +303,7 @@ lines.on("line", (line) => {
     });
     threadEphemeral.set(id, message.params.ephemeral === true);
     loadedThreads.add(id);
-    response(message.id, { ...threadPolicyResponse(message.method, message.params, id), thread: { id, ephemeral: threadEphemeral.get(id), ...threadLineages.get(id) } });
+    threadResponse(message.id, { ...threadPolicyResponse(message.method, message.params, id), thread: { id, ephemeral: threadEphemeral.get(id), ...threadLineages.get(id), turns: retainedTurns(message.params) } });
     return;
   }
   if (message.method === "thread/archive") {
@@ -298,6 +357,16 @@ lines.on("line", (line) => {
       return;
     }
     const turnId = `fake-turn-${++turnSequence}`;
+    if (Object.hasOwn(message.params, "serviceTier")) threadTiers.set(message.params.threadId, message.params.serviceTier);
+    if (process.env.CODEX_TEST_SPEED_LOG) {
+      const perTurn = message.params.serviceTierForTurn;
+      appendFileSync(process.env.CODEX_TEST_SPEED_LOG, JSON.stringify({ model: message.params.model, effort: message.params.effort,
+        ...Object.hasOwn(message.params, "serviceTier") ? { serviceTier: message.params.serviceTier } : {},
+        ...Object.hasOwn(message.params, "serviceTierForTurn") ? { serviceTierForTurn: perTurn } : {},
+        persistentTier: threadTiers.get(message.params.threadId), processingTier: perTurn === "default" ? null : perTurn ?? threadTiers.get(message.params.threadId) }) + "\n");
+    }
+    if (process.env.CODEX_TEST_TURN_OBSERVATION) appendFileSync(process.env.CODEX_TEST_TURN_OBSERVATION,
+      JSON.stringify({ pid: process.pid, threadId: message.params.threadId, turnId }) + "\n");
     const prompt = message.params.input?.[0]?.text || "";
     const context = {
       threadId: message.params.threadId,
@@ -411,6 +480,30 @@ lines.on("line", (line) => {
 
 function beginTurn(context) {
   const { threadId, turnId, prompt } = context;
+  if (prompt.includes("execution descendant hold") &&
+      process.env.CODEX_TEST_DESCENDANT_OBSERVATION) {
+    const detached = prompt.includes("detached");
+    const ignoreTerm = prompt.includes("ignore descendant term") ||
+      prompt.includes("app server exits first");
+    const descendant = spawn(
+      process.execPath,
+      ["-e", `${ignoreTerm ? "process.on('SIGTERM',()=>{});" : ""}setInterval(() => {}, 1000)`],
+      { stdio: "ignore", detached }
+    );
+    descendant.unref();
+    appendFileSync(
+      process.env.CODEX_TEST_DESCENDANT_OBSERVATION,
+      `${JSON.stringify({ appServerPid: process.pid, childPid: descendant.pid, detached })}\n`
+    );
+    if (prompt.includes("app server exits first")) {
+      const gate = process.env.CODEX_TEST_APP_SERVER_EXIT_GATE;
+      const timer = setInterval(() => {
+        if (gate && !existsSync(gate)) return;
+        clearInterval(timer);
+        process.exit(71);
+      }, 10);
+    }
+  }
   if (prompt.includes("future optional notification")) {
     notification("future/optionalObservation", { threadId, turnId, detail: "PRIVATE_FUTURE_PAYLOAD" });
   }
@@ -623,8 +716,36 @@ function beginTurn(context) {
     });
   }
 
+  if (prompt === "many resolved questions") {
+    const next = index => {
+      const requestId = `sequential-input-${index}`;
+      serverRequest(requestId, "mcpServer/elicitation/request", {
+        threadId, turnId, serverName: "fixture-mcp", mode: "form", message: `Question ${index}`,
+        requestedSchema: { type: "object", properties: { answer: { type: "string" } }, required: ["answer"] }
+      }, () => finishTurn(context, "completed", "SEQUENTIAL INPUT COMPLETE"));
+      if (index === 100) return;
+      setTimeout(() => {
+        pendingServerRequests.delete(requestId);
+        notification("serverRequest/resolved", { threadId, requestId });
+        next(index + 1);
+      }, index === 0 ? 100 : 1);
+    };
+    next(0);
+    return;
+  }
   if (prompt.includes("interactions")) {
     requestCommand(context);
+    return;
+  }
+  if (prompt.includes("execution progress flood")) {
+    for (let index = 0; index < 2_000; index += 1) {
+      notification("turn/plan/updated", {
+        threadId,
+        turnId,
+        plan: [{ step: `Flood progress ${index}`, status: "inProgress" }]
+      });
+    }
+    finishTurn(context, "completed", "EXECUTION PROGRESS FLOOD COMPLETE");
     return;
   }
   if (prompt.includes("auto resolve input")) {
@@ -645,6 +766,18 @@ function beginTurn(context) {
       cpuPercent: 1.5,
       rssKb: 2048
     }]);
+  }
+  if (prompt.includes("controller restart gate") && process.env.CODEX_TEST_COMPLETION_GATE) {
+    const timer = setInterval(() => {
+      if (!existsSync(process.env.CODEX_TEST_COMPLETION_GATE)) return;
+      clearInterval(timer);
+      finishTurn(context, "completed", `RECOVERED:${prompt}`);
+    }, 20);
+    return;
+  }
+  if (prompt.includes("delayed isolated completion")) {
+    setTimeout(() => finishTurn(context, "completed", "ISOLATED COMPLETION"), 100);
+    return;
   }
   if (prompt.includes("hold")) return;
   if (prompt.includes("report interrupt count")) {
@@ -826,6 +959,9 @@ function requestLocallyExpiredInput(context) {
 
 function finishTurn(context, status, text, error = null) {
   if (!activeTurns.delete(context.turnId)) return;
+  if (process.env.CODEX_TEST_TURN_COMPLETION_LOG) {
+    appendFileSync(process.env.CODEX_TEST_TURN_COMPLETION_LOG, `${Date.now()}\n`);
+  }
   if (context.prompt.includes("mark thread system error")) {
     systemErrorThreads.add(context.threadId);
   }

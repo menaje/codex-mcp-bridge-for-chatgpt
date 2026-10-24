@@ -2,94 +2,122 @@ import CodexBridgeKit
 import SwiftUI
 
 struct CodexAccountUsageView: View {
+    @Environment(\.locale) private var locale
     @EnvironmentObject private var model: AppModel
     let account: CodexAccountUsage
     var runtimeKind: String? = nil
     @State private var showBilling = false
-    @State private var adminKey = ""
-    @State private var organizationId = ""
-    @State private var projectId = ""
+    @StateObject private var inputSession = BridgeEditSession(target: "billing", values: [.adminKey: "", .organizationID: "", .projectID: ""])
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            LabeledContent("인증 방식", value: account.authMode == "api-key" ? "OpenAI API Key" : account.authMode == "chatgpt" ? "ChatGPT" : "—")
+            if account.authMode == "api-key" {
+                LabeledContent("macos.authenticationmethod") {
+                    Text("macos.openaiapikey")
+                }
+            } else if account.authMode == "chatgpt" {
+                LabeledContent("macos.authenticationmethod", value: "ChatGPT")
+            }
             if account.authMode == "chatgpt" {
-                Text("같은 계정의 Codex 사용량은 앱과 CLI에서 공유됩니다.")
-                    .font(.caption).foregroundStyle(.secondary)
+                if !account.windows.isEmpty {
+                    Text("macos.codexusageforthesameaccountisshared")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 ForEach(sortedWindows) { window in
                     VStack(alignment: .leading, spacing: 3) {
                         HStack {
-                            Text(Duration.seconds(Int64(window.windowDurationMins * 60)).formatted(.units(allowed: [.days, .hours, .minutes], width: .abbreviated)))
-                            Text(window.displayName ?? BridgeAppLocalization.string("추가 사용량", locale: model.interfaceLocale)).foregroundStyle(.secondary)
+                            Text(Duration.seconds(Int64(window.windowDurationMins * 60)).formatted(.units(allowed: [.days, .hours, .minutes], width: .abbreviated).locale(locale)))
+                            if let name = window.displayName {
+                                Text(name).foregroundStyle(.secondary)
+                            }
                             Spacer()
                             Text(window.remainingPercent / 100, format: .percent.precision(.fractionLength(0)))
-                            Text("남음")
+                            Text("macos.accountUsage.remainingLabel")
                         }
                         ProgressView(value: max(0, min(100, window.remainingPercent)), total: 100)
                         if let reset = window.resetsAt {
                             HStack {
-                                Text("초기화")
+                                Text("macos.resets")
                                 Text(Date(timeIntervalSince1970: reset), style: .relative)
                             }.font(.caption).foregroundStyle(.secondary)
                         }
                     }
                 }
-                if account.windows.isEmpty { Text("사용량 정보를 확인할 수 없습니다.").font(.caption) }
-                if let credits = account.credits {
-                    LabeledContent("추가 크레딧") {
+                if let credits = account.credits, credits.unlimited || credits.balance != nil {
+                    LabeledContent("macos.additionalcredits") {
                         if credits.unlimited {
-                            Text("크레딧 제한 없음")
-                        } else {
-                            Text(verbatim: credits.balance ?? "—")
+                            Text("macos.nocreditlimit")
+                        } else if let balance = credits.balance {
+                            Text(verbatim: balance)
                         }
                     }
-                    .help("잔액만으로 크레딧 사용 이력을 알 수는 없습니다.")
+                    .help("macos.abalancealonedoesnotshowwhethercredits")
                 }
                 if let credits = account.resetCredits, credits.availableCount > 0 {
-                    LabeledContent("사용량 초기화 쿠폰", value: credits.availableCount.formatted())
+                    LabeledContent("macos.usageresetcoupons", value: credits.availableCount.formatted())
                 }
-                HStack {
-                    Text("마지막 확인")
-                    Spacer()
-                    Text(Date(timeIntervalSince1970: account.observedAt / 1000), style: .relative)
-                }.font(.caption).foregroundStyle(.secondary)
+                if !account.windows.isEmpty {
+                    HStack {
+                        Text("macos.lastchecked")
+                        Spacer()
+                        Text(Date(timeIntervalSince1970: (account.usageObservedAt ?? account.observedAt) / 1000), style: .relative)
+                    }.font(.caption).foregroundStyle(.secondary)
+                }
             } else if account.authMode == "api-key" {
-                Text("API에도 요청·토큰·조직별 한도가 적용됩니다.")
+                Text("macos.apirequeststokensandorganizationsalsohavelimits")
                     .font(.caption).foregroundStyle(.secondary)
-                Text("청구 금액은 실행 키로 조회할 수 없습니다.")
-                    .font(.caption).foregroundStyle(.secondary)
-                Link("API 사용량 및 비용 보기", destination: URL(string: "https://platform.openai.com/usage")!)
-                if let costs = account.billing?.actualCosts, costs.configured {
-                    if costs.status == "available", let usd = costs.usd {
-                        LabeledContent(costs.projectId == nil ? "이번 달 조직 비용 (UTC)" : "이번 달 프로젝트 비용 (UTC)", value: usd.formatted(.currency(code: "USD")))
-                    } else { Text("비용 정보를 확인할 수 없습니다.").font(.caption) }
-                    Text("이 브리지의 작업 외 비용도 포함됩니다.").font(.caption).foregroundStyle(.secondary)
+                Link("macos.viewapiusageandcosts", destination: URL(string: "https://platform.openai.com/usage")!)
+                if let costs = account.billing?.actualCosts, costs.configured,
+                   costs.status == "available", let usd = costs.usd {
+                    LabeledContent(costs.projectId == nil ? "macos.organizationcostthismonthutc" : "macos.projectcostthismonthutc", value: usd.formatted(.currency(code: "USD")))
+                    Text("macos.includescostsfromworkoutsidethisbridge").font(.caption).foregroundStyle(.secondary)
                     if let organization = costs.organizationId { Text(verbatim: organization).font(.caption) }
                     if let project = costs.projectId { Text(verbatim: project).font(.caption) }
                 }
                 if let runtimeKind {
-                    FullRowDisclosure("API 비용 연결", isExpanded: $showBilling) {
-                        Text("비용 조회용 관리자 키를 별도로 사용합니다. 실행 로그인은 변경하지 않습니다.")
+                    FullRowDisclosure("macos.apicostconnection", isExpanded: $showBilling) {
+                        Text("macos.usesaseparateadminkeyforcostsyour")
                             .font(.caption).foregroundStyle(.secondary)
-                        SecureField("OpenAI Admin API Key", text: $adminKey)
-                        TextField("조직 ID", text: $organizationId)
-                        TextField("프로젝트 ID (선택)", text: $projectId)
-                        Button("비용 조회 연결") {
-                            let input = CodexBillingInput(adminKey: adminKey, organizationId: organizationId.trimmingCharacters(in: .whitespacesAndNewlines),
-                                projectId: projectId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : projectId.trimmingCharacters(in: .whitespacesAndNewlines))
-                            adminKey = ""
-                            Task { await model.manageCodex(.init(action: "configure-billing", kind: runtimeKind, billing: input)) }
-                        }.disabled(adminKey.isEmpty || organizationId.isEmpty)
+                        SecureField("macos.openaiadminapikey", text: inputSession.binding(.adminKey))
+                            .bridgeInput(inputSession, field: .adminKey)
+                        TextField("macos.organizationid", text: inputSession.binding(.organizationID))
+                            .bridgeInput(inputSession, field: .organizationID)
+                        TextField("macos.projectidoptional", text: inputSession.binding(.projectID))
+                            .bridgeInput(inputSession, field: .projectID)
+                        Button("macos.connectcostreporting") {
+                            inputSession.submit(validate: {
+                                if $0.targetID != billingTargetID || $0.value(.adminKey).isEmpty || $0.value(.organizationID).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { throw BridgeEditError.invalidValue }
+                            }, operation: { submitted, _ in
+                                let project = submitted.value(.projectID).trimmingCharacters(in: .whitespacesAndNewlines)
+                                let input = CodexBillingInput(adminKey: submitted.value(.adminKey),
+                                    organizationId: submitted.value(.organizationID).trimmingCharacters(in: .whitespacesAndNewlines), projectId: project.isEmpty ? nil : project)
+                                return await model.submitCodexRequest(.init(action: "configure-billing", kind: runtimeKind, billing: input))
+                            })
+                        }.disabled(inputSession.isSubmitting || model.isBusy || (!inputSession.hasMarkedText && (inputSession.value(.adminKey).isEmpty || inputSession.value(.organizationID).isEmpty)))
+                        BridgeEditStatus(session: inputSession)
                         if account.billing?.actualCosts?.configured == true {
-                            Button("비용 연결 해제") { Task { await model.manageCodex(.init(action: "remove-billing", kind: runtimeKind)) } }
+                            Button("macos.disconnectcostreporting") { Task { await model.manageCodex(.init(action: "remove-billing", kind: runtimeKind)) } }
                         }
                     }
                 }
             } else {
-                Text("로그인이 필요합니다").foregroundStyle(.orange)
+                Text("macos.loginrequired").foregroundStyle(.orange)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onAppear { synchronizeBillingTarget() }
+        .onChange(of: account.ownershipKey) { _ in synchronizeBillingTarget() }
+        .onChange(of: runtimeKind) { _ in synchronizeBillingTarget() }
+        .onChange(of: model.connectionContextID) { _ in synchronizeBillingTarget() }
+        .bridgeEditForm(inputSession)
+        .onDisappear { inputSession.discard() }
+    }
+
+    private var billingTargetID: String { "billing:\(model.connectionContextID):\(runtimeKind ?? "unknown"):\(account.ownershipKey ?? "unknown")" }
+    private func synchronizeBillingTarget() {
+        guard inputSession.targetID != billingTargetID else { return }
+        inputSession.discard()
+        inputSession.reset(target: billingTargetID, values: [.adminKey: "", .organizationID: "", .projectID: ""])
     }
 
     private var sortedWindows: [CodexAccountUsage.Window] {

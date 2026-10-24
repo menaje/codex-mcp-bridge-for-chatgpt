@@ -8,6 +8,7 @@ import {
   type ModelSelection
 } from "./modelPolicy.js";
 import { normalizeProjectId, normalizeProjectName } from "./projectRegistry.js";
+import { parseJsonTextStrict } from "./textIntegrity.js";
 
 export const LEGACY_SCOPE_ID = "00000000-0000-0000-0000-000000000000";
 export const SCOPE_ID_PATTERN =
@@ -32,6 +33,8 @@ export type ThreadExecutionState = {
 };
 
 export type TrackedCodexSession = ThreadIdentity & ThreadExecutionState & {
+  /** Historical creation provenance only; never a work access-control boundary. */
+  authBoundary?: string;
   persistence?: ThreadPersistence;
   /** Whether this non-ephemeral App Server thread was created for Codex app visibility. */
   visibleInCodexApp?: boolean;
@@ -50,6 +53,10 @@ export type SessionRegistryOptions = {
   allowedRoots?: string[];
   maxSessions?: number;
   now?: () => number;
+  projectionOnly?: boolean;
+  /** Query-only workers can omit Sessions for detail/Settings, or restrict scope. */
+  projectionSessions?: { scopeId?: string } | false;
+  authBoundary?: { key: string; allowLegacyShared: boolean } | (() => { key: string; allowLegacyShared: boolean });
 };
 
 export class SessionRegistry {
@@ -58,14 +65,20 @@ export class SessionRegistry {
   private readonly allowedRoots: string[];
   private readonly maxSessions: number;
   private readonly now: () => number;
+  private readonly authBoundary?: SessionRegistryOptions["authBoundary"];
   private projectedProjectRevision: number | undefined;
+  private readonly retentionCapacities = new Map<string | undefined, number>();
 
   constructor(options: SessionRegistryOptions = {}) {
     this.stateStore = options.stateStore;
     this.allowedRoots = options.allowedRoots || [];
     this.maxSessions = options.maxSessions ?? 1000;
     this.now = options.now || Date.now;
-    this.load();
+    this.authBoundary = options.authBoundary;
+    if (options.projectionSessions !== undefined && (!options.projectionOnly || !this.stateStore?.readOnly)) {
+      throw new Error("Partial Session hydration requires a query-only projection.");
+    }
+    this.load(options.projectionSessions);
   }
 
   get persistent(): boolean {
@@ -82,8 +95,19 @@ export class SessionRegistry {
   }
 
   record(session: TrackedCodexSession): void {
+    this.recordMetadata(session, this.currentAuthBoundary()?.key);
+  }
+
+  /** Job provenance is historical; the next Job can use a different account. */
+  recordForJob(session: TrackedCodexSession, jobAuthBoundary: string | undefined): void {
+    this.recordMetadata(session, jobAuthBoundary);
+  }
+
+  private recordMetadata(session: TrackedCodexSession, provenance?: string): void {
     const snapshot = [...this.sessions.entries()].map(([threadId, value]) => [threadId, { ...value }] as const);
     const existing = this.sessions.get(session.threadId);
+    // Never relabel an existing/legacy thread's creation account on a later Job.
+    const authBoundary = existing ? existing.authBoundary : session.authBoundary ?? provenance;
     const sessionId = normalizeOptionalLineageId(
       session.sessionId ?? existing?.sessionId,
       "sessionId"
@@ -104,6 +128,7 @@ export class SessionRegistry {
       threadId: session.threadId,
       scopeId: session.scopeId,
       backendKind: session.backendKind,
+      ...(authBoundary ? { authBoundary } : {}),
       ...(sessionId ? { sessionId } : {}),
       ...(forkedFromThreadId ? { forkedFromThreadId } : {}),
       ...(visibleInCodexApp !== undefined ? { visibleInCodexApp } : {}),
@@ -122,7 +147,7 @@ export class SessionRegistry {
       createdAt: existing?.createdAt ?? session.createdAt,
       lastUsedAt: session.lastUsedAt
     });
-    const removed = this.enforceLimit();
+    const removed = existing ? [] : this.enforceLimit(authBoundary);
     try {
       this.persistSession(this.sessions.get(session.threadId) || session, removed);
     } catch (error) {
@@ -136,6 +161,11 @@ export class SessionRegistry {
     this.refreshProjectIdentities();
     const session = this.sessions.get(threadId);
     return session ? cloneSession(session) : undefined;
+  }
+
+  /** Access follows Bridge scope/project checks at the caller, never the login. */
+  getForJob(threadId: string, _jobAuthBoundary: string | undefined): TrackedCodexSession | undefined {
+    return this.get(threadId);
   }
 
   touch(threadId: string): void {
@@ -204,8 +234,17 @@ export class SessionRegistry {
     if (session) this.sessions.set(threadId, cloneSession(session));
   }
 
+  /** Undo a shared state transaction without losing another session evicted by the record limit. */
+  captureInMemory(): () => void {
+    const snapshot = [...this.sessions.entries()].map(([threadId, value]) => [threadId, cloneSession(value)] as const);
+    return () => {
+      this.sessions.clear();
+      for (const [threadId, value] of snapshot) this.sessions.set(threadId, cloneSession(value));
+    };
+  }
+
   findCompatible(match: SessionMatch): TrackedCodexSession[] {
-    return this.list().filter(
+    return this.list(this.sessions.size).filter(
       (session) =>
         session.scopeId === match.scopeId &&
         session.cwd === match.cwd &&
@@ -223,38 +262,42 @@ export class SessionRegistry {
   }
 
   listForScope(scopeId: string, limit = this.maxSessions, offset = 0): TrackedCodexSession[] {
-    return this.list(this.maxSessions)
+    return this.list(this.sessions.size)
       .filter((session) => session.scopeId === scopeId)
       .slice(Math.max(0, offset), Math.max(0, offset) + Math.max(0, limit));
   }
 
   size(): number {
+    this.refreshProjectIdentities();
     return this.sessions.size;
   }
 
   sizeForScope(scopeId: string): number {
-    return [...this.sessions.values()].filter((session) => session.scopeId === scopeId).length;
+    this.refreshProjectIdentities();
+    return [...this.sessions.values()].filter(session => session.scopeId === scopeId).length;
   }
 
-  private load(): void {
-    if (!this.stateStore) return;
-    const stored = this.stateStore.listSessions();
+  private currentAuthBoundary(): { key: string; allowLegacyShared: boolean } | undefined {
+    return typeof this.authBoundary === "function" ? this.authBoundary() : this.authBoundary;
+  }
+
+  private load(filter?: { scopeId?: string } | false): void {
+    if (!this.stateStore || filter === false) return;
+    const stored = this.stateStore.listSessions(filter?.scopeId);
     const decoded = stored
       .map(readPersistedSession)
       .filter((session): session is TrackedCodexSession => Boolean(session))
       .sort((a, b) => a.lastUsedAt - b.lastUsedAt);
-    const sessions = decoded.slice(-this.maxSessions);
-    const retained = new Set(sessions.map((session) => session.threadId));
-    const expired = decoded
-      .filter((session) => !retained.has(session.threadId))
-      .map((session) => session.threadId);
-    if (expired.length > 0) {
-      this.stateStore.transaction(() => {
-        for (const threadId of expired) this.stateStore?.deleteSession(threadId);
-      });
-    }
-    for (const session of sessions) {
+    // Loading/access-policy changes never delete durable session references.
+    // Preserve the historical retention cohorts and an inherited over-capacity
+    // cohort until a separately chosen retention change is applied.
+    for (const session of decoded) {
+      const key = session.authBoundary;
+      this.retentionCapacities.set(key, (this.retentionCapacities.get(key) || 0) + 1);
       if (this.isAllowedCwd(session.cwd)) this.sessions.set(session.threadId, session);
+    }
+    for (const [key, count] of this.retentionCapacities) {
+      this.retentionCapacities.set(key, Math.max(this.maxSessions, count));
     }
     // A temporarily narrowed or misconfigured allowed-root set quarantines
     // persisted sessions without erasing their execution context.
@@ -283,6 +326,8 @@ export class SessionRegistry {
       if (identity?.projectId && identity.projectName) {
         session.projectId = identity.projectId;
         session.projectName = identity.projectName;
+      } else if (!identity) {
+        this.sessions.delete(threadId);
       } else {
         delete session.projectId;
         delete session.projectName;
@@ -291,11 +336,13 @@ export class SessionRegistry {
     this.projectedProjectRevision = revision;
   }
 
-  private enforceLimit(): string[] {
+  private enforceLimit(provenance: string | undefined): string[] {
     const removed: string[] = [];
-    while (this.sessions.size > this.maxSessions) {
-      const oldest = this.sessions.keys().next().value;
-      if (!oldest) return removed;
+    const capacity = this.retentionCapacities.get(provenance) ?? this.maxSessions;
+    const cohort = () => [...this.sessions.values()].filter(session => session.authBoundary === provenance);
+    while (cohort().length > capacity) {
+      const oldest = cohort()[0]?.threadId;
+      if (!oldest) break;
       this.sessions.delete(oldest);
       removed.push(oldest);
     }
@@ -343,6 +390,7 @@ function readPersistedSession(value: unknown): TrackedCodexSession | undefined {
     ? value.visibleInCodexApp
     : undefined;
   if (
+    (value.authBoundary !== undefined && (typeof value.authBoundary !== "string" || !/^[a-f0-9]{64}$/.test(value.authBoundary))) ||
     (value.sessionId !== undefined && !sessionId) ||
     (value.forkedFromThreadId !== undefined && !forkedFromThreadId) ||
     (value.visibleInCodexApp !== undefined && typeof value.visibleInCodexApp !== "boolean")
@@ -383,6 +431,7 @@ function readPersistedSession(value: unknown): TrackedCodexSession | undefined {
   }
   return {
     threadId: value.threadId,
+    ...(typeof value.authBoundary === "string" ? { authBoundary: value.authBoundary } : {}),
     scopeId: scopeId.toLowerCase(),
     ...(sessionId ? { sessionId } : {}),
     ...(forkedFromThreadId ? { forkedFromThreadId } : {}),
@@ -414,7 +463,7 @@ function readThreadId(value: unknown): string | undefined {
 
 function parseJson(text: string): unknown {
   try {
-    return JSON.parse(text);
+    return parseJsonTextStrict(text, "Stored session");
   } catch {
     return undefined;
   }

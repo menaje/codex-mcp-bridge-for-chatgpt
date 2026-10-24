@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { createInterface, type Interface as ReadLineInterface } from "node:readline";
+import { assertJsonTextIntegrity, decodeUtf8Strict } from "./textIntegrity.js";
 
 type JsonRpcId = number;
 
@@ -38,6 +38,7 @@ type TimedOutRequest = {
 
 const MAX_TRACKED_TIMED_OUT_REQUESTS = 256;
 export const MAX_JSON_RPC_TIMEOUT_MS = 2_147_483_647;
+export const MAX_JSON_RPC_LINE_BYTES = 8 * 1024 * 1024;
 
 export type JsonRpcProcessIdentity = {
   pid: number;
@@ -48,7 +49,7 @@ export type JsonRpcTerminationResult = JsonRpcProcessIdentity & {
   exited: boolean;
   escalated: boolean;
   signal: "SIGTERM" | "SIGKILL" | null;
-  mode: "process-group" | "turn-interrupt";
+  mode: "process-group" | "turn-interrupt" | "already-completed";
   workerExited: boolean;
 };
 
@@ -120,12 +121,13 @@ export type JsonRpcProcessOptions = {
  * supplied, and treats timeout=0 as an immediate timeout. Long-running Codex
  * turns need a different contract: no request deadline, while process lifetime
  * remains explicitly supervised. This transport creates a dedicated Unix
- * process group so force-stop can target the exact backend generation and all
- * descendants rather than only rejecting a local Promise.
+ * process group so force-stop can target the exact backend generation. A
+ * separate process-tree supervisor retains descendants that create their own
+ * groups and verifies those groups before a replacement worker is admitted.
  */
 export class JsonRpcProcess {
   private child?: ChildProcessWithoutNullStreams;
-  private lines?: ReadLineInterface;
+  private stdoutBuffer = Buffer.alloc(0);
   private nextRequestId = 1;
   private readonly pending = new Map<JsonRpcId, PendingRequest>();
   private readonly timedOut = new Map<JsonRpcId, TimedOutRequest>();
@@ -178,9 +180,8 @@ export class JsonRpcProcess {
     this.exitPromise = new Promise<void>((resolve) => {
       this.resolveExit = resolve;
     });
-    this.lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
-    this.lines.on("line", (line) => this.handleLine(line));
-    child.stderr.on("data", (chunk) => {
+    child.stdout.on("data", (chunk: Buffer) => this.receiveStdout(chunk));
+    child.stderr.on("data", (chunk: Buffer) => {
       if (process.env.CODEX_MCP_BRIDGE_DEBUG === "1") {
         process.stderr.write(`[${this.options.debugLabel}] ${chunk.toString()}`);
       }
@@ -206,8 +207,7 @@ export class JsonRpcProcess {
     });
 
     child.once("exit", (code, signal) => {
-      this.lines?.close();
-      this.lines = undefined;
+      this.stdoutBuffer = Buffer.alloc(0);
       const suffix = signal ? `signal ${signal}` : `exit code ${String(code)}`;
       this.notifyProcessExit(new Error(`${this.options.debugLabel} exited (${suffix}).`));
     });
@@ -309,13 +309,7 @@ export class JsonRpcProcess {
     }
 
     this.closing = true;
-    signalExactProcess(identity, "SIGTERM");
-    if (await this.waitForGroupExit(identity, graceMs)) {
-      return { ...identity, exited: true, escalated: false, signal: "SIGTERM", mode: "process-group", workerExited: true };
-    }
-    signalExactProcess(identity, "SIGKILL");
-    const exited = await this.waitForGroupExit(identity, graceMs);
-    return { ...identity, exited, escalated: true, signal: "SIGKILL", mode: "process-group", workerExited: exited };
+    return terminateJsonRpcProcessIdentity(identity, graceMs);
   }
 
   private async waitForExit(timeoutMs: number): Promise<boolean> {
@@ -326,18 +320,41 @@ export class JsonRpcProcess {
     ]);
   }
 
-  private async waitForGroupExit(identity: JsonRpcProcessIdentity, timeoutMs: number): Promise<boolean> {
-    const deadline = Date.now() + timeoutMs;
-    do {
-      if (!processIdentityAlive(identity)) return true;
-      await delay(25);
-    } while (Date.now() < deadline);
-    return !processIdentityAlive(identity);
+  private receiveStdout(chunk: Buffer): void {
+    if (this.exitNotified || this.closing) return;
+    this.stdoutBuffer = Buffer.concat([this.stdoutBuffer, chunk]);
+    while (true) {
+      const newline = this.stdoutBuffer.indexOf(0x0a);
+      if (newline < 0) {
+        if (this.stdoutBuffer.length > MAX_JSON_RPC_LINE_BYTES) {
+          this.failWire(new Error(`${this.options.debugLabel} emitted an oversized JSON-RPC line.`));
+        }
+        return;
+      }
+      if (newline > MAX_JSON_RPC_LINE_BYTES) {
+        this.failWire(new Error(`${this.options.debugLabel} emitted an oversized JSON-RPC line.`));
+        return;
+      }
+      const lineBytes = this.stdoutBuffer.subarray(0, newline);
+      this.stdoutBuffer = this.stdoutBuffer.subarray(newline + 1);
+      let line: string;
+      try {
+        line = decodeUtf8Strict(lineBytes, `${this.options.debugLabel} stdout`);
+      } catch (error) {
+        this.failWire(error instanceof Error ? error : new Error(String(error)));
+        return;
+      }
+      const error = this.handleLine(line);
+      if (error) {
+        this.failWire(error);
+        return;
+      }
+    }
   }
 
-  private handleLine(line: string): void {
+  private handleLine(line: string): Error | undefined {
     const trimmed = line.trim();
-    if (!trimmed) return;
+    if (!trimmed) return undefined;
     let message: unknown;
     try {
       message = JSON.parse(trimmed);
@@ -345,11 +362,33 @@ export class JsonRpcProcess {
       if (process.env.CODEX_MCP_BRIDGE_DEBUG === "1") {
         process.stderr.write(`[${this.options.debugLabel}] ignored non-JSON stdout line\n`);
       }
-      return;
+      return undefined;
+    }
+    try {
+      assertJsonTextIntegrity(message, `${this.options.debugLabel} response`);
+    } catch (error) {
+      return error instanceof Error ? error : new Error(String(error));
     }
     if (Array.isArray(message)) this.inboundQueue.push(...message);
     else this.inboundQueue.push(message);
     this.scheduleInboundDrain();
+    return undefined;
+  }
+
+  private failWire(error: Error): void {
+    if (this.exitNotified || this.closing) return;
+    this.closing = true;
+    this.stdoutBuffer = Buffer.alloc(0);
+    const identity = this.identity;
+    if (identity) {
+      void terminateJsonRpcProcessIdentity(identity, 1_500).catch(() => undefined);
+    }
+    try {
+      this.child?.stdin.end();
+    } catch {
+      // The transport has already become unusable.
+    }
+    this.notifyProcessExit(error);
   }
 
   /**
@@ -450,6 +489,7 @@ export class JsonRpcProcess {
     if (!this.child || this.exited || !this.child.stdin.writable) {
       throw new Error(`${this.options.debugLabel} process stdin is unavailable.`);
     }
+    assertJsonTextIntegrity(message, `${this.options.debugLabel} request`);
     const framed = this.options.omitJsonRpcHeader && isRecord(message)
       ? Object.fromEntries(Object.entries(message).filter(([key]) => key !== "jsonrpc"))
       : message;
@@ -510,6 +550,58 @@ export class JsonRpcProcess {
     this.resolveExit = undefined;
     this.options.onExit?.(error);
   }
+}
+
+/**
+ * Terminates a previously registered App Server identity without requiring the
+ * supervising executor process to still be alive. On Unix the identity is a
+ * dedicated process group. This primitive intentionally verifies that exact
+ * group only; the execution service's process-tree ledger covers descendants
+ * that move into another group.
+ */
+export async function terminateJsonRpcProcessIdentity(
+  identity: JsonRpcProcessIdentity,
+  graceMs = 1_500
+): Promise<JsonRpcTerminationResult> {
+  if (
+    !Number.isSafeInteger(identity.pid) || identity.pid < 2 ||
+    (identity.processGroupId !== null &&
+      (!Number.isSafeInteger(identity.processGroupId) || identity.processGroupId < 2)) ||
+    !Number.isSafeInteger(graceMs) || graceMs < 0
+  ) {
+    throw new Error("Invalid supervised process identity or termination grace period.");
+  }
+  if (!processIdentityAlive(identity)) {
+    return {
+      ...identity,
+      exited: true,
+      escalated: false,
+      signal: null,
+      mode: "process-group",
+      workerExited: true
+    };
+  }
+  signalExactProcess(identity, "SIGTERM");
+  if (await waitForProcessIdentityExit(identity, graceMs)) {
+    return {
+      ...identity,
+      exited: true,
+      escalated: false,
+      signal: "SIGTERM",
+      mode: "process-group",
+      workerExited: true
+    };
+  }
+  signalExactProcess(identity, "SIGKILL");
+  const exited = await waitForProcessIdentityExit(identity, graceMs);
+  return {
+    ...identity,
+    exited,
+    escalated: true,
+    signal: "SIGKILL",
+    mode: "process-group",
+    workerExited: exited
+  };
 }
 
 function addProgressToken(params: unknown, requestId: number): Record<string, unknown> {
@@ -585,6 +677,18 @@ function processIdentityAlive(identity: JsonRpcProcessIdentity): boolean {
     if (isPermissionDenied(error)) return true;
     throw error;
   }
+}
+
+async function waitForProcessIdentityExit(
+  identity: JsonRpcProcessIdentity,
+  timeoutMs: number
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    if (!processIdentityAlive(identity)) return true;
+    await delay(25);
+  } while (Date.now() < deadline);
+  return !processIdentityAlive(identity);
 }
 
 function isNoSuchProcess(error: unknown): boolean {

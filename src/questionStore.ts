@@ -1,5 +1,7 @@
+import { readAppliedHistoryPolicy, type AppliedHistoryPolicy } from "./historyPolicy.js";
 import { createHash, randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
+import { parseJsonTextStrict } from "./textIntegrity.js";
 
 export type UserQuestionField = {
   id: string; header: string; question: string; isOther?: boolean;
@@ -13,6 +15,8 @@ export type UserQuestionRecord = {
   notification: "stored" | "dispatching" | "requested" | "failed" | "uncertain";
   notificationAttempt?: string; notificationStartedAt?: number; consumedAt?: number;
 };
+
+export type CodexQuestionDeliveryStatus = "dispatching" | "not-delivered" | "delivered" | "uncertain";
 
 /** Upgrade-only schema introduced at v13. Current databases use stateSchema.ts. */
 export const V13_QUESTION_STORE_MIGRATION_SCHEMA = `
@@ -38,25 +42,83 @@ export class QuestionStore {
     deliveredJournalsRemoved: number;
   };
 
-  constructor(private readonly db: Database.Database) {
+  constructor(
+    private readonly db: Database.Database,
+    options: { readOnly?: boolean; policy?: () => AppliedHistoryPolicy } = {}
+  ) {
+    if (options.readOnly) {
+      this.startupMaintenance = {
+        dispatchesMarkedUncertain: 0,
+        expiredQuestionsRemoved: 0,
+        deliveredJournalsRemoved: 0
+      };
+      return;
+    }
     const dispatchesMarkedUncertain = this.db
       .prepare("UPDATE codex_question_deliveries SET status='uncertain' WHERE status='dispatching'")
       .run().changes;
-    this.startupMaintenance = { dispatchesMarkedUncertain, ...this.prune() };
+    this.startupMaintenance = { dispatchesMarkedUncertain, ...this.prune(Date.now()) };
   }
 
-  private prune(): { expiredQuestionsRemoved: number; deliveredJournalsRemoved: number } {
-    const now = Date.now();
+  /** Explicit bounded maintenance. Query methods never call this path. */
+  maintain(now = Date.now(), limit = 64): {
+    expiredQuestionsRemoved: number;
+    deliveredJournalsRemoved: number;
+    notificationsMarkedUncertain: number;
+  } {
+    const boundedLimit = Math.max(1, Math.min(64, Math.floor(limit)));
+    const cleanup = this.prune(now, boundedLimit);
+    const stale = this.db.prepare(`
+      SELECT question_id,scope_id,payload
+        FROM user_questions
+       WHERE json_extract(payload,'$.notification')='dispatching'
+         AND COALESCE(json_extract(payload,'$.notificationStartedAt'),0)<=?
+       ORDER BY expires_at,question_id
+       LIMIT ?
+    `).all(now - 20_000, boundedLimit) as Array<{
+      question_id: string; scope_id: string; payload: string;
+    }>;
+    let notificationsMarkedUncertain = 0;
+    for (const row of stale) {
+      const record = this.fromRow(row);
+      if (!record || record.notification !== "dispatching") continue;
+      record.notification = "uncertain";
+      this.save(record);
+      notificationsMarkedUncertain++;
+    }
+    return { ...cleanup, notificationsMarkedUncertain };
+  }
+
+  private prune(now: number, limit = 64): {
+    expiredQuestionsRemoved: number;
+    deliveredJournalsRemoved: number;
+  } {
     const expiredQuestionsRemoved = this.db
-      .prepare("DELETE FROM user_questions WHERE expires_at <= ?").run(now).changes;
+      .prepare(`DELETE FROM user_questions WHERE question_id IN (
+        SELECT question_id FROM user_questions WHERE expires_at<=?
+        ORDER BY expires_at,question_id LIMIT ?
+      )`).run(now, limit).changes;
     const deliveredJournalsRemoved = this.db
-      .prepare("DELETE FROM codex_question_deliveries WHERE status='delivered' AND created_at < ?")
-      .run(now - 7 * 24 * 60 * 60 * 1000).changes;
+      .prepare(`DELETE FROM codex_question_deliveries WHERE rowid IN (
+        SELECT rowid FROM codex_question_deliveries
+         WHERE status='delivered' AND occurred_at<?
+         ORDER BY created_at,rowid LIMIT ?
+      )`).run(readAppliedHistoryPolicy(this.db,now).cutoffAt ?? -1, limit).changes;
+    const policy=readAppliedHistoryPolicy(this.db,now);
+    if (policy.cutoffAt!==null) this.db.prepare(`DELETE FROM question_history WHERE question_id IN (
+      SELECT question_id FROM question_history WHERE occurred_at<=? ORDER BY occurred_at,question_id LIMIT ?)`)
+      .run(policy.cutoffAt,limit);
     return { expiredQuestionsRemoved, deliveredJournalsRemoved };
   }
 
+  history(scopeId: string, questionId: string, now=Date.now()): UserQuestionRecord | undefined {
+    const policy=readAppliedHistoryPolicy(this.db,now);
+    const row=this.db.prepare(`SELECT payload FROM question_history WHERE scope_id=? AND question_id=?
+      ${policy.cutoffAt===null ? "" : "AND occurred_at>?"}`).get(scopeId,questionId,...(policy.cutoffAt===null ? [] : [policy.cutoffAt]));
+    return this.fromRow(row);
+  }
+
   create(scopeId: string, input: { requestId: string; title: string; questions: UserQuestionField[]; expiresInMinutes?: number }): UserQuestionRecord {
-    this.prune();
     const requestHash = questionHash(input);
     const existing = this.fromRow(this.db.prepare("SELECT payload FROM user_questions WHERE scope_id=? AND request_id=?").get(scopeId, input.requestId));
     if (existing) {
@@ -72,18 +134,22 @@ export class QuestionStore {
       createdAt: now, expiresAt: now + (input.expiresInMinutes || 1440) * 60_000,
       status: "pending", notification: "stored"
     };
+    this.db.prepare("INSERT INTO question_history(question_id,scope_id,occurred_at,payload) VALUES (?,?,?,?)")
+      .run(record.questionId,scopeId,now,JSON.stringify(record));
     this.db.prepare("INSERT INTO user_questions(question_id,scope_id,request_id,response_ref,expires_at,payload) VALUES(?,?,?,NULL,?,?)")
       .run(record.questionId, scopeId, input.requestId, record.expiresAt, JSON.stringify(record));
     return record;
   }
 
   get(scopeId: string, questionId: string): UserQuestionRecord {
-    this.prune();
     const record = this.fromRow(this.db.prepare("SELECT payload FROM user_questions WHERE scope_id=? AND question_id=?").get(scopeId, questionId));
-    if (!record) throw new Error("QUESTION_UNAVAILABLE: The question expired or is unavailable in this conversation.");
+    if (!record || record.expiresAt <= Date.now()) {
+      throw new Error("QUESTION_UNAVAILABLE: The question expired or is unavailable in this conversation.");
+    }
     if (record.notification === "dispatching" && Date.now() - (record.notificationStartedAt || 0) > 20_000) {
+      // Project the crash-safe state without turning a card refresh into a
+      // SQLite write. The maintenance scheduler persists the same transition.
       record.notification = "uncertain";
-      this.save(record);
     }
     return record;
   }
@@ -91,7 +157,7 @@ export class QuestionStore {
   requireCard(scopeId: string, proof: { questionId: string; revision: number; presentationToken: string }): UserQuestionRecord {
     const record = this.get(scopeId, proof.questionId);
     if (record.revision !== proof.revision || record.presentationToken !== proof.presentationToken) {
-      throw new Error("QUESTION_STALE: This question card is no longer valid.");
+      throw new Error("QUESTION_STALE: This question is no longer valid.");
     }
     return record;
   }
@@ -120,17 +186,21 @@ export class QuestionStore {
   }
 
   readResponses(scopeId: string, responseRef?: string): UserQuestionRecord[] {
-    this.prune();
+    const now = Date.now();
     const rows = responseRef
-      ? this.db.prepare("SELECT payload FROM user_questions WHERE scope_id=? AND response_ref=?").all(scopeId, responseRef)
-      : this.db.prepare("SELECT payload FROM user_questions WHERE scope_id=? AND response_ref IS NOT NULL ORDER BY rowid DESC LIMIT 100").all(scopeId);
+      ? this.db.prepare("SELECT payload FROM user_questions WHERE scope_id=? AND response_ref=? AND expires_at>?").all(scopeId, responseRef, now)
+      : this.db.prepare("SELECT payload FROM user_questions WHERE scope_id=? AND response_ref IS NOT NULL AND expires_at>? ORDER BY rowid DESC LIMIT 100").all(scopeId, now);
     const records = rows.map(row => this.fromRow(row)!).filter(record => responseRef || !record.consumedAt).slice(0, 20);
     if (responseRef && !records.length) throw new Error("ANSWER_UNAVAILABLE: The answer expired or is unavailable in this conversation.");
-    for (const record of responseRef ? records : []) {
-      record.consumedAt ||= Date.now();
-      this.save(record);
-    }
     return records;
+  }
+
+  /** Semantic acknowledgement command kept separate from response queries. */
+  consumeResponse(scopeId: string, responseRef: string, now = Date.now()): UserQuestionRecord {
+    const [record] = this.readResponses(scopeId, responseRef);
+    record.consumedAt ||= now;
+    this.save(record);
+    return record;
   }
 
   claimNotification(record: UserQuestionRecord): { send: boolean; attempt?: string } {
@@ -151,31 +221,50 @@ export class QuestionStore {
     this.save(record);
   }
 
-  delivery(scopeId: string, requestId: string, hash: string): string | undefined {
+  delivery(scopeId: string, requestId: string, hash: string): CodexQuestionDeliveryStatus | undefined {
     const row = this.db.prepare("SELECT action_hash,status FROM codex_question_deliveries WHERE scope_id=? AND request_id=?")
       .get(scopeId, requestId) as { action_hash: string; status: string } | undefined;
     if (row && row.action_hash !== hash) throw new Error("ANSWER_REQUEST_CONFLICT: Reuse requestId only for the identical answer.");
-    return row?.status;
+    if (!row) return undefined;
+    return row.status === "dispatching" || row.status === "not-delivered" ||
+      row.status === "delivered" || row.status === "uncertain" ? row.status : "uncertain";
   }
 
-  beginDelivery(scopeId: string, requestId: string, questionRef: string, hash: string): void {
-    const existing = this.db.prepare("SELECT status FROM codex_question_deliveries WHERE scope_id=? AND question_ref=?").get(scopeId, questionRef);
-    if (existing) throw new Error("QUESTION_ALREADY_DISPATCHED: Inspect the previous delivery; do not resend under a new request ID.");
-    this.db.prepare("INSERT INTO codex_question_deliveries VALUES(?,?,?,?,?,?)")
-      .run(scopeId, requestId, questionRef, hash, "dispatching", Date.now());
+  beginDelivery(scopeId: string, requestId: string, questionRef: string, hash: string, jobId?: string): void {
+    const existing = this.db.prepare("SELECT request_id,action_hash,status FROM codex_question_deliveries WHERE scope_id=? AND question_ref=?")
+      .get(scopeId, questionRef) as { request_id: string; action_hash: string; status: string } | undefined;
+    if (existing) {
+      if (existing.request_id !== requestId || existing.status !== "not-delivered") {
+        throw new Error("QUESTION_ALREADY_DISPATCHED: Inspect the previous delivery; do not resend under a new request ID.");
+      }
+      if (existing.action_hash !== hash) {
+        throw new Error("ANSWER_REQUEST_CONFLICT: Reuse requestId only for the identical answer.");
+      }
+      const resumed = this.db.prepare("UPDATE codex_question_deliveries SET status='dispatching',created_at=? WHERE scope_id=? AND request_id=? AND question_ref=? AND action_hash=? AND status='not-delivered'")
+        .run(Date.now(), scopeId, requestId, questionRef, hash);
+      if (resumed.changes !== 1) throw new Error("QUESTION_ALREADY_DISPATCHED: Another answer attempt is in progress.");
+      return;
+    }
+    this.db.prepare("INSERT INTO codex_question_deliveries(scope_id,request_id,question_ref,action_hash,status,created_at,job_id,occurred_at) VALUES(?,?,?,?,?,?,?,?)")
+      .run(scopeId, requestId, questionRef, hash, "dispatching", Date.now(), jobId || null, Date.now());
   }
 
-  finishDelivery(scopeId: string, requestId: string, status: "delivered" | "uncertain"): void {
-    this.db.prepare("UPDATE codex_question_deliveries SET status=? WHERE scope_id=? AND request_id=?").run(status, scopeId, requestId);
+  finishDelivery(scopeId: string, requestId: string, status: "not-delivered" | "delivered" | "uncertain"): void {
+    const finished = this.db.prepare("UPDATE codex_question_deliveries SET status=? WHERE scope_id=? AND request_id=? AND status='dispatching'")
+      .run(status, scopeId, requestId);
+    if (finished.changes !== 1) throw new Error("QUESTION_DELIVERY_STALE: The delivery attempt is no longer current.");
   }
 
   private save(record: UserQuestionRecord): void {
+    this.db.prepare("UPDATE question_history SET payload=? WHERE question_id=?").run(JSON.stringify(record),record.questionId);
     this.db.prepare("UPDATE user_questions SET payload=?,response_ref=? WHERE scope_id=? AND question_id=?")
       .run(JSON.stringify(record), record.responseRef || null, record.scopeId, record.questionId);
   }
 
   private fromRow(row: unknown): UserQuestionRecord | undefined {
-    return row ? JSON.parse((row as { payload: string }).payload) as UserQuestionRecord : undefined;
+    return row
+      ? parseJsonTextStrict((row as { payload: string }).payload, "Stored user question") as UserQuestionRecord
+      : undefined;
   }
 }
 

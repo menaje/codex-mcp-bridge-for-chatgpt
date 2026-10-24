@@ -1,0 +1,166 @@
+{
+  "mode": "compare",
+  "implementationSourceHash": "87fb93928ab0aed801804dc686661ff3d9998014ad7a89cd5aff40aa419c65eb",
+  "node": "v24.11.1",
+  "platform": "darwin",
+  "arch": "arm64",
+  "tunnelClientVersion": "0.0.14+0f870e50a973fa820d4c409000059e181e8d242b (git sha: 0f870e50a973fa820d4c409000059e181e8d242b)",
+  "samples": 60,
+  "units": "milliseconds",
+  "baseline": {
+    "healthExec": {
+      "n": 60,
+      "p50": 13.172,
+      "p95": 13.601,
+      "p99": 16.264,
+      "max": 16.264
+    },
+    "healthFailureCount": 0,
+    "emptyNodeExec": {
+      "n": 60,
+      "p50": 20.649,
+      "p95": 22.084,
+      "p99": 23.454,
+      "max": 23.454
+    },
+    "emptyNodeSpawnEvent": {
+      "n": 60,
+      "p50": 0.319,
+      "p95": 0.39,
+      "p99": 0.405,
+      "max": 0.405
+    },
+    "emptyNodeSpawnExit": {
+      "n": 60,
+      "p50": 20.551,
+      "p95": 21.969,
+      "p99": 24.098,
+      "max": 24.098
+    },
+    "managedAtomicJSON": {
+      "n": 60,
+      "p50": 6.472,
+      "p95": 8.004,
+      "p99": 10.597,
+      "max": 10.597
+    },
+    "managedJSONBytes": 461,
+    "fileFsync": {
+      "n": 60,
+      "p50": 2.828,
+      "p95": 3.807,
+      "p99": 3.846,
+      "max": 3.846
+    },
+    "directoryFsync": {
+      "n": 60,
+      "p50": 2.874,
+      "p95": 3.847,
+      "p99": 7.273,
+      "max": 7.273
+    }
+  },
+  "delayFixtures": [
+    {
+      "endpointDelayMs": 700,
+      "before": {
+        "durationMs": 1043.7797499999997,
+        "code": 2,
+        "healthz": null,
+        "readyz": null,
+        "pollOK": true
+      },
+      "after": {
+        "durationMs": 705.277,
+        "connected": true,
+        "processRunning": true,
+        "reason": null,
+        "observation": {
+          "healthz": {
+            "status": 200,
+            "failure": null
+          },
+          "readyz": {
+            "status": 200,
+            "failure": null
+          },
+          "controlPlanePoll": {
+            "lastSuccessfulAt": "2026-10-07T18:58:10.880Z",
+            "fresh": true,
+            "failure": null
+          },
+          "failure": null
+        }
+      }
+    },
+    {
+      "endpointDelayMs": 3000,
+      "before": {
+        "durationMs": 1044.4869589999998,
+        "code": 2,
+        "healthz": null,
+        "readyz": null,
+        "pollOK": true
+      },
+      "after": {
+        "durationMs": 2005.173,
+        "connected": true,
+        "processRunning": true,
+        "reason": "timeout",
+        "observation": {
+          "healthz": {
+            "status": null,
+            "failure": "timeout"
+          },
+          "readyz": {
+            "status": null,
+            "failure": "timeout"
+          },
+          "controlPlanePoll": {
+            "lastSuccessfulAt": "2026-10-07T18:58:12.629Z",
+            "fresh": true,
+            "failure": null
+          },
+          "failure": "timeout"
+        }
+      }
+    }
+  ],
+  "after": {
+    "directHealth": {
+      "n": 60,
+      "p50": 4.236,
+      "p95": 5.56,
+      "p99": 15.472,
+      "max": 15.472
+    },
+    "repetitiveHealthSubprocesses": 0,
+    "managedAtomicJSON": {
+      "n": 60,
+      "p50": 7.628,
+      "p95": 8.117,
+      "p99": 9.516,
+      "max": 9.516
+    },
+    "managedJSONBytes": 800,
+    "fileFsync": {
+      "n": 60,
+      "p50": 3.103,
+      "p95": 3.356,
+      "p99": 4.285,
+      "max": 4.285
+    },
+    "directoryFsync": {
+      "n": 60,
+      "p50": 2.893,
+      "p95": 3.391,
+      "p99": 3.735,
+      "max": 3.735
+    },
+    "writeCadenceMs": 5000
+  },
+  "parentEventLoopDelayMs": {
+    "p99": 12.403,
+    "max": 443.286
+  }
+}

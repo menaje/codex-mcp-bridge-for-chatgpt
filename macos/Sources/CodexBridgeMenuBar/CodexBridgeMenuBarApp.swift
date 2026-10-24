@@ -1,5 +1,6 @@
 import CodexBridgeKit
 import AppKit
+import Combine
 import Darwin
 import OSLog
 import SwiftUI
@@ -93,13 +94,206 @@ enum AppSingleInstanceCoordinator {
     }
 }
 
+/// Hosts the dashboard in AppKit's native status-item popover. AppKit owns the
+/// outer surface so the arrow, material, corners, shadow, and anchored size
+/// transitions follow the current macOS appearance.
+@MainActor
+final class BridgeMenuBarController: NSObject, NSPopoverDelegate {
+    private(set) var statusItem: NSStatusItem?
+    private(set) var popover = NSPopover()
+    private var hostingController: NSHostingController<AnyView>?
+    private weak var model: AppModel?
+    private var modelObservation: AnyCancellable?
+    private var pendingPopoverSize: NSSize?
+    private var popoverSizeUpdateScheduled = false
+
+    func install(model: AppModel) {
+        guard statusItem == nil else { return }
+        self.model = model
+
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        guard let button = item.button else {
+            NSStatusBar.system.removeStatusItem(item)
+            return
+        }
+        statusItem = item
+        button.target = self
+        button.action = #selector(togglePopover(_:))
+        button.imagePosition = .imageOnly
+        button.imageScaling = .scaleProportionallyDown
+
+        popover.behavior = .transient
+        popover.animates = true
+        popover.delegate = self
+
+        let root = DashboardPopoverView(
+            onContentSizeChange: { [weak self] size in self?.updatePopoverSize(size) },
+            onRequestClose: { [weak self] in self?.closePopover() }
+        )
+        .environmentObject(model)
+        let host = NSHostingController(rootView: AnyView(root))
+        // preferredContentSize can transiently become zero while the model is
+        // still starting. The dashboard's measured callback is the sole size
+        // authority so that empty startup state cannot collapse the popover.
+        host.sizingOptions = []
+        host.view.frame = NSRect(
+            x: 0,
+            y: 0,
+            width: DashboardPopoverLayout.width,
+            height: DashboardPopoverLayout.initialHeight
+        )
+        host.preferredContentSize = host.view.frame.size
+        hostingController = host
+        popover.contentViewController = host
+        // A newly started model can briefly have no body content. Assign the
+        // native host first, then give the popover enough space for SwiftUI's
+        // initial layout; the measured callback replaces this immediately.
+        popover.contentSize = NSSize(
+            width: DashboardPopoverLayout.width,
+            height: DashboardPopoverLayout.initialHeight
+        )
+        host.view.layoutSubtreeIfNeeded()
+        let fittingSize = host.view.fittingSize
+        if fittingSize.width > 0, fittingSize.height > 0 {
+            updatePopoverSize(fittingSize)
+        }
+
+        updateStatusItem()
+        modelObservation = model.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                DispatchQueue.main.async { [weak self] in self?.updateStatusItem() }
+            }
+    }
+
+    @objc private func togglePopover(_ sender: NSStatusBarButton) {
+        if popover.isShown {
+            closePopover()
+        } else {
+            showPopover(relativeTo: sender)
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    private func showPopover(relativeTo button: NSStatusBarButton) {
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+    }
+
+    private func closePopover() {
+        guard popover.isShown else { return }
+        popover.performClose(nil)
+    }
+
+    func showDashboard() {
+        guard let button = statusItem?.button else { return }
+        if !popover.isShown {
+            showPopover(relativeTo: button)
+        }
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func updatePopoverSize(_ measuredSize: CGSize) {
+        guard measuredSize.width.isFinite, measuredSize.height.isFinite,
+              measuredSize.width > 0, measuredSize.height > 0 else { return }
+        let screen = statusItem?.button?.window?.screen ??
+            hostingController?.view.window?.screen ?? NSScreen.main
+        let next = NSSize(
+            width: DashboardPopoverLayout.width,
+            height: DashboardPopoverLayout.popoverHeight(
+                measured: measuredSize.height,
+                screen: screen?.visibleFrame.height ??
+                    measuredSize.height + DashboardPopoverLayout.screenMargin
+            )
+        )
+        pendingPopoverSize = next
+        guard !popoverSizeUpdateScheduled else { return }
+        popoverSizeUpdateScheduled = true
+        // SwiftUI can publish several geometry preferences while replacing a
+        // loading view with a scroll view. Apply only the final measurement for
+        // this run-loop pass, without animating an intermediate content frame.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.popoverSizeUpdateScheduled = false
+            guard let next = self.pendingPopoverSize else { return }
+            self.pendingPopoverSize = nil
+            guard abs(self.popover.contentSize.width - next.width) >= 0.5 ||
+                    abs(self.popover.contentSize.height - next.height) >= 0.5 else { return }
+            // AppKit's resize animation can briefly recenter the hosted SwiftUI
+            // content before it expands the popover. Keep the menu anchor fixed
+            // and apply this content-size change atomically instead.
+            let window = self.popover.isShown ? self.hostingController?.view.window : nil
+            let anchoredMaxY = window?.frame.maxY
+            self.popover.animates = false
+            self.hostingController?.preferredContentSize = next
+            self.popover.contentSize = next
+            if let window, let anchoredMaxY {
+                self.pinPopoverWindow(window, toMaxY: anchoredMaxY)
+            }
+            // NSPopover can finish its internal frame update on the following
+            // run-loop pass. Keep animations disabled through that pass and
+            // restore the top edge once more before accepting new animation.
+            DispatchQueue.main.async { [weak self, weak window] in
+                guard let self else { return }
+                if let window, let anchoredMaxY,
+                   self.popover.isShown,
+                   self.hostingController?.view.window === window {
+                    self.pinPopoverWindow(window, toMaxY: anchoredMaxY)
+                }
+                self.popover.animates = true
+            }
+        }
+    }
+
+    private func pinPopoverWindow(_ window: NSWindow, toMaxY anchoredMaxY: CGFloat) {
+        var frame = window.frame
+        let offset = anchoredMaxY - frame.maxY
+        guard abs(offset) >= 0.5 else { return }
+        frame.origin.y += offset
+        window.setFrame(frame, display: true)
+    }
+
+    private func updateStatusItem() {
+        guard let model, let button = statusItem?.button else { return }
+        let status = model.health.accessibilityLabel(locale: model.interfaceLocale)
+        button.image = BridgeMenuBarIcon.templateImage(for: model.health)
+        button.toolTip = BridgeAppLocalization.format(
+            "macos.format.dotSeparatedPair",
+            locale: model.interfaceLocale,
+            BridgeAppLocalization.string("macos.codexmcpbridgeforchatgpt", locale: model.interfaceLocale),
+            status
+        )
+        button.setAccessibilityLabel(status)
+    }
+
+    func popoverWillShow(_ notification: Notification) {
+        model?.setDashboardVisible(true)
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        model?.setDashboardVisible(false)
+    }
+
+    func uninstall() {
+        closePopover()
+        modelObservation = nil
+        pendingPopoverSize = nil
+        hostingController = nil
+        popover.contentViewController = nil
+        if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
+        statusItem = nil
+        model = nil
+    }
+}
+
 @MainActor
 final class BridgeAppDelegate: NSObject, NSApplicationDelegate {
     static var model: AppModel?
     private let logger = Logger(subsystem: "com.menaje.codex-mcp-bridge", category: "lifecycle")
+    private let menuBarController = BridgeMenuBarController()
     private var terminationRequestInProgress = false
 
     func applicationWillFinishLaunching(_ notification: Notification) {
+        _ = NSApp.setActivationPolicy(.accessory)
         guard AppSingleInstanceCoordinator.acquireOrActivateExistingInstance() else {
             logger.info("another menu bar application instance is already running")
             Darwin._exit(EXIT_SUCCESS)
@@ -108,8 +302,14 @@ final class BridgeAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         logger.info("menu bar application finished launching")
-        Self.model?.lifecycleTerminationHandler = { NSApp.terminate(nil) }
-        Task { await Self.model?.start() }
+        if let model = Self.model {
+            menuBarController.install(model: model)
+            model.lifecycleTerminationHandler = { NSApp.terminate(nil) }
+            model.completionNotificationOpenHandler = { [weak self] in
+                self?.menuBarController.showDashboard()
+            }
+            Task { await model.start() }
+        }
         if ProcessInfo.processInfo.environment["CODEX_MCP_BRIDGE_OPEN_SETTINGS"] == "1" {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 if let model = Self.model {
@@ -124,8 +324,28 @@ final class BridgeAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let model = Self.model else { return .terminateNow }
-        if model.applicationShutdownCompleted { return .terminateNow }
+        guard SettingsWindowController.shared.confirmDiscardBeforeApplicationShutdown() else { return .terminateCancel }
+        guard ConnectionAssistantWindowController.shared.confirmDiscardBeforeApplicationShutdown() else {
+            SettingsWindowController.shared.cancelApplicationShutdownDiscard()
+            return .terminateCancel
+        }
+        guard SkillsLibraryWindowController.shared.confirmDiscardBeforeApplicationShutdown() else {
+            SettingsWindowController.shared.cancelApplicationShutdownDiscard()
+            ConnectionAssistantWindowController.shared.cancelApplicationShutdownDiscard()
+            return .terminateCancel
+        }
+        guard let model = Self.model else {
+            SettingsWindowController.shared.completeApplicationShutdownDiscard()
+            ConnectionAssistantWindowController.shared.completeApplicationShutdownDiscard()
+            SkillsLibraryWindowController.shared.completeApplicationShutdownDiscard()
+            return .terminateNow
+        }
+        if model.applicationShutdownCompleted {
+            SettingsWindowController.shared.completeApplicationShutdownDiscard()
+            ConnectionAssistantWindowController.shared.completeApplicationShutdownDiscard()
+            SkillsLibraryWindowController.shared.completeApplicationShutdownDiscard()
+            return .terminateNow
+        }
         if terminationRequestInProgress { return .terminateLater }
         terminationRequestInProgress = true
         Task { @MainActor in
@@ -138,6 +358,21 @@ final class BridgeAppDelegate: NSObject, NSApplicationDelegate {
                     if !shouldTerminate { presentShutdownFailure(model: model) }
                 }
             }
+            if shouldTerminate,
+               (!SettingsWindowController.shared.confirmDiscardBeforeApplicationShutdown() ||
+                !ConnectionAssistantWindowController.shared.confirmDiscardBeforeApplicationShutdown() ||
+                !SkillsLibraryWindowController.shared.confirmDiscardBeforeApplicationShutdown()) {
+                shouldTerminate = false
+            }
+            if shouldTerminate {
+                SettingsWindowController.shared.completeApplicationShutdownDiscard()
+                ConnectionAssistantWindowController.shared.completeApplicationShutdownDiscard()
+                SkillsLibraryWindowController.shared.completeApplicationShutdownDiscard()
+            } else {
+                SettingsWindowController.shared.cancelApplicationShutdownDiscard()
+                ConnectionAssistantWindowController.shared.cancelApplicationShutdownDiscard()
+                SkillsLibraryWindowController.shared.cancelApplicationShutdownDiscard()
+            }
             terminationRequestInProgress = false
             sender.reply(toApplicationShouldTerminate: shouldTerminate)
         }
@@ -149,22 +384,22 @@ final class BridgeAppDelegate: NSObject, NSApplicationDelegate {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = BridgeAppLocalization.string(
-            "안전하게 종료하지 못했습니다",
+            "macos.couldnotquitsafely",
             locale: model.interfaceLocale
         )
         alert.informativeText = [
             model.runtimeErrorMessage,
             BridgeAppLocalization.string(
-                "실행 중인 작업과 백그라운드 프로세스를 중단하고 앱의 관련 프로세스를 강제로 종료할까요? 파일 변경은 되돌아가지 않습니다.",
+                "macos.interruptrunningworkandbackgroundprocessesandforce",
                 locale: model.interfaceLocale
             )
         ].compactMap { $0 }.joined(separator: "\n\n")
         alert.addButton(withTitle: BridgeAppLocalization.string(
-            "강제 종료",
+            "macos.forcequit",
             locale: model.interfaceLocale
         ))
         alert.addButton(withTitle: BridgeAppLocalization.string(
-            "취소",
+            "common.cancel",
             locale: model.interfaceLocale
         ))
         return alert.runModal() == .alertFirstButtonReturn
@@ -175,15 +410,15 @@ final class BridgeAppDelegate: NSObject, NSApplicationDelegate {
         let alert = NSAlert()
         alert.alertStyle = .critical
         let title = model.generalSettingsSaveState == .failed
-            ? "설정 변경사항을 저장하지 못했습니다"
-            : "관련 프로세스를 모두 종료하지 못했습니다"
+            ? "macos.couldnotsavesettings"
+            : "macos.couldnotstopallrelatedprocesses"
         alert.messageText = BridgeAppLocalization.string(title, locale: model.interfaceLocale)
         alert.informativeText = model.runtimeErrorMessage ?? BridgeAppLocalization.string(
-            "앱을 종료하지 않았습니다. 현황을 확인한 뒤 다시 시도해 주세요.",
+            "macos.theappwasnotquitreviewthestatus",
             locale: model.interfaceLocale
         )
         alert.addButton(withTitle: BridgeAppLocalization.string(
-            "확인",
+            "macos.ok",
             locale: model.interfaceLocale
         ))
         alert.runModal()
@@ -203,6 +438,15 @@ enum PrimaryAppWindowPresentation {
     static func configure(_ window: NSWindow) {
         window.level = .normal
         window.collectionBehavior = collectionBehavior
+        window.tabbingMode = .disallowed
+        window.hasShadow = true
+        window.backgroundColor = .windowBackgroundColor
+        window.titleVisibility = .visible
+        window.titlebarAppearsTransparent = false
+        window.styleMask.remove(.fullSizeContentView)
+        window.isMovableByWindowBackground = false
+        window.standardWindowButton(.miniaturizeButton)?.isEnabled = false
+        window.standardWindowButton(.zoomButton)?.isEnabled = false
     }
 
     static func show(_ window: NSWindow) {
@@ -227,26 +471,38 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     static let shared = SettingsWindowController()
     private var window: NSWindow?
     private weak var model: AppModel?
+    private let editScope = BridgeEditScope()
 
     func show(model: AppModel) {
         self.model = model
         if window == nil {
             let settingsWindow = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 820, height: 700),
-                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                contentRect: NSRect(x: 0, y: 0, width: 980, height: 720),
+                styleMask: [.titled, .closable, .resizable],
                 backing: .buffered,
                 defer: false
             )
-            settingsWindow.title = "Codex MCP Bridge for ChatGPT"
+            settingsWindow.title = BridgeAppLocalization.string(
+                "macos.settings",
+                locale: model.interfaceLocale
+            )
             settingsWindow.isReleasedWhenClosed = false
             settingsWindow.delegate = self
             PrimaryAppWindowPresentation.configure(settingsWindow)
+            settingsWindow.toolbarStyle = .unifiedCompact
+            settingsWindow.standardWindowButton(.zoomButton)?.isEnabled = true
             settingsWindow.setFrameAutosaveName("CodexBridgeSettingsWindow")
-            settingsWindow.contentView = NSHostingView(
-                rootView: NativeSettingsView()
+            settingsWindow.contentMinSize = NSSize(width: 820, height: 600)
+            let settingsHostingController = NSHostingController(
+                rootView: NativeSettingsView(onWindowTitleChange: { [weak settingsWindow] title in
+                    settingsWindow?.title = title
+                })
                     .environmentObject(model)
-                    .frame(minWidth: 720, minHeight: 620)
+                    .environment(\.bridgeEditScope, editScope)
+                    .frame(minWidth: 820, minHeight: 600)
             )
+            settingsWindow.contentViewController = settingsHostingController
+            settingsWindow.titleVisibility = .hidden
             settingsWindow.center()
             window = settingsWindow
         }
@@ -257,10 +513,17 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         model.refreshLoginItemStatus()
         Task {
             if model.helperStatus == nil { await model.start() }
-            await model.refreshStatus()
-            await model.refreshSettings()
         }
     }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        editScope.confirmDiscardIfNeeded { BridgeDiscardAlert.confirm(locale: model?.interfaceLocale ?? .current) }
+    }
+    func confirmDiscardBeforeApplicationShutdown() -> Bool {
+        editScope.confirmDiscardForApplicationShutdown { BridgeDiscardAlert.confirm(locale: model?.interfaceLocale ?? .current) }
+    }
+    func completeApplicationShutdownDiscard() { editScope.completeApplicationShutdownDiscard() }
+    func cancelApplicationShutdownDiscard() { editScope.cancelApplicationShutdownDiscard() }
 
     func windowWillClose(_ notification: Notification) {
         if let window = notification.object as? NSWindow {
@@ -271,40 +534,194 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 }
 
 @MainActor
-final class ConnectionRepairWindowController: NSObject, NSWindowDelegate {
-    static let shared = ConnectionRepairWindowController()
+final class SkillsLibraryWindowController: NSObject, NSWindowDelegate {
+    static let shared = SkillsLibraryWindowController()
     private var window: NSWindow?
+    private let windowState = SkillsLibraryWindowState()
+    private weak var model: AppModel?
+    private let editScope = BridgeEditScope()
 
     func show(model: AppModel) {
+        self.model = model
         if window == nil {
-            let repairWindow = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 560, height: 660),
+            let frameAutosaveName = "CodexBridgeSkillsLibraryWindowV5"
+            let skillsWindow = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 1_120, height: 760),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable],
                 backing: .buffered,
                 defer: false
             )
-            repairWindow.title = "Codex MCP Bridge for ChatGPT"
+            skillsWindow.title = BridgeAppLocalization.string(
+                "macos.skilllibrary",
+                locale: model.interfaceLocale
+            )
+            skillsWindow.isReleasedWhenClosed = false
+            skillsWindow.delegate = self
+            PrimaryAppWindowPresentation.configure(skillsWindow)
+            skillsWindow.standardWindowButton(.miniaturizeButton)?.isEnabled = true
+            skillsWindow.standardWindowButton(.zoomButton)?.isEnabled = true
+            skillsWindow.toolbarStyle = .unifiedCompact
+            skillsWindow.contentMinSize = NSSize(width: 900, height: 600)
+            skillsWindow.contentViewController = NSHostingController(
+                rootView: SkillsLibraryLocalizedRootView()
+                    .environmentObject(model)
+                    .environmentObject(windowState)
+                    .environment(\.bridgeEditScope, editScope)
+                    .frame(minWidth: 900, minHeight: 600)
+            )
+            skillsWindow.titleVisibility = .hidden
+            if !skillsWindow.setFrameUsingName(frameAutosaveName) {
+                skillsWindow.setContentSize(NSSize(width: 1_120, height: 720))
+                skillsWindow.center()
+            }
+            skillsWindow.setFrameAutosaveName(frameAutosaveName)
+            window = skillsWindow
+        }
+        if let window {
+            window.title = BridgeAppLocalization.string(
+                "macos.skilllibrary",
+                locale: model.interfaceLocale
+            )
+            PrimaryAppWindowPresentation.show(window)
+        }
+        Task {
+            if model.helperStatus == nil { await model.start() }
+            await model.refreshSkillLibrary()
+        }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        if let window = notification.object as? NSWindow {
+            PrimaryAppWindowPresentation.didClose(window)
+        }
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard editScope.confirmDiscardIfNeeded({ BridgeDiscardAlert.confirm(locale: model?.interfaceLocale ?? .current) }) else { return false }
+        return windowState.confirmDiscardIfNeeded {
+            presentDiscardAlert(
+                message: "macos.skills.discardUnsavedChangesAndClose",
+                bringSkillsWindowForward: false
+            )
+        }
+    }
+
+    func confirmDiscardBeforeApplicationShutdown() -> Bool {
+        guard editScope.confirmDiscardForApplicationShutdown({ BridgeDiscardAlert.confirm(locale: model?.interfaceLocale ?? .current) }) else { return false }
+        // The scope already includes the primary editor and any open sheet.
+        return true
+    }
+
+    func completeApplicationShutdownDiscard() {
+        editScope.completeApplicationShutdownDiscard()
+        windowState.completeApplicationShutdownDiscard()
+    }
+
+    func cancelApplicationShutdownDiscard() {
+        editScope.cancelApplicationShutdownDiscard()
+        windowState.cancelApplicationShutdownDiscard()
+    }
+
+    private func presentDiscardAlert(message: String, bringSkillsWindowForward: Bool) -> Bool {
+        let locale = model?.interfaceLocale ?? .current
+        if bringSkillsWindowForward, let window {
+            NSApp.activate(ignoringOtherApps: true)
+            PrimaryAppWindowPresentation.show(window)
+        }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = BridgeAppLocalization.string(message, locale: locale)
+        alert.informativeText = BridgeAppLocalization.string(
+            "macos.skills.theCurrentMarkdownEditsWillBeLost",
+            locale: locale
+        )
+        alert.addButton(withTitle: BridgeAppLocalization.string("macos.skills.discardChanges", locale: locale))
+        alert.addButton(withTitle: BridgeAppLocalization.string("common.cancel", locale: locale))
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+}
+
+@MainActor
+final class ConnectionAssistantWindowController: NSObject, NSWindowDelegate {
+    static let shared = ConnectionAssistantWindowController()
+    private var window: NSWindow?
+    private let windowState = ConnectionAssistantWindowState()
+    private let editScope = BridgeEditScope()
+    private weak var model: AppModel?
+
+    func show(
+        model: AppModel,
+        presentation requestedPresentation: ConnectionAssistantPresentation? = nil
+    ) {
+        self.model = model
+        if requestedPresentation != nil && window?.isVisible == true {
+            guard editScope.confirmDiscardIfNeeded({ BridgeDiscardAlert.confirm(locale: model.interfaceLocale) }) else { return }
+        }
+        let presentation = requestedPresentation ?? (model.needsSetup ? .setup : .recovery)
+        if window == nil || window?.isVisible != true || requestedPresentation != nil {
+            windowState.begin(presentation)
+        }
+        if window == nil {
+            let repairWindow = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 720, height: 640),
+                styleMask: [.titled, .closable, .resizable],
+                backing: .buffered,
+                defer: false
+            )
+            repairWindow.title = localizedTitle(for: presentation, model: model)
             repairWindow.isReleasedWhenClosed = false
             repairWindow.delegate = self
             PrimaryAppWindowPresentation.configure(repairWindow)
-            repairWindow.setFrameAutosaveName("CodexBridgeConnectionRepairWindow")
-            repairWindow.contentView = NSHostingView(
-                rootView: ConnectionRepairView()
+            repairWindow.standardWindowButton(.zoomButton)?.isEnabled = true
+            repairWindow.toolbarStyle = .unified
+            repairWindow.setFrameAutosaveName("CodexBridgeConnectionAssistantWindow")
+            repairWindow.contentMinSize = NSSize(width: 620, height: 520)
+            let repairHostingController = NSHostingController(
+                rootView: ConnectionAssistantRootView(
+                    windowState: windowState,
+                    onClose: { [weak repairWindow] in repairWindow?.performClose(nil) },
+                    onTitleChange: { [weak repairWindow] title in repairWindow?.title = title }
+                )
                     .environmentObject(model)
-                    .frame(minWidth: 500, minHeight: 580)
+                    .environment(\.bridgeEditScope, editScope)
+                    .frame(minWidth: 620, minHeight: 520)
             )
+            repairWindow.contentViewController = repairHostingController
             repairWindow.center()
             window = repairWindow
         }
         if let window {
+            window.title = localizedTitle(for: windowState.presentation, model: model)
             PrimaryAppWindowPresentation.show(window)
         }
         Task {
             if model.helperStatus == nil { await model.start() }
             await model.refreshStatus()
             await model.refreshAuthStatus()
+            if windowState.presentation == .setup { await model.refreshSetupDiscovery() }
         }
     }
+
+    private func localizedTitle(
+        for presentation: ConnectionAssistantPresentation,
+        model: AppModel
+    ) -> String {
+        BridgeAppLocalization.string(
+            presentation == .setup
+                ? "macos.connectionAssistant.setupWindowTitle"
+                : "macos.connectionAssistant.recoveryWindowTitle",
+            locale: model.interfaceLocale
+        )
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        editScope.confirmDiscardIfNeeded { BridgeDiscardAlert.confirm(locale: model?.interfaceLocale ?? .current) }
+    }
+    func confirmDiscardBeforeApplicationShutdown() -> Bool {
+        editScope.confirmDiscardForApplicationShutdown { BridgeDiscardAlert.confirm(locale: model?.interfaceLocale ?? .current) }
+    }
+    func completeApplicationShutdownDiscard() { editScope.completeApplicationShutdownDiscard() }
+    func cancelApplicationShutdownDiscard() { editScope.cancelApplicationShutdownDiscard() }
 
     func windowWillClose(_ notification: Notification) {
         if let window = notification.object as? NSWindow {
@@ -322,25 +739,45 @@ struct CodexBridgeMenuBarApp: App {
         let notificationDelivery = SystemOperationalNotificationDelivery()
         let appModel = AppModel(
             connectionStore: UserDefaultsBridgeConnectionStore(),
-            operationalNotifications: OperationalNotifications(defaults: .standard, delivery: notificationDelivery)
+            operationalNotifications: OperationalNotifications(defaults: .standard, delivery: notificationDelivery),
+            completionNotifications: CompletionNotifications(delivery: notificationDelivery)
         )
         notificationDelivery.onOpen = { [weak appModel] problem, scope in
             appModel?.showOperationalProblem(problem, scope: scope)
+        }
+        notificationDelivery.onCompletionOpen = { [weak appModel] in
+            appModel?.showDashboardForCompletionNotification()
         }
         _model = StateObject(wrappedValue: appModel)
         BridgeAppDelegate.model = appModel
     }
 
     var body: some Scene {
-        MenuBarExtra {
-            DashboardPopoverView(fitsMenuBarWindow: true)
+        Settings {
+            EmptyView()
                 .environmentObject(model)
-        } label: {
-            BridgeMenuBarIcon(health: model.health)
-                .accessibilityLabel(
-                    model.health.accessibilityLabel(locale: model.interfaceLocale)
-                )
         }
-        .menuBarExtraStyle(.window)
+        .commands {
+            CommandMenu("macos.bridgeskills") {
+                Button("macos.newskill") { performSkillLibraryCommand(.bridgeSkillCommandNew) }
+                    .keyboardShortcut("n", modifiers: .command)
+                Button("macos.skills.importFilesFolderOrZip") { performSkillLibraryCommand(.bridgeSkillCommandImport) }
+                    .keyboardShortcut("o", modifiers: .command)
+                Divider()
+                Button("macos.save") { performSkillLibraryCommand(.bridgeSkillCommandSave) }
+                    .keyboardShortcut("s", modifiers: .command)
+                Button("macos.skills.searchBridgeSkills") { performSkillLibraryCommand(.bridgeSkillCommandFind) }
+                    .keyboardShortcut("f", modifiers: .command)
+                Button("macos.skills.togglePreviewEdit") { performSkillLibraryCommand(.bridgeSkillCommandToggleEdit) }
+                    .keyboardShortcut("e", modifiers: .command)
+            }
+        }
+    }
+
+    private func performSkillLibraryCommand(_ name: Notification.Name) {
+        SkillsLibraryWindowController.shared.show(model: model)
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: name, object: nil)
+        }
     }
 }

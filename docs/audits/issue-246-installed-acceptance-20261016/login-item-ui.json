@@ -1,0 +1,7 @@
+{
+  "observedAt": "2026-10-16T06:04:52.875949+00:00",
+  "source": "macOS System Settings > General > Login Items & Extensions; cua accessibility tree",
+  "openAtLoginContainsInstalledApplication": true,
+  "application": "Codex MCP Bridge for ChatGPT",
+  "settingsChanged": false
+}

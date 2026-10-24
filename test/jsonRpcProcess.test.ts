@@ -13,6 +13,10 @@ rl.on("line", (line) => {
   const message = JSON.parse(line);
   omitted = message.jsonrpc === undefined;
   if (message.method === "echo") return send({ id: message.id, result: message.params });
+  if (message.method === "invalid-utf8") return process.stdout.write(Buffer.from([0xc3, 0x28, 0x0a]));
+  if (message.method === "unpaired-surrogate") {
+    return process.stdout.write('{"jsonrpc":"2.0","id":' + message.id + ',"result":"\\ud800"}\n');
+  }
   if (message.method === "hold") { heldId = message.id; return; }
   if (message.method === "exit-now") return process.exit(0);
   if (message.method === "release") {
@@ -57,6 +61,28 @@ describe("JsonRpcProcess", () => {
       await expect(headerless.request("echo", { mode: "app" }, { timeoutMs: 2_000 })).resolves.toEqual({ mode: "app" });
     } finally {
       await Promise.all([regular.close(), headerless.close()]);
+    }
+  });
+
+  it("rejects malformed UTF-8 and escaped unpaired surrogates from the App Server", async () => {
+    for (const method of ["invalid-utf8", "unpaired-surrogate"]) {
+      const rpc = processFor({ omitJsonRpcHeader: true });
+      try {
+        await expect(rpc.request(method, {}, { timeoutMs: 2_000 })).rejects.toThrow(/UTF-8|surrogate/i);
+        expect(rpc.exited).toBe(true);
+      } finally {
+        await rpc.close();
+      }
+    }
+  });
+
+  it("does not JSON-escape an unpaired surrogate into an outbound App Server request", async () => {
+    const rpc = processFor({ omitJsonRpcHeader: true });
+    try {
+      await expect(rpc.request("echo", { raw: "\ud800" }, { timeoutMs: 2_000 }))
+        .rejects.toThrow(/unpaired Unicode surrogate/i);
+    } finally {
+      await rpc.close();
     }
   });
 

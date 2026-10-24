@@ -1,0 +1,13 @@
+{
+  "base": "f710974b33fc40432653c815d175058cba1adaee",
+  "sourceSha256": {
+    "src/runtimeProcess.ts": "e38278e1fd569937e67491a031086b9ffcc7a7fdbdc036c047c21f2730b1d698",
+    "src/server.ts": "4371e2c0c254bf24d8bc9374c3d6588c332a2bee09052b83dd19c5e87edd3749",
+    "test/runtimeProcess.test.ts": "d307db986c645795ad96a4b4c6cfc4ca08a2a20a91cb092fcf76534c8bc1ccae",
+    "test/server.test.ts": "e0bb4a6fbaec4056b15be4352c84b498aba319e1e9946e93058dfbdabc1d147e",
+    "package-lock.json": "30e505c06fc6776c96068943d85907afb4bfd959b976bf1df38f220278d9646c"
+  },
+  "sourceMatchedGitArchive": true,
+  "openFileScanExitCode": 1,
+  "taskOwnedArchiveRemoved": true
+}

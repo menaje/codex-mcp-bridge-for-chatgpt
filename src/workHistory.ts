@@ -1,5 +1,7 @@
+import { readAppliedHistoryPolicy, historyExpired, retainedJobSql } from "./historyPolicy.js";
 import * as z from "zod/v4";
 import type Database from "better-sqlite3";
+import { performance } from "node:perf_hooks";
 import { problemKey, problemRevision } from "./problemReview.js";
 
 export const HISTORY_RETENTION_DAYS = [7, 30, 90, 0] as const;
@@ -13,13 +15,18 @@ export const dashboardHistoryActionInput = z.strictObject({
   ...dashboardHistoryActionBase,
   action: z.literal("acknowledge")
 });
-/** Runtime compatibility parser for already-mounted cards and older native clients. */
-export const dashboardHistoryRuntimeInput = z.strictObject({
-  ...dashboardHistoryActionBase,
-  action: z.enum(["acknowledge", "archive", "restore"])
-});
-export type DashboardHistoryActionInput = z.infer<typeof dashboardHistoryRuntimeInput>;
+export type DashboardHistoryActionInput = z.infer<typeof dashboardHistoryActionInput>;
 export type HistoryJobIdentity = {jobId:string;activityId:string;status:string;updatedAt:number};
+export type HistoryRetentionCandidate = {
+  jobId: string;
+  scopeId: string;
+  requestId: string;
+  activityId: string;
+  status: string;
+  updatedAt: number;
+  archivedAt: number;
+  terminalVersion: number | null;
+};
 export const DEFAULT_HISTORY_RETENTION_DAYS: HistoryRetentionDays = 30;
 export const ISSUE_ATTENTION_DAYS = 7;
 /** Upgrade-only schema introduced at v15. Current databases use stateSchema.ts. */
@@ -39,6 +46,7 @@ export function historyRetentionDays(value: unknown): HistoryRetentionDays {
 
 export type WorkHistoryPolicy = {
   retentionDays: HistoryRetentionDays;
+  policyRevision: string; evaluatedAt: string;
   issueAttentionDays: number;
   lastCleanupAt: string | null;
   lastCleanupCount: number;
@@ -49,18 +57,24 @@ export type WorkHistoryPolicy = {
 
 export type HistoryProblemJob = HistoryJobIdentity & {
   scopeId: string; agentId: string | null; acknowledgedAt: number | null;
+  occurredAt:number; reason:string|null;
   problemKey: string; revision: string;
 };
 
-/** Presentation/outcome retention never removes the authoritative replay receipt,
- * Agent, thread identity, project pins, or cancellation/delivery journals. */
+/** Presentation/outcome retention never removes the authoritative request replay
+ * receipt, Agent/thread identity, project pins, or cancellation journals. Exact
+ * ChatGPT completion-delivery rows expire with their run-history entry. */
 export class WorkHistoryStore {
-  constructor(private readonly db: Database.Database) {}
+  constructor(
+    private readonly db: Database.Database,
+    private readonly expireProjection: (candidate: HistoryRetentionCandidate, now: number) => void
+  ) {}
 
   latestJob(agentId: string): HistoryJobIdentity | undefined {
     const row = this.db.prepare(`SELECT job_id,activity_id,status,updated_at FROM jobs j WHERE agent_id=?
       AND NOT EXISTS (SELECT 1 FROM work_history_state h WHERE h.job_id=j.job_id AND h.expired_at IS NOT NULL)
-      ORDER BY created_at DESC,updated_at DESC,job_id DESC LIMIT 1`)
+      AND ${retainedJobSql(readAppliedHistoryPolicy(this.db),"j")}
+      ORDER BY created_at DESC,job_id DESC LIMIT 1`)
       .get(agentId) as {job_id:string;activity_id:string;status:string;updated_at:number} | undefined;
     return row ? {jobId:row.job_id,activityId:row.activity_id,status:row.status,updatedAt:row.updated_at} : undefined;
   }
@@ -116,14 +130,14 @@ export class WorkHistoryStore {
   }
 
   problemJobs(scopeId?: string): HistoryProblemJob[] {
-    const rows = this.db.prepare(`SELECT j.job_id,j.scope_id,j.agent_id,j.activity_id,j.status,j.updated_at,h.acknowledged_at,h.review_sequence AS review_seq
+    const rows = this.db.prepare(`SELECT j.job_id,j.scope_id,j.agent_id,j.activity_id,j.status,j.updated_at,j.ended_at,j.problem_summary,h.acknowledged_at,h.review_sequence AS review_seq
       FROM jobs j LEFT JOIN work_history_state h ON h.job_id=j.job_id
-      WHERE j.status IN ('failed','interrupted') AND h.expired_at IS NULL ${scopeId ? "AND j.scope_id=?" : ""}
+      WHERE j.status IN ('failed','interrupted','cancelled') AND h.expired_at IS NULL AND ${retainedJobSql(readAppliedHistoryPolicy(this.db),"j")} ${scopeId ? "AND j.scope_id=?" : ""}
       ORDER BY j.updated_at DESC,j.job_id`).all(...(scopeId ? [scopeId] : [])) as Array<{
-        job_id:string;scope_id:string;agent_id:string|null;activity_id:string;status:string;updated_at:number;acknowledged_at:number|null;review_seq:number|null;
+        job_id:string;scope_id:string;agent_id:string|null;activity_id:string;status:string;updated_at:number;ended_at:number;problem_summary:string|null;acknowledged_at:number|null;review_seq:number|null;
       }>;
     return rows.map(row => ({jobId:row.job_id,scopeId:row.scope_id,agentId:row.agent_id,activityId:row.activity_id,
-      status:row.status,updatedAt:row.updated_at,acknowledgedAt:row.acknowledged_at,
+      status:row.status,updatedAt:row.updated_at,occurredAt:row.ended_at,reason:row.problem_summary,acknowledgedAt:row.acknowledged_at,
       problemKey:problemKey("execution",row.job_id),
       revision:problemRevision(["execution",row.job_id,row.status,row.updated_at,row.acknowledged_at,row.review_seq || "0"])}));
   }
@@ -132,50 +146,54 @@ export class WorkHistoryStore {
     return Boolean(this.db.prepare("SELECT 1 FROM work_history_state WHERE job_id=? AND expired_at IS NOT NULL").get(jobId));
   }
 
-  policy(days: HistoryRetentionDays): WorkHistoryPolicy {
+  policy(_days: HistoryRetentionDays): WorkHistoryPolicy {
+    const applied = readAppliedHistoryPolicy(this.db);
+    const days = applied.retentionDays;
     const cleanup = this.db.prepare(`SELECT last_cleanup_at,last_cleanup_count,total_removed
       FROM work_history_control WHERE singleton=1`).get() as {
         last_cleanup_at:number|null;last_cleanup_count:number;total_removed:number;
       };
-    return { retentionDays: days, issueAttentionDays: ISSUE_ATTENTION_DAYS,
+    return { retentionDays: days, policyRevision: applied.policyRevision, evaluatedAt: new Date(applied.evaluatedAt).toISOString(), issueAttentionDays: ISSUE_ATTENTION_DAYS,
       lastCleanupAt: cleanup.last_cleanup_at === null ? null : new Date(cleanup.last_cleanup_at).toISOString(),
       lastCleanupCount: cleanup.last_cleanup_count, totalRemoved: cleanup.total_removed,
       reviewUntilRetention: true, automaticRecovery:true };
   }
 
   /** Bounded maintenance. Protected results and live work remain intact. */
-  sweep(days: HistoryRetentionDays, isProtected: (jobId: string) => boolean, now = Date.now()): number {
-    if (days === 0) return 0;
-    const cursor = this.db.prepare(`SELECT cursor_updated_at AS at,cursor_job_id AS id
-      FROM work_history_control WHERE singleton=1`).get() as {at:number;id:string};
+  sweep(
+    days: HistoryRetentionDays,
+    isProtected: (jobId: string) => boolean,
+    now = Date.now(),
+    options: { maxDurationMs?: number; limit?: number } = {}
+  ): number {
+    const policy = readAppliedHistoryPolicy(this.db, now);
+    if (policy.retentionDays === 0) return 0;
+    const limit = Math.max(1,Math.min(64,Math.floor(options.limit ?? 64)));
     const candidates = this.db.prepare(`SELECT j.job_id,j.scope_id,j.request_id,j.activity_id,j.status,
-      j.updated_at,j.archived_at,j.terminal_version FROM jobs j
-      WHERE j.archived_at IS NOT NULL AND j.status IN ('completed','failed','interrupted','cancelled')
-      AND j.updated_at<? AND (j.updated_at>? OR (j.updated_at=? AND j.job_id>?))
+      j.updated_at,j.archived_at,j.ended_at,j.terminal_version FROM jobs j
+      WHERE j.status IN ('completed','failed','interrupted','cancelled') AND j.ended_at<=?
       AND NOT EXISTS (SELECT 1 FROM work_history_state h WHERE h.job_id=j.job_id AND h.expired_at IS NOT NULL)
-      ORDER BY j.updated_at,j.job_id LIMIT 500`).all(now - days * 86400_000,cursor.at,cursor.at,cursor.id) as Array<{
-        job_id:string;scope_id:string;request_id:string;activity_id:string;status:string;updated_at:number;archived_at:number;terminal_version:number|null;
+      ORDER BY j.ended_at,j.job_id LIMIT ?`).all(policy.cutoffAt,limit) as Array<{
+        job_id:string;scope_id:string;request_id:string;activity_id:string;status:string;updated_at:number;
+        archived_at:number|null;ended_at:number;terminal_version:number|null;
       }>;
-    const last = candidates.length === 500 ? candidates[candidates.length-1] : undefined;
-    this.db.prepare(`UPDATE work_history_control SET cursor_updated_at=?,cursor_job_id=?
-      WHERE singleton=1`).run(last?.updated_at || 0,last?.job_id || "");
-    let removed = 0;
+    let removed=0;
+    const deadline=performance.now()+Math.max(1,options.maxDurationMs ?? 25);
     for (const row of candidates) {
+      if (removed && performance.now()>=deadline) break;
+      // Read after candidate preparation, under the state owner's write transaction.
       if (isProtected(row.job_id)) continue;
-      // Keep the exact request reservation and terminal outcome required for
-      // replay prevention. Remove display details and all disposable events.
-      const receipt = {resultOmitted:true,historyExpired:true};
-      this.db.prepare("UPDATE jobs SET payload=? WHERE job_id=?").run(JSON.stringify(receipt),row.job_id);
-      this.db.prepare("UPDATE jobs SET summary='{}' WHERE job_id=?").run(row.job_id);
-      this.db.prepare("DELETE FROM job_events WHERE job_id=?").run(row.job_id);
+      const current = readAppliedHistoryPolicy(this.db,now);
+      if (!historyExpired(row.ended_at,current)) continue;
+      this.expireProjection({jobId:row.job_id,scopeId:row.scope_id,requestId:row.request_id,
+        activityId:row.activity_id,status:row.status,updatedAt:row.updated_at,
+        archivedAt:row.archived_at ?? now,terminalVersion:row.terminal_version},now);
       this.db.prepare(`INSERT INTO work_history_state(job_id,expired_at) VALUES (?,?)
         ON CONFLICT(job_id) DO UPDATE SET expired_at=excluded.expired_at`).run(row.job_id,now);
       removed++;
     }
-    if (removed) {
-      this.db.prepare(`UPDATE work_history_control SET last_cleanup_at=?,last_cleanup_count=?,
-        total_removed=total_removed+? WHERE singleton=1`).run(now,removed,removed);
-    }
+    if (removed) this.db.prepare(`UPDATE work_history_control SET last_cleanup_at=?,last_cleanup_count=?,
+      total_removed=total_removed+?,review_revision=review_revision+1 WHERE singleton=1`).run(now,removed,removed);
     return removed;
   }
 }

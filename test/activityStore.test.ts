@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BridgeStateStore } from "../src/stateStore.js";
 import { CodexJobRegistry } from "../src/tools.js";
 import type { ToolResult } from "../src/upstream.js";
@@ -13,6 +13,9 @@ const ACTIVITY_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const ACTIVITY_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 describe("Activity SQLite state", () => {
+  beforeEach(()=>vi.spyOn(Date,"now").mockReturnValue(2_000_000));
+  afterEach(()=>vi.restoreAllMocks());
+
   it("keeps a default Activity open when its Codex turn reaches terminal state", () => {
     const store = new BridgeStateStore({ file: stateFile() });
     store.upsertJob(job("job-a", "request-a", ACTIVITY_A, "running", 10));
@@ -42,7 +45,6 @@ describe("Activity SQLite state", () => {
       scopeId: SCOPE_A,
       title: "Parallel implementation",
       kind: "implementation",
-      executionMode: "background",
       handoffPolicy: "notify",
       completionTrigger: "sealed-jobs-terminal",
       now: 1
@@ -406,12 +408,13 @@ describe("Activity SQLite state", () => {
           model: "gpt-test",
           reasoningEffort: "high",
           serviceTier: "priority",
-          reroutedModel: "gpt-rerouted"
+          requestState: "requested"
         }
       })
     ]);
     expect(JSON.stringify(store.listDashboardRetainedJobs()))
       .not.toContain("must-not-survive-pruning");
+    expect(store.listDashboardRetainedJobs()[0]?.execution).not.toHaveProperty("reroutedModel");
     expect(store.getActivity(ACTIVITY_A)).toMatchObject({
       counts: { total: 1, completed: 1, terminal: 1 }
     });
@@ -514,7 +517,6 @@ function job(
     activityId,
     status,
     updatedAt,
-    executionMode: "background" as const,
     backendKind: "mcp-server"
   };
 }

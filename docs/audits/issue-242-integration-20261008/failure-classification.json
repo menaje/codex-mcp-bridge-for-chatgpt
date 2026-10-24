@@ -1,0 +1,29 @@
+{
+  "r502Correlation": {
+    "classification": "Inherited R502 test synchronization defect. Not an integrated product transport failure.",
+    "beforeFix": "Focused and first full run saw child cleanup before asynchronous response-complete IPC; no product deadline expired. Selected case alone passed on both candidate and authoritative source; authoritative full 15-case file reproduced the same missing phase.",
+    "controlHead": "e550798fe16bd5944f69f1941a98d249e84adefc",
+    "fixCommit": "e1cc5aea23da3fb8464301d00c0e905cca1b7bb7",
+    "fix": "Await child cleanup AND response-complete with the existing vi.waitFor budget. All original phase, privacy, capacity, and exact-once assertions retained; no timeout increase.",
+    "fixedFocused": "final-r502-retirement: 38 passed, zero failures"
+  },
+  "experimentRetirement": {
+    "classification": "Task validation environment contamination; not product regression or baseline host timing.",
+    "cause": "A temporary package.json with type=module placed in the first TMPDIR for a TS audit helper changed the module mode of the fixture extensionless CommonJS git stub. Node reported require is not defined in ES module scope.",
+    "baseline": "Exact unchanged f710974 selected fixture passed in its separate clean TMPDIR.",
+    "correction": "Removed only the task-owned helper package.json; renamed helper to .mts. Candidate selected fixture then passed, followed by all 20 retirement cases in final focused run. Final full rerun uses a fresh TMPDIR without ancestor package.json.",
+    "retainedEvidence": [
+      "node-full.json",
+      "node-full.log",
+      "baseline-selected-failures.json",
+      "candidate-selected-failures.json",
+      "candidate-retirement-clean.json"
+    ]
+  },
+  "originalCharacterization": {
+    "classification": "Integration harness incompatibility, expected from W3 durable retry contract.",
+    "evidence": "characterization-original.stderr; immediate reclaim assertion 0 !== 1 at original 73e92d3.",
+    "fixCommit": "c83078898053470fb9b7e96e1760ab009addb790",
+    "correction": "Count ten attempts with one actual release, assert no immediate reclaim/one mutation/one transaction, advance fixture-only time to the persisted deadline, assert same outbox ID and validate FK/integrity."
+  }
+}

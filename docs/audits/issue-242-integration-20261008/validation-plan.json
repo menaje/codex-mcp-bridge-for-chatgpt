@@ -1,0 +1,155 @@
+{
+  "source": "c83078898053470fb9b7e96e1760ab009addb790 73e92d36100b2da192394d90bdd095d723945c32 fe411f1f4214f9adc1b2482e46bb00ea01547390",
+  "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review",
+  "tmpdir": "/tmp/cb242-int-tswwmblu",
+  "policy": "taskpolicy -a for validation child only; one Vitest worker; original deadlines; existing dependencies; CODEX_HOME unset; opt-in live companion disabled; pinned tunnel tests use synthetic local Go proxy",
+  "stages": [
+    {
+      "id": "build",
+      "command": "npm",
+      "args": [
+        "run",
+        "build"
+      ],
+      "extra": {}
+    },
+    {
+      "id": "tsc-noemit",
+      "command": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/.bin/tsc",
+      "args": [
+        "--noEmit",
+        "-p",
+        "tsconfig.json"
+      ],
+      "extra": {}
+    },
+    {
+      "id": "validate-fast",
+      "command": "npm",
+      "args": [
+        "run",
+        "validate:fast"
+      ],
+      "extra": {
+        "CODEX_MCP_BRIDGE_CODEX": "/tmp/codex-cli-0.153.3/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex"
+      }
+    },
+    {
+      "id": "focused-242",
+      "command": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/.bin/vitest",
+      "args": [
+        "run",
+        "test/issue242Characterization.test.ts",
+        "test/issue242Completion.test.ts",
+        "test/issue242ProxyCharacterization.test.ts",
+        "test/issue242ReadTransport.test.ts",
+        "test/issue242R502.test.ts",
+        "test/issue242R502Tunnel.test.ts",
+        "test/httpDiagnostics.test.ts",
+        "test/tunnelHealth.test.ts",
+        "test/runtimeStatus.test.ts",
+        "test/runtimeProcess.test.ts",
+        "test/stateReadProcess.test.ts",
+        "test/companionServer.test.ts",
+        "test/macosHelperServer.test.ts",
+        "test/launcherLifecycle.integration.test.ts",
+        "--maxWorkers=1",
+        "--reporter=default",
+        "--reporter=json",
+        "--outputFile.json=/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/focused-242.json"
+      ],
+      "extra": {
+        "ISSUE_242_TUNNEL_CLIENT": "/opt/homebrew/bin/tunnel-client",
+        "ISSUE_242_R502_REPORT": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/focused-242-proxy.json",
+        "ISSUE_242_R502_TUNNEL_REPORT": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/focused-242-tunnel.json"
+      }
+    },
+    {
+      "id": "lifecycle-capacity-db",
+      "command": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/.bin/vitest",
+      "args": [
+        "run",
+        "test/projectLifecycle.test.ts",
+        "test/projectLifecycleHost.test.ts",
+        "test/projectRegistry.test.ts",
+        "test/projectRecovery.test.ts",
+        "test/currentSelectorReplay.test.ts",
+        "test/cancellation.test.ts",
+        "test/executionRecovery.test.ts",
+        "test/executionRuntime.test.ts",
+        "test/executionJournal.test.ts",
+        "test/executionServiceProcess.test.ts",
+        "test/runtimeLifecycle.test.ts",
+        "test/runtimeLifecycleRecovery.test.ts",
+        "test/automaticRecovery.test.ts",
+        "test/stateServiceProcess.test.ts",
+        "test/stateStore.test.ts",
+        "test/stateDatabaseLifecycle.test.ts",
+        "test/stateSchemaMigration.test.ts",
+        "test/stateRecovery.test.ts",
+        "test/tools.test.ts",
+        "--maxWorkers=1",
+        "--reporter=default",
+        "--reporter=json",
+        "--outputFile.json=/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/lifecycle-capacity-db.json"
+      ],
+      "extra": {
+        "ISSUE_242_TUNNEL_CLIENT": "/opt/homebrew/bin/tunnel-client",
+        "ISSUE_242_R502_REPORT": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/lifecycle-capacity-db-proxy.json",
+        "ISSUE_242_R502_TUNNEL_REPORT": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/lifecycle-capacity-db-tunnel.json"
+      }
+    },
+    {
+      "id": "characterization-1200",
+      "command": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/.bin/tsx",
+      "args": [
+        "scripts/issue-242-characterization.ts",
+        "1200"
+      ],
+      "extra": {}
+    },
+    {
+      "id": "completion-counts",
+      "command": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/.bin/tsx",
+      "args": [
+        "scripts/issue-242-completion.ts"
+      ],
+      "extra": {}
+    },
+    {
+      "id": "tunnel-cost",
+      "command": "node",
+      "args": [
+        "scripts/issue-242-runtime-cost.mjs",
+        "compare",
+        "/opt/homebrew/bin/tunnel-client"
+      ],
+      "extra": {}
+    },
+    {
+      "id": "native-full",
+      "command": "npm",
+      "args": [
+        "run",
+        "macos:check"
+      ],
+      "extra": {}
+    },
+    {
+      "id": "node-full",
+      "command": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/.bin/vitest",
+      "args": [
+        "run",
+        "--maxWorkers=1",
+        "--reporter=default",
+        "--reporter=json",
+        "--outputFile.json=/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/node-full.json"
+      ],
+      "extra": {
+        "ISSUE_242_TUNNEL_CLIENT": "/opt/homebrew/bin/tunnel-client",
+        "ISSUE_242_R502_REPORT": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/node-full-proxy.json",
+        "ISSUE_242_R502_TUNNEL_REPORT": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/node-full-tunnel.json"
+      }
+    }
+  ]
+}

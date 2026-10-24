@@ -1,0 +1,41 @@
+[
+  {
+    "id": "r502-authoritative-control",
+    "source": "e550798fe16bd5944f69f1941a98d249e84adefc 49d29e9b246d6f7fadc64726222f1b589ae5658e dfcbbf596588982347d0c94787b68b83369fe2a6",
+    "scope": "taskpolicy -a validation child, CODEX_HOME unset, TMPDIR=/tmp/cb242-int-tswwmblu",
+    "counts": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 14,
+      "total": 15
+    },
+    "report": "r502-authoritative-control.json",
+    "log": "r502-authoritative-control.log"
+  },
+  {
+    "id": "r502-authoritative-full-control",
+    "source": "e550798fe16bd5944f69f1941a98d249e84adefc 49d29e9b246d6f7fadc64726222f1b589ae5658e dfcbbf596588982347d0c94787b68b83369fe2a6",
+    "scope": "taskpolicy -a validation child, CODEX_HOME unset, TMPDIR=/tmp/cb242-int-tswwmblu",
+    "counts": {
+      "passed": 14,
+      "failed": 1,
+      "skipped": 0,
+      "total": 15
+    },
+    "report": "r502-authoritative-full-control.json",
+    "log": "r502-authoritative-full-control.log"
+  },
+  {
+    "id": "candidate-retirement-clean",
+    "source": "c83078898053470fb9b7e96e1760ab009addb790 73e92d36100b2da192394d90bdd095d723945c32 fe411f1f4214f9adc1b2482e46bb00ea01547390",
+    "scope": "taskpolicy -a validation child, CODEX_HOME unset, TMPDIR=/tmp/cb242-int-tswwmblu",
+    "counts": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 19,
+      "total": 20
+    },
+    "report": "candidate-retirement-clean.json",
+    "log": "candidate-retirement-clean.log"
+  }
+]

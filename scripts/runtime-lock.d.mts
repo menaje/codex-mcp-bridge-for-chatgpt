@@ -21,6 +21,7 @@ export function acquireRuntimeLock(
   lockDirectory?: string,
   options?: {
     pid?: number;
+    token?: string;
     startedAt?: string;
     processAlive?: (pid: number) => boolean;
     platform?: NodeJS.Platform;
@@ -30,3 +31,5 @@ export function acquireRuntimeLock(
   directory: string;
   release(): void;
 };
+
+export function releaseStoppedRuntimeLock(lockDirectory: string, expectedOwner: { pid: number; token: string }, options?: { processAlive?: (pid: number) => boolean }): void;

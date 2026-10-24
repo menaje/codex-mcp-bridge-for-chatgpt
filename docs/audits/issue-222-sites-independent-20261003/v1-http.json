@@ -1,0 +1,100 @@
+{
+  "startedAt": "2026-10-02T23:32:32.892Z",
+  "projectId": "appgprj_6abf89d2d04c8191a617d5193ef5471a",
+  "versionNumber": 1,
+  "sourceCommit": "77dff7da2988c5ca2ceed4a2f913a62424741e6c",
+  "payload": {
+    "probe": "issue-222",
+    "phase": "A",
+    "value": 222
+  },
+  "payloadSha256": "41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf",
+  "requests": [
+    {
+      "label": "baseline_metadata",
+      "path": "/metadata",
+      "method": "GET",
+      "beganAt": "2026-10-02T23:32:32.895Z",
+      "completedAt": "2026-10-02T23:32:34.972Z",
+      "status": 200,
+      "responseDate": "Fri, 02 Oct 2026 23:32:35 GMT",
+      "contentType": "application/json",
+      "payloadSha256": null,
+      "responseSha256": "ce47bb060beeffacc7a33ce2dc76576756a198c1342cef4b1c52f38a548fdfa5",
+      "responseBody": "{\"fixture\":{\"probe\":\"issue-222\",\"phase\":\"A\",\"value\":222},\"storage\":\"not-configured\",\"localChannel\":false}"
+    },
+    {
+      "label": "write_fixed_payload",
+      "path": "/ingest",
+      "method": "POST",
+      "beganAt": "2026-10-02T23:32:34.976Z",
+      "completedAt": "2026-10-02T23:32:37.480Z",
+      "status": 200,
+      "responseDate": "Fri, 02 Oct 2026 23:32:37 GMT",
+      "contentType": "application/json",
+      "payloadSha256": "41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf",
+      "responseSha256": "9025411edd5d861e64e95c3580885ac4839d1866892a3eb01bd58e01ac179f1e",
+      "responseBody": "{\"accepted\":true,\"received\":{\"probe\":\"issue-222\",\"phase\":\"A\",\"value\":222},\"persisted\":false}"
+    },
+    {
+      "label": "independent_http_metadata_after_write",
+      "path": "/metadata",
+      "method": "GET",
+      "beganAt": "2026-10-02T23:32:37.481Z",
+      "completedAt": "2026-10-02T23:32:39.398Z",
+      "status": 200,
+      "responseDate": "Fri, 02 Oct 2026 23:32:39 GMT",
+      "contentType": "application/json",
+      "payloadSha256": null,
+      "responseSha256": "ce47bb060beeffacc7a33ce2dc76576756a198c1342cef4b1c52f38a548fdfa5",
+      "responseBody": "{\"fixture\":{\"probe\":\"issue-222\",\"phase\":\"A\",\"value\":222},\"storage\":\"not-configured\",\"localChannel\":false}"
+    },
+    {
+      "label": "duplicate_fixed_payload",
+      "path": "/ingest",
+      "method": "POST",
+      "beganAt": "2026-10-02T23:32:39.399Z",
+      "completedAt": "2026-10-02T23:32:41.121Z",
+      "status": 200,
+      "responseDate": "Fri, 02 Oct 2026 23:32:41 GMT",
+      "contentType": "application/json",
+      "payloadSha256": "41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf",
+      "responseSha256": "9025411edd5d861e64e95c3580885ac4839d1866892a3eb01bd58e01ac179f1e",
+      "responseBody": "{\"accepted\":true,\"received\":{\"probe\":\"issue-222\",\"phase\":\"A\",\"value\":222},\"persisted\":false}"
+    },
+    {
+      "label": "independent_http_metadata_after_duplicate",
+      "path": "/metadata",
+      "method": "GET",
+      "beganAt": "2026-10-02T23:32:41.121Z",
+      "completedAt": "2026-10-02T23:32:42.841Z",
+      "status": 200,
+      "responseDate": "Fri, 02 Oct 2026 23:32:42 GMT",
+      "contentType": "application/json",
+      "payloadSha256": null,
+      "responseSha256": "ce47bb060beeffacc7a33ce2dc76576756a198c1342cef4b1c52f38a548fdfa5",
+      "responseBody": "{\"fixture\":{\"probe\":\"issue-222\",\"phase\":\"A\",\"value\":222},\"storage\":\"not-configured\",\"localChannel\":false}"
+    },
+    {
+      "label": "mcp_initialize",
+      "path": "/mcp",
+      "method": "POST",
+      "beganAt": "2026-10-02T23:32:42.842Z",
+      "completedAt": "2026-10-02T23:32:42.912Z",
+      "status": 404,
+      "responseDate": "Fri, 02 Oct 2026 23:32:42 GMT",
+      "contentType": "text/plain; charset=utf-8",
+      "payloadSha256": "ee70026bd0777f002a86f35ebbd471c50600ed1845825e2621044fe50e257015",
+      "responseSha256": "e3ebaa16dd9d9b9fc107c42183fb6cf9d22927e1af03dbbdfa0ccc38e4e4ac31",
+      "responseBody": "Not found"
+    }
+  ],
+  "authentication": "existing get_site credential; documented OAI-Sites-Authorization header",
+  "credentialPersisted": false,
+  "mockRequests": 0,
+  "toolsList": "not performed: initialize failed",
+  "readFixture": "not performed: initialize failed",
+  "storageVerdict": "No PASS: existing metadata is not an HTTP lookup of stored records; no key/count lookup contract exists in v1",
+  "siteToLocal": "not performed: no supported channel exposed; no mock substituted",
+  "completedAt": "2026-10-02T23:32:42.912Z"
+}

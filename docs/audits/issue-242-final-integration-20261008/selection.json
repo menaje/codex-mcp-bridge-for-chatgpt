@@ -1,0 +1,46 @@
+{
+  "selectedCandidate": "de037d99d82aa42c5a792c1d3bd9c88afb45b173",
+  "selectedTree": "b7c4cee8d90725dd4fa554cb777b201af50e899a",
+  "independentAudit": "d1a36b52e84c90c5a3738d2d845ecb2595e0b394",
+  "alternateCandidate": "b9cb19d49e8ef9192e1044ddd5880e66c06e1cca",
+  "alternateTree": "4f2a35d66b1b2d53809e70c967ec028f06f12a71",
+  "productRootsCompared": [
+    "src",
+    "macos",
+    "package.json",
+    "package-lock.json",
+    ".github",
+    "AGENTS.md",
+    "release-manifest.json",
+    "state-migrations.json"
+  ],
+  "productRootsIdentical": true,
+  "nonAuditDifferences": [
+    "scripts/issue-242-characterization.ts",
+    "scripts/issue-242-integration-read-cost.ts",
+    "test/issue242R502.test.ts"
+  ],
+  "selectedAuditChangesOnlyOwnDirectory": true,
+  "candidateDiffSha256": "ff3ecb98aef0a26e9c9c2411ae5b2994e5138754a22e44cd21c4c5ef565481f5",
+  "repositoryInstructionsExactRemoteMatch": true,
+  "artifactManifests": [
+    {
+      "manifest": "docs/audits/issue-242-integration-20261008/artifact-sha256.json",
+      "checked": 85,
+      "mismatches": []
+    },
+    {
+      "manifest": "docs/audits/issue-242-independent-20261008/artifact-sha256.json",
+      "checked": 33,
+      "mismatches": []
+    }
+  ],
+  "auditDifferenceCount": 97,
+  "retainedEvidence": {
+    "directory": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-final-evidence-20261008",
+    "sourceBundle": "source-candidates.bundle",
+    "sourceBundleSha256": "6910d2f8b11c0b50ae360faa1befd5fba0d4d38304e48d8d05cb9056bc3aaa00",
+    "alternateReceipt": "alternate-final-verdict.json",
+    "alternateReceiptSha256": "9405718ad849bf33281d2fbf67524d3110b53c058590622f6c75442755f4cf4d"
+  }
+}

@@ -1,9 +1,11 @@
 import path from "node:path";
 import { realpathSync, statSync } from "node:fs";
-import { readdir } from "node:fs/promises";
+import { open, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { validateModelPolicy, type ModelChoice } from "./modelPolicy.js";
 import { PRODUCT_INFO } from "./productInfo.js";
+import { parseJsonTextStrict } from "./textIntegrity.js";
+import { isLoopbackOAuthMetadataUrl, mcpOAuthRequested } from "../scripts/runtime-env.mjs";
 
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type ApprovalPolicy = "untrusted" | "on-request" | "never";
@@ -14,24 +16,35 @@ export type CodexBackendKind = "mcp-server" | "app-server" | "codex-sdk";
 export function isCodexBackendKind(value: unknown): value is CodexBackendKind {
   return value === "mcp-server" || value === "app-server" || value === "codex-sdk";
 }
-export type McpTransportMode = "stateless" | "stateful";
 export type StateProfile = "stable" | "candidate" | "development";
 
 export const HARD_MAX_CONCURRENT_JOBS = 100;
 export const DEFAULT_USER_MAX_CONCURRENT_JOBS = 30;
+
+export type McpOAuthConfig = {
+  issuer: string;
+  resource: string;
+  resourceMetadataUrl: string;
+  jwksUri: string;
+  operatorSubject: string;
+};
 
 export type BridgeConfig = {
   host: string;
   port: number;
   token?: string;
   noAuth: boolean;
+  /** Opt-in, single-operator OAuth access JWT verification on HTTP only. */
+  oauth?: McpOAuthConfig;
+  /** Opt-in MCP Events. No Auth/Tunnel correlation metadata is insufficient. */
+  eventsEnabled?: boolean;
+  /** Explicit experimental profile; ordinary startup never enables Events. */
+  experimentalProfile?: "events";
   allowedHosts?: string[];
-  mcpTransportMode: McpTransportMode;
-  mcpSessionIdleTtlMs: number;
-  maxMcpSessions: number;
+  /** Browser Origin hostnames permitted to reach the MCP endpoint. */
+  allowedOrigins?: string[];
   codexCommand: string;
   codexService?: import("./codexService.js").CodexService;
-  codexCommandResolver?: () => Promise<string>;
   runtimeStatusResolver?: () => Promise<string[]>;
   defaultBackend: "app-server";
   allowedRoots: string[];
@@ -46,6 +59,10 @@ export type BridgeConfig = {
   modelCatalogTimeoutMs: number;
   modelCatalogStateFile: string;
   stateDatabaseFile: string;
+  /** Best-effort diagnostics only; never used for execution authority. */
+  telemetryDatabaseFile: string;
+  /** Bridge-owned, versioned skills. This is never a Codex global skills root. */
+  bridgeSkillsDirectory: string;
   stateProfile: StateProfile | "explicit";
   upstreamPoolSize: number;
   secretScan: boolean;
@@ -57,7 +74,10 @@ export type BridgeConfig = {
   jobStaleAfterMs: number;
   maxRetainedJobs: number;
   maxJobResultBytes: number;
+  /** Operator-facing configuration warnings surfaced in Settings and status. */
   startupWarnings: string[];
+  /** Development-only startup diagnostics retained in local logs and diagnostics. */
+  developerStartupWarnings: string[];
 };
 
 const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
@@ -69,12 +89,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   const port = parsePort(read("PORT") || "8765");
   const token = normalizeOptional(read("TOKEN"));
   const noAuth = parseBool(read("NO_AUTH"));
+  const profile = normalizeOptional(read("EXPERIMENTAL_PROFILE"));
+  if (profile && profile !== "events") throw new Error("EXPERIMENTAL_PROFILE_UNSUPPORTED: Use events only for explicit experiments.");
+  const experimentalProfile = profile as "events" | undefined;
+  const eventsEnabled = experimentalProfile === "events" && parseBool(read("EVENTS_ENABLED"));
+  const oauth = mcpOAuthRequested(env) ? loadMcpOAuthConfig(read, noAuth, host, port) : undefined;
   const allowedHosts = parseAllowedHosts(read("ALLOWED_HOSTS"));
-  const mcpTransportMode = parseMcpTransportMode(read("MCP_TRANSPORT_MODE") || "stateless");
-  const mcpSessionIdleTtlMs = parsePositiveInt(
-    read("MCP_SESSION_IDLE_TTL_MS") || String(30 * 60 * 1000)
-  );
-  const maxMcpSessions = parsePositiveInt(read("MAX_MCP_SESSIONS") || "64");
+  const allowedOrigins = parseAllowedHosts(read("ALLOWED_ORIGINS"));
   const defaultBackend = parseBackendKind(read("DEFAULT_BACKEND") || "app-server");
   // Project folders are registered in user settings. ROOTS remains only as a
   // backwards-compatible operator ceiling for existing deployments that set
@@ -102,6 +123,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     explicitStateDatabaseFile || stateDatabaseFileForProfile(selectedStateProfile),
     "state database file"
   );
+  const telemetryDatabaseFile = parseAbsoluteFilePath(
+    read("TELEMETRY_DATABASE_FILE") || path.join(path.dirname(stateDatabaseFile), "telemetry.sqlite"),
+    "telemetry database file"
+  );
+  if (databaseFilesMayAlias(telemetryDatabaseFile, stateDatabaseFile)) {
+    throw new Error("Telemetry and operational state must use different database files.");
+  }
+  const bridgeSkillsDirectory = parseAbsoluteDirectoryPath(
+    read("SKILLS_DIRECTORY") || path.join(path.dirname(stateDatabaseFile), "skills"),
+    "bridge skills directory"
+  );
   const stateProfile: StateProfile | "explicit" = explicitStateDatabaseFile
     ? "explicit"
     : selectedStateProfile;
@@ -119,12 +151,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   const maxRetainedJobs = parsePositiveInt(read("MAX_RETAINED_JOBS") || "100");
   const maxJobResultBytes = parsePositiveInt(read("MAX_JOB_RESULT_BYTES") || String(1024 * 1024));
   const startupWarnings: string[] = [];
+  const developerStartupWarnings: string[] = [];
   if (
     PRODUCT_INFO.releaseStage !== "stable" &&
     (stateProfile === "stable" ||
       (stateProfile === "explicit" && stateDatabaseFile === stateDatabaseFileForProfile("stable")))
   ) {
-    startupWarnings.push(
+    developerStartupWarnings.push(
       `This ${PRODUCT_INFO.releaseStage} build explicitly targets the stable state profile. ` +
       "Stop the stable runtime and complete the database preflight before continuing."
     );
@@ -139,7 +172,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   }
   if (normalizeOptional(read("FAST_RETURN_MS"))) {
     startupWarnings.push(
-      "CODEX_MCP_BRIDGE_FAST_RETURN_MS is retired and ignored. Choose foreground or background explicitly; background returns immediately."
+      "CODEX_MCP_BRIDGE_FAST_RETURN_MS is retired and ignored. codex_task now uses one durable asynchronous admission contract and does not wait for a fixed return timer."
+    );
+  }
+  const retiredMcpSettings = [
+    "MCP_TRANSPORT_MODE",
+    "MCP_SESSION_IDLE_TTL_MS",
+    "MAX_MCP_SESSIONS"
+  ].filter((name) => normalizeOptional(read(name)));
+  if (retiredMcpSettings.length > 0) {
+    startupWarnings.push(
+      `CODEX_MCP_BRIDGE_${retiredMcpSettings.join(", CODEX_MCP_BRIDGE_")} ` +
+      "are retired and ignored. This bridge serves only MCP 2026-07-28 request envelopes; remove the session transport settings."
     );
   }
   if (normalizeOptional(read("UPSTREAM_TIMEOUT_MS"))) {
@@ -166,11 +210,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     );
   }
 
-  if (!token && !noAuth) {
+  if (!token && !noAuth && !oauth) {
     throw new Error("Set CODEX_MCP_BRIDGE_TOKEN, or set CODEX_MCP_BRIDGE_NO_AUTH=1 for local-only development.");
   }
   if (noAuth && !LOCAL_HOSTS.has(host)) {
     throw new Error("CODEX_MCP_BRIDGE_NO_AUTH=1 is allowed only for local host bindings.");
+  }
+  if (oauth && eventsEnabled && (!token || Buffer.byteLength(token) < 32)) {
+    throw new Error("OAuth Events require a stable CODEX_MCP_BRIDGE_TOKEN of at least 32 bytes for callback encryption; it is not an OAuth access token.");
   }
 
   if (defaultSandbox === "workspace-write" && !allowWorkspaceWrite) {
@@ -203,10 +250,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     port,
     token,
     noAuth,
+    oauth,
+    eventsEnabled,
+    experimentalProfile,
     allowedHosts,
-    mcpTransportMode,
-    mcpSessionIdleTtlMs,
-    maxMcpSessions,
+    allowedOrigins,
     codexCommand: read("CODEX") || "codex",
     defaultBackend,
     allowedRoots,
@@ -221,6 +269,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     modelCatalogTimeoutMs,
     modelCatalogStateFile,
     stateDatabaseFile,
+    telemetryDatabaseFile,
+    bridgeSkillsDirectory,
     stateProfile,
     upstreamPoolSize,
     secretScan,
@@ -232,8 +282,35 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     jobStaleAfterMs,
     maxRetainedJobs,
     maxJobResultBytes,
-    startupWarnings
+    startupWarnings,
+    developerStartupWarnings
   };
+}
+
+function loadMcpOAuthConfig(read: (name: string) => string | undefined, noAuth: boolean, host: string, port: number): McpOAuthConfig {
+  if (noAuth) throw new Error("MCP OAuth cannot be combined with CODEX_MCP_BRIDGE_NO_AUTH=1, including stdio.");
+  const required = (name: string) => {
+    const value = read(`OAUTH_${name}`);
+    if (!value?.trim()) throw new Error(`MCP OAuth requires CODEX_MCP_BRIDGE_OAUTH_${name}.`);
+    return value;
+  };
+  const https = (name: string) => {
+    const value = required(name);
+    let url: URL;
+    try { url = new URL(value); } catch { throw new Error(`OAUTH_${name} must be an absolute HTTPS URL.`); }
+    if (url.protocol !== "https:" || url.username || url.password || url.hash || url.search || /[\s"\\<>]/u.test(value)) {
+      throw new Error(`OAUTH_${name} must be an HTTPS URL without credentials, query, fragment or unescaped whitespace.`);
+    }
+    // The OAuth issuer is compared exactly. Do not normalize paths or slashes.
+    return value;
+  };
+  const operatorSubject = required("OPERATOR_SUBJECT");
+  if (operatorSubject.length > 1_024 || /[\u0000-\u001f\u007f]/u.test(operatorSubject)) throw new Error("OAUTH_OPERATOR_SUBJECT must be a bounded provider-issued subject.");
+  const metadataUrl = required("RESOURCE_METADATA_URL");
+  const resourceMetadataUrl = isLoopbackOAuthMetadataUrl(metadataUrl, host, port)
+    ? metadataUrl : https("RESOURCE_METADATA_URL");
+  return { issuer: https("ISSUER"), resource: https("RESOURCE"), resourceMetadataUrl,
+    jwksUri: https("JWKS_URI"), operatorSubject };
 }
 
 function parseModelSelectionCeiling(value: string | undefined): ModelChoice[] | undefined {
@@ -241,7 +318,10 @@ function parseModelSelectionCeiling(value: string | undefined): ModelChoice[] | 
   if (!normalized) return undefined;
   let parsed: unknown;
   try {
-    parsed = JSON.parse(normalized);
+    parsed = parseJsonTextStrict(
+      normalized,
+      "CODEX_MCP_BRIDGE_MODEL_SELECTION_CEILING"
+    );
   } catch {
     throw new Error(
       "CODEX_MCP_BRIDGE_MODEL_SELECTION_CEILING must be a JSON array of model/reasoningEffort choices."
@@ -338,6 +418,74 @@ export function findSensitiveFiles(root: string, maxFindings = 20): Promise<stri
   return scan;
 }
 
+const MAX_BENIGN_NPMRC_BYTES = 4 * 1024;
+
+/**
+ * Keep the filename-first guard fail-closed while allowing the small, generated
+ * npm configuration bundled with VS Code language servers. Unknown settings,
+ * comments, oversized files, symlinks and unreadable files remain blocked.
+ */
+async function isNarrowlyBenignNpmrc(file: string): Promise<boolean> {
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(file, "r");
+    const buffer = Buffer.alloc(MAX_BENIGN_NPMRC_BYTES + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    if (bytesRead > MAX_BENIGN_NPMRC_BYTES) return false;
+
+    const text = buffer.toString("utf8", 0, bytesRead);
+    if (text.includes("\0") || text.includes("\uFFFD")) return false;
+
+    for (const rawLine of text.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      // Do not try to prove arbitrary comments harmless: this exception is
+      // intentionally limited to a tiny, machine-generated configuration.
+      if (line.startsWith("#") || line.startsWith(";")) return false;
+      const separator = line.indexOf("=");
+      if (separator <= 0) return false;
+      const key = line.slice(0, separator).trim().toLowerCase();
+      const value = line.slice(separator + 1).trim();
+      if (key === "legacy-peer-deps") {
+        if (!/^(?:true|false|"(?:true|false)"|'(?:true|false)')$/i.test(value)) return false;
+        continue;
+      }
+      if (key === "timeout") {
+        if (!/^\d{1,7}$/.test(value)) return false;
+        continue;
+      }
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+}
+
+/** Bounded, project-relative diagnostics; never expose the absolute project root. */
+export function formatSensitiveFileFindings(
+  root: string,
+  findings: readonly string[],
+  maxPaths = 5
+): string {
+  const displayed = findings.slice(0, Math.max(0, maxPaths)).map((file) => {
+    const relative = path.relative(root, file);
+    const withinRoot = relative !== "" &&
+      !path.isAbsolute(relative) &&
+      relative !== ".." &&
+      !relative.startsWith(`..${path.sep}`);
+    const label = (withinRoot ? relative : path.basename(file))
+      .split(path.sep)
+      .join("/")
+      .replace(/[\u0000-\u001f\u007f]/g, "\uFFFD");
+    return JSON.stringify(label);
+  });
+  const remaining = findings.length - displayed.length;
+  return `${displayed.join(", ")}${remaining > 0 ? ` (+${remaining} more)` : ""}`;
+}
+
 async function scanSensitiveFiles(root: string, maxFindings: number): Promise<string[]> {
   const findings: string[] = [];
   const skipDirs = new Set([
@@ -391,11 +539,18 @@ async function scanSensitiveFiles(root: string, maxFindings: number): Promise<st
         if (findings.length >= maxFindings) break;
         const fullPath = path.join(directory, entry.name);
         const lower = entry.name.toLowerCase();
-        if (
+        const deniedByName =
           deniedBasenames.has(lower) ||
           (lower.startsWith(".env.") && lower !== ".env.example") ||
-          deniedExtensions.some((ext) => lower.endsWith(ext))
-        ) {
+          deniedExtensions.some((ext) => lower.endsWith(ext));
+        if (deniedByName) {
+          if (
+            lower === ".npmrc" &&
+            entry.isFile() &&
+            await isNarrowlyBenignNpmrc(fullPath)
+          ) {
+            continue;
+          }
           findings.push(fullPath);
           continue;
         }
@@ -489,11 +644,6 @@ function parseBackendKind(raw: string): "app-server" {
   throw new Error(`Invalid default Codex backend: ${raw}`);
 }
 
-function parseMcpTransportMode(raw: string): McpTransportMode {
-  if (raw === "stateless" || raw === "stateful") return raw;
-  throw new Error(`Invalid MCP transport mode: ${raw}`);
-}
-
 export function defaultStateProfile(): StateProfile {
   return PRODUCT_INFO.releaseStage === "stable"
     ? "stable"
@@ -525,6 +675,35 @@ function normalizeOptional(raw: string | undefined): string | undefined {
 }
 
 function parseAbsoluteFilePath(raw: string, label: string): string {
+  if (!path.isAbsolute(raw) || /[\r\n]/.test(raw)) {
+    throw new Error(`Invalid ${label}; expected an absolute path.`);
+  }
+  return path.normalize(raw);
+}
+
+function databaseFilesMayAlias(left: string, right: string): boolean {
+  const canonical = (file: string): string => {
+    try {
+      return realpathSync(file);
+    } catch {
+      try {
+        return path.join(realpathSync(path.dirname(file)), path.basename(file));
+      } catch {
+        return file;
+      }
+    }
+  };
+  if (canonical(left) === canonical(right)) return true;
+  try {
+    const leftStat = statSync(left);
+    const rightStat = statSync(right);
+    return leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino;
+  } catch {
+    return false;
+  }
+}
+
+function parseAbsoluteDirectoryPath(raw: string, label: string): string {
   if (!path.isAbsolute(raw) || /[\r\n]/.test(raw)) {
     throw new Error(`Invalid ${label}; expected an absolute path.`);
   }

@@ -51,6 +51,18 @@ const AUTOMATIC_POLICY: ModelPolicy = {
 };
 
 describe("model policy resolver", () => {
+  it("accepts a dynamically advertised GPT-6.1 Sol while preserving old fixed choices and exact automatic admission", () => {
+    const latest = { model: "gpt-6.1-sol", reasoningEffort: "medium" };
+    const previous = catalog();
+    const expanded = catalog({ models: [...previous.models.map(model => ({ ...model, isDefault: false })),
+      { ...previous.models[0]!, id: latest.model, displayName: "GPT-6.1 Sol", isDefault: true,
+        defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ effort: "medium" }],
+        defaultServiceTier: undefined, serviceTiers: [{ id: "fast", name: "Fast" }] }] });
+    expect(decide({ policy: FIXED_POLICY, catalog: expanded }).effectiveSelection).toEqual(SOL_MAX);
+    expect(decide({ policy: AUTOMATIC_POLICY, catalog: expanded, requestedSelection: latest }).effectiveSelection).toEqual(latest);
+    expectPolicyError(() => decide({ policy: AUTOMATIC_POLICY, catalog: expanded }), "MODEL_SELECTION_REQUIRED");
+    expect(FIXED_POLICY.selection).toEqual(SOL_MAX);
+  });
   it("retains saved Ultra choices while filtering and rejecting disabled execution, including inheritance", () => {
     const ultra = { model: SOL_MAX.model, reasoningEffort: "ultra" };
     const policy = validateModelPolicy({
@@ -280,15 +292,22 @@ describe("model policy resolver", () => {
     })).toMatchObject({ appliedAt: "thread-start", effectiveSelection: SOL_MAX });
   });
 
-  it("uses a visible compatible fallback for saved catalog drift and distinguishes cached refresh failure", () => {
+  it("preserves fixed choices and rejects removed models or efforts without a replacement", () => {
     const removed = catalog().models.filter((model) => model.id !== SOL_MAX.model);
-    expect(decide({ policy: FIXED_POLICY, catalog: catalog({ models: removed }) })).toMatchObject({
-      source: "compatibility-fallback",
-      savedSelectionSupported: false,
-      effectiveSelection: TERRA_MEDIUM,
-      effectiveReasoningEffort: TERRA_MEDIUM.reasoningEffort,
-      fallbackWarning: expect.stringContaining("unsupported by the current catalog")
-    });
+    const removedEffort = catalog().models.map(model => ({ ...model,
+      supportedReasoningEfforts: model.supportedReasoningEfforts.filter(({ effort }) => effort !== SOL_MAX.reasoningEffort) }));
+    const before = structuredClone(FIXED_POLICY);
+    for (const operation of ["start", "continue"] as const) {
+      for (const models of [removed, removedEffort]) {
+        const error = expectPolicyError(() => decide({ policy: FIXED_POLICY,
+          operation, currentSelection: SOL_MAX, catalog: catalog({ models }) }), "MODEL_UNAVAILABLE");
+        expect(error.message).toContain("saved choice is preserved");
+        expect(FIXED_POLICY).toEqual(before);
+      }
+    }
+  });
+
+  it("keeps a supported fixed choice during a temporarily unverified catalog refresh", () => {
     const stale = catalog({
       stale: true,
       validation: "temporarily-unverified-with-last-known-good"

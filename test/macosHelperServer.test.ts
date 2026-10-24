@@ -1,3 +1,4 @@
+import { historicalCompletion } from "./fixtures/historicalCompletion.js";
 import {
   chmodSync,
   mkdirSync,
@@ -23,6 +24,8 @@ import {
 } from "../src/macosHelperServer.js";
 import { startPrivateJsonLineServer, type BridgeCompanionServer } from "../src/companionServer.js";
 import { CodexRuntimeManager } from "../src/codexRuntime.js";
+import { CodexAuthSelectionManager } from "../src/codexAuthSelection.js";
+import { BridgeStateStore } from "../src/stateStore.js";
 import { writeManagedRuntimeStatus } from "../scripts/runtime-status.mjs";
 import { updateRuntimeEnvFile } from "../scripts/runtime-env.mjs";
 import { acquireRuntimeLock } from "../scripts/runtime-lock.mjs";
@@ -32,10 +35,297 @@ import {
 } from "./helpers/stateSchemaFixtures.js";
 
 import { writeFakeLauncher } from "./fixtures/macosHelperLauncher.js";
+import { syntheticIdToken } from "./fixtures/syntheticAuth.js";
 
 const servers: BridgeCompanionServer[] = [];
 
 describe("central runtime lifecycle reservations", () => {
+  it("remembers distinct explicit Codex homes already used by the Helper without a folder picker", async () => {
+    const f = await lifecycleFixture();
+    const first = path.join(f.root, "existing-a");
+    const second = path.join(f.root, "existing-b");
+    mkdirSync(first); mkdirSync(second);
+    const base = readFileSync(f.envFile, "utf8") + `\nCODEX_MCP_BRIDGE_RUNTIME_HOME=${f.manager.root}\n`;
+    try {
+      writeFileSync(f.envFile, base + `CODEX_HOME=${first}\n`, { mode: 0o600 });
+      const firstStatus = await f.supervisor.codexRuntime({ action: "status", includeAccount: false });
+      expect(firstStatus.authSelection?.knownHomes?.map(item => item.home)).toEqual([first]);
+      await f.supervisor.start();
+      writeFileSync(f.envFile, base + `CODEX_HOME=${second}\n`, { mode: 0o600 });
+      const pendingStatus = await f.supervisor.codexRuntime({ action: "status", includeAccount: false });
+      expect(pendingStatus.environmentPending).toBe(true);
+      expect(pendingStatus.authSelection?.knownHomes?.map(item => item.home)).toEqual([first]);
+      await f.supervisor.stop({ mode: "force", timeoutMs: 5_000 });
+      const secondStatus = await f.supervisor.codexRuntime({ action: "status", includeAccount: false });
+      expect(secondStatus.authSelection?.knownHomes?.map(item => item.home)).toEqual([first, second]);
+      writeFileSync(f.envFile, base, { mode: 0o600 });
+      const selectable = await f.supervisor.codexRuntime({ action: "status", includeAccount: false });
+      expect(selectable.authSelection).toMatchObject({ overrideActive: false,
+        knownHomes: [{ home: first }, { home: second }] });
+    } finally { await f.supervisor.close({ runtime: "force-stop" }); }
+  });
+
+  it("offers an existing bridge-owned profile as a selectable candidate without starting login", async () => {
+    const f = await lifecycleFixture();
+    writeFileSync(f.envFile, readFileSync(f.envFile, "utf8") +
+      `\nCODEX_MCP_BRIDGE_RUNTIME_HOME=${f.manager.root}\n`, { mode: 0o600 });
+    const auth = new CodexAuthSelectionManager(f.manager.root);
+    try {
+      const prepared = await auth.prepare("bridge-chatgpt", 0, {});
+      const profileId = prepared.candidate!.id;
+      await auth.cancelCandidate(profileId, prepared.revision);
+      await f.supervisor.codexRuntime({ action: "auth-select-profile",
+        authProfileId: profileId, authRevision: 2 });
+      expect(await auth.snapshot({})).toMatchObject({
+        candidate: { id: profileId, reused: true, status: "prepared" }, profiles: [{ id: profileId }]
+      });
+    } finally { await f.supervisor.close({ runtime: "force-stop" }); }
+  });
+
+  it("keeps a pending auth change inert on ordinary start and applies it only through a drained restart", async () => {
+    const f = await lifecycleFixture();
+    writeFileSync(f.envFile, readFileSync(f.envFile, "utf8") +
+      `\nCODEX_MCP_BRIDGE_RUNTIME_HOME=${f.manager.root}\nCODEX_MCP_BRIDGE_STATE_DATABASE_FILE=${path.join(f.root, "state.sqlite")}\n`,
+      { mode: 0o600 });
+    const auth = new CodexAuthSelectionManager(f.manager.root);
+    await auth.stage({ kind: "disconnected" }, 0, "/fixture/codex", "fixture-cli", {}, false);
+    f.update({ activeJobs: 0 });
+    try {
+      const first = await f.supervisor.start();
+      expect(await auth.snapshot({})).toMatchObject({ applied: { kind: "shared" }, pending: { kind: "disconnected" } });
+      await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind: "restart", force: false });
+      await vi.waitFor(() => expect(["completed", "failed"]).toContain(f.supervisor.lifecycleStatus()?.phase), {
+        timeout: 6_000, interval: 50
+      });
+      if (f.supervisor.lifecycleStatus()?.phase === "failed") throw new Error(f.supervisor.lifecycleStatus()?.error || "unknown lifecycle error");
+      expect((await f.supervisor.health()).pid).not.toBe(first.pid);
+      expect(await auth.snapshot({})).toMatchObject({ applied: { kind: "disconnected" }, pending: null, generation: 1 });
+    } finally { await f.supervisor.close({ runtime: "force-stop" }); }
+  });
+
+  it("keeps the prior choice pending when a launched authentication runtime never becomes ready", async () => {
+    const f = await lifecycleFixture();
+    writeFileSync(f.envFile, readFileSync(f.envFile, "utf8") +
+      `\nCODEX_MCP_BRIDGE_RUNTIME_HOME=${f.manager.root}\nCODEX_MCP_BRIDGE_STATE_DATABASE_FILE=${path.join(f.root, "state.sqlite")}\n`,
+      { mode: 0o600 });
+    const auth = new CodexAuthSelectionManager(f.manager.root);
+    await auth.stage({ kind: "disconnected" }, 0, "/fixture/codex", "fixture-cli", {}, false);
+    f.update({ activeJobs: 0 });
+    try {
+      await f.supervisor.start();
+      writeFakeLauncher(path.join(f.root, "runtime", "launcher.mjs"), path.join(f.root, "failed-arguments.json"),
+        { admissionFile: path.join(f.root, "admission.json"), writeRuntimeLock: true, failAuthenticationActivation: true });
+      await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind: "restart", force: false });
+      await vi.waitFor(() => expect(f.supervisor.lifecycleStatus()?.phase).toBe("failed"), {
+        timeout: 8_000, interval: 50
+      });
+      expect(f.supervisor.lifecycleStatus()?.error).toContain("CODEX_AUTH_ACTIVATION_UNCERTAIN");
+      expect(await auth.snapshot({})).toMatchObject({
+        applied: { kind: "shared" }, pending: { kind: "disconnected" }, activation: { status: "uncertain" }
+      });
+      const uncertain = await auth.snapshot({});
+      await expect(f.supervisor.codexRuntime({ action: "auth-reconcile-stopped",
+        authActivationId: uncertain.activation!.id, authRevision: uncertain.revision }))
+        .rejects.toThrow("CODEX_AUTH_RECONCILIATION_CONFIRMATION_REQUIRED");
+      await f.supervisor.codexRuntime({ action: "auth-reconcile-stopped",
+        authActivationId: uncertain.activation!.id, authRevision: uncertain.revision,
+        authResolutionConfirmed: true });
+      expect(await auth.snapshot({})).toMatchObject({
+        applied: { kind: "shared" }, pending: { kind: "disconnected" }, activation: null,
+        lastActivationResolution: { id: uncertain.activation!.id, outcome: "stopped-unconfirmed" }
+      });
+      const restarted = await f.supervisor.start();
+      expect(restarted.phase).toBe("running");
+      expect((await auth.snapshot({})).pending?.kind).toBe("disconnected");
+      writeFakeLauncher(path.join(f.root, "runtime", "launcher.mjs"), path.join(f.root, "recovered-arguments.json"),
+        { admissionFile: path.join(f.root, "admission.json"), writeRuntimeLock: true });
+      await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind: "restart", force: false });
+      await vi.waitFor(() => expect(["completed", "failed"]).toContain(f.supervisor.lifecycleStatus()?.phase), {
+        timeout: 8_000, interval: 50
+      });
+      if (f.supervisor.lifecycleStatus()?.phase === "failed") {
+        throw new Error(f.supervisor.lifecycleStatus()?.error || "activation retry failed");
+      }
+      expect(await auth.snapshot({})).toMatchObject({
+        applied: { kind: "disconnected" }, pending: null, activation: null, generation: 1,
+        lastActivationResolution: { id: uncertain.activation!.id, outcome: "stopped-unconfirmed" }
+      });
+    } finally { await f.supervisor.close({ runtime: "force-stop" }); }
+  }, 15_000);
+
+  it("recovers profile A after profile B fails to launch and applies the same verified B candidate on retry", async () => {
+    const command = path.resolve("test/fixtures/fake-codex-app-server.mjs");
+    const f = await lifecycleFixture(false, command);
+    vi.stubEnv("HOME", f.root);
+    writeFileSync(f.envFile, readFileSync(f.envFile, "utf8") +
+      `\nCODEX_MCP_BRIDGE_RUNTIME_HOME=${f.manager.root}\nCODEX_MCP_BRIDGE_STATE_DATABASE_FILE=${path.join(f.root, "state.sqlite")}\n`,
+      { mode: 0o600 });
+    const auth = new CodexAuthSelectionManager(f.manager.root);
+    const environment = { HOME: f.root, PATH: process.env.PATH,
+      CODEX_MCP_BRIDGE_RUNTIME_HOME: f.manager.root };
+    const cliFingerprint = f.manager.appliedContextFingerprint();
+    const prepare = async (account: string) => {
+      const before = await auth.snapshot(environment);
+      const candidate = (await auth.prepare("bridge-chatgpt", before.revision, environment)).candidate!;
+      writeFileSync(path.join(f.manager.root, "auth-profiles", candidate.id, "auth.json"),
+        JSON.stringify({ auth_mode: "chatgpt", tokens: {
+          account_id: account, id_token: syntheticIdToken(`user-${account}`, account)
+        } }), { mode: 0o600 });
+      const verified = await auth.verify(candidate.id, command, cliFingerprint, environment);
+      expect(verified.candidate).toMatchObject({ id: candidate.id, status: "verified" });
+      expect(verified.candidate?.accountKey).toMatch(/^[a-f0-9]{64}$/);
+      const staged = await auth.stage(candidate.connection, verified.revision,
+        command, cliFingerprint, environment, false);
+      expect(staged.pending).toEqual(candidate.connection);
+      return { kind: "bridge-chatgpt" as const, profileId: candidate.id };
+    };
+    const restart = async () => {
+      await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind: "restart", force: false });
+      await vi.waitFor(() => expect(["completed", "failed"]).toContain(f.supervisor.lifecycleStatus()?.phase), {
+        timeout: 8_000, interval: 50
+      });
+      return f.supervisor.lifecycleStatus();
+    };
+    f.update({ activeJobs: 0 });
+    try {
+      const profileA = await prepare("workspace-a");
+      await f.supervisor.start();
+      const firstApply = await restart();
+      if (firstApply?.phase === "failed") throw new Error(firstApply.error || "profile A activation failed");
+      expect(await auth.snapshot(environment)).toMatchObject({
+        applied: profileA, pending: null, activation: null, generation: 1
+      });
+      expect((await f.supervisor.codexRuntime({ action: "status", includeAccount: false }))
+        .runningEnvironment?.codexHome).toBe(path.join(f.manager.root, "auth-profiles", profileA.profileId));
+      const profileB = await prepare("workspace-b");
+      writeFakeLauncher(path.join(f.root, "runtime", "launcher.mjs"), path.join(f.root, "failed-arguments.json"),
+        { admissionFile: path.join(f.root, "admission.json"), writeRuntimeLock: true, failAuthenticationActivation: true });
+      const failedApply = await restart();
+      expect(failedApply?.phase).toBe("failed");
+      expect(failedApply?.error).toContain("CODEX_AUTH_ACTIVATION_UNCERTAIN");
+      const uncertain = await auth.snapshot(environment);
+      expect(uncertain).toMatchObject({
+        applied: profileA, pending: profileB, candidate: { id: profileB.profileId, status: "verified" },
+        activation: { from: profileA, to: profileB, status: "uncertain" }, generation: 1
+      });
+      await expect(f.supervisor.start()).rejects.toThrow("CODEX_AUTH_ACTIVATION_UNCERTAIN");
+      await f.supervisor.codexRuntime({ action: "auth-reconcile-stopped",
+        authActivationId: uncertain.activation!.id, authRevision: uncertain.revision,
+        authResolutionConfirmed: true });
+      const recovered = await f.supervisor.start();
+      expect(recovered.phase).toBe("running");
+      expect(await auth.snapshot(environment)).toMatchObject({
+        applied: profileA, pending: profileB, candidate: { id: profileB.profileId, status: "verified" },
+        activation: null, generation: 1
+      });
+      expect((await f.supervisor.codexRuntime({ action: "status", includeAccount: false }))
+        .runningEnvironment?.codexHome).toBe(path.join(f.manager.root, "auth-profiles", profileA.profileId));
+      writeFakeLauncher(path.join(f.root, "runtime", "launcher.mjs"), path.join(f.root, "recovered-arguments.json"),
+        { admissionFile: path.join(f.root, "admission.json"), writeRuntimeLock: true });
+      const retriedApply = await restart();
+      if (retriedApply?.phase === "failed") throw new Error(retriedApply.error || "profile B retry failed");
+      expect(await auth.snapshot(environment)).toMatchObject({
+        applied: profileB, pending: null, candidate: null, activation: null, generation: 2,
+        lastActivationResolution: { id: uncertain.activation!.id, outcome: "stopped-unconfirmed" }
+      });
+      expect((await f.supervisor.codexRuntime({ action: "status", includeAccount: false }))
+        .runningEnvironment?.codexHome).toBe(path.join(f.manager.root, "auth-profiles", profileB.profileId));
+    } finally {
+      try { await f.supervisor.close({ runtime: "force-stop" }); }
+      finally { vi.unstubAllEnvs(); }
+    }
+  }, 30_000);
+
+  it("does not resolve an unconfirmed activation while its runtime still runs", async () => {
+    const f = await lifecycleFixture();
+    writeFileSync(f.envFile, readFileSync(f.envFile, "utf8") +
+      `\nCODEX_MCP_BRIDGE_RUNTIME_HOME=${f.manager.root}\n`, { mode: 0o600 });
+    const auth = new CodexAuthSelectionManager(f.manager.root);
+    try {
+      await f.supervisor.start();
+      await auth.stage({ kind: "disconnected" }, 0, "/fixture/codex", "fixture-cli", {}, false);
+      const activationId = await auth.beginActivation("", "", {});
+      await auth.failActivation(activationId!, false);
+      const uncertain = await auth.snapshot({});
+      await expect(f.supervisor.codexRuntime({ action: "auth-reconcile-stopped",
+        authActivationId: activationId!, authRevision: uncertain.revision,
+        authResolutionConfirmed: true })).rejects.toThrow("CODEX_AUTH_RUNTIME_STILL_RUNNING");
+      expect((await auth.snapshot({})).activation?.id).toBe(activationId);
+    } finally { await f.supervisor.close({ runtime: "force-stop" }); }
+  });
+
+  it("keeps the original runtime when a persisted job still belongs to the old authentication", async () => {
+    const f = await lifecycleFixture();
+    const stateFile = path.join(f.root, "state.sqlite");
+    writeFileSync(f.envFile, readFileSync(f.envFile, "utf8") +
+      `\nCODEX_MCP_BRIDGE_RUNTIME_HOME=${f.manager.root}\nCODEX_MCP_BRIDGE_STATE_DATABASE_FILE=${stateFile}\n`,
+      { mode: 0o600 });
+    const auth = new CodexAuthSelectionManager(f.manager.root);
+    await auth.stage({ kind: "disconnected" }, 0, "/fixture/codex", "fixture-cli", {}, false);
+    const store = new BridgeStateStore({ file: stateFile });
+    store.upsertJob({ jobId: randomUUID(), scopeId: randomUUID(), requestId: randomUUID(),
+      status: "running", updatedAt: 2 } as any);
+    store.close();
+    f.update({ activeJobs: 0 });
+    try {
+      const first = await f.supervisor.start();
+      await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind: "restart", force: false });
+      await vi.waitFor(() => expect(["blocked", "failed"]).toContain(f.supervisor.lifecycleStatus()?.phase), {
+        timeout: 6_000, interval: 50
+      });
+      expect((await f.supervisor.health()).pid).toBe(first.pid);
+      expect(await auth.snapshot({})).toMatchObject({ applied: { kind: "shared" }, pending: { kind: "disconnected" } });
+    } finally { await f.supervisor.close({ runtime: "force-stop" }); }
+  });
+
+  it.each(["user-hold", "host-accepted", "acceptance-unknown"] as const)(
+    "applies authentication while retaining a completed result protected by %s", async protection => {
+    const f = await lifecycleFixture();
+    const stateFile = path.join(f.root, "state.sqlite");
+    writeFileSync(f.envFile, readFileSync(f.envFile, "utf8") +
+      `\nCODEX_MCP_BRIDGE_RUNTIME_HOME=${f.manager.root}\nCODEX_MCP_BRIDGE_STATE_DATABASE_FILE=${stateFile}\n`,
+      { mode: 0o600 });
+    const auth = new CodexAuthSelectionManager(f.manager.root);
+    await auth.stage({ kind: "disconnected" }, 0, "/fixture/codex", "fixture-cli", {}, false);
+    const store = new BridgeStateStore({ file: stateFile });
+    const jobId = randomUUID();
+    const scopeId = randomUUID();
+    const owner = "a".repeat(64);
+    const result = { content: [{ type: "text", text: "Retained original result." }] };
+    store.upsertJob({ jobId, scopeId, requestId: randomUUID(), authBoundary: owner,
+      result, status: "completed", updatedAt: Date.now() } as any);
+    if (protection === "user-hold") {
+      store.holdResult(jobId, "Keep the original result", Date.now() + 60_000);
+    } else {
+      historicalCompletion(store, jobId, protection, protection === "host-accepted"
+        ? { host_accepted_at: Date.now() } : { acceptance_unknown_at: Date.now() });
+    }
+    const delivery = store.getJobCompletionDelivery(jobId, scopeId);
+    expect(store.readRetainedJobDetail(scopeId, { kind: "job", id: jobId })?.result).toEqual(result);
+    store.close();
+    f.update({ activeJobs: 0 });
+    try {
+      const first = await f.supervisor.start();
+      await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind: "restart", force: false });
+      await vi.waitFor(() => expect(["completed", "failed"]).toContain(f.supervisor.lifecycleStatus()?.phase), {
+        timeout: 6_000, interval: 50
+      });
+      if (f.supervisor.lifecycleStatus()?.phase === "failed") {
+        throw new Error(f.supervisor.lifecycleStatus()?.error || "result retention blocked activation");
+      }
+      expect((await f.supervisor.health()).pid).not.toBe(first.pid);
+      expect(await auth.snapshot({})).toMatchObject({ applied: { kind: "disconnected" }, pending: null });
+      const retained = new BridgeStateStore({ file: stateFile, readOnly: true });
+      try {
+        expect(retained.listJobs()).toContainEqual(expect.objectContaining({
+          jobId, scopeId, authBoundary: owner, status: "completed", result
+        }));
+        expect(retained.getJobCompletionDelivery(jobId, scopeId)).toEqual(delivery);
+        expect(retained.readRetainedJobDetail(scopeId, { kind: "job", id: jobId })?.result).toEqual(result);
+      } finally { retained.close(); }
+    } finally { await f.supervisor.close({ runtime: "force-stop" }); }
+  });
+
   it("keeps a running job and its restart reservation for over 60 seconds, then restarts on its event", async () => {
     const f = await lifecycleFixture();
     try {
@@ -53,21 +343,106 @@ describe("central runtime lifecycle reservations", () => {
   }, 75_000);
 
   it.each(["restart", "stop", "configure", "repair", "shutdown", "mode-switch", "helper-replace"] as const)(
-    "preserves memory-only conversations for %s and lets the user cancel", async kind => {
+    "preserves memory-only conversations with unfinished work for %s and lets the user cancel", async kind => {
       const f = await lifecycleFixture();
       try {
         const original = await f.supervisor.start();
-        f.update({ activeJobs: 0, memoryOnlyThreads: 1 });
+        f.update({ activeJobs: 0, memoryOnlyThreads: 1, protectedMemoryOnlyThreads: 1,
+          discardableMemoryOnlyThreads: 0 });
         const intent = await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind, force: false,
           ...(kind === "configure" ? { configuration: { maximumAccess: "workspace-write" as const } } : {}),
           ...(kind === "helper-replace" ? { targetBuildId: "next-build" } : {}) });
         await vi.waitFor(() => expect(f.supervisor.lifecycleStatus()?.phase).toBe("blocked"));
         expect((await f.supervisor.health()).pid).toBe(original.pid);
         expect(f.supervisor.cancelLifecycle(intent.requestId).phase).toBe("cancelled");
-        f.update({ activeJobs: 0, memoryOnlyThreads: 0 });
+        f.update({ activeJobs: 0, memoryOnlyThreads: 0, protectedMemoryOnlyThreads: 0,
+          discardableMemoryOnlyThreads: 0 });
         expect((await f.supervisor.health()).pid).toBe(original.pid);
       } finally { await f.supervisor.close({ runtime: "force-stop" }); }
     });
+
+  it("allows a safe restart when only completed memory-only contexts remain", async () => {
+    const f = await lifecycleFixture();
+    try {
+      const original = await f.supervisor.start();
+      f.update({ activeJobs: 0, memoryOnlyThreads: 2, protectedMemoryOnlyThreads: 0,
+        discardableMemoryOnlyThreads: 2 });
+      await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind: "restart", force: false });
+      await vi.waitFor(() => expect(f.supervisor.lifecycleStatus()?.phase).toBe("completed"), {
+        timeout: 6000,
+        interval: 50
+      });
+      expect((await f.supervisor.health()).pid).not.toBe(original.pid);
+    } finally { await f.supervisor.close({ runtime: "force-stop" }); }
+  });
+
+  it("preserves an unconfirmed completion and its exact result across a safe helper restart", async () => {
+    const root = temporaryDirectory();
+    const stateFile = path.join(root, "state.sqlite");
+    const scopeId = "12800000-0000-4000-8000-000000000001";
+    const jobId = "12800000-0000-4000-8000-000000000002";
+    const requestId = "12800000-0000-4000-8000-000000000003";
+    const owner = "12800000-0000-4000-8000-000000000004";
+    const original = new BridgeStateStore({ file: stateFile });
+    original.upsertJob({
+      jobId,
+      scopeId,
+      requestId,
+      status: "completed",
+      updatedAt: Date.now(),
+      result: { content: [{ type: "text", text: "retained after helper restart" }] }
+    } as any);
+    const completion = original.getJobCompletionDelivery(jobId, scopeId)!;
+    historicalCompletion(original, jobId, "acceptance-unknown", { acceptance_unknown_at: 11 });
+    original.close();
+
+    const f = await lifecycleFixture();
+    try {
+      const runtime = await f.supervisor.start();
+      f.update({ activeJobs: 0, memoryOnlyThreads: 1, protectedMemoryOnlyThreads: 0,
+        discardableMemoryOnlyThreads: 1 });
+      await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind: "restart", force: false });
+      await vi.waitFor(() => expect(f.supervisor.lifecycleStatus()?.phase).toBe("completed"), {
+        timeout: 6_000,
+        interval: 50
+      });
+      expect((await f.supervisor.health()).pid).not.toBe(runtime.pid);
+
+      const restarted = new BridgeStateStore({ file: stateFile });
+      try {
+        expect(restarted.getJobCompletionDelivery(jobId, scopeId)).toMatchObject({
+          receipt: completion.receipt,
+          state: "acceptance-unknown",
+          attemptCount: 1,
+          completionResultOfferedAt: undefined,
+          directResultOfferedAt: undefined
+        });
+        expect(restarted.countJobs()).toBe(1);
+        expect(restarted.listJobs()).toEqual([
+          expect.objectContaining({
+            jobId,
+            requestId,
+            result: { content: [{ type: "text", text: "retained after helper restart" }] }
+          })
+        ]);
+        restarted.recordJobCompletionResultOffer({
+          scopeId,
+          source: "direct-job-query",
+          jobId,
+          now: 12
+        });
+        expect(restarted.getJobCompletionDelivery(jobId, scopeId)).toMatchObject({
+          state: "acceptance-unknown",
+          directResultOfferedAt: 12
+        });
+        expect(restarted.countJobs()).toBe(1);
+      } finally {
+        restarted.close();
+      }
+    } finally {
+      await f.supervisor.close({ runtime: "force-stop" });
+    }
+  });
 
   it("rejects a superseded CLI target and leaves the old runtime running", async () => {
     const f = await lifecycleFixture();
@@ -98,7 +473,7 @@ describe("central runtime lifecycle reservations", () => {
   });
 });
 
-async function lifecycleFixture(autoRestart = false) {
+async function lifecycleFixture(autoRestart = false, codexCommand?: string) {
   const root = temporaryDirectory(), bridgeRoot = path.join(root, "runtime"), envFile = path.join(root, "c", ".env");
   const bridgeSocketPath = path.join(root, "c", "run", "bridge.sock"), launcherPath = path.join(bridgeRoot, "launcher.mjs");
   mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
@@ -108,11 +483,12 @@ async function lifecycleFixture(autoRestart = false) {
   update({ activeJobs: 1 });
   writeFakeLauncher(launcherPath, path.join(root, "arguments.json"), { admissionFile, writeRuntimeLock: true });
   updateRuntimeEnvFile(envFile, { apiKey: "sk-lifecycle-test-1234567890123456", tunnelId: "tunnel_oooooooooooooooooooooooooooooooo" });
-  const manager = new CodexRuntimeManager({ root: path.join(root, "cli"), discoverExternal: false });
+  const manager = new CodexRuntimeManager({ root: path.join(root, "cli"),
+    discoverExternal: Boolean(codexCommand), ...(codexCommand ? { explicitCommand: codexCommand, appPaths: [] } : {}) });
   const supervisor = new MacOSBridgeSupervisor({ bridgeRoot, envFile, bridgeSocketPath, launcherPath,
     runtimeLockDirectory: path.join(root, "c", "run", "launcher.lock"), codexRuntimeManager: manager,
     registeredProjectRoots: () => [], autoRestart, lifecycleIntervalMs: 60_000, startTimeoutMs: 5000 });
-  return { supervisor, manager, update };
+  return { supervisor, manager, update, root, envFile };
 }
 
 afterEach(async () => {
@@ -176,23 +552,23 @@ describe("macOS runtime helper RPC", () => {
       await schema3.close({ runtime: "force-stop" });
     }
 
-    const futureFile = path.join(root, "schema-20.sqlite");
+    const futureFile = path.join(root, "schema-33.sqlite");
     createSeededSchema3Fixture(futureFile);
     const futureDatabase = new Database(futureFile);
-    futureDatabase.prepare("UPDATE bridge_meta SET value = '20' WHERE key = 'schema_version'").run();
+    futureDatabase.prepare("UPDATE bridge_meta SET value = '33' WHERE key = 'schema_version'").run();
     futureDatabase.close();
-    const futureEnvFile = path.join(root, "schema-20", ".env");
+    const futureEnvFile = path.join(root, "schema-33", ".env");
     writeStateBackedRuntimeEnv(futureEnvFile, futureFile);
     const future = new MacOSBridgeSupervisor({
       bridgeRoot: path.join(root, "runtime"),
       envFile: futureEnvFile,
-      bridgeSocketPath: path.join(root, "schema-20.sock"),
-      runtimeLockDirectory: path.join(root, "schema-20-run", "launcher.lock")
+      bridgeSocketPath: path.join(root, "schema-33.sock"),
+      runtimeLockDirectory: path.join(root, "schema-33-run", "launcher.lock")
     });
     try {
       expect((await future.health()).configuration).toMatchObject({
         valid: false,
-        issue: expect.stringContaining("state schema 20")
+        issue: expect.stringContaining("state schema 33")
       });
     } finally {
       await future.close({ runtime: "force-stop" });
@@ -219,8 +595,57 @@ describe("macOS runtime helper RPC", () => {
         runtimeLockDirectory: path.join(root, "run", "launcher.lock") });
       const health = await supervisor.health();
       expect(health.bridge.connected).toBe(code !== -32603);
+      expect(health.bridge.observation).toBe(code !== -32603 ? "fresh" : "failed");
       expect(methods).toEqual(code === -32603 ? ["runtime.health"] : ["runtime.health", "runtime.snapshot"]);
     }
+  });
+
+  it("projects a state storage failure without marking the companion disconnected", async () => {
+    const root = temporaryDirectory();
+    const socketPath = path.join(root, "bridge.sock");
+    servers.push(await startPrivateJsonLineServer({
+      socketPath,
+      maxRequestBytes: 4096,
+      maxResponseBytes: 4096,
+      async dispatch(line) {
+        const { id } = JSON.parse(line);
+        return {
+          jsonrpc: "2.0",
+          id,
+          result: {
+            acceptingNewJobs: false,
+            activeJobs: 0,
+            pendingAdmissions: 0,
+            backgroundProcessState: "confirmed",
+            backgroundProcesses: 0,
+            backgroundProcessAgents: 0,
+            backgroundProcessUnknownAgents: 0,
+            stateService: {
+              status: "state-recovering",
+              storageError: "full",
+              storageErrorObservedAt: 1_790_031_000_000
+            }
+          }
+        };
+      },
+      requestTooLarge: () => ({}),
+      internalError: () => ({})
+    }));
+    const supervisor = new MacOSBridgeSupervisor({
+      bridgeRoot: root,
+      envFile: path.join(root, ".env"),
+      bridgeSocketPath: socketPath,
+      runtimeLockDirectory: path.join(root, "run", "launcher.lock")
+    });
+    const health = await supervisor.health();
+    expect(health.bridge).toMatchObject({
+      connected: true,
+      observation: "fresh",
+      acceptingNewJobs: false,
+      stateServiceStatus: "state-recovering",
+      stateServiceStorageError: "full",
+      stateServiceStorageErrorObservedAt: 1_790_031_000_000
+    });
   });
 
   it("keeps health independent of installation discovery and account queries", async () => {
@@ -245,7 +670,9 @@ describe("macOS runtime helper RPC", () => {
     updateRuntimeEnvFile(envFile, { apiKey: "sk-native-test-1234567890123456", tunnelId: "tunnel_nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn" });
     const runtimeStatusFile = path.join(root, "launcher-status.json");
     const state = { phase: "running", runtimeBuildId: "test", tunnel: { phase: "connected", profile: "managed", transport: "stdio",
-      doctorPassed: true, processRunning: true, connected: true, lastCheckedAt: new Date().toISOString(), lastError: null, lastProblem: null } };
+      doctorPassed: true, processRunning: true, connected: true, lastCheckedAt: new Date().toISOString(), lastError: null, lastProblem: null,
+      observation: { healthz: { status: 200, failure: null }, readyz: { status: 200, failure: null },
+        controlPlanePoll: { lastSuccessfulAt: new Date().toISOString(), fresh: true, failure: null }, failure: null } } };
     writeManagedRuntimeStatus(runtimeStatusFile, state);
     const controller = new MacOSBridgeSupervisor({ bridgeRoot: root, envFile, runtimeStatusFile,
       bridgeSocketPath: path.join(root, "bridge.sock"), registeredProjectRoots: () => [],
@@ -254,9 +681,15 @@ describe("macOS runtime helper RPC", () => {
     const unsubscribe = controller.subscribeChanges(topic => changes.push(topic));
     try {
       expect((await controller.health()).configuration.valid).toBe(true);
-      writeManagedRuntimeStatus(runtimeStatusFile, { ...state, tunnel: { ...state.tunnel, lastCheckedAt: new Date(Date.now() + 1).toISOString() } });
+      writeManagedRuntimeStatus(runtimeStatusFile, { ...state, tunnel: { ...state.tunnel, lastCheckedAt: new Date(Date.now() + 1).toISOString(),
+        observation: { ...state.tunnel.observation, controlPlanePoll: { ...state.tunnel.observation.controlPlanePoll,
+          lastSuccessfulAt: new Date(Date.now() + 1).toISOString() } } } });
       await new Promise(resolve => setTimeout(resolve, 50));
       expect(changes).not.toContain("runtime");
+      writeManagedRuntimeStatus(runtimeStatusFile, { ...state, tunnel: { ...state.tunnel,
+        observation: { ...state.tunnel.observation, failure: "timeout" } } });
+      await vi.waitFor(() => expect(changes).toContain("runtime"));
+      changes.length = 0;
       writeManagedRuntimeStatus(runtimeStatusFile, { ...state, tunnel: { ...state.tunnel, connected: false, phase: "degraded" } });
       await vi.waitFor(() => expect(changes).toContain("runtime"));
       writeFileSync(envFile, "", { mode: 0o600 });
@@ -303,6 +736,7 @@ describe("macOS runtime helper RPC", () => {
         status: { kind: "helper-status", phase: "running" }
       }
     });
+    expect(response.result.capabilities).not.toContain("auth.codex-browser-login");
   });
 
   it("routes setup and explicit drain or force semantics", async () => {
@@ -626,6 +1060,10 @@ describe("macOS runtime helper RPC", () => {
       bridgeSocketPath: bridgeSocket,
       launcherPath: launcher,
       runtimeLockDirectory: path.join(root, "runtime-lock", "launcher.lock"),
+      codexRuntimeManager: new CodexRuntimeManager({
+        root: path.join(root, "codex-runtime"),
+        discoverExternal: false
+      }),
       autoRestart: false,
       startTimeoutMs: 5_000
     });
@@ -742,19 +1180,29 @@ describe("macOS runtime helper RPC", () => {
     });
     try {
       const started = await supervisor.start();
+      expect(started.bridge).toMatchObject({ connected: true, observation: "fresh" });
+      expect(started.bridge.lastSuccessfulAt).toEqual(expect.any(String));
       writeFileSync(delayFile, "750");
-      expect(await supervisor.snapshot()).toMatchObject({
-        phase: "running", pid: started.pid, bridge: { connected: true }, lastExit: null, restartAttempt: 0
+      const delayed = await supervisor.snapshot();
+      expect(delayed).toMatchObject({
+        phase: "running", pid: started.pid,
+        bridge: { connected: true, observation: "fresh", lastSuccessfulAt: expect.any(String) },
+        lastExit: null, restartAttempt: 0
       });
+      const lastSuccessfulAt = delayed.bridge.lastSuccessfulAt;
       writeFileSync(delayFile, "2300");
       const failures = await Promise.all([supervisor.snapshot(), supervisor.snapshot()]);
-      expect(failures.every(status => !status.bridge.connected && status.pid === started.pid)).toBe(true);
+      expect(failures.every(status => !status.bridge.connected && status.pid === started.pid &&
+        status.bridge.observation === "timed-out" && status.bridge.lastSuccessfulAt === lastSuccessfulAt)).toBe(true);
       await supervisor.snapshot();
       let messages = supervisor.logs(200).map(entry => entry.message);
       expect(messages.filter(message => message.includes("Bridge status check failed"))).toHaveLength(1);
       expect(messages.some(message => message.includes("Bridge companion request timed out"))).toBe(true);
       writeFileSync(delayFile, "0");
-      expect(await supervisor.snapshot()).toMatchObject({ bridge: { connected: true }, lastExit: null, restartAttempt: 0 });
+      expect(await supervisor.snapshot()).toMatchObject({
+        bridge: { connected: true, observation: "fresh", lastSuccessfulAt: expect.any(String) },
+        lastExit: null, restartAttempt: 0
+      });
       messages = supervisor.logs(200).map(entry => entry.message);
       expect(messages.filter(message => message.includes("Bridge status check recovered"))).toHaveLength(1);
     } finally {
@@ -1177,6 +1625,11 @@ describe("macOS runtime helper RPC", () => {
       apiKey: "sk-supervisor-1234567890123456",
       tunnelId: "tunnel_oooooooooooooooooooooooooooooooo"
     });
+    // Adoption must inspect this fixture's authentication and state, including
+    // when the user's running Helper has a different connection staged.
+    writeFileSync(configFile, readFileSync(configFile, "utf8") +
+      `\nCODEX_MCP_BRIDGE_RUNTIME_HOME=${path.join(root, "cli")}\nCODEX_MCP_BRIDGE_STATE_DATABASE_FILE=${path.join(root, "state.sqlite")}\n`,
+      { mode: 0o600 });
     const first = new MacOSBridgeSupervisor({
       bridgeRoot,
       envFile: configFile,
@@ -1346,12 +1799,59 @@ createInterface({input:process.stdin}).on("line", line => {
     });
     unlinkSync(invocationFile);
     const progress = await supervisor.codexRuntime({ action: "status", includeAccount: false });
-    expect(progress.account).toMatchObject({ authMode: "chatgpt", authenticated: true });
+    // This fixture has no auth.json identity. A structural status read must
+    // avoid reusing numbers from an account whose current identity is unknown.
+    expect(progress.account).toBeNull();
     expect(() => readFileSync(invocationFile)).toThrow();
   });
 
+  it("does not report an account read failure as a logged-out Codex account", async () => {
+    const root = temporaryDirectory();
+    const bridgeRoot = path.join(root, "runtime");
+    const configDirectory = path.join(root, "config");
+    const configFile = path.join(configDirectory, ".env");
+    const fakeCodex = path.join(root, "fake-codex.mjs");
+    mkdirSync(configDirectory, { recursive: true, mode: 0o700 });
+    writeFileSync(fakeCodex, `#!/usr/bin/env node
+import ${JSON.stringify(new URL("./fixtures/app-server-schema-fixture.mjs", import.meta.url).href)};
+if (process.argv.includes("--version")) { console.log("codex-cli 0.153.3"); process.exit(0); }
+import {createInterface} from "node:readline";
+createInterface({input:process.stdin}).on("line", line => {
+ const request=JSON.parse(line); if(request.id===undefined)return;
+ if(request.method==="initialize") {
+   process.stdout.write(JSON.stringify({id:request.id,result:{userAgent:"fixture",platformFamily:"unix",platformOs:"macos"}})+"\\n");
+ } else if(request.method==="account/read") {
+   process.stdout.write(JSON.stringify({id:request.id,error:{code:-32000,message:"temporary account read failure"}})+"\\n");
+ } else {
+   process.stdout.write(JSON.stringify({id:request.id,result:{}})+"\\n");
+ }
+});
+`, { mode: 0o700 });
+    writeFileSync(configFile, [
+      "CONTROL_PLANE_API_KEY=sk-supervisor-1234567890123456",
+      "CONTROL_PLANE_TUNNEL_ID=tunnel_oooooooooooooooooooooooooooooooo",
+      `CODEX_MCP_BRIDGE_CODEX=${fakeCodex}`,
+      `CODEX_MCP_BRIDGE_RUNTIME_HOME=${path.join(root, "managed-codex")}`,
+      ""
+    ].join("\n"), { mode: 0o600 });
+    const supervisor = new MacOSBridgeSupervisor({
+      bridgeRoot,
+      envFile: configFile,
+      bridgeSocketPath: path.join(configDirectory, "run", "bridge.sock"),
+      runtimeLockDirectory: path.join(root, "runtime-lock", "launcher.lock"),
+      autoRestart: false,
+      registeredProjectRoots: () => []
+    });
+
+    await expect(supervisor.authStatus()).rejects.toThrow("CODEX_AUTH_STATUS_UNAVAILABLE");
+    await expect(supervisor.authStatus()).rejects.toThrow("CODEX_AUTH_STATUS_UNAVAILABLE");
+    const diagnostics = supervisor.logs(20).map(entry => entry.message);
+    expect(diagnostics.filter(message => message.includes("Codex login status check failed"))).toHaveLength(1);
+    expect(diagnostics.join("\n")).toContain("temporary account read failure");
+  });
+
   it.runIf(process.platform !== "win32")(
-    "stops the tracked Codex login process tree during verified helper shutdown preparation",
+    "rejects legacy shared-home login from both Helper actions without starting the CLI",
     async () => {
       const root = temporaryDirectory();
       const bridgeRoot = path.join(root, "runtime");
@@ -1397,18 +1897,13 @@ setInterval(() => {}, 1_000);
       let descendantPid = 0;
 
       try {
-        await supervisor.startLogin();
-        await eventually(() => existsAndHasContent(processFile));
-        ({ loginPid, descendantPid } = JSON.parse(readFileSync(processFile, "utf8")));
-        expect(processAlive(loginPid)).toBe(true);
-        expect(processAlive(descendantPid)).toBe(true);
-
-        const stopped = await supervisor.prepareShutdown({ mode: "force", timeoutMs: 5_000 });
-
-        expect(stopped).toMatchObject({ phase: "stopped", pid: null });
-        await eventually(() => !processAlive(loginPid));
-        await eventually(() => !processAlive(descendantPid));
+        await expect(supervisor.startLogin()).rejects.toThrow("CODEX_SHARED_LOGIN_DISABLED");
+        await expect(supervisor.codexRuntime({ action: "login" })).rejects.toThrow("CODEX_SHARED_LOGIN_DISABLED");
+        expect(existsAndHasContent(processFile)).toBe(false);
       } finally {
+        if (existsAndHasContent(processFile)) {
+          ({ loginPid, descendantPid } = JSON.parse(readFileSync(processFile, "utf8")));
+        }
         for (const pid of [loginPid, descendantPid]) {
           if (pid > 1 && processAlive(pid)) {
             try { process.kill(-pid, "SIGKILL"); } catch {}

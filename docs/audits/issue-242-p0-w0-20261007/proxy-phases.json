@@ -1,0 +1,317 @@
+{
+  "scope": "latest-dev internal proxy with isolated injected upstream; no installed tunnel",
+  "idleTimeoutOverrideMs": 200,
+  "results": [
+    {
+      "fault": "pre",
+      "status": 503,
+      "complete": true,
+      "reusedSocket": false,
+      "phases": [
+        {
+          "requestId": "5e04cabb-127f-4c83-a134-2080f4aa7449",
+          "phase": "dispatch",
+          "elapsedMs": 0.14366700000027777,
+          "responseStarted": false,
+          "headersSent": false,
+          "outcome": "not-observed",
+          "firstTermination": false
+        },
+        {
+          "requestId": "5e04cabb-127f-4c83-a134-2080f4aa7449",
+          "phase": "request-finished",
+          "elapsedMs": 18.546791999999186,
+          "responseStarted": false,
+          "headersSent": false,
+          "outcome": "unknown",
+          "firstTermination": false
+        },
+        {
+          "requestId": "5e04cabb-127f-4c83-a134-2080f4aa7449",
+          "phase": "upstream-request-error",
+          "elapsedMs": 26.39441699999952,
+          "responseStarted": false,
+          "headersSent": false,
+          "outcome": "unknown",
+          "firstTermination": true
+        }
+      ]
+    },
+    {
+      "fault": "post",
+      "status": 200,
+      "complete": false,
+      "reusedSocket": true,
+      "phases": [
+        {
+          "requestId": "3ae2a6aa-b223-4a1d-b21f-8589f730b2ff",
+          "phase": "dispatch",
+          "elapsedMs": 0.0152909999997064,
+          "responseStarted": false,
+          "headersSent": false,
+          "outcome": "not-observed",
+          "firstTermination": false
+        },
+        {
+          "requestId": "3ae2a6aa-b223-4a1d-b21f-8589f730b2ff",
+          "phase": "request-finished",
+          "elapsedMs": 2.806457999999111,
+          "responseStarted": false,
+          "headersSent": false,
+          "outcome": "unknown",
+          "firstTermination": false
+        },
+        {
+          "requestId": "3ae2a6aa-b223-4a1d-b21f-8589f730b2ff",
+          "phase": "response-headers",
+          "elapsedMs": 4.385082999999213,
+          "responseStarted": true,
+          "headersSent": false,
+          "outcome": "unknown",
+          "firstTermination": false
+        },
+        {
+          "requestId": "3ae2a6aa-b223-4a1d-b21f-8589f730b2ff",
+          "phase": "upstream-response-error",
+          "elapsedMs": 40.00104099999953,
+          "responseStarted": true,
+          "headersSent": true,
+          "outcome": "unknown",
+          "firstTermination": true
+        },
+        {
+          "requestId": "3ae2a6aa-b223-4a1d-b21f-8589f730b2ff",
+          "phase": "caller-closed",
+          "elapsedMs": 41.86670799999956,
+          "responseStarted": true,
+          "headersSent": true,
+          "outcome": "unknown",
+          "firstTermination": false
+        }
+      ]
+    },
+    {
+      "fault": "idle",
+      "status": 503,
+      "complete": true,
+      "reusedSocket": false,
+      "phases": [
+        {
+          "requestId": "44bea2d3-c568-41c5-b6cf-2773204a5bef",
+          "phase": "dispatch",
+          "elapsedMs": 0.010834000000613742,
+          "responseStarted": false,
+          "headersSent": false,
+          "outcome": "not-observed",
+          "firstTermination": false
+        },
+        {
+          "requestId": "44bea2d3-c568-41c5-b6cf-2773204a5bef",
+          "phase": "request-finished",
+          "elapsedMs": 1.7267090000004828,
+          "responseStarted": false,
+          "headersSent": false,
+          "outcome": "unknown",
+          "firstTermination": false
+        },
+        {
+          "requestId": "44bea2d3-c568-41c5-b6cf-2773204a5bef",
+          "phase": "idle-timeout",
+          "elapsedMs": 203.4077500000003,
+          "responseStarted": false,
+          "headersSent": false,
+          "outcome": "unknown",
+          "firstTermination": true
+        },
+        {
+          "requestId": "44bea2d3-c568-41c5-b6cf-2773204a5bef",
+          "phase": "upstream-request-error",
+          "elapsedMs": 223.1482500000002,
+          "responseStarted": false,
+          "headersSent": true,
+          "outcome": "unknown",
+          "firstTermination": false
+        }
+      ]
+    },
+    {
+      "fault": "caller",
+      "phases": [
+        {
+          "requestId": "5268d565-a219-42fd-9639-eb50c2a280fd",
+          "phase": "dispatch",
+          "elapsedMs": 0.005791999999928521,
+          "responseStarted": false,
+          "headersSent": false,
+          "outcome": "not-observed",
+          "firstTermination": false
+        },
+        {
+          "requestId": "5268d565-a219-42fd-9639-eb50c2a280fd",
+          "phase": "request-finished",
+          "elapsedMs": 2.777125000000524,
+          "responseStarted": false,
+          "headersSent": false,
+          "outcome": "unknown",
+          "firstTermination": false
+        },
+        {
+          "requestId": "5268d565-a219-42fd-9639-eb50c2a280fd",
+          "phase": "caller-closed",
+          "elapsedMs": 51.538416999999754,
+          "responseStarted": false,
+          "headersSent": false,
+          "outcome": "unknown",
+          "firstTermination": true
+        },
+        {
+          "requestId": "5268d565-a219-42fd-9639-eb50c2a280fd",
+          "phase": "upstream-request-error",
+          "elapsedMs": 52.20783300000039,
+          "responseStarted": false,
+          "headersSent": false,
+          "outcome": "unknown",
+          "firstTermination": false
+        }
+      ]
+    },
+    {
+      "fault": "ok",
+      "status": 200,
+      "complete": true,
+      "reusedSocket": false,
+      "phases": [
+        {
+          "requestId": "e1f8d75a-a5f9-4f6b-87cb-6e0e3d2f650b",
+          "phase": "dispatch",
+          "elapsedMs": 0.006042000000888947,
+          "responseStarted": false,
+          "headersSent": false,
+          "outcome": "not-observed",
+          "firstTermination": false
+        },
+        {
+          "requestId": "e1f8d75a-a5f9-4f6b-87cb-6e0e3d2f650b",
+          "phase": "request-finished",
+          "elapsedMs": 2.8582920000008016,
+          "responseStarted": false,
+          "headersSent": false,
+          "outcome": "unknown",
+          "firstTermination": false
+        },
+        {
+          "requestId": "e1f8d75a-a5f9-4f6b-87cb-6e0e3d2f650b",
+          "phase": "response-headers",
+          "elapsedMs": 5.708792000001267,
+          "responseStarted": true,
+          "headersSent": false,
+          "outcome": "unknown",
+          "firstTermination": false
+        },
+        {
+          "requestId": "e1f8d75a-a5f9-4f6b-87cb-6e0e3d2f650b",
+          "phase": "response-end",
+          "elapsedMs": 7.016542000001209,
+          "responseStarted": true,
+          "headersSent": true,
+          "outcome": "unknown",
+          "firstTermination": true
+        }
+      ]
+    },
+    {
+      "fault": "delay",
+      "status": 200,
+      "complete": true,
+      "reusedSocket": true,
+      "phases": [
+        {
+          "requestId": "ff456cf1-9f19-429a-acc6-f78258ce41a1",
+          "phase": "dispatch",
+          "elapsedMs": 0.01862500000061118,
+          "responseStarted": false,
+          "headersSent": false,
+          "outcome": "not-observed",
+          "firstTermination": false
+        },
+        {
+          "requestId": "ff456cf1-9f19-429a-acc6-f78258ce41a1",
+          "phase": "request-finished",
+          "elapsedMs": 3.406082999998034,
+          "responseStarted": false,
+          "headersSent": false,
+          "outcome": "unknown",
+          "firstTermination": false
+        },
+        {
+          "requestId": "ff456cf1-9f19-429a-acc6-f78258ce41a1",
+          "phase": "response-headers",
+          "elapsedMs": 107.29479100000026,
+          "responseStarted": true,
+          "headersSent": false,
+          "outcome": "unknown",
+          "firstTermination": false
+        },
+        {
+          "requestId": "ff456cf1-9f19-429a-acc6-f78258ce41a1",
+          "phase": "response-end",
+          "elapsedMs": 108.40937499999927,
+          "responseStarted": true,
+          "headersSent": true,
+          "outcome": "unknown",
+          "firstTermination": true
+        }
+      ]
+    },
+    {
+      "fault": "ok",
+      "status": 200,
+      "complete": true,
+      "reusedSocket": true,
+      "phases": [
+        {
+          "requestId": "501a2f7a-aeab-4bd9-a97c-c1de48cd254f",
+          "phase": "dispatch",
+          "elapsedMs": 0.006082999996579019,
+          "responseStarted": false,
+          "headersSent": false,
+          "outcome": "not-observed",
+          "firstTermination": false
+        },
+        {
+          "requestId": "501a2f7a-aeab-4bd9-a97c-c1de48cd254f",
+          "phase": "request-finished",
+          "elapsedMs": 1.1587499999986903,
+          "responseStarted": false,
+          "headersSent": false,
+          "outcome": "unknown",
+          "firstTermination": false
+        },
+        {
+          "requestId": "501a2f7a-aeab-4bd9-a97c-c1de48cd254f",
+          "phase": "response-headers",
+          "elapsedMs": 4.217832999998791,
+          "responseStarted": true,
+          "headersSent": false,
+          "outcome": "unknown",
+          "firstTermination": false
+        },
+        {
+          "requestId": "501a2f7a-aeab-4bd9-a97c-c1de48cd254f",
+          "phase": "response-end",
+          "elapsedMs": 6.305624999997235,
+          "responseStarted": true,
+          "headersSent": true,
+          "outcome": "unknown",
+          "firstTermination": true
+        }
+      ]
+    }
+  ],
+  "parentEventLoopDelayMs": {
+    "p50": 12.042239,
+    "p95": 23.101439,
+    "max": 51.052543
+  },
+  "sourceHead": "11cd8b9cee9167b97ce8a335a09f60479fffe039"
+}

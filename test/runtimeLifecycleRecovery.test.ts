@@ -262,7 +262,7 @@ it("a real helper SIGTERM preserves active work, then a new helper adopts and fi
     f.update({ activeJobs: 0 });
     await vi.waitFor(async () => {
       const health = await rpc(helperSocket, "helper.health");
-      expect(health.lifecycle).toMatchObject({ requestId: intent.requestId, phase: "completed" });
+      expect(health.lifecycle, JSON.stringify(health.lifecycle)).toMatchObject({ requestId: intent.requestId, phase: "completed" });
       expect(health.pid).not.toBe(originalPid!);
       expect(health.bridge.connected).toBe(true);
       expect(health.tunnel.connected).toBe(true);

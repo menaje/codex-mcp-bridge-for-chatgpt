@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { JsonRpcProcess } from "../src/jsonRpcProcess.js";
 import { threadAccessParams, turnAccessParams, verifyExecutionAccess } from "../src/executionAccess.js";
+import { independentTestCodexHome } from "./independent-test-auth.js";
 
 assert.equal(process.argv[2], "--run-authenticated");
 const command = process.argv[3];
@@ -14,7 +15,7 @@ const source = process.argv.find(argument => argument.startsWith("--source="))?.
 assert.match(source, /^[a-z][a-z0-9-]{0,30}$/);
 const root = await mkdtemp(path.join(tmpdir(), "bridge-question-wire-"));
 await chmod(root, 0o700);
-const isolatedHome = path.join(root, "home"), project = path.join(root, "synthetic-project");
+const isolatedHome = await independentTestCodexHome(), project = path.join(root, "synthetic-project");
 const notifications: Record<string, number> = {};
 const requests: Array<Record<string, unknown>> = [];
 const messages: Array<Record<string, unknown>> = [];
@@ -67,10 +68,7 @@ const rpc = new JsonRpcProcess({ command, args: ["app-server", "--listen", "stdi
   }
 });
 try {
-  await mkdir(isolatedHome, { mode: 0o700 }); await mkdir(project);
-  await copyFile(path.join(process.env.CODEX_HOME || path.join(homedir(), ".codex"), "auth.json"), path.join(isolatedHome, "auth.json"));
-  await chmod(path.join(isolatedHome, "auth.json"), 0o600);
-  await writeFile(path.join(isolatedHome, "config.toml"), 'cli_auth_credentials_store = "file"\nmodel_reasoning_effort = "low"\n');
+  await mkdir(project);
   await rpc.start();
   await rpc.request("initialize", { clientInfo: { name: "question_wire_probe", title: "Question feasibility", version: "0.0.0" },
     capabilities: { experimentalApi: true, requestAttestation: false, mcpServerOpenaiFormElicitation: false,
@@ -102,7 +100,7 @@ try {
   } catch { report.modelToolFlags = "unavailable"; }
   await rm(root, { recursive: true, force: true });
   report.elapsedMs = Date.now() - started;
-  report.temporaryHomeRemoved = true;
+  report.temporaryProjectRemoved = true;
 }
 await mkdir("output/question-feasibility", { recursive: true });
 await writeFile(`output/question-feasibility/cli-wire${replyToMessage ? "-steer" : ""}-${source}.json`, JSON.stringify(report, null, 2) + "\n");

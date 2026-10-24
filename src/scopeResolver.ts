@@ -1,6 +1,7 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { SCOPE_ID_PATTERN } from "./sessionRegistry.js";
 import type { BridgeStateStore } from "./stateStore.js";
+import { parseJsonTextStrict } from "./textIntegrity.js";
 
 const SCOPE_SECRET_META_KEY = "scope_hmac_secret_v1";
 const CHATGPT_CONVERSATION_LINKS_META_KEY = "chatgpt_conversation_links_v1";
@@ -187,7 +188,7 @@ function loadConversationIds(stateStore: BridgeStateStore): Map<string, string> 
   const encoded = stateStore.getMeta(CHATGPT_CONVERSATION_LINKS_META_KEY);
   if (encoded === undefined) return new Map();
   try {
-    const parsed = JSON.parse(encoded) as unknown;
+    const parsed = parseJsonTextStrict(encoded, "Stored ChatGPT conversation links");
     if (!Array.isArray(parsed) || parsed.length > MAX_CHATGPT_CONVERSATION_LINKS) {
       throw new Error("expected a bounded entry array");
     }

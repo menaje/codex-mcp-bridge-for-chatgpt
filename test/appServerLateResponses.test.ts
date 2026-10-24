@@ -48,6 +48,7 @@ describe("AppServerLateResponseJournal", () => {
       {
         initializeTimeoutMs: 2_000,
         requestTimeoutMs: 30,
+        threadInitializationTimeoutMs: 30,
         onLateResponse: (response) => journal.observe(response)
       },
       { versionProbe: async () => CODEX_CLI_TEST_VERSION }
@@ -211,6 +212,16 @@ describe("AppServerLateResponseJournal", () => {
     expect(journal.observe(response)).toMatchObject({ reconciliation: "state-conflict" });
     expect(store.getAgent(agent.agentId)?.lifecycle).toBe("active");
     expect(journal.status().totals.stateConflicts).toBe(1);
+    store.close();
+  });
+
+  it("rejects escaped unpaired surrogates in persisted telemetry", () => {
+    const store = new BridgeStateStore({ file: ":memory:" });
+    store.setMeta("app_server_late_responses_v1", '{"note":"\\ud800"}');
+
+    expect(() => new AppServerLateResponseJournal(store)).toThrow(
+      /late-response telemetry is invalid JSON/
+    );
     store.close();
   });
 });

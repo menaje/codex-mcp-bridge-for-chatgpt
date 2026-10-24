@@ -1,0 +1,18 @@
+{
+  "recordedAt": "2026-10-02T23:46:46.566Z",
+  "evidenceJsonCount": 11,
+  "existingCredentialExactMatches": 0,
+  "sourceCredentialExactMatches": 0,
+  "signedScreenshotUrlsInEvidence": 0,
+  "semanticAssertions": "passed",
+  "runtimeHttpRequests": 12,
+  "writeRequests": 4,
+  "distinctPayloads": 1,
+  "v2Storage": "PASS",
+  "actualMcp": "BLOCKED_HTTP401",
+  "toolsListCalls": 0,
+  "readFixtureCalls": 0,
+  "localCalls": 0,
+  "providerCallsAfter401": 0,
+  "validationScope": "task-owned evidence and scripts only; does not erase the initial signed URL tool-output incident"
+}

@@ -1,17 +1,29 @@
 # Bridge database schema and lifecycle
 
-Schema 19 is the current SQLite schema. `src/stateSchema.ts` contains the complete
-DDL used for a new installation. `src/stateStore.ts` contains upgrade code only
-for schemas 3 through 18; schemas 1 and 2 are rejected. The published v0.2 and
+Schema 31 is the current SQLite schema. `src/stateSchema.ts` contains the complete
+DDL and projections used for a new installation. `src/stateStore.ts` contains
+upgrade code for schemas 3 through 31; schemas 1 and 2 are rejected. The published v0.2 and
 v0.3 line used schema 3, and the pre-change development installation used schema
 18. Every supported upgrade ends with the same tables, columns, constraints,
-indexes, and triggers as direct schema-19 creation.
+indexes, and triggers as direct schema-32 creation.
 
-The database is the only bridge state authority. Settings, projects, retained
-sessions, and Jobs no longer have parallel JSON files or JSON mirrors. SQLite
+The database is the durable authority for Bridge business state: admission,
+scope and permission decisions, project and Activity relationships, request
+idempotency, result storage and delivery receipts. Actual Codex turn events and
+worker lifetime are established by the App Server and the execution owner, as
+described in [execution authority and evidence](execution-authority-and-evidence.md).
+Settings, projects, retained sessions, and Jobs no longer have parallel JSON
+files or JSON mirrors. SQLite
 payloads remain where their contents are inherently variable, but fields used for
 identity, joins, constraints, state transitions, or indexes are columns and are
 removed from those payloads.
+
+Best-effort transport telemetry is deliberately outside this authority. The
+isolated production runtime stores it in a separate `telemetry.sqlite` database
+with its own WAL, bounded queue, and retention. Telemetry failure is observable
+but cannot change an operational command. The schema-25
+`transport_observations` table remains for rollback and direct in-process
+compatibility; the isolated production path does not write it.
 
 ## Ownership rules
 
@@ -19,11 +31,11 @@ removed from those payloads.
 current default folder, order, and archive/delete state. Other tables store a
 `project_id` only when they need a relationship. Readers join `projects.name`, so
 a rename appears consistently in Settings, current work, and history. There is no
-project-name history table or snapshot fallback. Archiving keeps the relationship
-and current name. Deleting a registration excludes it from Settings, selection,
-new admission, and tracked-project counts, while its tombstone remains the naming
-authority for already retained history. A row with no valid project relationship
-is shown without a project and is never guessed from a name or folder.
+project-name history table or snapshot fallback. Archive ends project use before
+it marks completion. Delete removes the registration and its Bridge work/result
+relationships, retaining only independent deduplication receipts. Ownership is
+never inferred from a name or folder. See [project lifecycle](project-lifecycle.md)
+for the state machine, race fences and table-level cleanup rules.
 
 A registered project's current default folder is different from an admitted
 execution folder:
@@ -39,17 +51,50 @@ execution folder:
   execution fields are read by joining `sessions`.
 
 `jobs` owns the current Job state, result/error receipt payload, last progress,
-terminal provenance, and one compact display summary. `job_events` owns bounded
-diagnostic event history. `job_interactions` owns current blocking/nonblocking
+terminal provenance, and one compact display summary. `job_events` owns retained
+diagnostic event history, subject to the common policy. `job_interactions` owns current blocking/nonblocking
 input state. There is no `job_summaries` table, and progress events do not write a
 full Job document. `scopes.version` is the one scope CAS/event sequence; there is
 no `scope_versions` mirror.
 
-## Complete schema-19 table matrix
+## Complete schema-32 table matrix
 
 The retention column describes bridge cleanup. SQLite free pages are reusable but
 remain allocated until an offline compaction; physical erasure is therefore a
 separate operation.
+
+Schema 20 removes the retired `execution_mode` columns from `activities` and
+`jobs`, and removes any legacy `executionMode` member from Job payload JSON.
+Admission has one durable asynchronous execution path; Job lifecycle remains
+authoritative in `status`, versions, terminal provenance, and the retained
+result/error receipt. Schema 21 adds exact live-Dashboard completion delivery;
+schema 22 records the legacy path that marked a terminal result as read. Schema
+23 adds separate completion-receipt and direct-query result-offer timestamps.
+Creating a tool response is no longer treated as proof that ChatGPT received it,
+and a direct query no longer consumes a pending live-card delivery. The current
+Job payload also retains the immutable admission-time `completionDeliveryPolicy`;
+legacy rows default to `live-card`. New ordinary rows use `relay-card`; previously
+admitted `direct-wait` policies remain immutable. Historical Dashboard claims/sends
+stay retired. New relay goals/events/attempts use versioned `bridge_meta` namespaces
+and existing Unit-of-Work hooks, without another SQL migration. Temporary owner
+disconnection preserves the current event's delivery record. Resolved/replaced
+events retain minimal receipts under `relay_event_history_v1/<jobId>/<eventId>`
+and restore them if that exact identity returns. Common history
+expiry removes these receipts and body-linked references; minimal replay/stop proof stays
+separate. See [goal relay](relay-delivery.md). Schema 24
+added GPT–user Decision Card tables. The feature was retired in #141, but this
+migration remains immutable for older database upgrades. Schema 25
+adds compact operational command receipts in the same transaction as the
+isolated state mutation so an IPC response-loss retry cannot duplicate work.
+Schema 26 adds version history for user-authored model descriptions. The active
+override stays in `user_settings`; a history row contains user text or a marker
+for using the current official catalog description. Existing active overrides
+are imported as the first version without inventing a save time.
+Schema 27 removes the four retired Decision Card tables without changing Codex
+Jobs, questions, answers, completion delivery, or operational receipts.
+Schemas 28 and 29 add bounded history and recovery indexes. Schema 30 stores a
+non-secret authentication ownership boundary on each retained session. Existing
+sessions keep a null boundary because an upgrade cannot infer their owner.
 
 | Table | Current consumer and authoritative fields | Decision and retention |
 | --- | --- | --- |
@@ -57,34 +102,48 @@ separate operation.
 | `scopes` | Scope resolver and all scoped mutations; `scope_id`, `version`, creation/update time | Keep as scope identity and the single atomic sequence. Retained while referenced. `scope_versions` was merged here. |
 | `bridge_instances` | Restart ownership, cancellation/delivery provenance, diagnostics; process and stop facts | Keep as an append-only operational journal. Open older instances are marked superseded at startup; rows remain while provenance can reference them. |
 | `project_registry` | Project registry CAS; singleton `registry_revision`, `updated_at` | Keep separately because registry-wide CAS has a different lifetime from each project revision. |
-| `projects` | Settings, admission, current-name projection; UUID/ref/revision, current `name`, canonical key, current `cwd`, order, archive/delete times | Sole registered-project authority. Archived/deleted rows remain while execution relationships refer to them; a deleted tombstone can label retained history but cannot be selected or admitted. Active name and cwd are unique. |
+| `projects` | Settings/admission authority; UUID/ref/revision, name/cwd/order, archive state/revision/reasons and times | Archive records intent then confirmed shutdown. Delete physically removes registration and managed work. Active name/cwd are unique. |
+| `retired_requests` | Independent scoped admission/control hash and observed outcome receipt | Retain indefinitely for fail-closed deduplication; no project/folder/session ownership or execution content. |
+| `retired_threads` | Opaque retired thread identity and timestamp | Retain indefinitely to reject late context recreation; no project/folder relationship. |
 | `user_settings` | `UserSettingsStore`; ordinary settings JSON plus independent settings CAS and update time | Keep one JSON object because presentation/policy settings evolve together and are not joined individually. Project arrays/default aliases are forbidden here. |
-| `sessions` | Session registry, continue/fork, Agent thread projection, cwd reuse; thread/scope/project relationship and structured backend execution context | Canonical retained-thread execution context. Global session retention removes old unreferenced sessions; an Agent thread prevents deletion. No payload or project-name copy. |
-| `activities` | Activity lifecycle/card compatibility, admission, counters, completion state; optional project relation and pinned cwd | Keep current workflow authority. Project name copies and duplicate project UUID/cwd columns were removed. Activity-only completion/card fields remain until #53 decides their supported client lifetime. |
+| `model_description_versions` | Per-model user description revisions, save time, and official-selection markers | Append a version in the same transaction as the active override change. Never copy official catalog text into history. Retain history through general Settings reset and catalog disappearance. Fetch one model at a time in bounded pages. |
+| `sessions` | Session registry, continue/fork, Agent thread projection, cwd reuse; thread/scope/project relationship, `auth_boundary`, and structured backend execution context | Canonical retained-thread execution context. A null legacy owner remains historical and cannot be resumed under the current login. Global session retention removes old unreferenced sessions; an Agent thread prevents deletion. No payload or project-name copy. |
+| `activities` | Activity lifecycle, admission, counters, and completion state; optional project relation and pinned cwd | Keep current workflow authority. Project name copies and duplicate project UUID/cwd columns were removed. Retained Activity state does not imply an Activity-card presenter. |
 | `agents` | Agent identity and live lifecycle; current thread/job pointers, version, orphan evidence | Keep current Agent authority. `archived_at` and the `archived` lifecycle are removed; schema 18 restored archived Agents once before schema 19. |
 | `agent_threads` | Agent membership/history and current-thread selection; context mode and link/replacement times | Keep relationship data only. Thread execution details come from `sessions`; invalid legacy-project contexts are dropped and are never resumed or mapped to a new project. |
 | `activity_agents` | Activity-to-Agent assignment history; role, context mode, assignment/release times | Keep because Activity membership has a different lifecycle from Agent thread membership. Active pairs are unique. |
-| `jobs` | Admission replay receipt, execution/recovery state, Dashboard/current/history projection; formal identity, source/current thread, status, execution context, versions/progress, terminal provenance, bounded `summary`, variable result/error `payload` | Keep one row per admitted request. Full result bodies follow result retention; later history expiry reduces payload to the compact replay receipt but preserves `(scope_id, request_id)` and terminal outcome. Structured fields cannot also appear in payload. Summary may contain only `execution`, `usage`, and `uncertainResponseReview`; status, timestamps, duration, and error provenance stay in formal columns or the retained Job payload lifecycle. |
+| `jobs` | Scoped admission identity, execution/control facts, immutable `ended_at` and provenance, current status, history summary and payload | Retain history and full originals for the saved 7/30/90/0 policy measured from execution end. Registry eviction archives without deleting history. At expiry clear prose/results/diagnostics while retaining compact request hash, outcome, versions and control identity so retries cannot duplicate execution. Uncertain delivery and result holds do not extend history. |
 | `job_interactions` | Input/approval wait projection, retention protection, unfinished-work checks; authoritative `interaction_id`/`is_blocking` plus the remaining variable interaction payload | Keep only the current interaction set and replace it atomically with Job state. The two structured fields are reconstructed for public DTOs and do not remain in payload JSON. Delete with the Job. Replaces `pendingInteractions` JSON scans. |
 | `activity_events` | Activity cursor/watch and compatibility diagnostics | Bounded diagnostic/control history: at most 50,000 recent rows and seven-day cleanup in batches. Delete with Activity/scope. |
-| `job_events` | Progress projection, usage/reroute summary extraction, status cursors | Bounded diagnostics: 256 per Job, global 50,000 rows/64 MiB payload budget, 8 KiB per payload, seven-day metadata cleanup. Delete with Job. Does not contain a full Job copy. |
-| `completion_outbox` | Legacy `codex_activity_handoff` and retained Activity card delivery | Keep undelivered/acknowledgement authority while those clients are supported. #53 is the explicit exit condition for deleting this table and its Activity-only writers/readers after pending delivery handling is resolved. |
+| `job_events` | Original progress, usage, diagnostic and completion-delivery audit events | Retain full stored event payloads under the related execution end policy; no durable count, byte or fixed seven-day cap. Active execution events remain available. Hydration and responses are bounded independently. |
+| `completion_outbox` | Durable local completion-notification selection, dispatch, acknowledgement, and retry state | Keep delivery authority independently of Dashboard presentation. The local macOS companion claims only retryable `notify` records through its private socket and acknowledges an exact record only after macOS accepts its generic notification. `verify` records are never sent as success notifications. A failed presentation releases its lease; a crash after presentation can be retried, so the outbox does not claim exactly-once visible delivery. |
+| `job_completion_deliveries` | Exact terminal completion audit, offer time and delivery uncertainty | Retain through the related execution policy, then delete the historical delivery row. Queries/offers never restart retention, settle uncertainty or resend a response. Compact Job admission/control facts remain. |
 | `agent_mutations` | Agent mutation request replay/idempotency; scoped request hash/result | Keep as the durable replay receipt for retained mutation requests. It is not a second Agent state store. |
 | `cancellation_operations` | Root cancellation request idempotency, exact target/proof/result | Keep while request replay and audit provenance are needed. It is protected from generic event cleanup. |
 | `cancellation_intents` | Per-target cancellation dispatch and result provenance | Keep recorded/dispatched intents through restart; terminal evidence remains with the retained request journal. Target indexes serve protection and recovery checks. |
 | `steering_deliveries` | Steering idempotency and delivery certainty; prompt digest, expected Job version, status/result | Keep prepared/dispatching/uncertain records through restart and retain completed evidence with the request receipt. Prompt text is never stored here. |
-| `transport_observations` | Bounded operational diagnostics for aborted/detached/presentation events | Keep as disposable diagnostics only; it grants no replay or execution authority. It is ordered by the recent index and can be pruned independently. |
-| `user_questions` | Question request/answer state and response reference | Keep until its explicit expiry; startup removes expired rows. Payload is question state, not a Job mirror. |
-| `codex_question_deliveries` | Codex-originated question delivery idempotency | Keep one scoped request/question-reference receipt so restart cannot redeliver the same question as new. |
+| `transport_observations` | Compatibility transport diagnostics; production writes the telemetry database | Follow the related Job end policy or own occurrence for unlinked records. No execution/replay authority. |
+| `user_questions` | Current question validity and answer control | Validity expiry is independent of history. `question_history` retains scoped originals/answers under their first occurrence policy; cleanup cannot approve or resend a valid question. |
+| `codex_question_deliveries` | Exact question delivery identity and first occurrence | Retain delivery history by the same saved policy; current question/interaction authority remains separate. |
 | `thread_connections` | App Server connection ownership, handoff/release and recovery inspection | Keep current connection evidence independently of `sessions`: a saved execution context does not prove a live connection. Unfinished-work checks join indexed Job/interactions/cancellation fields. |
 | `event_budget` | Trigger-maintained Job-event row and payload-byte counters | Derived singleton. Rebuilt during migration and updated by three triggers; it is not a DB/WAL or backup size limit. |
 | `event_retention_state` | Event cleanup policy generation and restartable event cursor | Keep typed singleton because the cursor has transactional cleanup semantics. Replaces dynamic `bridge_meta` keys. |
 | `result_holds` | Temporary operator/result-review protection; reason and expiry | Keep only until `expires_at`; maintenance deletes expired holds in batches. Delete with Job. |
-| `work_history_state` | Per-Job optional acknowledgement, display expiry, and review sequence | Keep while the Job receipt exists. It changes review/display state without changing the Job outcome. Delete with Job. |
+| `work_history_state` | Permanent expiration marker plus legacy acknowledgement fields | Mark physical history expiry without removing admission identity. Legacy acknowledgement is not a current UI action or current-warning source. |
 | `work_history_control` | Global review revision, restartable history cursor, cleanup totals | Keep typed singleton because global CAS/pagination invalidation and cleanup progress have distinct semantics. Replaces dynamic `bridge_meta` keys. |
 | `runtime_problem_resolutions` | Current runtime-problem resolution evidence by Agent revision | Keep the latest matching resolution only; delete with Agent. Replaces one dynamic meta key per Agent. |
-| `automatic_recovery` | Durable bounded recovery action/budget; kind/state/attempts/schedule/evidence | Keep unresolved work through restart and retained resolved evidence through history retention. It never authorizes arbitrary new execution. |
-| `automatic_recovery_incidents` | Stable incident identity to active recovery relationship | Keep current and historical incident identity so a restart does not reset attempt limits; one recovery key per incident. |
+| `automatic_recovery` | Historical incident journal, first occurrence, captured source identities, reason and evidence | All states, including unresolved and Job-less incidents, follow the same saved policy. Updating state does not restart the clock. `recovery_controls` preserves current retry authority after prose expiry. |
+| `automatic_recovery_incidents` | Latest observation identity and active/current recovery pointer | Keep the latest pointer to distinguish repeated observations from a fresh recurrence; no historical prose or separate history TTL. |
+| `operational_command_receipts` | Isolated-state command ID, operation, payload digest, optional aggregate/version, compact result, committing generation and time | Keep through the unresolved IPC uncertainty window. Idempotent `maintain` receipts are eligible after 24 hours and are removed in bounded 500-row slices; future business-command receipts require a separate reference-aware policy. An identical retained command retry returns the original result; a changed operation, payload hash, or aggregate fails closed. Receipt storage does not prove an external recipient accepted an effect. |
+
+Project deletion requires confirmed `archive_state='complete'` and no active Job.
+Archive is an intent/external-confirmation/CAS sequence, not a settings transaction
+that waits for execution shutdown. Legacy archived/tombstoned registrations enter
+that same cleanup sequence. Completed archive removes old execution context;
+restore reactivates only the registration. Delete physically removes the row and
+managed work. Independent `retired_requests` and `retired_threads` preserve only
+request idempotency and stale-write fences; they never reserve a cwd. Full rules
+are in [project lifecycle](project-lifecycle.md).
 
 Schema 18 also had `scope_versions` and `job_summaries`; both are removed above.
 Its other project label/UUID/name/cwd snapshot columns, session payload, Agent archive
@@ -93,7 +152,7 @@ their schema-19 owners rather than by compatibility tables.
 
 ## Index and query contract
 
-The schema defines 42 non-SQLite indexes and three event-budget triggers. The
+The schema defines 44 non-SQLite indexes and three event-budget triggers. The
 indexes below are correctness or bounded-work contracts rather than incidental
 optimizations:
 
@@ -103,7 +162,8 @@ optimizations:
 | Project rename/cwd conflicts and display order | `projects_active_name`, `projects_active_cwd`, `projects_ordered` |
 | Scope/status/Activity Job views | `jobs_scope_recent`, `jobs_status_recent`, `jobs_activity_recent` |
 | Event cursors and per-Job cleanup | `activity_events_*_cursor`, `job_events_*_cursor` |
-| Pending completion delivery | `completion_outbox_pending` |
+| Pending native Activity completion delivery | `completion_outbox_pending` |
+| Historical exact Job delivery audit (index retained for schema compatibility) | `job_completion_deliveries_claimable` |
 | History cleanup and review | `jobs_status_recent`, `work_history_state` primary key, `work_history_expired` |
 | Question and hold expiry | `user_questions_expiry`; bounded `result_holds` scan of at most 500 rows |
 | Connection/recovery maintenance | `thread_connections_idle`, `thread_connections_agent`, `automatic_recovery_scope`, `automatic_recovery_job` |
@@ -150,7 +210,7 @@ copy, not end-to-end service latency or evidence of a live replacement.
 
 ## Upgrade and legacy-data rules
 
-A fresh database creates schema 19 directly. A persistent supported older database
+A fresh database creates schema 32 directly. A persistent supported older database
 is inspected before a writable SQLite connection opens. The canonical-file lock,
 live-owner check, integrity and foreign-key checks, permissions, free-space
 calculation, verified backup, sequential conversion, and final verification all
@@ -159,7 +219,7 @@ Development and candidate packages use separate default state profiles; selectin
 the stable DB requires an explicit profile or absolute-file override.
 
 The upgrade gets one private, mode-0600 backup named
-`state.sqlite.pre-v<SOURCE>-to-v19.sqlite` and a bound metadata sidecar. The
+`state.sqlite.pre-v<SOURCE>-to-v32.sqlite` and a bound metadata sidecar. The
 sidecar records the logical/physical database identity, source and target runtime
 facts, migration path/checksums, snapshot checksum, integrity/foreign-key results,
 and a digest of table row counts. Retrying the same upgrade reuses and fully
@@ -172,9 +232,29 @@ Every intermediate migration records its literal destination version and an
 append-only applied-provenance record. A pending record is committed before each
 step and reconciled if the process stops after the schema transaction but before
 the provenance transaction. No step writes the current-version constant. The
-schema-19 rebuild and its foreign-key check run in one transaction. An interrupted
-or invalid conversion rolls that rebuild back and can be retried after the source
-problem is corrected. The full operational and restore procedure is in the
+schema-19 rebuild and its foreign-key check run in one transaction. The following
+schema-20 projection removes execution-mode state without changing request IDs,
+request hashes, Job status/results, events, or deduplication receipts. Schema 21
+adds one completion-delivery row only when a Job becomes terminal after that
+contract is active; it does not backfill old terminal Jobs. Schema 22 adds and
+backfills only the result-read source for already consumed schema-21 deliveries.
+Schema 23 projects those historical rows into result-offer evidence and adds
+separate offer timestamps for new completion-receipt and direct-query responses.
+It does not infer receipt from response construction and does not replay legacy
+`result-read` rows whose transport outcome cannot be reconstructed. Schema 24
+adds the four independent decision-card tables without backfilling or changing
+any Codex Job, Question, completion, or Activity record.
+Schema 25 adds an empty command-receipt table and index without backfilling or
+changing existing domain state.
+Schema 26 imports each active user-authored model description as version 1 with
+an unknown save time, then records later changes without copying official text.
+Schema 27 drops the four retired Decision Card tables, including their legacy
+submissions. The original migration snapshot must be disposed of after service
+acceptance under the [runbook policy](state-upgrade-recovery.md#retired-decision-data-and-backup-disposal).
+Schema 28 adds `jobs_agent_recent_history` so Agent history reads can find the
+latest retained Job without scanning archived rows across the full Job table.
+An interrupted or invalid conversion rolls its transaction back and can be retried
+after the source problem is corrected. The full operational and restore procedure is in the
 [state upgrade and recovery runbook](state-upgrade-recovery.md).
 
 Schema-18 project values are accepted only when their UUID matches `projects`.
@@ -189,15 +269,23 @@ relationship. Migration never creates a project from a slug, name, cwd, or old
 snapshot.
 
 The supported schema-3 fixture is taken from the published v0.3.0 implementation
-and passes every fixed checkpoint through schema 19. Exact deployed-development
-fixtures cover schemas 16 and 18; schemas 4 through 15 and 17 are generated only
-as named, committed checkpoints from those sources. `state-migrations.json` binds
-their provenance and hashes to the shipped implementation. Schemas 1 and 2 are
+and follows the fixed migration path through schema 32. Exact deployed-development
+fixtures cover schemas 16 and 18; the catalog names derived checkpoints for
+schemas 4 through 15, 17, and 19 through 31 from those sources. `state-migrations.json` lists
+the full supported source range, migration checksums, and fixture provenance.
+Schemas 1 and 2 are
 outside the supported release floor and are rejected before a backup or mutation.
 Removed JSON import markers/backends cannot reintroduce retired fields on later
 restarts.
 
 ## Capacity, backups, and offline compaction
+
+The schema-32 table/write/read/maintenance ownership matrix and the command,
+query, and bounded scheduler contracts are documented in
+[State data access and maintenance ownership](state-data-access.md).
+The selected two-database process, IPC, readiness, migration and fault contract
+is documented in
+[State execution isolation architecture](state-execution-isolation.md).
 
 Treat four measurements separately:
 
@@ -219,7 +307,8 @@ ends and the upgraded database has survived normal restarts, remove older backup
 as a deliberate operator action. Backups contain the same private material as the
 source database and require the same access controls. The bridge does not silently
 delete them because release and rollback policy belong to the operator. Keep each
-backup with its `.migration-v<SOURCE>-to-v19.backup.json` sidecar. Supported
+backup with its `.migration-v<SOURCE>-to-v32.backup.json` sidecar for a schema-32
+upgrade, or the exact original target's sidecar for an earlier upgrade. Supported
 snapshot restore is allowed only while the migrated DB records that neither HTTP
 nor stdio service-open occurred; after that boundary, preserve current state and
 use forward repair or explicit data reconciliation. See the
@@ -243,3 +332,76 @@ The storage audit executes and verifies steps 2–5 on disposable copies and lea
 the live database untouched. A report with `liveDatabaseReplacementPerformed:
 false` is implementation evidence, not evidence that an operator has compacted or
 released a production installation.
+
+The complete schema-32 table, explicit index and trigger ownership inventory,
+including command/query consumers, recovery dependencies, future destination and
+two-database file security rules, is in
+[State schema ownership catalog](state-schema-ownership-catalog.md).
+
+
+## Issue 251 policy clock and durable detail
+
+Schema 32 records immutable Job end time and its recorded/legacy-estimated source.
+Registry eviction preserves the original sanitized result in `job_result_bodies`
+and related events. A bounded response preview does not delete the disk original.
+History, related summaries/diagnostics/question bodies/recovery steps and telemetry
+use the stored 7/30/90/0 policy. Zero is unlimited. A missing or invalid current
+setting stops destructive cleanup; only installation and explicit schema-2 legacy
+initialization supplies 30 days. Every delete rechecks the current policy.
+
+`recovery_controls` holds only the current incident key, owner, attempts and state.
+It blocks replay after historical prose expires; a confirmed observation closes
+its validity, or removal of the owner retires it. It does not store past reason,
+evidence, result or prompt. Original request/hash/intent authority likewise stays
+minimal, without implying that an expired result was delivered or approved.
+
+The telemetry owner reads policy and exact Job end/expiry clocks from the existing
+state database read-only. Persistent telemetry count caps are removed. The existing
+bounded maintenance events slice requests telemetry cleanup; no new daemon or
+operational writer is added. Generic measurements/events use their own fixed
+occurrence time. Transport attached to live work waits for that exact run's end.
+Queue/memory bounds and a bounded local ACK receipt window remain control limits,
+with no persistent diagnostic body retained in those receipts.
+
+## Policy/deletion serialization and independent Activity materials (#251 review)
+
+The normal state owner is still the only operational DB writer. Settings writes
+and destructive telemetry slices acquire the same private sibling
+`<canonical-state-file>.history-policy-gate.sqlite`. This empty SQLite file has
+no tables, settings, record bodies or leases; it is solely an OS-backed mutex.
+Telemetry continues to open the operational source read-only. The state owner
+holds this mutex until its outer settings transaction commits or rolls back,
+including updates nested inside project/settings commands. Nested same-owner
+settings calls reuse that held gate; they do not acquire it a second time.
+Settings acquire the existing operational write transaction first, then try the
+gate without waiting. Telemetry acquires the gate first, then its own transaction;
+it only reads the operational WAL and never requests its write lock. Contention
+therefore rolls back/fails fast instead of forming a waiting lock cycle.
+Telemetry obtains it before reading the policy and holds it through its own delete commit/rollback.
+Both owners use timeout zero. Contention fails with SQLITE_BUSY without waiting
+or applying a fallback; the normal retry path must obtain fresh policy. A
+read/storage failure rolls back and releases the mutex, and process death releases
+SQLite locks. The file contains nothing to include in a history/backup archive.
+
+Activity completion material uses its immutable outbox `created_at`, independent
+of the last Job end. Reads, pending alerts and claims apply the saved policy even
+before cleanup. Existing history maintenance also scrubs a bounded 64 outbox
+payloads without waiting for another Job expiry; its compact outbox identity and
+attempt/lease/delivery outcome remain as an idempotency fence. Expired payloads
+carry only `historyExpired:true`, so a later unlimited setting cannot revive
+physically removed material. Delivered and undelivered completion records follow
+the same history period; an offer/lease does not restart it.
+
+Cancellation reason text uses immutable operation `created_at` for both Job and
+Activity targets. Reads omit expired prose and history maintenance clears it in
+bounded slices. Identity, action hash, root/child intent, status, machine reason
+code and outcome are unaffected, including active cancellation. An unavailable
+policy cannot authorize deletion; the direct control getter omits prose while
+remaining usable to settle/replay an existing action.
+
+History cache revision v3 includes the stored mutation revision plus the visible
+retained count and earliest retained end clock. Logical expiry therefore changes
+page/cursor validity before a physical sweep. Runtime incident recurrence uses
+its distinct incident identity. Only the initial canonical incident or a direct
+execution-recovery action is correlated with the failed execution's progression;
+association to the same Job alone does not collapse a new occurrence.

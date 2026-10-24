@@ -1,0 +1,88 @@
+
+ RUN  v4.1.11 /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w3-completion
+
+ ❯ test/companionServer.test.ts (19 tests | 1 failed) 22422ms
+     × carries the full worst-case JSON-escaped Bridge skill content over the native socket 20138ms
+ ❯ test/issue242Completion.test.ts (5 tests | 3 failed) 6538ms
+     × emits readiness only after the outer durable commit; excludes progress, verify, duplicates and rollback 3751ms
+     × has zero empty writer transactions and distinguishes a concurrent consumer winning after preflight 545ms
+     × persists bounded delivery backoff, ignores wrong owners and recovers ack loss, lease expiry and restart 982ms
+ ❯ test/issue242Characterization.test.ts (2 tests | 1 failed) 17836ms
+     × measures fresh query-only projections without changing results or writer ownership 14594ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/companionServer.test.ts > native companion server > carries the full worst-case JSON-escaped Bridge skill content over the native socket
+Error: Test timed out in 20000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/companionServer.test.ts:298:3
+    296|   });
+    297|
+    298|   it("carries the full worst-case JSON-escaped Bridge skill content ov…
+       |   ^
+    299|     const socketPath = temporarySocketPath();
+    300|     const service = fakeApplicationService();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  test/issue242Characterization.test.ts > issue 242 latest-dev characterization > measures fresh query-only projections without changing results or writer ownership
+Error: STATE_READ_START_TIMEOUT: Read projection did not become ready.
+ ❯ Timeout.<anonymous> src/stateReadProcess.ts:356:23
+    354|       };
+    355|       const timer = setTimeout(() => {
+    356|         const error = new Error("STATE_READ_START_TIMEOUT: Read projec…
+       |                       ^
+    357|         finish(error);
+    358|         child.kill("SIGKILL");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  test/issue242Completion.test.ts > issue 242 W3 durable native completions > emits readiness only after the outer durable commit; excludes progress, verify, duplicates and rollback
+Error: SETTINGS_REVISION_CONFLICT: expectedSettingsRevision is required.
+ ❯ UserSettingsStore.applyConfiguration src/userSettings.ts:336:13
+    334|     const hasGeneralPatch = Object.keys(patch).length > 0;
+    335|     if (hasGeneralPatch && expectedSettingsRevision === undefined) {
+    336|       throw new Error(`${SETTINGS_REVISION_CONFLICT}: expectedSettings…
+       |             ^
+    337|     }
+    338|     if (operations.length > 0 && expectedRegistryRevision === undefine…
+ ❯ UserSettingsStore.update src/userSettings.ts:263:17
+ ❯ test/issue242Completion.test.ts:42:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  test/issue242Completion.test.ts > issue 242 W3 durable native completions > has zero empty writer transactions and distinguishes a concurrent consumer winning after preflight
+Error: Bridge state upgrade/startup requires every database owner to stop; live process(es): 16300.
+ ❯ acquireStateDatabaseOpenLease src/stateDatabaseLifecycle.ts:386:13
+    384|     const live = lockedInspection.activeProcessIds.filter(isProcessAli…
+    385|     if (live.length > 0) {
+    386|       throw new Error(
+       |             ^
+    387|         `Bridge state upgrade/startup requires every database owner to…
+    388|       );
+ ❯ prepareStateDatabaseOpen src/stateDatabaseLifecycle.ts:311:10
+ ❯ new BridgeStateStore src/stateStore.ts:700:52
+ ❯ test/issue242Completion.test.ts:70:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+ FAIL  test/issue242Completion.test.ts > issue 242 W3 durable native completions > persists bounded delivery backoff, ignores wrong owners and recovers ack loss, lease expiry and restart
+Error: Bridge state upgrade/startup requires every database owner to stop; live process(es): 16300.
+ ❯ acquireStateDatabaseOpenLease src/stateDatabaseLifecycle.ts:386:13
+    384|     const live = lockedInspection.activeProcessIds.filter(isProcessAli…
+    385|     if (live.length > 0) {
+    386|       throw new Error(
+       |             ^
+    387|         `Bridge state upgrade/startup requires every database owner to…
+    388|       );
+ ❯ prepareStateDatabaseOpen src/stateDatabaseLifecycle.ts:311:10
+ ❯ new BridgeStateStore src/stateStore.ts:700:52
+ ❯ test/issue242Completion.test.ts:126:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯
+
+
+ Test Files  3 failed | 2 passed (5)
+      Tests  5 failed | 26 passed (31)
+   Start at  21:36:45
+   Duration  55.57s (transform 25.19s, setup 0ms, import 39.73s, tests 47.24s, environment 1ms)

@@ -1,5 +1,6 @@
 import type { CodexAppServerLateResponse } from "./appServerUpstream.js";
 import type { BridgeStateStore } from "./stateStore.js";
+import { parseJsonTextStrict } from "./textIntegrity.js";
 
 const META_KEY = "app_server_late_responses_v1";
 export const MAX_RETAINED_APP_SERVER_LATE_RESPONSES = 128;
@@ -160,7 +161,7 @@ export class AppServerLateResponseJournal {
     if (raw === undefined) return emptyState();
     let parsed: unknown;
     try {
-      parsed = JSON.parse(raw);
+      parsed = parseJsonTextStrict(raw, "Stored App Server late-response telemetry");
     } catch {
       throw new Error("Stored App Server late-response telemetry is invalid JSON.");
     }

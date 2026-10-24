@@ -127,3 +127,7 @@ Observed on macOS 26.6.2 / arm64:
 The Intel host's read-only SSH probe failed host-key verification; trust checks
 were not disabled. Intel physical acceptance and the no-deployment release gates
 remain open under #54, #52, #53 and #11.
+
+> 2026-09-29 correction: this historical run used a disposable copy of the
+> operating authentication file. The current live script requires a separately
+> signed-in persistent test profile; see [test credential policy](../codex-auth-connections.md#live-test-credentials).

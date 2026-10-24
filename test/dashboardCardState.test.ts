@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { reconcileDashboardPageCaches } from "../src/dashboardCard.js";
+import {
+  DASHBOARD_CARD_HTML,
+  reconcileDashboardPageCaches
+} from "../src/dashboardCard.js";
 
 type Row = { id: string };
 type Page = { offset: number; returned: number; total: number; hasNext: boolean };
@@ -17,6 +20,14 @@ const mergeRows = (current: Row[], incoming: Row[]): Row[] => {
   return [...merged.values()];
 };
 const rowKey = (row: Row): string => row.id;
+
+describe("Dashboard sender retirement", () => {
+  it("contains no executable completion sender or payload builder", () => {
+    expect(DASHBOARD_CARD_HTML).not.toMatch(/ui\/message|sendFollowUpMessage|codex_ui_completion|completionResultMessage|completionWatcher/);
+    expect(DASHBOARD_CARD_HTML).toContain('rpcRequest("ui/initialize"');
+    expect(DASHBOARD_CARD_HTML).toContain('callTool("codex_ui_read"');
+  });
+});
 
 describe("Dashboard independent page caches", () => {
   it("preserves recent rows when idle load-more appends its next page", () => {

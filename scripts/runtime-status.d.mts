@@ -1,3 +1,11 @@
+export type TunnelEndpointObservation = { status: number | null; failure: string | null };
+export type TunnelHealthObservation = {
+  healthz: TunnelEndpointObservation;
+  readyz: TunnelEndpointObservation;
+  controlPlanePoll: { lastSuccessfulAt: string | null; fresh: boolean; failure: string | null };
+  failure: string | null;
+};
+
 export type ManagedTunnelStatus = {
   phase: string;
   profile: string | null;
@@ -8,6 +16,7 @@ export type ManagedTunnelStatus = {
   lastCheckedAt: string | null;
   lastError: string | null;
   lastProblem: StatusProblem | null;
+  observation?: TunnelHealthObservation;
 };
 
 export type StatusProblem = {
@@ -22,13 +31,23 @@ export type ManagedRuntimeStatus = {
   launcherPid: number;
   phase: string;
   runtimeBuildId: string;
+  codexEnvironmentFingerprint?: string;
+  codexEnvironment?: NodeJS.ProcessEnv;
   tunnel: ManagedTunnelStatus;
   stale: boolean;
+  startup?: InitialStartupStatus;
 };
 
 export const MANAGED_RUNTIME_STATUS_PROTOCOL: string;
 export const MANAGED_RUNTIME_STATUS_VERSION: number;
 export const MAX_TUNNEL_CONTROL_PLANE_AGE_MS: number;
+export function createStartupDiagnostics(
+  role: "helper" | "launcher" | "server" | "runtime-parent" | "state-owner",
+  options?: {
+    environment?: NodeJS.ProcessEnv;
+    emit?: (line: string) => void;
+  }
+): (stage: string) => void;
 export function hasRecentTunnelControlPlanePoll(report: unknown, now?: number): boolean;
 
 export function readManagedRuntimeStatus(
@@ -40,3 +59,8 @@ export function writeManagedRuntimeStatus(
   filePath: string,
   status: Record<string, unknown>
 ): void;
+
+export type InitialStartupContext = { requestId: string; token: string; attempt: number; deadlineAt: number };
+export type InitialStartupStatus = InitialStartupContext & { stage: "launching" | "state-owner" | "http" | "tunnel" | "ready"; failureCode: string | null; causeCode?: string | null; readyAt?: number | null };
+export function initialStartupContext(environment?: NodeJS.ProcessEnv): InitialStartupContext | null;
+export function initialStartupStageTimeout(initialLimit: number, legacyLimit: number, environment?: NodeJS.ProcessEnv, now?: number): number;

@@ -1,0 +1,44 @@
+{
+  "buildId": "0d26c7f14353:41d00390ea3a",
+  "durationSeconds": 2.144,
+  "populationRetainedJobs": [
+    733
+  ],
+  "methods": {
+    "detail": {
+      "samples": 10,
+      "successes": 10,
+      "failures": 0,
+      "minMs": 1.178,
+      "medianMs": 1.553,
+      "maxMs": 3.185
+    },
+    "helper.health": {
+      "samples": 10,
+      "successes": 10,
+      "failures": 0,
+      "minMs": 0.527,
+      "medianMs": 0.599,
+      "maxMs": 7.717
+    },
+    "history": {
+      "samples": 10,
+      "successes": 10,
+      "failures": 0,
+      "minMs": 63.19,
+      "medianMs": 71.076,
+      "maxMs": 85.441
+    },
+    "summary": {
+      "samples": 10,
+      "successes": 10,
+      "failures": 0,
+      "minMs": 56.698,
+      "medianMs": 64.104,
+      "maxMs": 259.055
+    }
+  },
+  "sameNativeAndServerDeadlines": true,
+  "readOnlyProtocol": true,
+  "controlledBeforeAfterBenchmark": false
+}

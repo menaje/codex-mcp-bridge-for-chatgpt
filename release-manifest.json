@@ -16,8 +16,12 @@
       "LICENSE",
       "UPSTREAM.md",
       "docs",
+      "scripts/auth-selection.mjs",
+      "scripts/auth-selection.d.mts",
       "scripts/build-fingerprint.mjs",
       "scripts/child-shutdown.mjs",
+      "scripts/execution-storage.mjs",
+      "scripts/execution-storage.d.mts",
       "scripts/launcher-options.mjs",
       "scripts/managed-file.mjs",
       "scripts/managed-file.d.mts",
@@ -26,7 +30,10 @@
       "scripts/runtime-status.mjs",
       "scripts/runtime-status.d.mts",
       "scripts/start-codex-mcp-bridge.mjs",
+      "scripts/text-integrity.d.mts",
+      "scripts/text-integrity.mjs",
       "scripts/tunnel-profile.mjs",
+      "scripts/tunnel-health.mjs",
       ".codex-plugin",
       ".app.json",
       "release-manifest.json",
@@ -76,34 +83,29 @@
     }
   },
   "uiResources": {
-    "strategy": "content-hash",
+    "strategy": "versioned-uri",
     "hashAlgorithm": "sha256",
-    "hashLength": 12,
     "minimumContractGeneration": {
       "settings": 9,
-      "activity": 12,
       "dashboard": 6,
-      "question": 1
+      "relay": 1
     },
     "resources": [
       "settings",
-      "activity",
       "dashboard",
-      "question"
+      "relay"
     ],
     "activeResources": [
       "settings",
       "dashboard",
-      "question"
+      "relay"
     ],
-    "compatibilityResources": [
-      "activity"
-    ],
+    "compatibilityResources": [],
     "releaseCatalog": "ui-release-catalog.json",
-    "releaseCatalogSha256": "fcb76cea1b7f3a955f88ef47fe59d96dc44197576dc955d8bf2226148af9a9eb"
+    "releaseCatalogSha256": "386b60ac8a1a9548c02b75259f4c66050289999c2cf2d7dac38adcc66d7f8498"
   },
   "stateCompatibility": {
-    "currentSchema": 19,
+    "currentSchema": 32,
     "supportedSourceSchemas": [
       3,
       4,
@@ -120,7 +122,20 @@
       15,
       16,
       17,
-      18
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31
     ],
     "unsupportedSourceSchemas": [
       1,
@@ -132,15 +147,15 @@
       "job-state-json"
     ],
     "migrationCatalog": "state-migrations.json",
-    "migrationCatalogSha256": "810399dee06f768ee70896c69998b3d22c659db0f4dc9beb8baabb62ecad2909",
+    "migrationCatalogSha256": "d7a0932cb78293b75e5d020fef01b3bcfb8f4ef1d00f19d33e98eaa170c81d4d",
     "stateProfilePolicy": "release-stage-isolated-v1",
     "rollbackPolicy": "verified-original-before-service-open-v1",
     "persistentContracts": {
-      "userSettingsSchema": 4,
-      "taskInputContract": 2,
+      "userSettingsSchema": 8,
+      "taskInputContract": 6,
       "macosHelperProtocol": 2,
-      "localCompanionProtocol": 2,
-      "remoteCompanionProtocol": 1
+      "localCompanionProtocol": 12,
+      "remoteCompanionProtocol": 10
     },
     "contractSources": {
       "databaseSchema": "src/stateSchema.ts#CURRENT_STATE_SCHEMA_VERSION",
@@ -162,12 +177,12 @@
   },
   "release": {
     "releaseUnitId": "codex-mcp-bridge",
-    "version": "0.4.1",
+    "version": "0.5.0",
     "stage": "stable",
     "tagPrefix": "v",
     "channel": "stable",
-    "sourceVersion": "0.4.0",
-    "sourceCandidate": "0.4.1-rc.1",
+    "sourceVersion": "0.4.1",
+    "sourceCandidate": "0.5.0-rc.5",
     "generateNotes": true,
     "targets": {
       "macos": {

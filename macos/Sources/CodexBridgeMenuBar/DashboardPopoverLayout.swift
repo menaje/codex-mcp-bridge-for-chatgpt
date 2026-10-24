@@ -17,22 +17,29 @@ enum DashboardPanel: String, CaseIterable {
 
     var title: String {
         switch self {
-        case .running: return "실행 중"
-        case .responseRequired: return "응답 필요"
-        case .problems: return "문제"
-        case .history: return "작업·실행 기록"
-        case .background: return "백그라운드 프로세스"
+        case .running: return "macos.running"
+        case .responseRequired: return "dashboard.responseRequired"
+        case .problems: return "dashboard.problems"
+        case .history: return "macos.workrunhistory"
+        case .background: return "macos.backgroundprocesses"
         }
     }
 
-    func rows(in snapshot: DashboardSnapshot) -> [DashboardRow] {
+    func rows(in snapshot: DashboardSnapshot, now: Date = Date()) -> [DashboardRow] {
         if self == .history {
-            return snapshot.activeRows + snapshot.terminalRows
+            return snapshot.historyModeApplied == "jobs" ? snapshot.terminalRows.filter { ExecutionRecordPresentation.retained($0, days: snapshot.historyPolicy?.retentionDays, now: now) } : snapshot.activeRows + snapshot.terminalRows
         }
-        let rows = snapshot.statusRowsComplete == true
-            ? snapshot.statusRows ?? []
-            : snapshot.activeRows + snapshot.terminalRows
+        let rows = self == .background && snapshot.historyModeApplied == "jobs"
+            ? snapshot.backgroundRows ?? (snapshot.activeRows + snapshot.terminalRows)
+            : snapshot.statusRows ?? (snapshot.activeRows + snapshot.terminalRows)
+        if self == .running && snapshot.historyModeApplied == "jobs" {
+            return snapshot.activeRows.filter { $0.bucket == "active" && $0.jobId != nil }
+        }
         return rows.filter(matches)
+    }
+
+    private func snapshotCompatibilityJob(_ row: DashboardRow) -> Bool {
+        ["running", "input-required", "approval-required", "terminating", "termination-failed"].contains(row.status)
     }
 
     private func matches(_ row: DashboardRow) -> Bool {
@@ -40,7 +47,7 @@ enum DashboardPanel: String, CaseIterable {
         case .history:
             return true
         case .running:
-            return row.status == "running"
+            return row.bucket == "active" && (row.jobId != nil || snapshotCompatibilityJob(row))
         case .responseRequired:
             return ["input-required", "approval-required"].contains(row.status)
         case .problems:
@@ -53,9 +60,29 @@ enum DashboardPanel: String, CaseIterable {
 
 enum DashboardPopoverLayout {
     static let width: CGFloat = 460
+    static let initialHeight: CGFloat = 160
+    static let screenMargin: CGFloat = 24
 
     static func detailHeight(content: CGFloat, fixed: CGFloat, screen: CGFloat) -> CGFloat {
-        min(max(1, content), max(1, screen - 24 - fixed))
+        min(max(1, content), max(1, screen - screenMargin - fixed))
+    }
+
+    static func detailHeight(
+        for panel: DashboardPanel,
+        content: CGFloat,
+        fixed: CGFloat,
+        screen: CGFloat
+    ) -> CGFloat {
+        let available = max(1, screen - screenMargin - fixed)
+        // History is fetched only after the user opens it. Reserve its final
+        // scroll viewport immediately so the loading view and populated list
+        // do not repeatedly resize and re-anchor the native popover.
+        if panel == .history { return available }
+        return min(max(1, content), available)
+    }
+
+    static func popoverHeight(measured: CGFloat, screen: CGFloat) -> CGFloat {
+        min(ceil(measured), max(1, floor(screen - screenMargin)))
     }
 }
 
@@ -72,6 +99,15 @@ struct DashboardPopoverHeights: PreferenceKey {
     }
 }
 
+struct DashboardPopoverContentSize: PreferenceKey {
+    static let defaultValue = CGSize.zero
+
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        let next = nextValue()
+        if next.width > 0, next.height > 0 { value = next }
+    }
+}
+
 extension View {
     func dashboardHeight(_ region: DashboardPopoverRegion) -> some View {
         background(GeometryReader { geometry in
@@ -80,29 +116,23 @@ extension View {
     }
 }
 
-/// Keep the menu window fitted to its content, growing down from its opening position.
-/// Ordinary windows using the same dashboard only report their available space.
+/// Report the stable vertical space for the screen that owns the popover. The
+/// native NSPopover owns its animated window frame. Deriving this value from
+/// that moving frame feeds the animation back into SwiftUI's requested height
+/// and makes the popover repeatedly grow and shrink.
 struct DashboardPopoverScreen: NSViewRepresentable {
-    var fitsWindow = false
-    var isPresented = true
     let changed: (CGFloat) -> Void
 
     func makeNSView(context: Context) -> ScreenView { ScreenView(changed: changed) }
     func updateNSView(_ view: ScreenView, context: Context) {
         view.changed = changed
-        view.configure(fitsWindow: fitsWindow, isPresented: isPresented)
+        view.scheduleUpdate()
     }
 
     final class ScreenView: NSView {
         var changed: (CGFloat) -> Void
         private var lastAvailable: CGFloat?
-        private var fitsWindow = false
-        private var isPresented = false
-        private var topEdge: CGFloat?
-        private var lastWindowFrame: NSRect?
-        private var contentChromeHeight: CGFloat?
         private var updatePending = false
-        private var applyingFrame = false
 
         init(changed: @escaping (CGFloat) -> Void) {
             self.changed = changed
@@ -111,115 +141,46 @@ struct DashboardPopoverScreen: NSViewRepresentable {
 
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-        func configure(fitsWindow: Bool, isPresented: Bool) {
-            if self.isPresented != isPresented || self.fitsWindow != fitsWindow {
-                resetAnchor()
-            }
-            self.fitsWindow = fitsWindow
-            self.isPresented = isPresented
-            scheduleUpdate()
-        }
-
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             NotificationCenter.default.removeObserver(self)
-            resetAnchor()
+            lastAvailable = nil
             if let window {
                 NotificationCenter.default.addObserver(self, selector: #selector(screenChanged),
                     name: NSWindow.didChangeScreenNotification, object: window)
-                NotificationCenter.default.addObserver(self, selector: #selector(windowGeometryChanged),
+                NotificationCenter.default.addObserver(self, selector: #selector(windowChanged),
                     name: NSWindow.didMoveNotification, object: window)
-                NotificationCenter.default.addObserver(self, selector: #selector(windowGeometryChanged),
+                NotificationCenter.default.addObserver(self, selector: #selector(windowChanged),
                     name: NSWindow.didResizeNotification, object: window)
             }
             scheduleUpdate()
         }
 
         @objc private func screenChanged(_ notification: Notification) {
-            resetAnchor()
+            lastAvailable = nil
             scheduleUpdate()
         }
 
-        @objc private func windowGeometryChanged(_ notification: Notification) {
-            guard !applyingFrame else { return }
-            scheduleUpdate()
-        }
+        @objc private func windowChanged(_ notification: Notification) { scheduleUpdate() }
 
         override func layout() {
             super.layout()
             scheduleUpdate()
         }
 
-        private func resetAnchor() {
-            topEdge = nil
-            lastWindowFrame = nil
-            contentChromeHeight = nil
-            lastAvailable = nil
-        }
-
-        private func scheduleUpdate() {
+        func scheduleUpdate() {
             guard !updatePending else { return }
             updatePending = true
-            // AppKit resizing during a SwiftUI layout pass can feed a stale size
-            // back into that pass. Coalesce measurements after layout instead.
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.updatePending = false
-                self.updateWindow()
+                self.updateAvailableHeight()
             }
         }
 
-        func updateWindow() {
+        private func updateAvailableHeight() {
             guard let window, let screen = window.screen, bounds.height > 0 else { return }
-            let top: CGFloat
-            if fitsWindow {
-                guard isPresented else { return }
-                let currentFrame = window.frame
-                // A move without a resize is a new placement (for example when
-                // reopening at a different status-item position). A content
-                // resize must retain the previous top edge, even if SwiftUI
-                // has already resized the host around its center.
-                if topEdge == nil || (lastWindowFrame?.size == currentFrame.size &&
-                    lastWindowFrame?.origin != currentFrame.origin) {
-                    topEdge = currentFrame.maxY
-                }
-                let anchoredTop = min(topEdge ?? currentFrame.maxY, screen.visibleFrame.maxY)
-                topEdge = anchoredTop
-                let contentRect = window.contentRect(forFrameRect: currentFrame)
-                // Some SwiftUI hosts expose their fixed outer padding through
-                // contentMinSize instead of their intrinsic/fitting size. That
-                // minimum can retain the largest prior height on Intel, though,
-                // so use it only to learn the fixed chrome around this view.
-                // The current ScreenView bounds remain the source of the
-                // changing content height, which lets a collapsed panel shrink.
-                let hostContentHeight = max(window.contentMinSize.height,
-                    window.contentView?.fittingSize.height ?? 0)
-                let measuredChromeHeight = max(0, hostContentHeight - bounds.height)
-                if let contentChromeHeight {
-                    self.contentChromeHeight = contentChromeHeight > 0
-                        ? min(contentChromeHeight, measuredChromeHeight)
-                        : measuredChromeHeight
-                } else {
-                    contentChromeHeight = measuredChromeHeight
-                }
-                let height = ceil(bounds.height + (contentChromeHeight ?? 0))
-                var frame = window.frameRect(forContentRect: NSRect(
-                    x: contentRect.minX, y: contentRect.minY, width: contentRect.width, height: height))
-                frame.origin.y = anchoredTop - frame.height
-                if frame != currentFrame {
-                    applyingFrame = true
-                    window.setFrame(frame, display: true)
-                    applyingFrame = false
-                }
-                lastWindowFrame = window.frame
-                // Available height must use the window anchor, not the inner
-                // view's position inside a previously oversized, centered host.
-                top = anchoredTop - (frame.height - bounds.height)
-            } else {
-                top = window.convertPoint(toScreen: convert(
-                    NSPoint(x: bounds.minX, y: isFlipped ? bounds.minY : bounds.maxY), to: nil)).y
-            }
-            let available = floor(min(screen.visibleFrame.maxY, top) - screen.visibleFrame.minY)
+            let available = floor(screen.visibleFrame.height)
             guard available > 0, available != lastAvailable else { return }
             lastAvailable = available
             changed(available)

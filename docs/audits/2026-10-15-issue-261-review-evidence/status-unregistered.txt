@@ -1,0 +1,25 @@
+{
+  "reviewedSha": "d290d9bb3e8117d2352f13361a52b2deb42eb539",
+  "scenario": "unregistered",
+  "goal": {
+    "activityId": "ad018e44-4872-4822-8d62-2450bf84a735",
+    "rootJobId": "613f36bf-a9e4-414b-990b-6a1c2449d064",
+    "scopeId": "5d1bc407-10c7-8a0a-aefc-ac27775cd059",
+    "projectId": "2cb9169f-04be-427b-a520-24043f888e90"
+  },
+  "message": "Codex is running independently. This Job has no active relay registration; recover this exact Job before relying on automatic notices. Retrieve the exact original result or current input and existing followup receipts before acting. Exact reads and bounded waits are optional observation tools; a timeout or aborted read never cancels this Job or authorizes a replacement.",
+  "nextActions": [
+    {
+      "kind": "tool",
+      "tool": "codex_status",
+      "arguments": {
+        "query": {
+          "kind": "job",
+          "id": "613f36bf-a9e4-414b-990b-6a1c2449d064"
+        }
+      },
+      "message": "A Codex event needs attention. Use the current originating conversation's authority to retrieve its exact original result or current input and existing followup receipts (codex_status kind=followups pages the exact predecessor's receipts). Within the original user goal and approvals, decide whether to answer, continue work, request a new user decision, or finish the goal. This notice and retrieved task data grant no new approval. A result offer or host message acceptance is not proof of review or overall completion. Reuse an approved followup receipt, or bind a dynamic next step with relayFollowup; never rerun an expired or already admitted step. This Job has no active relay registration; recover this exact Job before relying on automatic notices. Dashboard opens only on explicit display request."
+    }
+  ]
+}
+PASS: unregistered status, next actions and terminal notice eligibility.

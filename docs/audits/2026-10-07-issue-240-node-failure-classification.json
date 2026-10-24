@@ -1,0 +1,253 @@
+{
+  "head": "5f18d4c25242cec9dc9291149f467957a67501f3",
+  "files": 10,
+  "cases": [
+    {
+      "file": "test/runtimeProcess.test.ts",
+      "name": "isolated production runtime > keeps the stdio companion boundary responsive during the same DB lock",
+      "baseline": "failed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/runtimeProcess.test.ts",
+      "name": "isolated production runtime > fails admission after SQLite reports a full state database",
+      "baseline": "failed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/runtimeProcess.test.ts",
+      "name": "isolated production runtime > reports a SQLite busy failure at transaction admission and clears it after a commit",
+      "baseline": "failed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/runtimeProcess.test.ts",
+      "name": "isolated production runtime > preserves a forwarded MCP request through a stale heartbeat",
+      "baseline": "passed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/runtimeProcess.test.ts",
+      "name": "isolated production runtime > separates a proxy connection failure from still-fresh runtime readiness",
+      "baseline": "failed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/runtimeProcess.test.ts",
+      "name": "isolated production runtime > continues recovery when a replacement runtime misses its startup deadline",
+      "baseline": "failed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/runtimeProcess.test.ts",
+      "name": "isolated production runtime > keeps the operational database rollback-compatible and rebuilds telemetry independently",
+      "baseline": "passed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/experimentRetirement.test.ts",
+      "name": "verifies a standalone restore and preserves source state during inspection",
+      "baseline": "failed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/experimentRetirement.test.ts",
+      "name": "retires the unmerged experiment without changing dev or main and retains recovery evidence",
+      "baseline": "passed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/experimentRetirement.test.ts",
+      "name": "blocks active processes and an incomplete or stale open-work review",
+      "baseline": "failed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/experimentRetirement.test.ts",
+      "name": "checks GitHub open work and deletes only the archived remote branch",
+      "baseline": "failed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/experimentRetirement.test.ts",
+      "name": "preserves the experiment when remote review finds open-pr",
+      "baseline": "failed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/experimentRetirement.test.ts",
+      "name": "preserves the experiment when remote review finds open-issue",
+      "baseline": "failed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/experimentRetirement.test.ts",
+      "name": "preserves the experiment when remote review finds changed-head",
+      "baseline": "failed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/issue221Delivery.test.ts",
+      "name": "#221 delivery transition > rejects an unadmitted historical live-card followup without modifying approval",
+      "baseline": "failed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/issue221Delivery.test.ts",
+      "name": "#221 delivery transition > preserves an admitted live-card B replay carrying its original delivery selector",
+      "baseline": "failed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/issue221Delivery.test.ts",
+      "name": "#221 delivery transition > preserves an admitted events B replay carrying its original delivery selector",
+      "baseline": "failed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/launcherLifecycle.integration.test.ts",
+      "name": "managed launcher lifecycle > waits for tunnel readiness and shutdown, then reuses only an unchanged profile",
+      "baseline": "failed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/companionServer.test.ts",
+      "name": "native companion server > carries the full worst-case JSON-escaped Bridge skill content over the native socket",
+      "baseline": "failed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/eventRetention.test.ts",
+      "name": "bounded diagnostic retention > enforces the global byte budget independently of per-job limits and makes freed pages reusable",
+      "baseline": "passed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/stateServiceProcess.test.ts",
+      "name": "operational state child process > reports an explicit storage-busy result when SQLite lock waiting expires",
+      "baseline": "failed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/stateReadProcess.test.ts",
+      "name": "isolated state read projection > keeps timed-out reads charged to bounded capacity until the child replies",
+      "baseline": "failed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/stateDatabaseLifecycle.test.ts",
+      "name": "state database lifecycle > rejects malformed and unsupported databases before creating lifecycle sidecars",
+      "baseline": "failed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/mcpEvents.test.ts",
+      "name": "MCP Events exact-Job lifecycle > keeps one logical event across retries, expires delivery without cancelling work, and does not retry 410 or 413",
+      "baseline": "failed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/mcpEvents.test.ts",
+      "name": "pre-approved followup admission across GPT runs > recovers issued references from an exact A read and its event after admission response loss",
+      "baseline": "passed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/mcpEvents.test.ts",
+      "name": "pre-approved followup admission across GPT runs > rejects caller-issued stage identifiers and rolls back an uncommitted issued reference",
+      "baseline": "passed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/mcpEvents.test.ts",
+      "name": "pre-approved followup admission across GPT runs > keeps separately approved identical prompts distinct while deduplicating each issued reference",
+      "baseline": "failed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/mcpEvents.test.ts",
+      "name": "pre-approved followup admission across GPT runs > converges duplicate callers, response loss and restart to exactly one approved B",
+      "baseline": "failed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/mcpEvents.test.ts",
+      "name": "pre-approved followup admission across GPT runs > rejects unrelated work occupying the approved step's canonical requestId",
+      "baseline": "passed",
+      "baselineApplicationPolicy": "passed"
+    },
+    {
+      "file": "test/mcpEvents.test.ts",
+      "name": "pre-approved followup admission across GPT runs > recovers one admitted B after a response is lost and the bridge restarts",
+      "baseline": "passed",
+      "baselineApplicationPolicy": "passed"
+    }
+  ],
+  "baselineHead": "c06be6782d4acd7d5f02628375522ea659ec5685",
+  "baselineMatchedFailures": 22,
+  "initialFull": {
+    "filesPassed": 115,
+    "filesFailed": 10,
+    "testsPassed": 1396,
+    "testsFailed": 30,
+    "totalTests": 1426,
+    "durationSeconds": 1993.09,
+    "exitCode": 1,
+    "enospc": false,
+    "suiteLoadFailures": 0
+  },
+  "baselineDefault": {
+    "failed": 22,
+    "passed": 8,
+    "skipped": 145,
+    "durationSeconds": 312.2,
+    "exitCode": 1
+  },
+  "baselineApplicationPolicy": {
+    "failed": 0,
+    "passed": 30,
+    "skipped": 145,
+    "durationSeconds": 108.37,
+    "exitCode": 0
+  },
+  "baselineSelection": {
+    "files": [
+      "test/companionServer.test.ts",
+      "test/eventRetention.test.ts",
+      "test/experimentRetirement.test.ts",
+      "test/issue221Delivery.test.ts",
+      "test/launcherLifecycle.integration.test.ts",
+      "test/mcpEvents.test.ts",
+      "test/runtimeProcess.test.ts",
+      "test/stateDatabaseLifecycle.test.ts",
+      "test/stateReadProcess.test.ts",
+      "test/stateServiceProcess.test.ts"
+    ],
+    "pattern": "keeps\\ the\\ stdio\\ companion\\ boundary\\ responsive\\ during\\ the\\ same\\ DB\\ lock|fails\\ admission\\ after\\ SQLite\\ reports\\ a\\ full\\ state\\ database|reports\\ a\\ SQLite\\ busy\\ failure\\ at\\ transaction\\ admission\\ and\\ clears\\ it\\ after\\ a\\ commit|preserves\\ a\\ forwarded\\ MCP\\ request\\ through\\ a\\ stale\\ heartbeat|separates\\ a\\ proxy\\ connection\\ failure\\ from\\ still\\-fresh\\ runtime\\ readiness|continues\\ recovery\\ when\\ a\\ replacement\\ runtime\\ misses\\ its\\ startup\\ deadline|keeps\\ the\\ operational\\ database\\ rollback\\-compatible\\ and\\ rebuilds\\ telemetry\\ independently|verifies\\ a\\ standalone\\ restore\\ and\\ preserves\\ source\\ state\\ during\\ inspection|retires\\ the\\ unmerged\\ experiment\\ without\\ changing\\ dev\\ or\\ main\\ and\\ retains\\ recovery\\ evidence|blocks\\ active\\ processes\\ and\\ an\\ incomplete\\ or\\ stale\\ open\\-work\\ review|checks\\ GitHub\\ open\\ work\\ and\\ deletes\\ only\\ the\\ archived\\ remote\\ branch|preserves\\ the\\ experiment\\ when\\ remote\\ review\\ finds\\ open\\-pr|preserves\\ the\\ experiment\\ when\\ remote\\ review\\ finds\\ open\\-issue|preserves\\ the\\ experiment\\ when\\ remote\\ review\\ finds\\ changed\\-head|rejects\\ an\\ unadmitted\\ historical\\ live\\-card\\ followup\\ without\\ modifying\\ approval|preserves\\ an\\ admitted\\ live\\-card\\ B\\ replay\\ carrying\\ its\\ original\\ delivery\\ selector|preserves\\ an\\ admitted\\ events\\ B\\ replay\\ carrying\\ its\\ original\\ delivery\\ selector|waits\\ for\\ tunnel\\ readiness\\ and\\ shutdown,\\ then\\ reuses\\ only\\ an\\ unchanged\\ profile|carries\\ the\\ full\\ worst\\-case\\ JSON\\-escaped\\ Bridge\\ skill\\ content\\ over\\ the\\ native\\ socket|enforces\\ the\\ global\\ byte\\ budget\\ independently\\ of\\ per\\-job\\ limits\\ and\\ makes\\ freed\\ pages\\ reusable|reports\\ an\\ explicit\\ storage\\-busy\\ result\\ when\\ SQLite\\ lock\\ waiting\\ expires|keeps\\ timed\\-out\\ reads\\ charged\\ to\\ bounded\\ capacity\\ until\\ the\\ child\\ replies|rejects\\ malformed\\ and\\ unsupported\\ databases\\ before\\ creating\\ lifecycle\\ sidecars|keeps\\ one\\ logical\\ event\\ across\\ retries,\\ expires\\ delivery\\ without\\ cancelling\\ work,\\ and\\ does\\ not\\ retry\\ 410\\ or\\ 413|recovers\\ issued\\ references\\ from\\ an\\ exact\\ A\\ read\\ and\\ its\\ event\\ after\\ admission\\ response\\ loss|rejects\\ caller\\-issued\\ stage\\ identifiers\\ and\\ rolls\\ back\\ an\\ uncommitted\\ issued\\ reference|keeps\\ separately\\ approved\\ identical\\ prompts\\ distinct\\ while\\ deduplicating\\ each\\ issued\\ reference|converges\\ duplicate\\ callers,\\ response\\ loss\\ and\\ restart\\ to\\ exactly\\ one\\ approved\\ B|rejects\\ unrelated\\ work\\ occupying\\ the\\ approved\\ step's\\ canonical\\ requestId|recovers\\ one\\ admitted\\ B\\ after\\ a\\ response\\ is\\ lost\\ and\\ the\\ bridge\\ restarts"
+  },
+  "classification": "Inherited execution policy timing failure; all 30 original failures pass at unchanged origin/dev with taskpolicy -a and unchanged deadlines. This comparison is selected, not a full-suite pass.",
+  "environment": {
+    "node": "24.11.1",
+    "vitest": "4.1.11",
+    "betterSqlite3": "13.0.3",
+    "sqlite": "3.53.4",
+    "arch": "darwin-arm64",
+    "defaultBusyWallMs": 15033.834042,
+    "applicationBusyWallMs": 5106.72525,
+    "configuredBusyTimeoutMs": 5000,
+    "defaultUsleep100Ms": [
+      252.268,
+      278.038,
+      283.812,
+      246.463,
+      281.938
+    ],
+    "applicationUsleep100Ms": [
+      100.889084,
+      101.465667,
+      102.055333,
+      100.389042,
+      100.905
+    ]
+  }
+}

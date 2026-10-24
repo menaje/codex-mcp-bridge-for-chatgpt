@@ -1,0 +1,37 @@
+{
+  "Contents/Info.plist": {
+    "CFBundleIdentifier": "com.menaje.codex-mcp-bridge",
+    "CFBundleShortVersionString": "0.4.1",
+    "CFBundleVersion": "1",
+    "CFBundleExecutable": "CodexBridgeMenuBar"
+  },
+  "Contents/Resources/Runtime/dist/build-info.json": {
+    "version": "0.4.1",
+    "commit": "9be3bb6c70b8673137fb8663c9137c07d1d7c90d",
+    "dirty": false,
+    "sourceHash": "2dd00dba8f3decaa5427bb94563fe67a59b385e68f83c0e465675f261e9a032d",
+    "builtAt": "2026-10-06T15:13:33.541Z",
+    "id": "9be3bb6c70b8:2dd00dba8f3d"
+  },
+  "Contents/Resources/Runtime/package.json": {
+    "name": "codex-mcp-bridge-for-chatgpt",
+    "version": "0.4.1"
+  },
+  "codesign --verify --deep": {
+    "exit": 0,
+    "stdout": "",
+    "stderr": "/Applications/Codex MCP Bridge for ChatGPT.app: valid on disk\n/Applications/Codex MCP Bridge for ChatGPT.app: satisfies its Designated Requirement\n"
+  },
+  "codesign -d --entitlements": {
+    "exit": 0,
+    "stdout": "",
+    "stderr": "Executable=/Applications/Codex MCP Bridge for ChatGPT.app/Contents/MacOS/CodexBridgeMenuBar\nwarning: Specifying ':' in the path is deprecated and will not work in a future release\n"
+  },
+  "binaries": {
+    "Contents/MacOS/CodexBridgeMenuBar": {
+      "sha256": "931457b14c5f101b116fc7b34bf3e54099f8600da7b01dcc2a65922712a46554",
+      "mode": "0o755"
+    }
+  },
+  "observations": "Read-only disk identity; running production PID identified separately. No app launch, no production RPC, DB or credentials opened."
+}

@@ -58,7 +58,7 @@ index 1ab2df4..4cd16fd 100644
 +      const tool=(await c.client.listTools()).tools.find(t=>t.name==="codex_task")!;
 +      const p=c.settings.current.projects[0]!;
 +      const envelope=(tool.inputSchema.properties!.executionEnvelopeRef as {const:string}).const;
-+      const call=(args:Record<string,unknown>)=>c.bareCallTool({name:"codex_task",_meta:{"openai/session":"public-audit-session"},arguments:{taskContractVersion:"2",executionEnvelopeRef:envelope,executionMode:"foreground",...args}});
++      const call=(args:Record<string,unknown>)=>c.bareCallTool({name:"codex_task",_meta:{"openai/session":"public-audit-session"},arguments:{taskContractVersion:"3",executionEnvelopeRef:envelope,executionMode:"foreground",...args}});
 +      const first=await call({requestId:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",prompt:"synthetic audit",project:{name:p.name,projectRef:p.projectRef,projectRevision:p.projectRevision},selection:{model:"gpt-5.6-sol",reasoningEffort:"max"},sandbox:"danger-full-access"});
 +
 +      expect(first.isError).not.toBe(true);

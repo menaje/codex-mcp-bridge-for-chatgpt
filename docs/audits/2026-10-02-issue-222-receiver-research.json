@@ -1,0 +1,914 @@
+{
+  "schemaVersion": 1,
+  "issue": 222,
+  "date": "2026-10-02",
+  "language": "ko",
+  "researchHandoffComplete": true,
+  "actualGeneralChatAcceptance": false,
+  "githubIssueClosed": false,
+  "baseline": {
+    "selectedProject": "브리지",
+    "registrationRevision": 4,
+    "remote": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt.git",
+    "head": "30919ee1e1b9461216db289a5a69876079efb92e",
+    "originDev": "30919ee1e1b9461216db289a5a69876079efb92e",
+    "remoteDevAtT0": "30919ee1e1b9461216db289a5a69876079efb92e",
+    "rootBranch": "dev",
+    "rootCleanAtFinal": true,
+    "taskBranch": "codex/issue-222-receiver-research",
+    "target": "dev",
+    "worktree": "/private/tmp/bridge-222-receiver-research-20261002",
+    "issue224": "기존 T0 복구 증거 재사용"
+  },
+  "candidates": [
+    {
+      "id": "A",
+      "title": "direct-wait",
+      "disposition": "prior-actual-reused",
+      "axes": {
+        "observe": "기존 actual Work 완료/원본 검토",
+        "newWake": "새 wake 미검증",
+        "ongoingTurnContinuation": "기존 actual Work 진행 중 turn 지속",
+        "originalChatRoute": "기존 actual Work 원 대화",
+        "exactOriginalAuthority": "기존 actual Work exact 결과"
+      },
+      "evidence": [
+        "PR154",
+        "NEW-DIRECT",
+        "NEW-NAV",
+        "HOST-GATE"
+      ],
+      "limit": "현재 actual ChatGPT/Codex 신규 실행 없음. 합성 A 1개만. 일반 Chat 및 종료된 GPT turn의 새 wake 미검증.",
+      "modelContinuity": "unverified",
+      "usageContinuity": "unverified",
+      "generalChatFastGate": "not-established",
+      "longDurationTests": {
+        "disposition": "dependency-not-applicable",
+        "reason": "일반 Chat 원본 결과 gate 미성립: 10/30/60분 미실행"
+      },
+      "uiLifetime": "진행 중 GPT turn; 종료 뒤 새 wake 미검증",
+      "latency": {
+        "actualGptMs": null,
+        "clock": "미측정; synthetic/HTTP 값은 별도 navigation/siteFixture만",
+        "usageAttribution": "미검증"
+      }
+    },
+    {
+      "id": "B",
+      "title": "inline Dashboard",
+      "disposition": "synthetic-only",
+      "axes": {
+        "observe": "합성 live card; 기존 actual 표시",
+        "newWake": "미검증",
+        "ongoingTurnContinuation": "미검증",
+        "originalChatRoute": "합성 originating connection",
+        "exactOriginalAuthority": "합성 exact retained result"
+      },
+      "evidence": [
+        "NEW-CARD",
+        "PR108",
+        "HOST-GATE"
+      ],
+      "limit": "#108 actual teardown과 이번 fake host 9/9를 구분. 카드 표시 및 fake ACK는 actual GPT 수신 증거가 아님.",
+      "modelContinuity": "unverified",
+      "usageContinuity": "unverified",
+      "generalChatFastGate": "not-established",
+      "longDurationTests": {
+        "disposition": "dependency-not-applicable",
+        "reason": "일반 Chat 원본 결과 gate 미성립: 10/30/60분 미실행"
+      },
+      "uiLifetime": "mounted/visible/not tornDown: src/dashboardCard.ts completionCanRun",
+      "latency": {
+        "actualGptMs": null,
+        "clock": "미측정; synthetic/HTTP 값은 별도 navigation/siteFixture만",
+        "usageAttribution": "미검증"
+      }
+    },
+    {
+      "id": "C",
+      "title": "PiP",
+      "disposition": "blocked-with-evidence",
+      "axes": {
+        "observe": "미검증",
+        "newWake": "미검증",
+        "ongoingTurnContinuation": "미검증",
+        "originalChatRoute": "미검증",
+        "exactOriginalAuthority": "미검증"
+      },
+      "evidence": [
+        "HOST-GATE",
+        "DOC-EXT"
+      ],
+      "limit": "공식 surface 존재. 인증된 host controller 부재로 mount/이탈/완료 시험 불가. Bridge extension 부재로 host 전체 미지원 판정하지 않음.",
+      "modelContinuity": "unverified",
+      "usageContinuity": "unverified",
+      "generalChatFastGate": "not-established",
+      "longDurationTests": {
+        "disposition": "dependency-not-applicable",
+        "reason": "일반 Chat 원본 결과 gate 미성립: 10/30/60분 미실행"
+      },
+      "uiLifetime": "actual mount/lifetime 미검증",
+      "latency": {
+        "actualGptMs": null,
+        "clock": "미측정; synthetic/HTTP 값은 별도 navigation/siteFixture만",
+        "usageAttribution": "미검증"
+      }
+    },
+    {
+      "id": "D",
+      "title": "Sidebar / Conversation Panel",
+      "disposition": "blocked-with-evidence",
+      "axes": {
+        "observe": "미검증",
+        "newWake": "미검증",
+        "ongoingTurnContinuation": "미검증",
+        "originalChatRoute": "미검증",
+        "exactOriginalAuthority": "미검증"
+      },
+      "evidence": [
+        "HOST-GATE",
+        "DOC-EXT"
+      ],
+      "limit": "공식 extension 계약만 확보. receiver mount, 원 대화 route, exact authority 실제 시험 미실행.",
+      "modelContinuity": "unverified",
+      "usageContinuity": "unverified",
+      "generalChatFastGate": "not-established",
+      "longDurationTests": {
+        "disposition": "dependency-not-applicable",
+        "reason": "일반 Chat 원본 결과 gate 미성립: 10/30/60분 미실행"
+      },
+      "uiLifetime": "actual mount/lifetime 미검증",
+      "latency": {
+        "actualGptMs": null,
+        "clock": "미측정; synthetic/HTTP 값은 별도 navigation/siteFixture만",
+        "usageAttribution": "미검증"
+      }
+    },
+    {
+      "id": "E",
+      "title": "scheduled monitor",
+      "disposition": "actual-tested",
+      "axes": {
+        "observe": "parent 예약 metadata만",
+        "newWake": "last_run metadata; 새 GPT wake 미확인",
+        "ongoingTurnContinuation": "미확인",
+        "originalChatRoute": "미확인",
+        "exactOriginalAuthority": "미확인"
+      },
+      "evidence": [
+        "PARENT-E",
+        "ROOT-E",
+        "DOC-AUTO"
+      ],
+      "limit": "parent-host-reported actual scheduling metadata. Bridge 호출/원본 접근/응답 전달 미확인. root tools 미노출은 전역 미지원 아님.",
+      "modelContinuity": "unverified",
+      "usageContinuity": "unverified",
+      "generalChatFastGate": "not-established",
+      "longDurationTests": {
+        "disposition": "dependency-not-applicable",
+        "reason": "일반 Chat 원본 결과 gate 미성립: 10/30/60분 미실행"
+      },
+      "uiLifetime": "예약 metadata는 UI/GPT/원본 권한 생존 증거 아님",
+      "latency": {
+        "actualGptMs": null,
+        "clock": "미측정; synthetic/HTTP 값은 별도 navigation/siteFixture만",
+        "usageAttribution": "미검증"
+      }
+    },
+    {
+      "id": "F",
+      "title": "Work / dot Events",
+      "disposition": "prior-actual-reused",
+      "axes": {
+        "observe": "기존 actual Work completed event",
+        "newWake": "기존 actual Work event-triggered 재개",
+        "ongoingTurnContinuation": "direct-wait와 별개",
+        "originalChatRoute": "같은 대화 설정 관측; 원본 scope 불일치",
+        "exactOriginalAuthority": "실패 HANDLE_UNAVAILABLE"
+      },
+      "evidence": [
+        "PR213",
+        "DOC-EVENTS"
+      ],
+      "limit": "Work actual, dot 공식 계약만. A 종료 후 이탈. same OAuth principal / 다른 scope, B0. 기존 구독 재개 없음.",
+      "modelContinuity": "unverified",
+      "usageContinuity": "unverified",
+      "generalChatFastGate": "not-established",
+      "longDurationTests": {
+        "disposition": "dependency-not-applicable",
+        "reason": "일반 Chat 원본 결과 gate 미성립: 10/30/60분 미실행"
+      },
+      "uiLifetime": "backend 이벤트 수신과 original scope는 별개",
+      "latency": {
+        "actualGptMs": null,
+        "clock": "미측정; synthetic/HTTP 값은 별도 navigation/siteFixture만",
+        "usageAttribution": "미검증"
+      }
+    },
+    {
+      "id": "G",
+      "title": "native notification + manual resume",
+      "disposition": "prior-actual-reused",
+      "axes": {
+        "observe": "기존 actual 로컬 notification 등록",
+        "newWake": "자동 GPT wake 없음: 현재 계약",
+        "ongoingTurnContinuation": "사용자 수동 입력 필요",
+        "originalChatRoute": "사용자가 원 대화 선택",
+        "exactOriginalAuthority": "원 scope에서 수동 exact 조회 필요"
+      },
+      "evidence": [
+        "PR108",
+        "NEW-NATIVE"
+      ],
+      "limit": "새 3/3은 fake delivery/socket. actual OS banner 시험 아님. 알림 클릭은 local Dashboard를 열며 원 Chat 재개를 증명하지 않음.",
+      "modelContinuity": "unverified",
+      "usageContinuity": "unverified",
+      "generalChatFastGate": "not-established",
+      "longDurationTests": {
+        "disposition": "dependency-not-applicable",
+        "reason": "일반 Chat 원본 결과 gate 미성립: 10/30/60분 미실행"
+      },
+      "uiLifetime": "로컬 notification; original Chat은 수동 복귀",
+      "latency": {
+        "actualGptMs": null,
+        "clock": "미측정; synthetic/HTTP 값은 별도 navigation/siteFixture만",
+        "usageAttribution": "미검증"
+      }
+    },
+    {
+      "id": "H",
+      "title": "API background comparison",
+      "disposition": "official-contract-only",
+      "axes": {
+        "observe": "API 공식 계약",
+        "newWake": "ChatGPT wake 미검증",
+        "ongoingTurnContinuation": "API 계약만",
+        "originalChatRoute": "ChatGPT route 미검증",
+        "exactOriginalAuthority": "Bridge 권한 미검증"
+      },
+      "evidence": [
+        "DOC-BG"
+      ],
+      "limit": "유료 API 시험/제품 전환 없음. API response 조회 계약을 ChatGPT receiver PASS로 확장하지 않음.",
+      "modelContinuity": "unverified",
+      "usageContinuity": "unverified",
+      "generalChatFastGate": "not-established",
+      "longDurationTests": {
+        "disposition": "dependency-not-applicable",
+        "reason": "일반 Chat 원본 결과 gate 미성립: 10/30/60분 미실행"
+      },
+      "uiLifetime": "API server lifecycle 계약만",
+      "latency": {
+        "actualGptMs": null,
+        "clock": "미측정; synthetic/HTTP 값은 별도 navigation/siteFixture만",
+        "usageAttribution": "미검증"
+      }
+    },
+    {
+      "id": "I",
+      "title": "Sites",
+      "disposition": "actual-tested",
+      "axes": {
+        "observe": "private deploy metadata actual; runtime 수신 미확인",
+        "newWake": "미검증",
+        "ongoingTurnContinuation": "미검증",
+        "originalChatRoute": "미검증",
+        "exactOriginalAuthority": "미검증"
+      },
+      "evidence": [
+        "SITE-DEPLOY",
+        "SITE-HTTP",
+        "SITE-MCP-CONTRACT"
+      ],
+      "limit": "owner-only 게시 성공. has_mcp=false는 자산의 MCP 선언 부족. owner header401/MCP404로 수신 미성립. MCP 설정 sample/설치 미확보.",
+      "modelContinuity": "unverified",
+      "usageContinuity": "unverified",
+      "generalChatFastGate": "not-established",
+      "longDurationTests": {
+        "disposition": "dependency-not-applicable",
+        "reason": "일반 Chat 원본 결과 gate 미성립: 10/30/60분 미실행"
+      },
+      "uiLifetime": "private 배포 metadata; host UI/영속 inbox 생존 미검증",
+      "latency": {
+        "actualGptMs": null,
+        "clock": "미측정; synthetic/HTTP 값은 별도 navigation/siteFixture만",
+        "usageAttribution": "미검증"
+      }
+    }
+  ],
+  "sites": [
+    {
+      "id": "SITE-1",
+      "title": "MCP/plugin 설치·read-only 도구",
+      "disposition": "blocked-with-evidence",
+      "result": "private 게시만 actual-tested. get_site(include_mcp_connection=true): \"The published Site does not declare an MCP server. Enable MCP and republish it.\" 기존 RPC 코드와 플랫폼 MCP 선언은 다름. 확인한 save/deploy/update 도구에 선언 입력 없음; 공식 문서는 절차만, 기술 샘플 미확보. 자산 부족/확인한 계약 미노출이며 host 미지원 판정 아님."
+    },
+    {
+      "id": "SITE-2",
+      "title": "host surface·기기 접근",
+      "disposition": "blocked-with-evidence",
+      "result": "node_repl/browser/CUA callable 없음, AX/screen=false. 설치·Connect UI를 제어하지 못함. Web/desktop/mobile 지원 전반에 대한 부정 결론 아님."
+    },
+    {
+      "id": "SITE-3",
+      "title": "UI lifetime·PiP/Panel",
+      "disposition": "blocked-with-evidence",
+      "result": "자체 descriptor의 displayModes 선언은 host 수락 증거가 아님. 인증된 host mount/이탈/teardown 미실행."
+    },
+    {
+      "id": "SITE-4",
+      "title": "storage·지속성",
+      "disposition": "actual-tested",
+      "result": "read_database_overview: bindings=[], tables=[], selected=null. 이 fixture의 persistence 미구성만 확인. ingest 반환의 persisted:false는 실행된 결과가 아님. D1/R2 플랫폼 계약과 구분."
+    },
+    {
+      "id": "SITE-5",
+      "title": "local → Site 수신",
+      "disposition": "blocked-with-evidence",
+      "result": "비인증 GET403, 공식 get_site 제공 owner header GET401/POST ingest401. owner 인증 수락이나 fixture 수신 성공 미확인. 인증된 push 가능성의 반증 아님. 임의 인증 우회/재발급 없음."
+    },
+    {
+      "id": "SITE-6",
+      "title": "Site → local 명령",
+      "disposition": "dependency-not-applicable",
+      "result": "이번 자산은 Tunnel/local binding 없음. RPC local_command_probe는 무실행 설계이지만 원격404로 도구가 호출되지 않음. 명령 성공/안전한 실제 거부도 입증되지 않음."
+    },
+    {
+      "id": "SITE-7",
+      "title": "Events·원 대화 wake",
+      "disposition": "dependency-not-applicable",
+      "result": "SITE-1 설치/호출 경로 미성립. 이벤트 구독·callback를 만들지 않음. 기존 Work Events와 Site receiver를 동일시하지 않음."
+    },
+    {
+      "id": "SITE-8",
+      "title": "Site 일정·monitor",
+      "disposition": "dependency-not-applicable",
+      "result": "도구 create_schedule은 있지만 원본 Bridge 호출 권한 경로 미성립. 일정을 만들지 않음. parent E 예약과 별개."
+    },
+    {
+      "id": "SITE-9",
+      "title": "identity·original scope",
+      "disposition": "actual-tested",
+      "result": "owner role, custom audience, explicitly allowed viewer1, external visitor0, groups 없음 확인. 이 metadata는 Bridge 원본 scope 매핑/권한을 증명하지 않음."
+    },
+    {
+      "id": "SITE-10",
+      "title": "security·비밀·접근",
+      "disposition": "actual-tested",
+      "result": "owner-private publish succeeded; anonymous403. 무해한 fixture/metadata만 업로드. 제공 인증 header401은 인증 보호의 완전 검증이 아님. 정책 완화·public share·계정 key 생성 없음."
+    },
+    {
+      "id": "SITE-11",
+      "title": "오프라인·재시작·sleep·장시간",
+      "disposition": "dependency-not-applicable",
+      "result": "핵심 receiver/authority gate 미성립. 공용 Bridge 재시작·기기 sleep·네트워크 차단은 사용자 경계상 미실행. #154 짧은 기존 증거 범위만 재사용."
+    },
+    {
+      "id": "SITE-12",
+      "title": "통합 판정·운영 권고",
+      "disposition": "blocked-with-evidence",
+      "result": "연구 결과의 분리/판정 산출물 완성. end-to-end receiver PASS 아님. Site는 private metadata 게시 단계까지만 actual; R1 채택 근거 부족."
+    }
+  ],
+  "commands": [
+    {
+      "command": "./node_modules/.bin/vitest run test/tools.test.ts test/userSettings.test.ts test/stateStore.test.ts -t 'direct-result|direct-wait|automatically opens the originating' --maxWorkers=1 --reporter=json --outputFile=output/issue-222-research/direct-card-focused.json",
+      "exitCode": 0,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 79,
+      "provenance": "synthetic-only"
+    },
+    {
+      "command": "PATH=<task-owned output/issue-222-research/bin>:$PATH ./node_modules/.bin/tsx scripts/issue-126-live-card-completion-regression.ts",
+      "exitCode": 0,
+      "passed": 9,
+      "failed": 0,
+      "provenance": "synthetic-only",
+      "playwrightCli": "0.1.19"
+    },
+    {
+      "command": "swift test --package-path macos --scratch-path output/issue-222-research/swift-build --filter 'CompletionNotificationsTests|testCompletionNotificationContentIsGeneric'",
+      "exitCode": 0,
+      "passed": 3,
+      "failed": 0,
+      "provenance": "synthetic-only"
+    },
+    {
+      "command": "./node_modules/.bin/tsx output/issue-222-research/navigation-probe.mts",
+      "exitCode": 0,
+      "admittedSyntheticJobs": 1,
+      "realCodexJobs": 0,
+      "provenance": "synthetic-only"
+    },
+    {
+      "command": "tsx -e: independentTestCodexHome() 사전확인 (정확한 셸 문자열은 보존하지 않음)",
+      "exitCode": 1,
+      "result": "Set CODEX_BRIDGE_TEST_CODEX_HOME to an absolute, persistent Codex home with an independent test login.",
+      "provenance": "blocked-with-evidence"
+    },
+    {
+      "command": "swift -e: ApplicationServices AXIsProcessTrusted(), CoreGraphics CGPreflightScreenCaptureAccess() (동작 기록)",
+      "exitCode": 0,
+      "result": {
+        "accessibilityTrusted": false,
+        "screenCaptureAllowed": false
+      },
+      "provenance": "actual-tested"
+    },
+    {
+      "command": "task-owned osascript System Events / Safari read-only probe",
+      "exitCode": null,
+      "result": "무응답; 이번 소유 PID17917/17950만 종료",
+      "provenance": "blocked-with-evidence"
+    }
+  ],
+  "navigation": {
+    "provenance": "synthetic-only",
+    "actualChatgpt": false,
+    "realCodex": false,
+    "jobId": "bdb59eea-ccf7-4cf8-b57d-fa6390fb3c0c",
+    "admittedAt": null,
+    "runStartedAtMs": 1790938056595,
+    "departureConfirmedAt": 1790938060856,
+    "terminalCommittedAt": null,
+    "terminalCommitObservedAtMs": 1790938061043,
+    "gptContinuedAt": null,
+    "exactReadAt": null,
+    "localExactReadObservedAtMs": 1790938061043,
+    "sameOriginalScope": true,
+    "answerMatchesFixture": true,
+    "clock": "같은 기기 Date.now 밀리초",
+    "departureToCommittedStateObservationMs": 187,
+    "causalOrdering": "held fake upstream: navigation confirmed -> explicit release -> terminal committed-state exact read",
+    "scopeOfEquality": "isolated synthetic HTTP requests only",
+    "jobCounts": {
+      "original": 0,
+      "newA": 1,
+      "newB": 0,
+      "actualNewCodex": 0
+    },
+    "hostAxes": {
+      "canObserveCompletion": {
+        "status": "unknown",
+        "evidence": [],
+        "provenance": "local-browser",
+        "reason": "Explicit completion observation; ACK/offer/mount are insufficient"
+      },
+      "canWakeModel": {
+        "status": "unknown",
+        "evidence": [],
+        "provenance": "local-browser",
+        "reason": "Explicit new automatic model run; active-turn waits are insufficient"
+      },
+      "canBindOriginalChat": {
+        "status": "unknown",
+        "evidence": [],
+        "provenance": "local-browser",
+        "reason": "Explicit original Chat route observation"
+      },
+      "canBindOriginalAuthority": {
+        "status": "unknown",
+        "evidence": [],
+        "provenance": "local-browser",
+        "reason": "Exact result digest/version and original scope read; offer is insufficient"
+      }
+    },
+    "measurementLimit": "원 임시 JSON의 admittedAt는 run start; terminalCommittedAt는 committed-state 관측 시각; exactReadAt는 로컬 HTTP offer/read. 실제 admission/SQLite commit/GPT read 시각으로 재사용하지 않음."
+  },
+  "focusedTests": [
+    "BridgeStateStore keeps a direct-wait Job policy immutable and out of the live-card lease path across restart",
+    "current bridge tool contracts snapshots experimental direct-result delivery per Job and keeps the default live-card path unchanged",
+    "current bridge tool contracts keeps a direct-wait Job pending at an unapproved Codex command boundary",
+    "current bridge tool contracts recovers a direct-wait Job by exact identity after the host aborts a status read",
+    "current bridge tool contracts automatically opens the originating conversation Dashboard for admitted work and queues completion delivery",
+    "user settings and project registry defaults experimental direct-result delivery off, persists it, and migrates older settings off"
+  ],
+  "cardScenarios": [
+    {
+      "scenario": "accept",
+      "passed": true,
+      "messageCount": 1,
+      "waitCount": 1
+    },
+    {
+      "scenario": "reject-then-accept",
+      "passed": true,
+      "messageCount": 2,
+      "waitCount": 2
+    },
+    {
+      "scenario": "timeout-unknown",
+      "passed": true,
+      "messageCount": 1,
+      "waitCount": 1
+    },
+    {
+      "scenario": "teardown-during-send",
+      "passed": true,
+      "messageCount": 1,
+      "waitCount": 1
+    },
+    {
+      "scenario": "direct-result-read",
+      "passed": true,
+      "messageCount": 0,
+      "waitCount": 1
+    },
+    {
+      "scenario": "teardown-before-terminal",
+      "passed": true,
+      "messageCount": 0,
+      "waitCount": 1
+    },
+    {
+      "scenario": "direct-wait-route",
+      "passed": true,
+      "messageCount": 0,
+      "waitCount": 0
+    },
+    {
+      "scenario": "mismatch",
+      "passed": true,
+      "messageCount": 0,
+      "waitCount": 0
+    },
+    {
+      "scenario": "duplicate-cards",
+      "passed": true,
+      "messageCount": 1,
+      "waitCount": 3
+    }
+  ],
+  "parentE": {
+    "provenance": "parent-host-reported actual scheduling metadata",
+    "create": "SUCCESS",
+    "scheduledAt": "2026-10-02T10:43:59Z",
+    "last_run_time": "2026-10-02T10:45:35.115578Z",
+    "disabledAt": "2026-10-02T10:46:37.480301Z",
+    "is_enabled": false,
+    "instruction": "완료 T0 exact Job 조회 1회만",
+    "bridgeToolInvocation": "unconfirmed",
+    "originalAuthorityAccess": "unconfirmed",
+    "responseDelivered": "unconfirmed",
+    "logsQueried": false,
+    "securityRejectedLogRequestRetried": false
+  },
+  "siteFixture": {
+    "projectId": "appgprj_6abf89d2d04c8191a617d5193ef5471a",
+    "slug": "bridge-222-receiver-probe-20261002",
+    "savedVersion": "appgprj_6abf89d2d04c8191a617d5193ef5471a~appgver_cfd8ffa772f08191a4c5ddd764e00c84",
+    "deploymentId": "appgdep_6abf8c53881881918b7349c805ec3587",
+    "deploymentStatus": "succeeded",
+    "has_mcp": false,
+    "mcpConnectionError": "The published Site does not declare an MCP server. Enable MCP and republish it.",
+    "mcpDeclarationAssetGap": true,
+    "mcpEnableSettingLocatedInExaminedContracts": false,
+    "technicalMcpSampleLocated": false,
+    "globalMcpUnsupported": false,
+    "audience": "owner-only backend verified",
+    "explicitViewers": 1,
+    "externalVisitors": 0,
+    "databaseBindings": [],
+    "tables": [],
+    "httpProbes": [
+      {
+        "probe": "anonymous-metadata",
+        "status": 403,
+        "elapsedMs": 131,
+        "ownerHeaderSupplied": false,
+        "ownerAuthenticationAccepted": false
+      },
+      {
+        "probe": "owner-metadata",
+        "status": 401,
+        "elapsedMs": 2395,
+        "ownerHeaderSupplied": true,
+        "ownerAuthenticationAccepted": false
+      },
+      {
+        "probe": "local-to-site-ingest",
+        "status": 401,
+        "elapsedMs": 2273,
+        "ownerHeaderSupplied": true,
+        "ownerAuthenticationAccepted": false
+      },
+      {
+        "probe": "mcp-initialize",
+        "status": 404,
+        "elapsedMs": 2110,
+        "ownerHeaderSupplied": true,
+        "ownerAuthenticationAccepted": null
+      },
+      {
+        "probe": "mcp-tools-list",
+        "status": 404,
+        "elapsedMs": 2353,
+        "ownerHeaderSupplied": true,
+        "ownerAuthenticationAccepted": null
+      },
+      {
+        "probe": "mcp-read-fixture",
+        "status": 404,
+        "elapsedMs": 103,
+        "ownerHeaderSupplied": true,
+        "ownerAuthenticationAccepted": null
+      },
+      {
+        "probe": "mcp-local-command-denial",
+        "status": 404,
+        "elapsedMs": 108,
+        "ownerHeaderSupplied": true,
+        "ownerAuthenticationAccepted": null
+      }
+    ],
+    "sourcePushedSha": "77dff7da2988c5ca2ceed4a2f913a62424741e6c",
+    "sourceWorkerSha256": "91d012efd539e2cbf82cdeabe17c654fd0aef1c52ba7bebd5faed144aa0bb006",
+    "sourceCommits": 3,
+    "sourcePushes": 2,
+    "sourceRepositoryDistinctFromBridge": true,
+    "extraLocalUnpushedCommit": "06596e8db4b17b0adeb51f63ffb79499819ea13f",
+    "retainedPrivate": true,
+    "deleteOrUnpublishToolExposed": false,
+    "metadataEvidence": "작성 Agent가 실제 도구 응답에서 관측하여 보고한 사실; 독립 원응답 검증 미실시. siteFixture는 보고 정리 위치이며 독립 source가 아님",
+    "mcpSchemaEvidence": "작성 Agent가 실제 도구 응답에서 관측하여 보고한 사실; 독립 schema/오류 원응답 검증 미실시"
+  },
+  "recommendation": "direct-wait + 원 대화에서 명시적 수동 exact Job 복구",
+  "r1Adoption": "현재 일반 Chat 증거로 채택 불가; 보편적 불가능 판정 아님",
+  "nextAction": "reviewer exact committed bytes 재확인 후 상위 결과 게시/#221 반영/통합 및 #222 연구 종료 판정; 새 시험 없음",
+  "cleanup": {
+    "isolatedHttpAndSQLite": "closed/deleted by trial finally",
+    "ownedPlaywrightSession": "closed",
+    "ownedOsascript": "terminated",
+    "newSubscriptions": 0,
+    "rootSchedules": 0,
+    "parentSchedule": "disabled by parent report",
+    "productionChanged": false,
+    "bridgeCommitPushMerge": false,
+    "githubIssueMutation": false,
+    "worktree": "리뷰 및 상위 dev 통합을 위해 보존; 두 audit 파일만 연구 branch commit 대상",
+    "privateSite": "owner-only 무해한 fixture 보존; delete/unpublish callable 없어 정리 미완료",
+    "sourceCredentialTempFile": "deleted",
+    "secretValuesInAudit": false,
+    "recordScope": "시험 종료 당시 상태; 이번 문서 보완에서는 두 audit 파일 commit만 허용, merge/push/GitHub 변경 없음",
+    "rawEvidence": "task-owned local source/ignored output 보존; 원문 로그/민감정보는 commit하지 않음"
+  },
+  "inputs": [
+    {
+      "path": "scripts/issue-126-live-card-completion-regression.ts",
+      "sha256": "6483e2489d3e2271ba5e2516c03efa79cda405d8b1ea6fb03db5938c4b4c41ff"
+    },
+    {
+      "path": "src/dashboardCard.ts",
+      "sha256": "6f59eb84fb63d85b1637267accbd062eca2c5364eb5c996be0f7d39e982a8d00"
+    },
+    {
+      "path": "src/tools.ts",
+      "sha256": "f5cb8f5b6b2ab32de44df3e6484a445cb546e44d4d91c6396077b54c15ea7b49"
+    },
+    {
+      "path": "test/tools.test.ts",
+      "sha256": "3e09a260be4bb5c105ede2983bdcb4436d2cf9a10fd9b5b00bee862c8935b970"
+    },
+    {
+      "path": "test/userSettings.test.ts",
+      "sha256": "c57f60a7e8d4c2f32b8d6f81adfbd59aabe32be0755e665f1379a1ea868d45f0"
+    },
+    {
+      "path": "test/stateStore.test.ts",
+      "sha256": "ba722d967dcee11d1d6c43eb21f1b16f959b8bac87645ca10bd10a1c71c38539"
+    },
+    {
+      "path": "docs/audits/2026-09-22-issue-154-direct-result-receiving.md",
+      "sha256": "0535c9b67a4e1d1075dada80f64fae3c5d54a1f184288b46cc881f9676b74cf2"
+    },
+    {
+      "path": "docs/audits/2026-10-02-issue-213-host-scope-gate.json",
+      "sha256": "ca4b44a32cc9a2fbdb723893c41496f6e97429de32a8676b32c30d2ddba0c74d"
+    },
+    {
+      "path": "docs/audits/2026-09-14-issue-108-live-dashboard-lifecycle.md",
+      "sha256": "a2e7ef8403fbe744bc91f3af397d708e24e031c94831a78a8a942798d66eb9a9"
+    },
+    {
+      "path": "output/issue-222-research/navigation-probe.mts",
+      "sha256": "6eb7042c13bb98a5052e4bc711fd619f7b8d35a2a2c6cbc8879ac6be7754163b"
+    },
+    {
+      "path": "output/issue-222-research/navigation-result.json",
+      "sha256": "54f31fd0d95893d0419371698c2be15d950fe57207e8e93158309c23fb82c20a"
+    },
+    {
+      "path": "output/issue-222-research/site-http.json",
+      "sha256": "0d754c9d10db904840f5bbf480c87954838f654c396a72e7f1e0bd4dda130504"
+    },
+    {
+      "path": "output/issue-222-research/direct-card-focused.json",
+      "sha256": "bee6e7f1b13db7ffa8aa23a7dbf7cd398d0b384910dc60283392b70be18e65fb"
+    },
+    {
+      "path": "output/issue-222-research/native-focused.log",
+      "sha256": "f9853252c567783f0a29e2c0dd7eba44af292aba383f4791aca60c8ab5f5ae23"
+    },
+    {
+      "path": "output/playwright/issue-126-live-card-completion/results.json",
+      "sha256": "c4d6623ed6d6fb8d02c150cdcd18523a2e7bdf0bdabbe8a14835a0239e166326"
+    },
+    {
+      "path": "/tmp/bridge-222-t1-t2-20261002/scripts/issue-222-host-fast-gate.ts",
+      "sha256": "70e0b89dc52b3b569eab77b51d4ec86ed0fca5fbca2947da6da1a08a989407c1"
+    },
+    {
+      "path": "/tmp/bridge-222-t1-t2-20261002/scripts/issue-222-receiver-probe.ts",
+      "sha256": "ec5c677ab59ade3d5ba9006bb69e99de7cdee2d479bea06b2d2e432ae9698697"
+    },
+    {
+      "path": "/tmp/bridge-222-receiver-site-20261002/worker.mjs",
+      "sha256": "91d012efd539e2cbf82cdeabe17c654fd0aef1c52ba7bebd5faed144aa0bb006"
+    },
+    {
+      "path": "macos/Tests/CodexBridgeKitTests/OperationalNotificationsTests.swift",
+      "sha256": "61f2d24c751918497318f784b0f248cfafefa929d2422eed11158e5d97f75415"
+    },
+    {
+      "path": "/tmp/bridge-222-t1-t2-20261002/docs/audits/2026-10-02-issue-222-t1-http-adapter.md",
+      "sha256": "c10882baf28eef63968823f7c1220a422026cc36c51cee86c0cdefc0f135772e"
+    }
+  ],
+  "validation": {
+    "auditSemanticChecks": "pass: 후보9/SITE12, disposition/시계/출처/권한/비밀 pattern/상대 링크",
+    "affected": "pass: docs-only 2 paths, Node=false/macOS=false; localization/release/schema CLI0.153.3",
+    "whitespace": "pass: Git 신규 파일 및 Python whitespace"
+  },
+  "acceptance": [
+    {
+      "category": "research",
+      "criterion": "실제 사용가능 항목 시험 또는 공식·기술적 실행불가 사유 기록",
+      "status": "연구 범위 기록 충족",
+      "basis": "가능한 짧은 시험 수행; 환경 제어/인증 및 확인한 계약 미노출 경계 기록. 전역불가능 증명 아님"
+    },
+    {
+      "category": "research",
+      "criterion": "evidence층 분리",
+      "status": "충족",
+      "basis": "actual/재사용/합성/공식 계약/parent 보고/작성 Agent 보고 분리; Site metadata·schema 독립 원응답 미검증"
+    },
+    {
+      "category": "research",
+      "criterion": "Chat/Work/dot 구분",
+      "status": "충족",
+      "basis": "일반 Chat 미검증, #154/#213 actual Work 재사용, dot 공식 계약만"
+    },
+    {
+      "category": "research",
+      "criterion": "A~I 및 SITE-1~12 비교표",
+      "status": "충족",
+      "basis": "전 항목 disposition 및 Observe/new Wake/ongoing turn/route/authority 표"
+    },
+    {
+      "category": "research",
+      "criterion": "권고 조합 1개",
+      "status": "충족",
+      "basis": "direct-wait + 원 대화에서 명시적 수동 exact Job 복구"
+    },
+    {
+      "category": "research",
+      "criterion": "#221 반영",
+      "status": "상위 수행대기",
+      "basis": "문안만 작성; 결과 게시/#221 반영 미실행. #223 경계 문안도 미게시"
+    },
+    {
+      "category": "research",
+      "criterion": "미래 재검토점",
+      "status": "충족",
+      "basis": "공식 receiver/host 제어·원본 권한 계약 변화 시 재판정; 전역불가능 단정 없음"
+    },
+    {
+      "category": "handoff",
+      "criterion": "결과 게시·이슈 종료·Git 통합",
+      "status": "상위 수행대기",
+      "basis": "reviewer exact committed bytes 재확인 후 상위 결정; 아직 완료 아님"
+    },
+    {
+      "category": "product-adoption",
+      "criterion": "strict actual general Chat fast-gate 및 exact 원본 A 검토",
+      "status": "미충족",
+      "basis": "실행 중 이탈→완료→추가 사용자 입력 없는 재개→exact A 검토 미성립; actual A0/synthetic A1; 연구 종료와 독립"
+    },
+    {
+      "category": "product-adoption",
+      "criterion": "장시간·B followup·전체 기기 장애 확장",
+      "status": "dependency-not-applicable",
+      "basis": "original A 읽기/검토 gate 미통과; 다른 작업 방해 금지"
+    },
+    {
+      "category": "product-adoption",
+      "criterion": "원본 권한 및 모델·추론·usage 연속성",
+      "status": "미검증",
+      "basis": "scope 우회 없음; UI/backend 생존으로 추정하지 않음"
+    },
+    {
+      "category": "handoff",
+      "criterion": "raw evidence local보존·private Site 정리 한계",
+      "status": "부분 충족",
+      "basis": "local source/ignored output 보존; 원문 로그/민감정보 commit 제외; owner-private Site 삭제/unpublish 미노출로 정리 미완료"
+    }
+  ],
+  "sources": {
+    "PR154": {
+      "provenance": "prior-actual-reused",
+      "path": "docs/audits/2026-09-22-issue-154-direct-result-receiving.md",
+      "surface": "actual Work; ongoing turn"
+    },
+    "PR213": {
+      "provenance": "prior-actual-reused",
+      "path": "docs/audits/2026-10-02-issue-213-host-scope-gate.json",
+      "surface": "actual web Work; original scope denied"
+    },
+    "PR108": {
+      "provenance": "prior-actual-reused",
+      "path": "docs/audits/2026-09-14-issue-108-live-dashboard-lifecycle.md",
+      "surface": "actual ChatGPT card teardown / local macOS notification registration"
+    },
+    "NEW-DIRECT": {
+      "provenance": "synthetic-only",
+      "artifact": "output/issue-222-research/direct-card-focused.json"
+    },
+    "NEW-CARD": {
+      "provenance": "synthetic-only",
+      "artifact": "output/playwright/issue-126-live-card-completion/results.json"
+    },
+    "NEW-NAV": {
+      "provenance": "synthetic-only",
+      "artifact": "output/issue-222-research/navigation-result.json",
+      "normalizedFinal": "navigation"
+    },
+    "NEW-NATIVE": {
+      "provenance": "synthetic-only",
+      "artifact": "output/issue-222-research/native-focused.log"
+    },
+    "HOST-GATE": {
+      "provenance": "blocked-with-evidence",
+      "facts": [
+        "callable browser/CUA/node_repl absent",
+        "AXIsProcessTrusted=false",
+        "CGPreflightScreenCaptureAccess=false",
+        "owned AppleScript probes did not return; terminated",
+        "independent test home required; not configured"
+      ]
+    },
+    "ROOT-E": {
+      "provenance": "blocked-with-evidence",
+      "limit": "native automations tool not exposed to this agent; global unsupported not inferred"
+    },
+    "PARENT-E": {
+      "provenance": "parent-host-reported actual scheduling metadata",
+      "details": "parentE",
+      "logsAccessed": false
+    },
+    "SITE-DEPLOY": {
+      "provenance": "actual-tested",
+      "details": "siteFixture",
+      "scope": "provisioning/save/private-deploy metadata only; 작성 Agent 실제 도구응답 관측 보고, 독립 원응답 검증 미실시",
+      "independentRawResponseVerified": false,
+      "detailsRole": "siteFixture 자체참조는 보고 정리 위치이며 독립 source가 아님"
+    },
+    "SITE-HTTP": {
+      "provenance": "actual-tested",
+      "details": "siteFixture.httpProbes",
+      "scope": "HTTP status only; owner authentication and fixture receipt not established"
+    },
+    "SITE-MCP-CONTRACT": {
+      "provenance": "blocked-with-evidence",
+      "scope": "get_site MCP connection error; fixture declaration missing; examined setter/sample unavailable; not platform unsupported",
+      "evidenceOrigin": "작성 Agent의 실제 도구응답 관측 보고; 독립 schema/오류 스냅샷 미보존",
+      "independentRawResponseVerified": false
+    },
+    "DOC-EXT": {
+      "provenance": "official-contract-only",
+      "url": "https://developers.openai.com/plugins/build/extensions"
+    },
+    "DOC-EVENTS": {
+      "provenance": "official-contract-only",
+      "url": "https://developers.openai.com/plugins/build/mcp-events"
+    },
+    "DOC-AUTO": {
+      "provenance": "official-contract-only",
+      "url": "https://learn.chatgpt.com/docs/automations"
+    },
+    "DOC-BG": {
+      "provenance": "official-contract-only",
+      "url": "https://developers.openai.com/api/docs/guides/background"
+    }
+  },
+  "researchClosureStatus": "독립 검토 조건부 통과; 상위 결과 게시/#221 반영/이슈 종료/통합 수행대기. 연구 종료는 제품기능 성공이 아님",
+  "reviewRevision": {
+    "reviewerJobId": "012acd1c-8f39-4210-96a6-14bc48fdb7f3",
+    "reviewedMarkdownSha256": "39d5196e7c4100039e571c45439cdb1719ff34d38f5108595226a43873bc8699",
+    "reviewedJsonSha256": "4079ff98fe9b326f14aa4b594b52111a86261daef4531d5a9ae7a311cc1043c8",
+    "p2": "Site 게시 metadata/MCP schema 관측 보고 한정, 독립 원응답 미검증",
+    "p3": "연구 종료/제품 채택 조건 분리; 상위 수행대기 명시",
+    "newTrials": false,
+    "newAccountLogNetworkQueries": false
+  }
+}

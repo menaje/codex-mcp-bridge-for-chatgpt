@@ -1,0 +1,35 @@
+{
+  "detail": {
+    "samples": 10,
+    "successes": 10,
+    "failures": 0,
+    "p50Ms": 12.241959,
+    "p95Ms": 120.351417,
+    "p99Ms": 120.351417
+  },
+  "helper.health": {
+    "samples": 10,
+    "successes": 10,
+    "failures": 0,
+    "p50Ms": 9.067958,
+    "p95Ms": 36.015625,
+    "p99Ms": 36.015625
+  },
+  "history": {
+    "samples": 10,
+    "successes": 0,
+    "failures": 10,
+    "p50Ms": 2521.90475,
+    "p95Ms": 2603.730666,
+    "p99Ms": 2603.730666
+  },
+  "summary": {
+    "samples": 10,
+    "successes": 0,
+    "failures": 10,
+    "p50Ms": 2523.383667,
+    "p95Ms": 2545.856209,
+    "p99Ms": 2545.856209
+  },
+  "boundary": "Serial request-count checks; no dwell/soak window. Native list deadline 3s, server with problems 2.5s; unchanged. Low-n p95/p99 are sample maxima. Exact detail target selected from the private read-only snapshot after native history list failed."
+}

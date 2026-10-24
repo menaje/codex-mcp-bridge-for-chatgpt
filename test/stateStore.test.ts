@@ -2,10 +2,350 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
-import { BridgeStateStore } from "../src/stateStore.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  BridgeStateStore,
+  COMPLETION_OUTBOX_UNCERTAIN_HOLD_AT
+} from "../src/stateStore.js";
+
+import { historicalCompletion } from "./fixtures/historicalCompletion.js";
 
 describe("BridgeStateStore", () => {
+  // These fixtures deliberately use small fixed timestamps. Evaluate policy
+  // at the same fixture clock, not decades after those records were created.
+  beforeEach(()=>vi.spyOn(Date,"now").mockReturnValue(2_000_000));
+  afterEach(()=>vi.restoreAllMocks());
+  it("lists only retryable notify events for the local native delivery path", () => {
+    const store = new BridgeStateStore({ file: ":memory:" });
+    const notifyActivityId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const verifyActivityId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const otherScope = "22222222-2222-4222-8222-222222222222";
+    try {
+      store.createActivity({
+        activityId: notifyActivityId,
+        scopeId: SCOPE_A,
+        handoffPolicy: "notify",
+        completionTrigger: "sealed-jobs-terminal",
+        now: 1
+      });
+      store.upsertJob({ ...job("native-notify", "native-notify-request"), activityId: notifyActivityId, updatedAt: 2 });
+      store.sealActivity(notifyActivityId, 3);
+
+      store.createActivity({
+        activityId: verifyActivityId,
+        scopeId: otherScope,
+        handoffPolicy: "verify",
+        completionTrigger: "sealed-jobs-terminal",
+        now: 1
+      });
+      store.upsertJob({
+        ...job("native-verify", "native-verify-request"),
+        scopeId: otherScope,
+        activityId: verifyActivityId,
+        updatedAt: 2
+      });
+      store.sealActivity(verifyActivityId, 3);
+
+      const events = store.listPendingNotifyCompletionOutbox();
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        activityId: notifyActivityId,
+        scopeId: SCOPE_A,
+        channel: "notify"
+      });
+
+      const claimedAt = Date.now();
+      const claimed = store.claimCompletionOutbox(
+        events[0]!.outboxId,
+        SCOPE_A,
+        "native-menu-bar",
+        1_000,
+        claimedAt
+      );
+      expect(claimed).toMatchObject({ attemptCount: 1, leaseOwner: "native-menu-bar" });
+      expect(store.listPendingNotifyCompletionOutbox()).toEqual([]);
+      store.markCompletionOutboxDelivered(events[0]!.outboxId, SCOPE_A, "native-menu-bar", claimedAt + 1);
+      expect(store.getCompletionOutbox(events[0]!.outboxId)).toMatchObject({ deliveredAt: claimedAt + 1 });
+      expect(store.listCompletionOutbox(verifyActivityId)).toMatchObject([
+        { channel: "verify", deliveredAt: undefined }
+      ]);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("holds an uncertain Dashboard completion dispatch out of automatic retries", () => {
+    const store = new BridgeStateStore({ file: ":memory:" });
+    const activityId = "12121212-1212-4212-8212-121212121212";
+    try {
+      store.createActivity({
+        activityId,
+        scopeId: SCOPE_A,
+        handoffPolicy: "notify",
+        completionTrigger: "sealed-jobs-terminal",
+        now: 1
+      });
+      store.upsertJob({ ...job("completion-job", "completion-request"), activityId, updatedAt: 2 });
+      store.sealActivity(activityId, 3);
+
+      const [event] = store.listPendingCompletionOutbox(SCOPE_A);
+      expect(event).toMatchObject({ activityId, scopeId: SCOPE_A, attemptCount: 0 });
+      const leaseOwner = "dashboard-widget";
+      expect(store.claimCompletionOutbox(event!.outboxId, SCOPE_A, leaseOwner, 1_000, 3))
+        .toMatchObject({ outboxId: event!.outboxId, leaseOwner, attemptCount: 1 });
+      const uncertain = store.markCompletionOutboxUncertain(event!.outboxId, SCOPE_A, leaseOwner);
+      expect(uncertain).toMatchObject({
+        outboxId: event!.outboxId,
+        nextAttemptAt: COMPLETION_OUTBOX_UNCERTAIN_HOLD_AT,
+        leaseOwner: undefined,
+        leaseExpiresAt: undefined
+      });
+      expect(store.listPendingCompletionOutbox(SCOPE_A)).toEqual([]);
+      expect(store.claimCompletionOutbox(event!.outboxId, SCOPE_A, "another-widget", 1_000, 4))
+        .toBeUndefined();
+    } finally {
+      store.close();
+    }
+  });
+
+  it("keeps a claimed completion outbox event durable across a bridge restart", () => {
+    const file = stateFile();
+    const activityId = "13131313-1313-4313-8313-131313131313";
+    const first = new BridgeStateStore({ file });
+    try {
+      first.createActivity({
+        activityId,
+        scopeId: SCOPE_A,
+        handoffPolicy: "notify",
+        completionTrigger: "sealed-jobs-terminal",
+        now: 1
+      });
+      first.upsertJob({ ...job("restart-completion-job", "restart-completion-request"), activityId, updatedAt: 2 });
+      first.sealActivity(activityId, 3);
+      const [event] = first.listPendingCompletionOutbox(SCOPE_A);
+      expect(event).toMatchObject({ activityId, attemptCount: 0 });
+      first.close();
+
+      const restarted = new BridgeStateStore({ file });
+      try {
+        const [restored] = restarted.listPendingCompletionOutbox(SCOPE_A);
+        expect(restored).toMatchObject({ outboxId: event!.outboxId, activityId, attemptCount: 0 });
+        const claimed = restarted.claimCompletionOutbox(restored!.outboxId, SCOPE_A, "restarted-widget", 1_000, 4);
+        expect(claimed).toMatchObject({ leaseOwner: "restarted-widget", attemptCount: 1 });
+        restarted.markCompletionOutboxDelivered(restored!.outboxId, SCOPE_A, "restarted-widget", 5);
+      } finally {
+        restarted.close();
+      }
+
+      const verified = new BridgeStateStore({ file });
+      try {
+        expect(verified.listPendingCompletionOutbox(SCOPE_A)).toEqual([]);
+        expect(verified.listCompletionOutbox(activityId)).toMatchObject([
+          { outboxId: event!.outboxId, deliveredAt: 5, attemptCount: 1, leaseOwner: undefined }
+        ]);
+      } finally {
+        verified.close();
+      }
+    } finally {
+      try { first.close(); } catch {}
+    }
+  });
+
+  it("preserves a historical host receipt while recording an exact Job result offer", () => {
+    const store = new BridgeStateStore({ file: ":memory:" });
+    const jobId = "14141414-1414-4414-8414-141414141414";
+    try {
+      store.upsertJob(job(jobId, "15151515-1515-4515-8515-151515151515"));
+      const original = historicalCompletion(store, jobId, "host-accepted", { host_accepted_at: 5_021 });
+      expect(store.retentionProtection(jobId, 5_021)).not.toContain("undelivered-chatgpt-result");
+      expect(store.recordJobCompletionResultOffer({ scopeId: SCOPE_A, source: "direct-job-query", jobId, now: 5_022 }))
+        .toMatchObject({ ...original, directResultOfferedAt: 5_022, updatedAt: 5_022 });
+      expect(store.retentionProtection(jobId, 5_022)).not.toContain("undelivered-chatgpt-result");
+      expect(store.getJobCompletionDelivery(jobId)?.resultReadAt).toBeUndefined();
+    } finally { store.close(); }
+  });
+
+  it("retains delivery uncertainty without granting a separate result-retention exception", () => {
+    const store = new BridgeStateStore({ file: ":memory:" });
+    const jobId = "34343434-3434-4434-8434-343434343434";
+    const requestId = "35353535-3535-4535-8535-353535353535";
+    const owner = "36363636-3636-4636-8636-363636363636";
+    const terminalAt = 1_800_000_000_000;
+    const day = 86_400_000;
+    const recoveryMs = 6 * 60 * 60_000;
+    try {
+      store.writeSettings({ historyRetentionDays: 7 }, 0, terminalAt);
+      store.upsertJob({ ...job(jobId, requestId), updatedAt: terminalAt });
+      const delivery = store.getJobCompletionDelivery(jobId, SCOPE_A)!;
+
+      expect(store.retentionProtection(jobId, terminalAt + 1, recoveryMs))
+        .not.toContain("undelivered-chatgpt-result");
+      historicalCompletion(store, jobId, "host-accepted", { host_accepted_at: terminalAt + 2 });
+      expect(store.retentionProtection(jobId, terminalAt + 7 * day - 1, recoveryMs))
+        .not.toContain("undelivered-chatgpt-result");
+      expect(store.retentionProtection(jobId, terminalAt + 7 * day, recoveryMs))
+        .not.toContain("undelivered-chatgpt-result");
+
+      const offeredAt = terminalAt + 7 * day - 1_000;
+      store.recordJobCompletionResultOffer({
+        scopeId: SCOPE_A,
+        source: "completion-receipt",
+        receipt: delivery.receipt,
+        now: offeredAt
+      });
+      expect(store.retentionProtection(jobId, terminalAt + 7 * day, recoveryMs))
+        .not.toContain("chatgpt-result-recovery");
+      expect(store.retentionProtection(jobId, offeredAt + recoveryMs, recoveryMs))
+        .not.toContain("chatgpt-result-recovery");
+    } finally {
+      store.close();
+    }
+  });
+
+  it("records direct result offers without consuming or stealing a delivery", () => {
+    const store = new BridgeStateStore({ file: ":memory:" });
+    const pendingJobId = "24242424-2424-4424-8424-242424242424";
+    const leasedJobId = "26262626-2626-4626-8626-262626262626";
+    const rejectedJobId = "29292929-2929-4929-8929-292929292929";
+    const unknownJobId = "31313131-3131-4131-8131-313131313131";
+    const owner = "33333333-3333-4333-8333-333333333333";
+    try {
+      store.upsertJob(job(pendingJobId, "25252525-2525-4525-8525-252525252525"));
+      expect(store.recordJobCompletionResultOffer({
+        scopeId: SCOPE_A,
+        source: "direct-job-query",
+        jobId: pendingJobId,
+        now: 10
+      })).toMatchObject({
+        state: "pending",
+        directResultOfferedAt: 10,
+        resultReadAt: undefined,
+        resultReadSource: undefined,
+        attemptCount: 0
+      });
+      store.upsertJob(job(leasedJobId, "27272727-2727-4727-8727-272727272727"));
+      historicalCompletion(store, leasedJobId, "leased", { lease_owner: owner, lease_expires_at: 1_020 });
+      expect(store.recordJobCompletionResultOffer({
+        scopeId: SCOPE_A,
+        source: "direct-job-query",
+        jobId: leasedJobId,
+        now: 21
+      })).toMatchObject({
+        state: "leased",
+        directResultOfferedAt: 21,
+        resultReadSource: undefined
+      });
+      store.upsertJob(job(rejectedJobId, "30303030-3030-4030-8030-303030303030"));
+      historicalCompletion(store, rejectedJobId, "host-rejected", { last_host_rejected_at: 31, next_attempt_at: 5_031 });
+      expect(store.recordJobCompletionResultOffer({
+        scopeId: SCOPE_A,
+        source: "direct-job-query",
+        jobId: rejectedJobId,
+        now: 32
+      })).toMatchObject({
+        state: "host-rejected",
+        directResultOfferedAt: 32,
+        resultReadSource: undefined
+      });
+      expect(store.retentionProtection(rejectedJobId, 32))
+        .not.toContain("undelivered-chatgpt-result");
+
+      store.upsertJob(job(unknownJobId, "32323232-3232-4232-8232-323232323232"));
+      historicalCompletion(store, unknownJobId, "acceptance-unknown", { acceptance_unknown_at: 41 });
+      expect(store.recordJobCompletionResultOffer({
+        scopeId: SCOPE_A,
+        source: "direct-job-query",
+        jobId: unknownJobId,
+        now: 42
+      })).toMatchObject({
+        state: "acceptance-unknown",
+        directResultOfferedAt: 42,
+        resultReadSource: undefined
+      });
+      expect(store.retentionProtection(unknownJobId, 42))
+        .not.toContain("undelivered-chatgpt-result");
+    } finally {
+      store.close();
+    }
+  });
+
+  it("keeps a direct-wait Job policy immutable and out of the live-card lease path across restart", () => {
+    const file = stateFile();
+    const store = new BridgeStateStore({ file });
+    const jobId = "45454545-4545-4545-8545-454545454545";
+    const requestId = "46464646-4646-4646-8646-464646464646";
+    try {
+      store.upsertJob({
+        ...job(jobId, requestId),
+        status: "running",
+        updatedAt: 1,
+        completionDeliveryPolicy: "direct-wait"
+      });
+      store.upsertJob({
+        ...job(jobId, requestId),
+        completionDeliveryPolicy: "direct-wait"
+      });
+      expect(store.listJobs()).toEqual([
+        expect.objectContaining({ jobId, completionDeliveryPolicy: "direct-wait" })
+      ]);
+      expect(store.getJobCompletionDelivery(jobId, SCOPE_A)).toMatchObject({
+        state: "pending",
+        attemptCount: 0
+      });
+      expect(store).not.toHaveProperty("claimJobCompletionDelivery");
+      expect(() => store.upsertJob({
+        ...job(jobId, requestId),
+        completionDeliveryPolicy: "live-card"
+      })).toThrow(/completion delivery policy cannot change/);
+      expect(store.listJobs()).toEqual([
+        expect.objectContaining({ jobId, completionDeliveryPolicy: "direct-wait" })
+      ]);
+    } finally {
+      store.close();
+    }
+
+    const restarted = new BridgeStateStore({ file });
+    try {
+      expect(restarted.listJobs()).toEqual([
+        expect.objectContaining({ jobId, completionDeliveryPolicy: "direct-wait" })
+      ]);
+      expect(restarted.getJobCompletionDelivery(jobId, SCOPE_A)).toMatchObject({
+        state: "pending",
+        attemptCount: 0
+      });
+      expect(restarted).not.toHaveProperty("claimJobCompletionDelivery");
+      restarted.upsertJob({
+        ...job(jobId, requestId),
+        completionDeliveryPolicy: "direct-wait"
+      });
+      expect(restarted.listJobs()).toHaveLength(1);
+      expect(() => restarted.upsertJob({
+        ...job(jobId, requestId),
+        completionDeliveryPolicy: "live-card"
+      })).toThrow(/completion delivery policy cannot change/);
+    } finally {
+      restarted.close();
+    }
+  });
+
+  it("keeps an expired historical send lease unchanged across restart", () => {
+    const file = stateFile();
+    const store = new BridgeStateStore({ file });
+    const jobId = "18181818-1818-4818-8818-181818181818";
+    store.upsertJob(job(jobId, "19191919-1919-4919-8919-191919191919"));
+    const original = historicalCompletion(store, jobId, "leased", {
+      lease_owner: "20202020-2020-4020-8020-202020202020", lease_expires_at: 1_010
+    });
+    store.close();
+    const restored = new BridgeStateStore({ file });
+    try {
+      expect(restored.getJobCompletionDelivery(jobId)).toEqual(original);
+      expect(restored).not.toHaveProperty("claimJobCompletionDelivery");
+      expect(restored).not.toHaveProperty("markJobCompletionHostAccepted");
+      expect(restored).not.toHaveProperty("releaseJobCompletionDelivery");
+    } finally { restored.close(); }
+  });
+
   it("finds retained status-card work and filters archived jobs before applying its limit", () => {
     const store = new BridgeStateStore({ file: ":memory:" });
     const otherScope = "22222222-2222-4222-8222-222222222222";
@@ -55,7 +395,6 @@ describe("BridgeStateStore", () => {
       expect.objectContaining({
         ...job("job-committed", "request-committed"),
         activityId: expect.any(String),
-        executionMode: "background",
         backendKind: "mcp-server",
         terminalVersion: 1
       })
@@ -133,7 +472,7 @@ describe("BridgeStateStore", () => {
     expect(readFileSync(file).includes(Buffer.from(rawPrompt))).toBe(false);
 
     const reopened = new BridgeStateStore({ file });
-    expect(reopened.schemaVersion).toBe(19);
+    expect(reopened.schemaVersion).toBe(32);
     expect(reopened.listSteeringDeliveries(SCOPE_A)).toEqual([
       expect.objectContaining({
         requestId,
@@ -201,7 +540,7 @@ describe("BridgeStateStore", () => {
     store.close();
 
     const restored = new BridgeStateStore({ file });
-    expect(restored.schemaVersion).toBe(19);
+    expect(restored.schemaVersion).toBe(32);
     expect(restored.getActivityProjectAdmission(activityId)?.projectId).toBe(project.id);
     expect(restored.listJobs()).toEqual([
       expect.objectContaining({ projectId: project.id, projectName: "Codex MCP Bridge" })
@@ -332,8 +671,8 @@ describe("BridgeStateStore", () => {
       requestId,
       actionHash: "f".repeat(64),
       source: "widget-control",
-      toolName: "codex_activity_job_cancel",
-      actionName: "cancel-card-job",
+      toolName: "codex_cancel",
+      actionName: "cancel-dashboard-job",
       target: {
         kind: "job",
         jobId: activeJob.jobId,
@@ -350,7 +689,7 @@ describe("BridgeStateStore", () => {
         cardGeneration: 7
       },
       callerRequestDigest: "2".repeat(64),
-      reasonCode: "widget-force-stop",
+      reasonCode: "dashboard-force-stop",
       now: 4
     });
     expect(operation.rootIntentId).toBe(intent.intentId);
@@ -454,7 +793,7 @@ describe("BridgeStateStore", () => {
     store.close();
 
     const restored = new BridgeStateStore({ file });
-    expect(restored.schemaVersion).toBe(19);
+    expect(restored.schemaVersion).toBe(32);
     expect(restored.getCancellationOperation(SCOPE_A, requestId)).toMatchObject({
       source: "model-tool",
       reason: "The user changed direction. Stop the obsolete job."

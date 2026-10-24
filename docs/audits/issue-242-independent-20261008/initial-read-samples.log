@@ -1,0 +1,19 @@
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: preserve the paged history and complete status summary contracts
+
+0 !== 120
+
+    at <anonymous> (/private/tmp/issue-242-independent-20261008/read-samples.mts:15:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 0,
+  expected: 120,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.11.1

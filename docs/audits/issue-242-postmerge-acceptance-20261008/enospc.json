@@ -1,0 +1,11 @@
+{
+  "observed": "Shell temporary-file creation failed ENOSPC while own bundle assembly awaited npm ci; runner and descendants stopped with SIGTERM; no completed bundle gate claimed",
+  "removedOnlyTaskOwned": [
+    "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-postmerge-acceptance-20261008/macos/.build/arm64-apple-macosx/debug/ModuleCache",
+    "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-postmerge-acceptance-20261008/macos/.build/arm64-apple-macosx/release/ModuleCache",
+    "/tmp/cb242-accept/home/.npm",
+    "/tmp/cb242-accept/tmp",
+    "/tmp/cb242-accept/bundle/Codex MCP Bridge for ChatGPT.app/Contents/Resources/Runtime/node_modules"
+  ],
+  "blocked": "clean dependency installation and further large compilations"
+}

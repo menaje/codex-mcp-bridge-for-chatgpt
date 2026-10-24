@@ -1,0 +1,8 @@
+{
+  "head": "e550798fe16bd5944f69f1941a98d249e84adefc",
+  "tree": "dfcbbf596588982347d0c94787b68b83369fe2a6",
+  "sourceArchive": "/tmp/cb242-r502-control-8izpwb3c",
+  "checkedTrackedBlobCount": 887,
+  "sourceBlobVerification": "Every archived tracked file matched its Git blob before validation. node_modules points to the task-owned existing dependency clone. No product source overlay.",
+  "purpose": "Reproduce the new R502 diagnostic assertion on its authoritative source; exact f710974 has no such diagnostic API/test, so its existing proxy controls are compared separately."
+}

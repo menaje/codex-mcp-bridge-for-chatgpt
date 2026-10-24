@@ -1,13 +1,14 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   MANAGED_RUNTIME_STATUS_PROTOCOL,
   hasRecentTunnelControlPlanePoll,
   readManagedRuntimeStatus,
   writeManagedRuntimeStatus
 } from "../scripts/runtime-status.mjs";
+import { codexAppliedEnvironment, codexChildEnvironmentFingerprint } from "../scripts/runtime-env.mjs";
 
 describe("managed runtime status", () => {
   it("requires a recent successful control-plane poll even when the daemon is ready", () => {
@@ -57,6 +58,35 @@ describe("managed runtime status", () => {
     });
   });
 
+  it("keeps unchanged healthy heartbeats fresh across 20 seconds and marks a stopped writer stale", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "codex-runtime-heartbeat-"));
+    const file = path.join(root, "status.json");
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-10-07T00:00:00Z"));
+      for (let interval = 0; interval < 6; interval++) {
+        writeManagedRuntimeStatus(file, { phase: "running", runtimeBuildId: "fixture", tunnel: connectedTunnel() });
+        vi.advanceTimersByTime(5_000);
+        expect(readManagedRuntimeStatus(file)?.stale).toBe(false);
+      }
+      vi.advanceTimersByTime(15_001);
+      expect(readManagedRuntimeStatus(file)?.stale).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("accepts additive observation evidence and rejects malformed evidence while retaining old version 1 compatibility", () => {
+    const file = path.join(mkdtempSync(path.join(tmpdir(), "codex-runtime-evidence-")), "status.json");
+    const observation = { healthz: { status: null, failure: "timeout" }, readyz: { status: 200, failure: null },
+      controlPlanePoll: { lastSuccessfulAt: new Date().toISOString(), fresh: true, failure: null }, failure: "timeout" };
+    writeManagedRuntimeStatus(file, { phase: "running", runtimeBuildId: "fixture", tunnel: { ...connectedTunnel(), observation } });
+    expect(readManagedRuntimeStatus(file)?.tunnel.observation).toEqual(observation);
+    writeManagedRuntimeStatus(file, { phase: "running", runtimeBuildId: "fixture", tunnel: { ...connectedTunnel(),
+      observation: { ...observation, healthz: { status: "200", failure: null } } } });
+    expect(readManagedRuntimeStatus(file)).toBeNull();
+    writeManagedRuntimeStatus(file, { phase: "running", runtimeBuildId: "fixture", tunnel: connectedTunnel() });
+    expect(readManagedRuntimeStatus(file)?.tunnel.observation).toBeUndefined();
+  });
+
   it("does not let a caller override authoritative envelope fields", () => {
     const root = mkdtempSync(path.join(tmpdir(), "codex-runtime-status-"));
     const file = path.join(root, "run", "status.json");
@@ -75,6 +105,24 @@ describe("managed runtime status", () => {
       launcherPid: process.pid,
       stale: false
     });
+  });
+
+  it("seals the applied Codex environment in a private status file", () => {
+    const file = path.join(mkdtempSync(path.join(tmpdir(), "codex-applied-status-")), "run", "status.json");
+    const environment = codexAppliedEnvironment({ HOME: "/fixture/home", PATH: "/fixture/bin",
+      CODEX_HOME: "/fixture/codex", CONTROL_PLANE_API_KEY: "sk-tunnel-only" });
+    writeManagedRuntimeStatus(file, { phase: "running", runtimeBuildId: "build-one",
+      codexEnvironment: environment,
+      codexEnvironmentFingerprint: codexChildEnvironmentFingerprint(environment),
+      tunnel: connectedTunnel() });
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(readManagedRuntimeStatus(file)?.codexEnvironment).toEqual(environment);
+    expect(readFileSync(file, "utf8")).not.toContain("sk-tunnel-only");
+
+    const changed = JSON.parse(readFileSync(file, "utf8"));
+    changed.codexEnvironment.CODEX_HOME = "/fixture/other";
+    writeFileSync(file, `${JSON.stringify(changed)}\n`, { mode: 0o600 });
+    expect(readManagedRuntimeStatus(file)).toBeNull();
   });
 
   it("rejects status timestamps implausibly far in the future", () => {
@@ -102,6 +150,22 @@ describe("managed runtime status", () => {
         lastProblem: { code: "NOT_STABLE", arguments: {} }
       }
     });
+    expect(readManagedRuntimeStatus(file)).toBeNull();
+  });
+
+  it("fails closed for invalid UTF-8 and escaped unpaired surrogates", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "codex-runtime-status-"));
+    const file = path.join(root, "run", "status.json");
+    writeManagedRuntimeStatus(file, {
+      phase: "running",
+      runtimeBuildId: "build-one",
+      tunnel: connectedTunnel()
+    });
+
+    writeFileSync(file, Buffer.from([0xff]), { mode: 0o600 });
+    expect(readManagedRuntimeStatus(file)).toBeNull();
+
+    writeFileSync(file, Buffer.from('{"message":"\\ud800"}'), { mode: 0o600 });
     expect(readManagedRuntimeStatus(file)).toBeNull();
   });
 });

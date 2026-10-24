@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import * as z from "zod/v4";
+import { parseJsonUtf8Strict } from "./textIntegrity.js";
 
 const claimsSchema = z.strictObject({
   purpose: z.enum(["work", "history"]).optional(), historyRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
@@ -7,8 +8,7 @@ const claimsSchema = z.strictObject({
   hostScopeId: z.string().uuid().nullable(), scopeId: z.string().uuid(),
   activityId: z.string().uuid(), generation: z.number().int().positive(),
   agentId: z.string().uuid(), agentVersion: z.number().int().positive(),
-  jobId: z.string().nullable(), jobVersion: z.number().int().positive().nullable(),
-  processIds: z.array(z.string().max(200)).max(100)
+  jobId: z.string().nullable(), jobVersion: z.number().int().positive().nullable()
 });
 export type UiControlClaims = z.infer<typeof claimsSchema>;
 /** Shared by MCP sessions that operate on the same registry. Restart invalidates
@@ -29,7 +29,10 @@ export class UiControlProofs {
     const received = Buffer.from(signature, "base64url"), expected = this.sign(payload);
     if (received.length !== expected.length || !timingSafeEqual(received, expected)) throw fail();
     let claims: UiControlClaims;
-    try { claims = claimsSchema.parse(JSON.parse(Buffer.from(payload, "base64url").toString("utf8"))); } catch { throw fail(); }
+    try {
+      const parsed = parseJsonUtf8Strict(Buffer.from(payload, "base64url"), "UI control proof");
+      claims = claimsSchema.parse(parsed);
+    } catch { throw fail(); }
     if (claims.expiresAt <= this.now() || claims.widgetInstanceId !== widgetInstanceId ||
       (hostScopeId !== undefined && claims.hostScopeId !== hostScopeId)) throw fail();
     return claims;

@@ -1,0 +1,11 @@
+{
+  "scope": "owned compiled read child; injected 500 ms synchronous SQL slice; no product source changes",
+  "scenarios": 1,
+  "passed": 1,
+  "failed": 0,
+  "afterCancellation": 1,
+  "afterPhysicalCompletion": 0,
+  "wallMs": 558.5721659999999,
+  "abandonedJobsMs": 521.570333,
+  "retainedJobsAfterRecovery": 40
+}

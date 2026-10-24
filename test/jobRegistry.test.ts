@@ -1,15 +1,354 @@
-import { mkdtempSync, readFileSync, statSync } from "node:fs";
+import { historicalCompletion } from "./fixtures/historicalCompletion.js";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
+import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import { CodexJobRegistry } from "../src/tools.js";
+import { CodexService } from "../src/codexService.js";
+import { projectCodexAccount } from "../src/codexAccount.js";
 import { BridgeStateStore } from "../src/stateStore.js";
-import type { CodexProgress, CodexUpstream, ToolResult } from "../src/upstream.js";
+import { SessionRegistry } from "../src/sessionRegistry.js";
+import type { CodexProgress, CodexUpstream, ToolResult, UpstreamWorkerAssignment } from "../src/upstream.js";
+import { syntheticIdToken } from "./fixtures/syntheticAuth.js";
 
 const SCOPE_A = "11111111-1111-4111-8111-111111111111";
 const REQUEST_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const SCOPE_B = "22222222-2222-4222-8222-222222222222";
+const REQUEST_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const PROJECT_REF_A = "prj_AAAAAAAAAAAAAAAAAAAAAA";
+const PROJECT_REF_B = "prj_BBBBBBBBBBBBBBBBBBBBBB";
 
 describe("CodexJobRegistry persistence", () => {
+  it("keeps original live Job controls and its exact ACK after a file-backed login change", async () => {
+    const root = temporaryRoot(), home = path.join(root, ".codex");
+    mkdirSync(home);
+    writeFileSync(path.join(home, "config.toml"), 'cli_auth_credentials_store = "file"\n');
+    const authFile = path.join(home, "auth.json");
+    const writeAuth = (userId: string) => writeFileSync(authFile, JSON.stringify({
+      auth_mode: "chatgpt", tokens: { account_id: "shared-workspace",
+        id_token: syntheticIdToken(userId, "shared-workspace") }
+    }));
+    writeAuth("user-a");
+    const service = new CodexService({ HOME: root, CODEX_HOME: home, PATH: "",
+      CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime") });
+    service.setAuthPolicyReader(async () => ({
+      config: { config: { cliAuthCredentialsStore: "file" } }, requirements: { requirements: null }
+    }));
+    let observed = projectCodexAccount({
+      account: { type: "chatgpt", email: "same@example.invalid" },
+      workspaceRouting: { chatgptAccountId: "shared-workspace" }
+    }, null);
+    service.setAccountReader(async () => observed);
+    await service.assertCurrentAdmission();
+    const ownerA = service.currentExecutionAuthBoundary();
+    const store = new BridgeStateStore({ file: path.join(root, "state.sqlite") });
+    const registry = new CodexJobRegistry({ stateStore: store, allowedRoots: [root],
+      authBoundary: () => service.currentExecutionAuthBoundary() });
+    const assignment = { backendKind: "app-server" as const, workerId: "app-0", workerGeneration: 1,
+      upstreamRequestId: "turn-a", threadId: "thread-a" };
+    let retained = false;
+    const acknowledgeExecution = vi.fn();
+    const respondToInteraction = vi.fn(async () => undefined);
+    const ownsActiveExecution = vi.fn((jobId: string, candidate: typeof assignment) =>
+      jobId === job.jobId && candidate.workerId === assignment.workerId &&
+      candidate.workerGeneration === assignment.workerGeneration &&
+      candidate.upstreamRequestId === assignment.upstreamRequestId && candidate.threadId === assignment.threadId);
+    registry.attachUpstream({
+      async listTools() { return { tools: [] }; }, async callTool() { return result("unused"); }, async close() {},
+      supportsExecutionRecovery: () => true, ownsActiveExecution,
+      ownsRetainedResult: (jobId, candidate) => retained && jobId === job.jobId &&
+        candidate.upstreamRequestId === assignment.upstreamRequestId,
+      acknowledgeExecution, respondToInteraction
+    });
+    let finish!: (value: ToolResult) => void;
+    let progress!: (value: CodexProgress) => void;
+    const job = registry.start({ ...jobInput(root), backendKind: "app-server" }, async (onProgress, onAssigned) => {
+      onAssigned(assignment);
+      progress = onProgress;
+      return new Promise<ToolResult>(resolve => { finish = resolve; });
+    });
+    try {
+      await Promise.resolve();
+      await Promise.resolve();
+      const interactionId = "app-0:1:question-a";
+      progress({ progress: 0.5, event: { eventId: "question-a", type: "input-required", phase: "waiting",
+        createdAt: Date.now(), summary: "A question", details: { interaction: {
+          interactionId, kind: "user-input", threadId: "thread-a", turnId: "turn-a",
+          itemId: "question-item", summary: "A question", questions: [{ id: "answer", question: "Continue?", isSecret: false }]
+        } } } });
+      expect(registry.get(job.jobId)?.pendingInteractions).toHaveLength(1);
+      writeAuth("user-b");
+      await expect(service.assertCurrentAdmission()).resolves.toBeUndefined();
+      expect(service.sessionAuthBoundary().key).not.toBe(ownerA);
+      expect(service.currentExecutionAuthBoundary()).not.toBe(ownerA);
+      expect(registry.findRequest(SCOPE_A, REQUEST_A, job.requestHash)?.jobId).toBe(job.jobId);
+      await registry.respondToInteraction(job.jobId, interactionId, { answers: { answer: ["yes"] } });
+      expect(respondToInteraction).toHaveBeenCalledExactlyOnceWith(interactionId, { answers: { answer: ["yes"] } });
+      rmSync(authFile);
+      observed = projectCodexAccount({ account: null }, null);
+      await expect(service.assertCurrentAdmission()).rejects.toThrow("CODEX_AUTH_REQUIRED");
+      expect(service.currentExecutionAuthBoundary()).toBeNull();
+      retained = true;
+      finish(result("thread-a"));
+      await job.promise;
+      expect(registry.get(job.jobId)).toMatchObject({ status: "completed" });
+      expect(acknowledgeExecution).toHaveBeenCalledExactlyOnceWith(job.jobId);
+    } finally { store.close(); }
+  });
+
+  it("cancels only the original live worker request after the current owner changes", async () => {
+    const root = temporaryRoot(), store = new BridgeStateStore({ file: path.join(root, "state.sqlite") });
+    let currentOwner = "a".repeat(64), originalWorkerLive = false;
+    const registry = new CodexJobRegistry({ stateStore: store, allowedRoots: [root],
+      authBoundary: () => currentOwner });
+    const forceTerminateWorker = vi.fn(async (assignment) => ({ ...assignment,
+      mode: "turn-interrupt" as const, exited: true, workerExited: false, escalated: false }));
+    registry.attachUpstream({
+      async listTools() { return { tools: [] }; }, async callTool() { return result("unused"); }, async close() {},
+      ownsActiveExecution: (_jobId, assignment) => originalWorkerLive &&
+        assignment.workerId === "app-0" && assignment.workerGeneration === 3 &&
+        assignment.upstreamRequestId === "turn-original" && assignment.threadId === "thread-original",
+      forceTerminateWorker
+    });
+    let finish!: (value: ToolResult) => void;
+    const job = registry.start({ ...jobInput(root), backendKind: "app-server" }, async (_progress, assigned) => {
+      assigned({ backendKind: "app-server", workerId: "app-0", workerGeneration: 3,
+        upstreamRequestId: "turn-original", threadId: "thread-original" });
+      return new Promise<ToolResult>(resolve => { finish = resolve; });
+    });
+    try {
+      await Promise.resolve();
+      await Promise.resolve();
+      currentOwner = "b".repeat(64);
+      expect(() => durableCancelIntent(registry, job.jobId, REQUEST_B)).toThrow("CODEX_EXECUTION_OWNER_UNAVAILABLE");
+      originalWorkerLive = true;
+      const intent = durableCancelIntent(registry, job.jobId, REQUEST_B);
+      await registry.cancel(job.jobId, intent, { interruptOnly: true });
+      expect(forceTerminateWorker).toHaveBeenCalledTimes(1);
+      expect(forceTerminateWorker.mock.calls[0]?.[0]).toMatchObject({
+        workerId: "app-0", workerGeneration: 3, upstreamRequestId: "turn-original"
+      });
+    } finally {
+      finish(result("thread-original"));
+      await job.promise;
+      store.close();
+    }
+  });
+
+  it("retains the same Job owner after a normal CLI replacement and Bridge restart", async () => {
+    const root = temporaryRoot(), file = path.join(root, "state.sqlite");
+    const home = path.join(root, ".codex");
+    mkdirSync(home);
+    writeFileSync(path.join(home, "auth.json"), JSON.stringify({
+      auth_mode: "chatgpt", tokens: { account_id: "workspace-a", id_token: syntheticIdToken("fixture-user", "workspace-a") }
+    }));
+    const environment = { HOME: root, CODEX_HOME: home, PATH: "",
+      CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime") };
+    const service = new CodexService(environment);
+    let cliFingerprint = "cli-before";
+    vi.spyOn(service.cli, "appliedContextFingerprint").mockImplementation(() => cliFingerprint);
+    const store = new BridgeStateStore({ file });
+    const registry = new CodexJobRegistry({ stateStore: store, allowedRoots: [root],
+      authBoundary: () => service.sessionAuthBoundary().key });
+    const job = registry.start(jobInput(root), async () => result("same-workspace"));
+    await job.promise;
+    const ownerBefore = service.sessionAuthBoundary().key;
+    cliFingerprint = "cli-after";
+    expect(service.sessionAuthBoundary().key).toBe(ownerBefore);
+    expect(registry.findRequest(SCOPE_A, REQUEST_A, job.requestHash)?.jobId).toBe(job.jobId);
+    store.close();
+    const restarted = new CodexService(environment);
+    vi.spyOn(restarted.cli, "appliedContextFingerprint").mockReturnValue(cliFingerprint);
+    const reopened = new BridgeStateStore({ file });
+    try {
+      const recovered = new CodexJobRegistry({ stateStore: reopened, allowedRoots: [root],
+        authBoundary: () => restarted.sessionAuthBoundary().key });
+      expect(recovered.findRequest(SCOPE_A, REQUEST_A, job.requestHash)?.jobId).toBe(job.jobId);
+    } finally { reopened.close(); }
+  });
+
+  it("returns the original completed Job after account change and restart", async () => {
+    const root = temporaryRoot();
+    const file = path.join(root, "state.sqlite");
+    const firstOwner = "a".repeat(64), secondOwner = "b".repeat(64);
+    const store = new BridgeStateStore({ file });
+    const first = new CodexJobRegistry({ stateStore: store, allowedRoots: [root], authBoundary: () => firstOwner });
+    const job = first.start(jobInput(root), async () => result("original-owner"));
+    await job.promise;
+    expect(store.listJobs()[0]).toMatchObject({ jobId: job.jobId, authBoundary: firstOwner });
+    store.close();
+
+    const reopened = new BridgeStateStore({ file });
+    try {
+      const second = new CodexJobRegistry({ stateStore: reopened, allowedRoots: [root], authBoundary: () => secondOwner });
+      expect(second.get(job.jobId)?.status).toBe("completed");
+      expect(second.findRequest(SCOPE_A, REQUEST_A, job.requestHash)?.jobId).toBe(job.jobId);
+    } finally { reopened.close(); }
+  });
+
+  it("marks an unrecoverable original execution interrupted independently of the current account", async () => {
+    const root = temporaryRoot(), file = path.join(root, "state.sqlite");
+    const store = new BridgeStateStore({ file });
+    const first = new CodexJobRegistry({ stateStore: store, allowedRoots: [root], authBoundary: () => "a".repeat(64) });
+    const job = first.start(jobInput(root), () => new Promise<ToolResult>(() => undefined));
+    store.close();
+    const reopened = new BridgeStateStore({ file });
+    try {
+      const second = new CodexJobRegistry({ stateStore: reopened, allowedRoots: [root],
+        authBoundary: () => "b".repeat(64), recoverExecutions: true });
+      expect(second.get(job.jobId)).toMatchObject({ status: "interrupted", trackingState: "orphaned" });
+      expect(second.findRequest(SCOPE_A, REQUEST_A, job.requestHash)?.jobId).toBe(job.jobId);
+      const { intent } = second.beginCancellationOperation({
+        scopeId: job.scopeId, requestId: REQUEST_B, actionHash: "b".repeat(64),
+        source: "operator", toolName: "job-registry-test", actionName: "cancel-job",
+        target: { kind: "job", jobId: job.jobId, activityId: job.activityId },
+        expectedVersion: second.get(job.jobId)!.version, reasonCode: "test-cancel"
+      });
+      await expect(second.cancel(job.jobId, intent)).resolves.toMatchObject({ status: "interrupted" });
+      expect(second.getCancellationIntent(intent.intentId)?.status).toBe("no-op");
+      await expect(second.steer(job.jobId, "new account prompt")).rejects.toThrow("no active turn");
+      expect(reopened.listJobs()[0]?.status).toBe("interrupted");
+    } finally { reopened.close(); }
+  });
+
+  it("recovers the original receipt without depending on a restarted login check", async () => {
+    const root = temporaryRoot(), home = path.join(root, ".codex"), file = path.join(root, "state.sqlite");
+    mkdirSync(home);
+    writeFileSync(path.join(home, "auth.json"), JSON.stringify({ auth_mode: "chatgpt",
+      tokens: { account_id: "workspace-a", id_token: syntheticIdToken("user-a", "workspace-a") } }));
+    const environment = { HOME: root, CODEX_HOME: home, PATH: "",
+      CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime") };
+    const firstService = new CodexService(environment);
+    await firstService.assertCurrentAdmission();
+    const firstStore = new BridgeStateStore({ file });
+    const first = new CodexJobRegistry({ stateStore: firstStore, allowedRoots: [root],
+      authBoundary: () => firstService.currentExecutionAuthBoundary(), recoverExecutions: true });
+    first.attachUpstream({ async listTools() { return { tools: [] }; },
+      async callTool() { return result("unused"); }, async close() {},
+      supportsExecutionRecovery: () => true });
+    const job = first.start(jobInput(root), () => new Promise<ToolResult>(() => undefined));
+    expect(firstStore.listJobs()[0]).toMatchObject({ jobId: job.jobId, executionReceipt: true });
+    firstStore.close();
+
+    const restartedService = new CodexService(environment);
+    const reopened = new BridgeStateStore({ file });
+    try {
+      expect(restartedService.currentExecutionAuthBoundary()).toBeNull();
+      const recovered = new CodexJobRegistry({ stateStore: reopened, allowedRoots: [root],
+        authBoundary: () => restartedService.currentExecutionAuthBoundary(), recoverExecutions: true });
+      const recoverExecution = vi.fn(() => new Promise<ToolResult>(() => undefined));
+      recovered.attachUpstream({ async listTools() { return { tools: [] }; },
+        async callTool() { return result("unused"); }, async close() {},
+        supportsExecutionRecovery: () => true, recoverExecution },
+      new SessionRegistry({ stateStore: reopened, allowedRoots: [root],
+        authBoundary: () => restartedService.sessionAuthBoundary() }));
+      await Promise.resolve();
+      expect(recoverExecution).toHaveBeenCalledTimes(1);
+      expect(recovered.get(job.jobId)).toMatchObject({ status: "running", trackingState: "liveness-unknown" });
+      await restartedService.assertCurrentAdmission();
+      recovered.resumeAuthorizedRecoveries();
+      expect(recoverExecution).toHaveBeenCalledTimes(1);
+      expect(recoverExecution).toHaveBeenCalledWith(job.jobId, expect.any(Function), expect.any(Function));
+      recovered.resumeAuthorizedRecoveries();
+      expect(recoverExecution).toHaveBeenCalledTimes(1);
+    } finally { reopened.close(); }
+  });
+
+  it("settles a recovered original Job under its owner after a later external login change", async () => {
+    const root = temporaryRoot(), file = path.join(root, "state.sqlite");
+    const ownerA = "a".repeat(64), ownerB = "b".repeat(64);
+    let currentOwner = ownerA;
+    const firstStore = new BridgeStateStore({ file });
+    const first = new CodexJobRegistry({ stateStore: firstStore, allowedRoots: [root],
+      authBoundary: () => currentOwner, recoverExecutions: true });
+    const agent = first.createAgent({ scopeId: SCOPE_A, agentName: "Original owner" });
+    first.attachUpstream({ async listTools() { return { tools: [] }; },
+      async callTool() { return result("unused"); }, async close() {},
+      supportsExecutionRecovery: () => true });
+    const job = first.start({ ...jobInput(root), backendKind: "app-server", agentId: agent.agentId,
+      contextMode: "fresh" }, () => new Promise<ToolResult>(() => undefined));
+    await Promise.resolve();
+    expect(firstStore.listJobs()[0]).toMatchObject({ jobId: job.jobId, authBoundary: ownerA,
+      executionReceipt: true });
+    firstStore.close();
+
+    const reopened = new BridgeStateStore({ file });
+    try {
+      const recovered = new CodexJobRegistry({ stateStore: reopened, allowedRoots: [root],
+        authBoundary: () => currentOwner, recoverExecutions: true });
+      const assignment: UpstreamWorkerAssignment = { backendKind: "app-server",
+        workerId: "original-worker", workerGeneration: 7, upstreamRequestId: "original-turn",
+        threadId: "original-thread" };
+      let finish!: (value: ToolResult) => void;
+      const recoverExecution = vi.fn((_jobId: string, _progress: (progress: CodexProgress) => void,
+        onAssigned: (value: UpstreamWorkerAssignment) => void) => {
+        onAssigned(assignment);
+        return new Promise<ToolResult>(resolve => { finish = resolve; });
+      });
+      const acknowledgeExecution = vi.fn();
+      recovered.attachUpstream({ async listTools() { return { tools: [] }; },
+        async callTool() { return result("unused"); }, async close() {},
+        supportsExecutionRecovery: () => true, recoverExecution,
+        ownsRetainedResult: (jobId, value) => jobId === job.jobId &&
+          value.workerId === assignment.workerId && value.workerGeneration === assignment.workerGeneration &&
+          value.upstreamRequestId === assignment.upstreamRequestId && value.threadId === assignment.threadId,
+        acknowledgeExecution },
+      new SessionRegistry({ stateStore: reopened, allowedRoots: [root],
+        authBoundary: () => ({ key: currentOwner, allowLegacyShared: false }) }));
+      await Promise.resolve();
+      expect(recoverExecution).toHaveBeenCalledTimes(1);
+      recovered.resumeAuthorizedRecoveries();
+      expect(recoverExecution).toHaveBeenCalledTimes(1);
+      expect(reopened.listSessions()).toContainEqual(expect.objectContaining({
+        threadId: "original-thread", authBoundary: ownerA
+      }));
+
+      currentOwner = ownerB;
+      finish(result("original-thread"));
+      await recovered.get(job.jobId)!.promise;
+      expect(recovered.get(job.jobId)).toMatchObject({ status: "completed", authBoundary: ownerA });
+      expect(reopened.listSessions()).toContainEqual(expect.objectContaining({
+        threadId: "original-thread", authBoundary: ownerA
+      }));
+      expect(recoverExecution).toHaveBeenCalledTimes(1);
+      expect(acknowledgeExecution).toHaveBeenCalledExactlyOnceWith(job.jobId);
+    } finally { reopened.close(); }
+  });
+
+  it("bounds shared Job wait listeners and returns their slots on abort and completion", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "state.sqlite"));
+    const store = registry.admissionStateStore;
+    let complete: (value: ToolResult) => void = () => undefined;
+    try {
+      const job = registry.start(jobInput(root), async () =>
+        new Promise<ToolResult>(resolve => { complete = resolve; })
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      const controllers = Array.from({ length: 128 }, () => new AbortController());
+      const waiting = controllers.map(controller => registry.wait(
+        job.jobId, "terminal", 5_000, controller.signal, "model-status"
+      ));
+      expect(registry.waitDiagnostics().active.total).toBe(128);
+      await expect(registry.waitForInput(job.jobId, undefined, 5_000))
+        .rejects.toThrow("JOB_WAIT_CAPACITY");
+      controllers[0]!.abort();
+      await expect(waiting[0]).rejects.toThrow("cancelled by the host");
+      const inputWait = registry.waitForInput(job.jobId, undefined, 5_000);
+      complete(result("wait-capacity-released"));
+      await job.promise;
+      await expect(Promise.all(waiting.slice(1))).resolves.toHaveLength(127);
+      await expect(inputWait).resolves.toMatchObject({ timedOut: false });
+      expect(registry.waitDiagnostics().active.total).toBe(0);
+    } finally {
+      store.close();
+    }
+  });
+
   it.each(["persistent", "ephemeral"] as const)(
     "keeps %s progress writes on bounded state and event paths",
     async (mode) => {
@@ -80,6 +419,458 @@ describe("CodexJobRegistry persistence", () => {
     }
   );
 
+  it("keeps terminal waits asleep across progress churn and off the prune hot path", async () => {
+    vi.useFakeTimers();
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "state.sqlite"));
+    const store = registry.admissionStateStore;
+    const retainedMaintenance = vi.spyOn(registry, "maintainRetainedJobs");
+    let emitProgress: ((progress: CodexProgress) => void) | undefined;
+    let complete: (value: ToolResult) => void = () => undefined;
+    try {
+      const job = registry.start(jobInput(root), async (progress) => {
+        emitProgress = progress;
+        return new Promise<ToolResult>((resolve) => { complete = resolve; });
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const projectIdentityReads = vi.spyOn(store, "listActivityProjectIdentities");
+      const waiting = registry.wait(job.jobId, "terminal", 1_000, undefined, "model-status");
+      await Promise.resolve();
+      projectIdentityReads.mockClear();
+
+      for (let index = 0; index < 100; index += 1) {
+        emitProgress?.({ progress: index / 100 });
+      }
+      expect(projectIdentityReads).not.toHaveBeenCalled();
+      expect(registry.waitDiagnostics()).toMatchObject({
+        exactStatusWaits: 1,
+        wakes: { total: 0, progress: 0, terminal: 0 },
+        active: {
+          total: 1,
+          modelStatus: 1,
+          jobs: [{ jobId: job.jobId, total: 1, terminal: 1, modelStatus: 1 }]
+        }
+      });
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(waiting).resolves.toMatchObject({
+        job: { jobId: job.jobId, status: "running" },
+        waitFor: "terminal",
+        waitTimedOut: true,
+        changed: true
+      });
+      expect(projectIdentityReads).not.toHaveBeenCalled();
+      expect(registry.waitDiagnostics()).toMatchObject({
+        timedOut: 1,
+        wakes: { total: 0, progress: 0, terminal: 0 },
+        active: { total: 0, jobs: [] }
+      });
+
+      complete(result("terminal-timeout-survived"));
+      await job.promise;
+      expect(registry.get(job.jobId)).toMatchObject({ status: "completed" });
+      expect(retainedMaintenance).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      store.close();
+    }
+  });
+
+  it("wakes change waits on progress without waking terminal waits", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "state.sqlite"));
+    let emitProgress: ((progress: CodexProgress) => void) | undefined;
+    let complete: (value: ToolResult) => void = () => undefined;
+    try {
+      const job = registry.start(jobInput(root), async (progress) => {
+        emitProgress = progress;
+        return new Promise<ToolResult>((resolve) => { complete = resolve; });
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const changed = registry.wait(job.jobId, "change", 5_000);
+      await Promise.resolve();
+      emitProgress?.({ progress: 0.5 });
+      await expect(changed).resolves.toMatchObject({
+        job: { jobId: job.jobId, status: "running" },
+        waitFor: "change",
+        waitTimedOut: false,
+        changed: true
+      });
+      expect(registry.waitDiagnostics()).toMatchObject({
+        started: { total: 1, change: 1, terminal: 0 },
+        wakes: { total: 1, progress: 1, terminal: 0, stateChange: 0 }
+      });
+
+      complete(result("change-wait-completed"));
+      await job.promise;
+    } finally {
+      registry.admissionStateStore.close();
+    }
+  });
+
+  it("keeps progress notifications off the automatic recovery survey", async () => {
+    vi.useFakeTimers();
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "state.sqlite"));
+    let surveys = 0;
+    let emitProgress: ((progress: CodexProgress) => void) | undefined;
+    let complete: (value: ToolResult) => void = () => undefined;
+    try {
+      const agent = registry.admissionStateStore.createAgent({
+        scopeId: SCOPE_A, agentName: "Progress survey Agent"
+      });
+      registry.configureAutomaticRecovery({
+        candidates: () => { surveys += 1; return []; },
+        attempt: async () => ({ resolved: false, reason: "unused" }),
+        intervalMs: 60_000
+      });
+      const job = registry.start({ ...jobInput(root), agentId: agent.agentId }, async progress => {
+        emitProgress = progress;
+        return new Promise<ToolResult>(resolve => { complete = resolve; });
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(150);
+      const beforeProgress = surveys;
+      for (let index = 0; index < 50; index += 1) {
+        emitProgress?.({ progress: index / 50 });
+      }
+      await vi.advanceTimersByTimeAsync(150);
+      expect(surveys).toBe(beforeProgress);
+      complete(result("progress-without-survey"));
+      await job.promise;
+      await vi.advanceTimersByTimeAsync(150);
+      expect(surveys).toBeGreaterThan(beforeProgress);
+    } finally {
+      await registry.closeThreadConnections();
+      registry.admissionStateStore.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it("coalesces a multi-Job progress storm without scheduling recovery discovery", async () => {
+    vi.useFakeTimers();
+    const root = temporaryRoot();
+    const registry = new CodexJobRegistry({allowedRoots:[root],maxConcurrentJobs:20,maxJobs:100});
+    const emitters: Array<(progress:CodexProgress)=>void> = [];
+    const completions: Array<(result:ToolResult)=>void> = [];
+    let surveys = 0;
+    try {
+      registry.configureAutomaticRecovery({candidates: () => { surveys++; return []; },
+        attempt: async () => ({resolved:false,reason:"unused"}),intervalMs:60_000});
+      const jobs = Array.from({length:20},(_,index) => registry.start({
+        ...jobInput(root),requestId:randomUUID(),requestHash:index.toString(16).padStart(64,"0")
+      }, async progress => {
+        emitters.push(progress);
+        return new Promise<ToolResult>(resolve => { completions.push(resolve); });
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(150);
+      expect(emitters).toHaveLength(20);
+      const before = surveys;
+      for (let progress = 0; progress < 30; progress++) {
+        for (const emit of emitters) emit({progress:progress/30});
+      }
+      await vi.advanceTimersByTimeAsync(150);
+      expect(surveys).toBe(before);
+      for (const complete of completions) complete(result("storm-complete"));
+      await Promise.all(jobs.map(job => job.promise));
+      await vi.advanceTimersByTimeAsync(150);
+      expect(surveys).toBeGreaterThan(before);
+    } finally {
+      await registry.closeThreadConnections();
+      registry.admissionStateStore.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it("admits exact reads and durable control while recovery and retention share the event loop", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root,path.join(root,"state.sqlite"));
+    const state = registry.admissionStateStore;
+    const agents = Array.from({length:1_200},(_,index) => state.createAgent({
+      scopeId:SCOPE_A,agentName:`Foreground priority ${index}`
+    }));
+    let finishActive: (value:ToolResult)=>void = () => undefined;
+    let inspected = 0;
+    try {
+      const active = registry.start({...jobInput(root),agentId:agents[0]!.agentId},
+        async () => new Promise<ToolResult>(resolve => {finishActive=resolve;}));
+      const completed = registry.start({...jobInput(root),requestId:REQUEST_B,
+        requestHash:"b".repeat(64)},async()=>result("exact-result"));
+      await completed.promise;
+      registry.configureAutomaticRecovery({
+        pageAgents:(after,limit)=>state.recoveryAgentIds(after,limit),
+        candidates:agentId=>{inspected++;state.getAgent(agentId!);return [];},
+        attempt:async()=>({resolved:false,reason:"unused"}),intervalMs:60_000
+      });
+      const foreground = new Promise<{durationMs:number;inspectedAtRead:number}>((resolve,reject) =>
+        setImmediate(() => { void (async () => {
+          const started = performance.now();
+          state.eventRetention.sweep();
+          expect(registry.listAgents(SCOPE_A,12)).toHaveLength(12);
+          expect(registry.get(completed.jobId)?.result?.structuredContent)
+            .toMatchObject({threadId:"exact-result"});
+          expect((await registry.waitForInput(active.jobId,undefined,0)).timedOut).toBe(false);
+          const intent = durableCancelIntent(registry,active.jobId,randomUUID());
+          expect(registry.getCancellationIntent(intent.intentId)?.status).toBe("recorded");
+          return {durationMs:performance.now()-started,inspectedAtRead:inspected};
+        })().then(resolve,reject); }));
+      const sweep = registry.sweepAutomaticRecovery();
+      const read = await foreground;
+      await sweep;
+      expect(read.inspectedAtRead).toBeLessThan(32);
+      expect(read.durationMs).toBeLessThan(250);
+      expect(inspected).toBeGreaterThan(0);
+      expect(inspected).toBeLessThanOrEqual(32);
+      finishActive(result("active-finished"));
+      await active.promise;
+    } finally {
+      await registry.closeThreadConnections();
+      state.close();
+    }
+  },30_000);
+
+  it("bounds simultaneous Dashboard and model terminal watchers under public-event load", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "state.sqlite"));
+    const store = registry.admissionStateStore;
+    let emitProgress: ((progress: CodexProgress) => void) | undefined;
+    let complete: (value: ToolResult) => void = () => undefined;
+    try {
+      const job = registry.start(jobInput(root), async (progress) => {
+        emitProgress = progress;
+        return new Promise<ToolResult>((resolve) => { complete = resolve; });
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const modelWait = registry.wait(
+        job.jobId, "terminal", 5_000, undefined, "model-status"
+      );
+      const dashboardWait = registry.wait(
+        job.jobId, "terminal", 5_000, undefined, "dashboard-completion"
+      );
+      await Promise.resolve();
+      const projectIdentityReads = vi.spyOn(store, "listActivityProjectIdentities");
+
+      for (let index = 0; index < 100; index += 1) {
+        emitProgress?.({
+          progress: index / 100,
+          event: {
+            eventId: `public-progress-${index}`,
+            type: "command",
+            phase: "updated",
+            createdAt: Date.now(),
+            summary: `Public progress ${index}`
+          }
+        });
+      }
+      expect(projectIdentityReads).not.toHaveBeenCalled();
+      expect(registry.waitDiagnostics()).toMatchObject({
+        exactStatusWaits: 1,
+        sources: { modelStatus: 1, dashboardCompletion: 1 },
+        wakes: { total: 0, progress: 0, terminal: 0 },
+        active: {
+          total: 2,
+          modelStatus: 1,
+          dashboardCompletion: 1,
+          jobs: [{ jobId: job.jobId, total: 2, terminal: 2 }]
+        },
+        maintenance: { telemetryTransaction: { count: 4 } }
+      });
+      expect(registry.progressPersistenceStatus()).toMatchObject({
+        queued: 32,
+        scopes: 1,
+        capacity: 256,
+        perScopeCapacity: 32,
+        dropped: 64,
+        immediateBudget: 4,
+        immediateRemaining: 0
+      });
+
+      complete(result("two-watchers-one-terminal"));
+      await job.promise;
+      const [modelResult, dashboardResult] = await Promise.all([modelWait, dashboardWait]);
+      expect(modelResult.job).toMatchObject({ status: "completed" });
+      expect(dashboardResult.job).toMatchObject({ status: "completed" });
+      expect(registry.waitDiagnostics()).toMatchObject({
+        completed: 2,
+        wakes: { total: 2, progress: 0, terminal: 2, stateChange: 0 },
+        active: { total: 0, jobs: [] }
+      });
+    } finally {
+      store.close();
+    }
+  });
+
+  it("fairly drains project progress and lets critical input bypass a noisy project", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "state.sqlite"));
+    const store = registry.admissionStateStore;
+    let emitA: ((progress: CodexProgress) => void) | undefined;
+    let emitB: ((progress: CodexProgress) => void) | undefined;
+    let completeA: (value: ToolResult) => void = () => undefined;
+    let completeB: (value: ToolResult) => void = () => undefined;
+    const jobA = registry.start({
+      ...jobInput(root),
+      projectRequest: {
+        name: "Project A",
+        projectRef: PROJECT_REF_A,
+        projectRevision: 1
+      }
+    }, async progress => {
+      emitA = progress;
+      return new Promise<ToolResult>(resolve => { completeA = resolve; });
+    });
+    const jobB = registry.start({
+      ...jobInput(root),
+      scopeId: SCOPE_B,
+      requestId: REQUEST_B,
+      requestHash: "b".repeat(64),
+      projectRequest: {
+        name: "Project B",
+        projectRef: PROJECT_REF_B,
+        projectRevision: 1
+      }
+    }, async progress => {
+      emitB = progress;
+      return new Promise<ToolResult>(resolve => { completeB = resolve; });
+    });
+    try {
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(emitA).toBeTypeOf("function");
+      expect(emitB).toBeTypeOf("function");
+      const recordTelemetry = vi.spyOn(store, "recordJobTelemetryEvent");
+
+      for (let index = 0; index < 100; index += 1) {
+        emitA?.({
+          progress: index / 100,
+          event: {
+            eventId: `project-a-${index}`,
+            type: "command",
+            phase: "updated",
+            createdAt: Date.now(),
+            summary: `Project A progress ${index}`
+          }
+        });
+      }
+      emitB?.({
+        progress: 0.1,
+        event: {
+          eventId: "project-b-fair",
+          type: "command",
+          phase: "updated",
+          createdAt: Date.now(),
+          summary: "Project B progress"
+        }
+      });
+
+      expect(recordTelemetry.mock.calls.map(call => call[0])).toEqual([
+        jobA.jobId,
+        jobA.jobId,
+        jobA.jobId,
+        jobA.jobId
+      ]);
+      expect(registry.progressPersistenceStatus()).toMatchObject({
+        queued: 33,
+        scopes: 2,
+        dropped: 64,
+        immediateRemaining: 0
+      });
+
+      await new Promise<void>(resolve => setImmediate(resolve));
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(recordTelemetry.mock.calls.slice(4, 6).map(call => call[0])).toEqual([
+        jobA.jobId,
+        jobB.jobId
+      ]);
+
+      for (let index = 100; index < 140; index += 1) {
+        emitA?.({
+          progress: index / 140,
+          event: {
+            eventId: `project-a-${index}`,
+            type: "command",
+            phase: "updated",
+            createdAt: Date.now(),
+            summary: `Project A progress ${index}`
+          }
+        });
+      }
+      expect(registry.progressPersistenceStatus()).toMatchObject({
+        queued: 32,
+        scopes: 1,
+        immediateRemaining: 0
+      });
+
+      const callsBeforeCriticalInput = recordTelemetry.mock.calls.length;
+      emitB?.({
+        progress: 0.5,
+        event: {
+          eventId: "project-b-input",
+          type: "input-required",
+          phase: "waiting",
+          createdAt: Date.now(),
+          summary: "Project B needs input"
+        }
+      });
+      expect(recordTelemetry).toHaveBeenCalledTimes(callsBeforeCriticalInput + 1);
+      expect(recordTelemetry.mock.calls.at(-1)?.[0]).toBe(jobB.jobId);
+      expect(registry.progressPersistenceStatus()).toMatchObject({
+        queued: 32,
+        scopes: 1,
+        immediateRemaining: 0
+      });
+    } finally {
+      completeA(result("project-a-complete"));
+      completeB(result("project-b-complete"));
+      await Promise.allSettled([jobA.promise, jobB.promise]);
+      await registry.closeThreadConnections();
+      store.close();
+    }
+  });
+
+  it("treats an aborted exact status wait as a read abort without cancelling the Job", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "state.sqlite"));
+    let complete: (value: ToolResult) => void = () => undefined;
+    try {
+      const job = registry.start(jobInput(root), async () =>
+        new Promise<ToolResult>((resolve) => { complete = resolve; })
+      );
+      await Promise.resolve();
+      const cancel = vi.spyOn(registry, "cancel");
+      const controller = new AbortController();
+      const waiting = registry.wait(
+        job.jobId, "terminal", 5_000, controller.signal, "model-status"
+      );
+      await Promise.resolve();
+      controller.abort();
+
+      await expect(waiting).rejects.toThrow("cancelled by the host");
+      expect(cancel).not.toHaveBeenCalled();
+      expect(registry.get(job.jobId)).toMatchObject({ status: "running" });
+      expect(registry.get(job.jobId)?.cancelRequestedAt).toBeUndefined();
+      expect(registry.waitDiagnostics()).toMatchObject({
+        hostAborts: { total: 1, modelStatus: 1 },
+        active: { total: 0, jobs: [] }
+      });
+
+      complete(result("abort-did-not-cancel"));
+      await job.promise;
+      expect(registry.get(job.jobId)).toMatchObject({ status: "completed" });
+    } finally {
+      registry.admissionStateStore.close();
+    }
+  });
+
   it("notifies native subscribers when work starts and settles, then unsubscribes", async () => {
     const root = temporaryRoot();
     const registry = persistentRegistry(root, path.join(root, "state.sqlite"));
@@ -123,7 +914,6 @@ describe("CodexJobRegistry persistence", () => {
     expect(loaded).toMatchObject({
       status: "completed",
       terminalOrigin: "normal-completion",
-      activityPresentationId: REQUEST_A,
       executionDecision: {
         policyRevision: 3,
         effectiveSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
@@ -133,6 +923,366 @@ describe("CodexJobRegistry persistence", () => {
       result: { structuredContent: { threadId: "thread-completed" } }
     });
     expect(statSync(stateFile).mode & 0o777).toBe(0o600);
+  });
+
+  it("keeps reads pure and expires a result only at an explicit retention boundary", async () => {
+    const root = temporaryRoot();
+    const stateStore = new BridgeStateStore({ file: path.join(root, "state.sqlite") });
+    const clock = vi.spyOn(Date, "now");
+    let now = 1_000;
+    clock.mockImplementation(() => now);
+    const ttlMs = 100;
+    const registry = new CodexJobRegistry({
+      stateStore,
+      allowedRoots: [root],
+      ttlMs,
+      maxJobs: 100
+    });
+    try {
+      const completed = registry.start(jobInput(root), async () => result("recovery-window"));
+      await completed.promise;
+      const delivery = stateStore.getJobCompletionDelivery(completed.jobId, SCOPE_A)!;
+      historicalCompletion(stateStore, completed.jobId, "host-accepted", { host_accepted_at: 1_020 });
+      stateStore.recordJobCompletionResultOffer({
+        scopeId: SCOPE_A,
+        source: "completion-receipt",
+        receipt: delivery.receipt,
+        now: 1_050
+      });
+
+      now = 1_101;
+      expect(registry.get(completed.jobId)?.result).toMatchObject({
+        structuredContent: { threadId: "recovery-window" }
+      });
+      now = 1_150;
+      expect(registry.get(completed.jobId)).toBeDefined();
+      expect(stateStore.listJobs()).toHaveLength(1);
+      expect(registry.maintainRetainedJobs()).toBe(1);
+      expect(registry.get(completed.jobId)).toBeUndefined();
+      expect(stateStore.listJobs()).toEqual([]);
+    } finally {
+      clock.mockRestore();
+      stateStore.close();
+    }
+  });
+
+  it("bounds each retained-Job maintenance slice and resumes on the next call", async () => {
+    const root = temporaryRoot();
+    const stateStore = new BridgeStateStore({ file: path.join(root, "state.sqlite") });
+    const clock = vi.spyOn(Date, "now");
+    let now = 1_000;
+    clock.mockImplementation(() => now);
+    const registry = new CodexJobRegistry({
+      stateStore,
+      allowedRoots: [root],
+      ttlMs: 100,
+      maxJobs: 1_000
+    });
+    try {
+      for (let index = 0; index < 12; index += 1) {
+        now = 1_000 + index;
+        const completed = registry.start({
+          ...jobInput(root),
+          requestId: randomUUID(),
+          requestHash: index.toString(16).padStart(64, "0")
+        }, async () => result(`bounded-${index}`));
+        await completed.promise;
+      }
+      now = 2_000;
+      const protection = vi.spyOn(stateStore, "retentionProtection").mockReturnValue([]);
+      const before = registry.size;
+      expect(registry.maintainRetainedJobs({
+        maxInspected: 5,
+        maxRemoved: 2,
+        maxDurationMs: 1_000
+      })).toBe(2);
+      expect(registry.size).toBe(before - 2);
+      // Each inspected candidate is checked once by the registry and each
+      // bounded deletion is defensively checked once by the State UoW.
+      expect(protection.mock.calls.length).toBeLessThanOrEqual(7);
+
+      expect(registry.maintainRetainedJobs({
+        maxInspected: 5,
+        maxRemoved: 2,
+        maxDurationMs: 1_000
+      })).toBe(2);
+      expect(registry.size).toBe(before - 4);
+    } finally {
+      clock.mockRestore();
+      stateStore.close();
+    }
+  });
+
+  it("backpressures new Jobs while active work defers retained-Job maintenance", async () => {
+    const root = temporaryRoot();
+    const stateStore = new BridgeStateStore({ file: path.join(root, "state.sqlite") });
+    const registry = new CodexJobRegistry({
+      stateStore,
+      allowedRoots: [root],
+      maxConcurrentJobs: 2,
+      maxJobs: 2
+    });
+    let releaseLong: (value: ToolResult) => void = () => undefined;
+    try {
+      registry.configureStateMaintenance(5);
+      const long = registry.start({
+        ...jobInput(root),
+        requestId: randomUUID(),
+        requestHash: "1".repeat(64)
+      }, () => new Promise<ToolResult>(resolve => { releaseLong = resolve; }));
+      await Promise.resolve();
+
+      const shortInput = {
+        ...jobInput(root),
+        requestId: randomUUID(),
+        requestHash: "2".repeat(64)
+      };
+      const short = registry.start(shortInput, async () => result("short-thread"));
+      await short.promise;
+
+      for (let index = 0; index < 12; index += 1) {
+        expect(() => registry.start({
+          ...jobInput(root),
+          requestId: randomUUID(),
+          requestHash: (index + 3).toString(16).padStart(64, "0")
+        }, async () => result(`blocked-${index}`))).toThrow(/JOB_RETENTION_CAPACITY/);
+      }
+      expect(registry.size).toBe(2);
+      expect(stateStore.listJobs()).toHaveLength(2);
+      expect(registry.start(shortInput, async () => result("must-not-run"))).toBe(short);
+
+      releaseLong(result("long-thread"));
+      await long.promise;
+      await waitForCondition(() => registry.size === 1, 2_000);
+
+      const recovered = registry.start({
+        ...jobInput(root),
+        requestId: randomUUID(),
+        requestHash: "f".repeat(64)
+      }, async () => result("recovered-thread"));
+      await recovered.promise;
+      expect(registry.size).toBeLessThanOrEqual(2);
+      expect(stateStore.listJobs()).toHaveLength(registry.size);
+    } finally {
+      releaseLong(result("cleanup-thread"));
+      await registry.closeThreadConnections();
+      stateStore.close();
+    }
+  });
+
+  it("reclaims terminal residency without losing held originals or bypassing capacity", async () => {
+    const root = temporaryRoot();
+    const file = path.join(root, "state.sqlite");
+    const firstStore = new BridgeStateStore({ file });
+    const first = new CodexJobRegistry({
+      stateStore: firstStore,
+      allowedRoots: [root],
+      maxConcurrentJobs: 1,
+      maxJobs: 1
+    });
+    const protectedJob = first.start(jobInput(root), async () => result("protected-thread"));
+    await protectedJob.promise;
+    firstStore.holdResult(protectedJob.jobId, "test protection", Date.now() + 60_000);
+    firstStore.close();
+
+    const restoredStore = new BridgeStateStore({ file });
+    const restored = new CodexJobRegistry({
+      stateStore: restoredStore,
+      allowedRoots: [root],
+      maxConcurrentJobs: 1,
+      maxJobs: 1
+    });
+    try {
+      const nextInput = {
+        ...jobInput(root),
+        requestId: randomUUID(),
+        requestHash: "e".repeat(64)
+      };
+      expect(() => restored.start(nextInput, async () => result("must-not-run")))
+        .toThrow(/JOB_RETENTION_CAPACITY/);
+      await waitForCondition(() => restored.size === 0, 2_000);
+      expect(restoredStore.readRetainedJobDetail(protectedJob.scopeId,
+        { kind: "job", id: protectedJob.jobId })?.result).toEqual(result("protected-thread"));
+      const next = restored.start(nextInput, async () => result("next-thread"));
+      await next.promise;
+      expect(restored.size).toBe(1);
+      expect(restoredStore.readRetainedJobDetail(protectedJob.scopeId,
+        { kind: "job", id: protectedJob.jobId })?.result).toEqual(result("protected-thread"));
+      expect(restoredStore.readRetainedJobDetail(next.scopeId,
+        { kind: "job", id: next.jobId })?.result).toEqual(result("next-thread"));
+    } finally {
+      await restored.closeThreadConnections();
+      restoredStore.close();
+    }
+  });
+
+  it("does not publish an in-memory completion when the atomic terminal commit fails", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "private", "state.sqlite"));
+    const store = registry.admissionStateStore;
+    const originalUpsert = store.upsertJob.bind(store);
+    let injected = false;
+    vi.spyOn(store, "upsertJob").mockImplementation((value) => {
+      if (!injected && (value as { status?: unknown }).status === "completed") {
+        injected = true;
+        throw new Error("injected terminal persistence failure");
+      }
+      return originalUpsert(value);
+    });
+
+    const job = registry.start(jobInput(root), async () => result("commit-failure-thread"));
+    await job.promise;
+
+    expect(injected).toBe(true);
+    expect(registry.get(job.jobId)).toMatchObject({
+      status: "failed",
+      terminalOrigin: undefined,
+      error: expect.stringContaining("BRIDGE_TERMINAL_COMMIT_FAILED")
+    });
+    expect(store.listJobs()).toEqual([
+      expect.objectContaining({
+        jobId: job.jobId,
+        status: "failed",
+        error: expect.stringContaining("BRIDGE_TERMINAL_COMMIT_FAILED")
+      })
+    ]);
+    expect(store.listJobs()[0]).not.toHaveProperty("terminalOrigin");
+    expect(store.listJobEvents(job.jobId).map((event) => event.eventType)).toEqual([
+      "job-started",
+      "job-failed"
+    ]);
+    expect(store.listCompletionOutbox(job.activityId)).toEqual([]);
+  });
+
+  it.each(["completed", "failed"] as const)("acknowledges a recovered %s outcome only after its durable commit", async (status) => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "state.sqlite"));
+    const store = registry.admissionStateStore;
+    const originalUpsert = store.upsertJob.bind(store);
+    const acknowledgeExecution = vi.fn();
+    const assignment = { backendKind: "app-server" as const, workerId: "retained-worker", workerGeneration: 1,
+      upstreamRequestId: "retained-turn", threadId: "exact-completed-thread" };
+    registry.attachUpstream({
+      async listTools() { return { tools: [] }; },
+      async callTool() { return result("unused"); },
+      async close() {},
+      supportsExecutionRecovery: () => true,
+      ownsRetainedResult: (_jobId, candidate) => JSON.stringify(candidate) === JSON.stringify(assignment),
+      acknowledgeExecution
+    });
+    let blocked = true;
+    let attempts = 0;
+    vi.spyOn(store, "upsertJob").mockImplementation(value => {
+      if (blocked && (value as { status?: unknown }).status === status) {
+        attempts += 1;
+        throw new Error("injected busy terminal transaction");
+      }
+      return originalUpsert(value);
+    });
+    try {
+      const job = registry.start(jobInput(root), async (_progress, assigned) => {
+        assigned(assignment);
+        if (status === "failed") throw new Error("exact upstream failure");
+        return result("exact-completed-thread");
+      });
+      await waitForCondition(() => attempts > 0, 1000);
+      expect(job.status).toBe("running");
+      expect(store.listJobs()[0]).toMatchObject({ status: "running" });
+      expect(acknowledgeExecution).not.toHaveBeenCalled();
+      blocked = false;
+      await job.promise;
+      expect(job.status).toBe(status);
+      expect(store.listJobs()[0]).toMatchObject(status === "completed"
+        ? { status, result: { structuredContent: { threadId: "exact-completed-thread" } } }
+        : { status, error: "exact upstream failure" });
+      expect(acknowledgeExecution).toHaveBeenCalledExactlyOnceWith(job.jobId);
+    } finally {
+      await registry.closeThreadConnections();
+      store.close();
+    }
+  });
+
+  it("does not start deferred execution when the enclosing admission transaction rolls back", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "private", "state.sqlite"));
+    const run = vi.fn(async () => result("must-not-run"));
+    let job: ReturnType<CodexJobRegistry["start"]> | undefined;
+
+    expect(() => registry.activityTransaction(() => {
+      job = registry.start(jobInput(root), run, undefined, 4, false, undefined, true);
+      throw new Error("injected admission commit failure");
+    })).toThrow("injected admission commit failure");
+    registry.discardDeferredAdmission(job!.jobId);
+    await job!.promise;
+
+    expect(run).not.toHaveBeenCalled();
+    expect(registry.get(job!.jobId)).toBeUndefined();
+    expect(registry.admissionStateStore.listJobs()).toEqual([]);
+  });
+
+  it("makes a rejected-turn terminal commit failure explicit instead of publishing the upstream failure", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "private", "state.sqlite"));
+    const store = registry.admissionStateStore;
+    const originalUpsert = store.upsertJob.bind(store);
+    let injected = false;
+    vi.spyOn(store, "upsertJob").mockImplementation((value) => {
+      if (!injected && (value as { status?: unknown }).status === "failed") {
+        injected = true;
+        throw new Error("injected rejected-turn persistence failure");
+      }
+      return originalUpsert(value);
+    });
+
+    const job = registry.start(jobInput(root), async () => {
+      throw new Error("ordinary upstream failure");
+    });
+    await job.promise;
+
+    expect(registry.get(job.jobId)).toMatchObject({
+      status: "failed",
+      terminalOrigin: undefined,
+      error: expect.stringContaining("BRIDGE_TERMINAL_COMMIT_FAILED")
+    });
+    expect(store.listJobs()).toEqual([
+      expect.objectContaining({
+        jobId: job.jobId,
+        status: "failed",
+        error: expect.stringContaining("BRIDGE_TERMINAL_COMMIT_FAILED")
+      })
+    ]);
+  });
+
+  it("keeps the durable running receipt authoritative when every terminal commit fails", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "private", "state.sqlite"));
+    const store = registry.admissionStateStore;
+    const originalUpsert = store.upsertJob.bind(store);
+    vi.spyOn(store, "upsertJob").mockImplementation((value) => {
+      if ((value as { status?: unknown }).status !== "running") {
+        throw new Error("persistent terminal persistence failure");
+      }
+      return originalUpsert(value);
+    });
+
+    const job = registry.start(jobInput(root), async () => result("uncommitted-terminal-thread"));
+    await job.promise;
+
+    expect(registry.get(job.jobId)).toMatchObject({
+      status: "running",
+      version: 1
+    });
+    expect(registry.get(job.jobId)).not.toHaveProperty("terminalOrigin");
+    expect(store.listJobs()).toEqual([
+      expect.objectContaining({
+        jobId: job.jobId,
+        status: "running",
+        version: 1
+      })
+    ]);
+    expect(store.listJobEvents(job.jobId).map((event) => event.eventType)).toEqual([
+      "job-started"
+    ]);
   });
 
   it("persists retired request-hash version 3 without inventing a project identity", async () => {
@@ -283,73 +1433,6 @@ describe("CodexJobRegistry persistence", () => {
     expect(restored.size).toBe(0);
   });
 
-  it("cancels a scope watcher promptly and releases its widget lease", async () => {
-    const root = temporaryRoot();
-    const registry = persistentRegistry(root, path.join(root, "private", "state.sqlite"));
-    const controller = new AbortController();
-    const version = registry.getScopeVersion(SCOPE_A);
-    const pending = registry.waitForScopeVersion(
-      SCOPE_A,
-      version,
-      10_000,
-      "widget-a",
-      controller.signal,
-      { kind: "explicit" }
-    );
-
-    controller.abort();
-    await expect(pending).rejects.toThrow(/cancelled by the host/);
-    await expect(
-      registry.waitForScopeVersion(
-        SCOPE_A,
-        version,
-        1,
-        "widget-a",
-        undefined,
-        { kind: "explicit" }
-      )
-    ).resolves.toMatchObject({ changed: false, timedOut: true });
-  });
-
-  it("keeps watcher admission separate from all 30 active Codex job slots", async () => {
-    const root = temporaryRoot();
-    const registry = persistentRegistry(root, path.join(root, "private", "state.sqlite"));
-    for (let index = 0; index < 30; index += 1) {
-      registry.start(
-        {
-          ...jobInput(root),
-          requestId: `request-${index}`,
-          requestHash: String(index).padStart(64, "0")
-        },
-        async () => new Promise<ToolResult>(() => undefined)
-      );
-    }
-    expect(registry.runningCount()).toBe(30);
-    expect(() =>
-      registry.start(
-        {
-          ...jobInput(root),
-          requestId: "request-over-limit",
-          requestHash: "f".repeat(64)
-        },
-        async () => result("never")
-      )
-    ).toThrow(/configured limit is 30/);
-
-    const controller = new AbortController();
-    const version = registry.getScopeVersion(SCOPE_A);
-    const watch = registry.waitForScopeVersion(
-      SCOPE_A,
-      version,
-      10_000,
-      "widget-load-test",
-      controller.signal,
-      { kind: "explicit" }
-    );
-    controller.abort();
-    await expect(watch).rejects.toThrow(/cancelled by the host/);
-  });
-
   it("directs deliberate parallel work to a fresh Agent context, not retired session inputs", async () => {
     const root = temporaryRoot();
     const registry = new CodexJobRegistry({ maxConcurrentJobs: 2, allowedRoots: [root] });
@@ -380,477 +1463,6 @@ describe("CodexJobRegistry persistence", () => {
 
     finish(result("thread-completed"));
     await first.promise;
-  });
-
-  it("enforces independent per-scope and global watcher fairness limits", async () => {
-    const root = temporaryRoot();
-    const registry = persistentRegistry(root, path.join(root, "private", "state.sqlite"));
-    const controllers = Array.from({ length: 8 }, () => new AbortController());
-    const scopeB = "22222222-2222-4222-8222-222222222222";
-    const watches = controllers.slice(0, 3).map((controller, index) =>
-      registry
-        .waitForScopeVersion(
-          SCOPE_A,
-          registry.getScopeVersion(SCOPE_A),
-          10_000,
-          `widget-${index}`,
-          controller.signal,
-          { kind: "explicit" }
-        )
-        .catch((error: unknown) => error)
-    );
-    watches.push(registry.waitForScopeVersion(
-      SCOPE_A,
-      registry.getScopeVersion(SCOPE_A),
-      10_000,
-      "widget-3",
-      controllers[3].signal,
-      {
-        kind: "automatic",
-        activityPresentationId: "10101010-1010-4010-8010-101010101010"
-      }
-    ).catch((error: unknown) => error));
-
-    await expect(
-      registry.waitForScopeVersion(
-        SCOPE_A,
-        registry.getScopeVersion(SCOPE_A),
-        10,
-        "widget-extra-a",
-        undefined,
-        { kind: "explicit" }
-      )
-    ).rejects.toThrow(/per-scope watcher limit is 4/);
-    watches.push(...controllers.slice(4, 7).map((controller, offset) =>
-      registry
-        .waitForScopeVersion(
-          scopeB,
-          registry.getScopeVersion(scopeB),
-          10_000,
-          `widget-${offset + 4}`,
-          controller.signal,
-          { kind: "explicit" }
-        )
-        .catch((error: unknown) => error)
-    ));
-    watches.push(registry.waitForScopeVersion(
-      scopeB,
-      registry.getScopeVersion(scopeB),
-      10_000,
-      "widget-7",
-      controllers[7].signal,
-      {
-        kind: "automatic",
-        activityPresentationId: "20202020-2020-4020-8020-202020202020"
-      }
-    ).catch((error: unknown) => error));
-    await expect(
-      registry.waitForScopeVersion(
-        "33333333-3333-4333-8333-333333333333",
-        0,
-        10,
-        "widget-global-extra",
-        undefined,
-        { kind: "explicit" }
-      )
-    ).rejects.toThrow(/watcher limit is 8/);
-
-    for (const controller of controllers) controller.abort();
-    await Promise.all(watches);
-  });
-
-  it("confirms automatic presentation ownership only after a mounted card lease", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-08-23T00:00:00.000Z"));
-    try {
-      const registry = new CodexJobRegistry({ activityMountReservationTtlMs: 1_000 });
-      const activity = registry.createActivity({ scopeId: SCOPE_A, title: "Card generation" });
-      const preferences = { activityCardVisibility: "always" as const };
-      const firstPresentation = "10101010-1010-4010-8010-101010101010";
-      const secondPresentation = "20202020-2020-4020-8020-202020202020";
-
-      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences, {
-        activityPresentationId: firstPresentation,
-        reservationOwnerId: "job-one"
-      }))
-        .toMatchObject({
-          activityId: activity.activityId,
-          cardGeneration: 1,
-          shouldRenderActivityCard: true,
-          renderReason: "new-presentation",
-          activityPresentationId: firstPresentation
-        });
-      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences, {
-        activityPresentationId: firstPresentation,
-        reservationOwnerId: "job-two"
-      }))
-        .toMatchObject({ shouldRenderActivityCard: true, renderReason: "render-latest" });
-      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences, {
-        activityPresentationId: firstPresentation,
-        reservationOwnerId: "job-one"
-      }))
-        .toMatchObject({ shouldRenderActivityCard: true, renderReason: "render-latest" });
-
-      await vi.advanceTimersByTimeAsync(1_001);
-      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences, {
-        activityPresentationId: firstPresentation,
-        reservationOwnerId: "job-two"
-      }))
-        .toMatchObject({ shouldRenderActivityCard: true, renderReason: "new-presentation" });
-
-      expect(registry.touchActivityCardLease(
-        SCOPE_A,
-        activity.activityId,
-        1,
-        "widget-one",
-        {
-          kind: "automatic",
-          activityPresentationId: firstPresentation,
-          reservationOwnerId: "job-two"
-        }
-      )).toEqual({ stopped: false });
-      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences, {
-        activityPresentationId: firstPresentation,
-        reservationOwnerId: "job-two"
-      }))
-        .toMatchObject({ shouldRenderActivityCard: false, renderReason: "active-lease" });
-      expect(registry.touchActivityCardLease(
-        SCOPE_A,
-        activity.activityId,
-        1,
-        "widget-duplicate",
-        {
-          kind: "automatic",
-          activityPresentationId: firstPresentation,
-          reservationOwnerId: "job-two"
-        }
-      )).toEqual({ stopped: true, stopReason: "presentation-duplicate" });
-      registry.releaseActivityCardLease(
-        SCOPE_A,
-        activity.activityId,
-        1,
-        "widget-one",
-        {
-          kind: "automatic",
-          activityPresentationId: firstPresentation,
-          reservationOwnerId: "job-two"
-        }
-      );
-      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences, {
-        activityPresentationId: firstPresentation,
-        reservationOwnerId: "job-two"
-      })).toMatchObject({
-        shouldRenderActivityCard: false,
-        renderReason: "render-confirmed"
-      });
-      expect(registry.touchActivityCardLease(
-        SCOPE_A,
-        activity.activityId,
-        1,
-        "widget-remounted",
-        {
-          kind: "automatic",
-          activityPresentationId: firstPresentation,
-          reservationOwnerId: "job-two"
-        }
-      )).toEqual({ stopped: false });
-      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences, {
-        presentationKind: "explicit"
-      }))
-        .toMatchObject({ shouldRenderActivityCard: true, renderReason: "explicit" });
-
-      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences, {
-        activityPresentationId: secondPresentation,
-        reservationOwnerId: "job-three"
-      })).toMatchObject({ shouldRenderActivityCard: true, renderReason: "new-presentation" });
-      expect(registry.activityPresentationWatcherPolicy(SCOPE_A, {
-        kind: "automatic",
-        activityPresentationId: firstPresentation
-      })).toMatchObject({ live: true, stopped: false });
-      expect(registry.activityPresentationWatcherPolicy(SCOPE_A, {
-        kind: "automatic",
-        activityPresentationId: secondPresentation
-      })).toMatchObject({ live: true, stopped: false, ownsCompletionHandoff: true });
-      expect(registry.touchActivityCardLease(
-        SCOPE_A,
-        activity.activityId,
-        1,
-        "widget-two",
-        {
-          kind: "automatic",
-          activityPresentationId: secondPresentation,
-          reservationOwnerId: "job-three"
-        }
-      )).toEqual({ stopped: false });
-      expect(registry.activityPresentationWatcherPolicy(SCOPE_A, {
-        kind: "automatic",
-        activityPresentationId: firstPresentation
-      })).toMatchObject({ live: false, stopped: true, stopReason: "presentation-superseded" });
-
-      const root = temporaryRoot();
-      const databaseFile = path.join(root, "state.sqlite");
-      const firstStore = new BridgeStateStore({ file: databaseFile });
-      const beforeRestart = new CodexJobRegistry({ stateStore: firstStore, allowedRoots: [root] });
-      const persistentActivity = beforeRestart.createActivity({ scopeId: SCOPE_A, title: "Restart lease" });
-      beforeRestart.activityCardRenderHint(persistentActivity.activityId, "background", preferences, {
-        activityPresentationId: firstPresentation,
-        reservationOwnerId: "job-before-restart"
-      });
-      firstStore.close();
-
-      const secondStore = new BridgeStateStore({ file: databaseFile });
-      const afterRestart = new CodexJobRegistry({ stateStore: secondStore, allowedRoots: [root] });
-      expect(afterRestart.activityCardRenderHint(persistentActivity.activityId, "background", preferences, {
-        activityPresentationId: firstPresentation,
-        reservationOwnerId: "job-after-restart"
-      })).toMatchObject({ shouldRenderActivityCard: true, renderReason: "new-presentation" });
-      secondStore.close();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("rejects a late mount from an older unconfirmed presentation reservation", () => {
-    const registry = new CodexJobRegistry();
-    const activity = registry.createActivity({ scopeId: SCOPE_A, title: "Late card mount" });
-    const preferences = { activityCardVisibility: "always" as const };
-    const olderPresentation = "21212121-2121-4121-8121-212121212121";
-    const newerPresentation = "23232323-2323-4323-8323-232323232323";
-
-    registry.activityCardRenderHint(activity.activityId, "foreground", preferences, {
-      activityPresentationId: olderPresentation,
-      reservationOwnerId: "older-job"
-    });
-    registry.activityCardRenderHint(activity.activityId, "foreground", preferences, {
-      activityPresentationId: newerPresentation,
-      reservationOwnerId: "newer-job"
-    });
-
-    expect(registry.touchActivityCardLease(
-      SCOPE_A,
-      activity.activityId,
-      activity.cardGeneration,
-      "newer-widget",
-      { kind: "automatic", activityPresentationId: newerPresentation }
-    )).toEqual({ stopped: false });
-    expect(registry.touchActivityCardLease(
-      SCOPE_A,
-      activity.activityId,
-      activity.cardGeneration,
-      "late-older-widget",
-      { kind: "automatic", activityPresentationId: olderPresentation }
-    )).toEqual({ stopped: true, stopReason: "presentation-superseded" });
-  });
-
-  it("lets only the newest mounted sibling own one response presentation", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-08-23T01:00:00.000Z"));
-    try {
-      const registry = new CodexJobRegistry({ activityMountReservationTtlMs: 1_000 });
-      const activity = registry.createActivity({ scopeId: SCOPE_A, title: "Latest sibling card" });
-      const preferences = { activityCardVisibility: "always" as const };
-      const presentationId = "25252525-2525-4525-8525-252525252525";
-      const firstPresentation = {
-        kind: "automatic" as const,
-        activityPresentationId: presentationId,
-        reservationOwnerId: "job-first"
-      };
-      const lastPresentation = {
-        kind: "automatic" as const,
-        activityPresentationId: presentationId,
-        reservationOwnerId: "job-last"
-      };
-
-      registry.activityCardRenderHint(activity.activityId, "foreground", preferences, {
-        activityPresentationId: presentationId,
-        reservationOwnerId: "job-first"
-      });
-      expect(registry.touchActivityCardLease(
-        SCOPE_A,
-        activity.activityId,
-        activity.cardGeneration,
-        "widget-first",
-        firstPresentation
-      )).toEqual({ stopped: false });
-
-      expect(registry.activityCardRenderHint(activity.activityId, "foreground", preferences, {
-        activityPresentationId: presentationId,
-        reservationOwnerId: "job-last"
-      })).toMatchObject({ shouldRenderActivityCard: true, renderReason: "render-latest" });
-      expect(registry.activityPresentationWatcherPolicy(SCOPE_A, firstPresentation))
-        .toMatchObject({ live: true, stopped: false });
-
-      await vi.advanceTimersByTimeAsync(1_001);
-      expect(registry.activityPresentationWatcherPolicy(SCOPE_A, firstPresentation))
-        .toMatchObject({ live: true, stopped: false });
-      expect(registry.touchActivityCardLease(
-        SCOPE_A,
-        activity.activityId,
-        activity.cardGeneration,
-        "widget-first",
-        firstPresentation
-      )).toEqual({ stopped: false });
-
-      expect(registry.activityCardRenderHint(activity.activityId, "foreground", preferences, {
-        activityPresentationId: presentationId,
-        reservationOwnerId: "job-last"
-      })).toMatchObject({ shouldRenderActivityCard: true, renderReason: "render-latest" });
-      const previousWatch = registry.waitForScopeVersion(
-        SCOPE_A,
-        registry.getScopeVersion(SCOPE_A),
-        10_000,
-        "widget-first",
-        undefined,
-        firstPresentation
-      );
-      expect(registry.touchActivityCardLease(
-        SCOPE_A,
-        activity.activityId,
-        activity.cardGeneration,
-        "widget-last",
-        lastPresentation
-      )).toEqual({ stopped: false });
-      await expect(previousWatch).resolves.toMatchObject({
-        stopped: true,
-        timedOut: false,
-        stopReason: "presentation-superseded"
-      });
-      expect(registry.activityPresentationWatcherPolicy(SCOPE_A, firstPresentation))
-        .toMatchObject({ live: false, stopped: true, stopReason: "presentation-superseded" });
-      expect(registry.activityPresentationWatcherPolicy(SCOPE_A, lastPresentation))
-        .toMatchObject({ live: true, stopped: false, ownsCompletionHandoff: true });
-      expect(registry.touchActivityCardLease(
-        SCOPE_A,
-        activity.activityId,
-        activity.cardGeneration,
-        "widget-first",
-        firstPresentation
-      )).toEqual({ stopped: true, stopReason: "presentation-superseded" });
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("hands live-watch ownership across 10 sequential response presentations without leaking watcher slots", async () => {
-    const registry = new CodexJobRegistry();
-    const activity = registry.createActivity({ scopeId: SCOPE_A, title: "Sequential cards" });
-    const preferences = { activityCardVisibility: "always" as const };
-    let previousWatch: Promise<Awaited<ReturnType<typeof registry.waitForScopeVersion>>> | undefined;
-    let previousPresentation: string | undefined;
-    let finalController: AbortController | undefined;
-
-    for (let index = 1; index <= 10; index += 1) {
-      const activityPresentationId = `24242424-2424-4424-8424-${index.toString(16).padStart(12, "0")}`;
-      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences, {
-        activityPresentationId,
-        reservationOwnerId: `job-${index}`
-      })).toMatchObject({
-        shouldRenderActivityCard: true,
-        renderReason: "new-presentation",
-        activityPresentationId
-      });
-
-      const presentation = { kind: "automatic" as const, activityPresentationId };
-      registry.touchActivityCardLease(
-        SCOPE_A,
-        activity.activityId,
-        activity.cardGeneration,
-        `automatic-widget-${index}`,
-        presentation
-      );
-
-      if (previousWatch) {
-        await expect(previousWatch).resolves.toMatchObject({
-          stopped: true,
-          timedOut: false,
-          stopReason: "presentation-superseded"
-        });
-        expect(registry.activityPresentationWatcherPolicy(SCOPE_A, {
-          kind: "automatic",
-          activityPresentationId: previousPresentation as string
-        })).toMatchObject({ live: false, ownsCompletionHandoff: false });
-      }
-
-      const controller = new AbortController();
-      previousWatch = registry.waitForScopeVersion(
-        SCOPE_A,
-        registry.getScopeVersion(SCOPE_A),
-        10_000,
-        `automatic-widget-${index}`,
-        controller.signal,
-        presentation
-      );
-      previousPresentation = activityPresentationId;
-      finalController = controller;
-    }
-
-    finalController?.abort();
-    await expect(previousWatch).rejects.toThrow(/cancelled by the host/);
-
-    const verificationController = new AbortController();
-    const verificationWatch = registry.waitForScopeVersion(
-      SCOPE_A,
-      registry.getScopeVersion(SCOPE_A),
-      10_000,
-      "automatic-widget-verification",
-      verificationController.signal,
-      { kind: "automatic", activityPresentationId: previousPresentation as string }
-    );
-    verificationController.abort();
-    await expect(verificationWatch).rejects.toThrow(/cancelled by the host/);
-  });
-
-  it("reserves three explicit watcher slots while preserving one latest automatic owner", async () => {
-    const registry = new CodexJobRegistry();
-    const activity = registry.createActivity({ scopeId: SCOPE_A, title: "Watcher ownership" });
-    const activityPresentationId = "25252525-2525-4525-8525-252525252525";
-    registry.activityCardRenderHint(
-      activity.activityId,
-      "background",
-      { activityCardVisibility: "always" },
-      { activityPresentationId }
-    );
-
-    const explicitControllers = [new AbortController(), new AbortController(), new AbortController()];
-    const explicitWatches = explicitControllers.map((controller, index) =>
-      registry.waitForScopeVersion(
-        SCOPE_A,
-        registry.getScopeVersion(SCOPE_A),
-        10_000,
-        `explicit-widget-${index}`,
-        controller.signal,
-        { kind: "explicit" }
-      )
-    );
-    await expect(registry.waitForScopeVersion(
-      SCOPE_A,
-      registry.getScopeVersion(SCOPE_A),
-      10_000,
-      "explicit-widget-overflow",
-      undefined,
-      { kind: "explicit" }
-    )).rejects.toThrow(/explicit-card watcher limit is 3/);
-
-    const automaticController = new AbortController();
-    const automaticWatch = registry.waitForScopeVersion(
-      SCOPE_A,
-      registry.getScopeVersion(SCOPE_A),
-      10_000,
-      "automatic-widget",
-      automaticController.signal,
-      { kind: "automatic", activityPresentationId }
-    );
-    expect(registry.activityPresentationWatcherPolicy(SCOPE_A, { kind: "explicit" }))
-      .toMatchObject({ live: true, ownsCompletionHandoff: false, maxExplicitPerScope: 3 });
-    expect(registry.activityPresentationWatcherPolicy(SCOPE_A, {
-      kind: "automatic",
-      activityPresentationId
-    })).toMatchObject({ live: true, ownsCompletionHandoff: true, maxAutomaticPerScope: 1 });
-
-    for (const controller of explicitControllers) controller.abort();
-    automaticController.abort();
-    const settled = await Promise.allSettled([...explicitWatches, automaticWatch]);
-    expect(settled.every((entry) => entry.status === "rejected")).toBe(true);
   });
 
   it("restores a terminal result that arrives while an unconfirmed force-stop is pending", async () => {
@@ -897,6 +1509,65 @@ describe("CodexJobRegistry persistence", () => {
       result: { structuredContent: { threadId: "naturally-completed" } }
     });
     expect(registry.runningCount()).toBe(0);
+  });
+
+  it("preserves a deferred completion through DB contention when cancellation arrives too late", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "state.sqlite"));
+    const store = registry.admissionStateStore;
+    const originalUpsert = store.upsertJob.bind(store);
+    const acknowledgeExecution = vi.fn();
+    let finish!: (value: ToolResult) => void;
+    const run = new Promise<ToolResult>(resolve => { finish = resolve; });
+    let originalPromise!: Promise<void>;
+    registry.attachUpstream({
+      async listTools() { return { tools: [] }; },
+      async callTool() { return result("unused"); },
+      async close() {},
+      supportsExecutionRecovery: () => true,
+      ownsRetainedResult: (_jobId, candidate) => candidate.workerId === "race-worker" && candidate.workerGeneration === 1 &&
+        candidate.upstreamRequestId === "original-turn" && candidate.threadId === "completion-won-race",
+      acknowledgeExecution,
+      async forceTerminateWorker(assignment) {
+        finish(result("completion-won-race"));
+        await originalPromise;
+        return { ...assignment, mode: "already-completed", exited: true, workerExited: false, escalated: false };
+      }
+    });
+    let blocked = true;
+    let attempts = 0;
+    vi.spyOn(store, "upsertJob").mockImplementation(value => {
+      if (blocked && (value as { status?: unknown }).status === "completed") {
+        attempts += 1;
+        throw new Error("injected busy terminal transaction");
+      }
+      return originalUpsert(value);
+    });
+    try {
+      const job = registry.start(jobInput(root), async (_progress, assigned) => {
+        assigned({ backendKind: "app-server", workerId: "race-worker", workerGeneration: 1,
+          upstreamRequestId: "original-turn", threadId: "completion-won-race" });
+        return run;
+      });
+      originalPromise = job.promise;
+      await Promise.resolve();
+      const intent = durableCancelIntent(registry, job.jobId, REQUEST_B);
+      await registry.cancel(job.jobId, intent);
+      expect(attempts).toBe(1);
+      expect(job.status).toBe("running");
+      expect(registry.getCancellationIntent(intent.intentId)?.status).toBe("no-op");
+      expect(acknowledgeExecution).not.toHaveBeenCalled();
+      blocked = false;
+      await job.promise;
+      expect(job).toMatchObject({ status: "completed", result: {
+        structuredContent: { threadId: "completion-won-race" }
+      } });
+      expect(store.listJobs()[0]).toMatchObject({ status: "completed" });
+      expect(acknowledgeExecution).toHaveBeenCalledExactlyOnceWith(job.jobId);
+    } finally {
+      await registry.closeThreadConnections();
+      store.close();
+    }
   });
 
   it("keeps a termination-failed job active when no terminal evidence exists", async () => {
@@ -1079,10 +1750,7 @@ function durableCancelIntent(
       activityId: job.activityId,
       ...(job.agentId ? { agentId: job.agentId } : {}),
       ...(job.threadId ? { threadId: job.threadId } : {}),
-      ...(job.upstreamRequestId ? { turnId: job.upstreamRequestId } : {}),
-      ...(job.activityPresentationId
-        ? { presentationId: job.activityPresentationId }
-        : {})
+      ...(job.upstreamRequestId ? { turnId: job.upstreamRequestId } : {})
     },
     expectedVersion: job.version,
     reasonCode: "test-cancel"
@@ -1109,7 +1777,6 @@ function jobInput(root: string) {
     sandbox: "read-only" as const,
     scopeId: SCOPE_A,
     requestId: REQUEST_A,
-    activityPresentationId: REQUEST_A,
     requestHash: "a".repeat(64),
     requestHashVersion: 2 as const,
     selectionKey: "selection-a",
@@ -1141,4 +1808,12 @@ function result(threadId: string): ToolResult {
 
 function temporaryRoot(): string {
   return mkdtempSync(path.join(tmpdir(), "bridge-job-state-"));
+}
+
+async function waitForCondition(condition: () => boolean, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() >= deadline) throw new Error("Timed out waiting for retained-Job maintenance.");
+    await delay(10);
+  }
 }

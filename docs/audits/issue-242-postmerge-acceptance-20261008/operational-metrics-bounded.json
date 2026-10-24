@@ -1,0 +1,334 @@
+{
+  "at": "2026-10-07T20:56:09.685290+00:00",
+  "scope": "Existing loopback operational metrics; allowlisted numeric counters and enum labels only",
+  "metrics": [
+    {
+      "name": "commands_poll_cycles_total",
+      "labelNames": [
+        "otel_scope_name",
+        "otel_scope_schema_url",
+        "otel_scope_version"
+      ],
+      "safeLabels": {},
+      "value": "6512"
+    },
+    {
+      "name": "commands_poll_errors_total",
+      "labelNames": [
+        "error_kind",
+        "otel_scope_name",
+        "otel_scope_schema_url",
+        "otel_scope_version"
+      ],
+      "safeLabels": {
+        "error_kind": "other"
+      },
+      "value": "15"
+    },
+    {
+      "name": "commands_poll_errors_total",
+      "labelNames": [
+        "error_kind",
+        "otel_scope_name",
+        "otel_scope_schema_url",
+        "otel_scope_version"
+      ],
+      "safeLabels": {
+        "error_kind": "timeout"
+      },
+      "value": "3"
+    },
+    {
+      "name": "commands_poll_last_successful_timestamp_seconds",
+      "labelNames": [
+        "otel_scope_name",
+        "otel_scope_schema_url",
+        "otel_scope_version"
+      ],
+      "safeLabels": {},
+      "value": "1.791406545e+09"
+    },
+    {
+      "name": "http_client_request_duration_seconds_count",
+      "labelNames": [
+        "http_request_method",
+        "http_route",
+        "network_protocol_name",
+        "network_protocol_version",
+        "otel_scope_name",
+        "otel_scope_schema_url",
+        "otel_scope_version",
+        "server_address",
+        "url_scheme"
+      ],
+      "safeLabels": {
+        "http_request_method": "GET"
+      },
+      "value": "16"
+    },
+    {
+      "name": "http_client_request_duration_seconds_count",
+      "labelNames": [
+        "http_request_method",
+        "http_route",
+        "network_protocol_name",
+        "network_protocol_version",
+        "otel_scope_name",
+        "otel_scope_schema_url",
+        "otel_scope_version",
+        "server_address",
+        "url_scheme"
+      ],
+      "safeLabels": {
+        "http_request_method": "POST"
+      },
+      "value": "6"
+    },
+    {
+      "name": "http_client_request_duration_seconds_count",
+      "labelNames": [
+        "http_request_method",
+        "http_response_status_code",
+        "http_route",
+        "network_protocol_name",
+        "network_protocol_version",
+        "otel_scope_name",
+        "otel_scope_schema_url",
+        "otel_scope_version",
+        "server_address",
+        "url_scheme"
+      ],
+      "safeLabels": {
+        "http_request_method": "GET",
+        "http_response_status_code": "200"
+      },
+      "value": "1"
+    },
+    {
+      "name": "http_client_request_duration_seconds_count",
+      "labelNames": [
+        "http_request_method",
+        "http_response_status_code",
+        "http_route",
+        "network_protocol_name",
+        "network_protocol_version",
+        "otel_scope_name",
+        "otel_scope_schema_url",
+        "otel_scope_version",
+        "server_address",
+        "url_scheme"
+      ],
+      "safeLabels": {
+        "http_request_method": "GET",
+        "http_response_status_code": "200"
+      },
+      "value": "4091"
+    },
+    {
+      "name": "http_client_request_duration_seconds_count",
+      "labelNames": [
+        "http_request_method",
+        "http_response_status_code",
+        "http_route",
+        "network_protocol_name",
+        "network_protocol_version",
+        "otel_scope_name",
+        "otel_scope_schema_url",
+        "otel_scope_version",
+        "server_address",
+        "url_scheme"
+      ],
+      "safeLabels": {
+        "http_request_method": "GET",
+        "http_response_status_code": "204"
+      },
+      "value": "2402"
+    },
+    {
+      "name": "http_client_request_duration_seconds_count",
+      "labelNames": [
+        "http_request_method",
+        "http_response_status_code",
+        "http_route",
+        "network_protocol_name",
+        "network_protocol_version",
+        "otel_scope_name",
+        "otel_scope_schema_url",
+        "otel_scope_version",
+        "server_address",
+        "url_scheme"
+      ],
+      "safeLabels": {
+        "http_request_method": "GET",
+        "http_response_status_code": "503"
+      },
+      "value": "2"
+    },
+    {
+      "name": "http_client_request_duration_seconds_count",
+      "labelNames": [
+        "http_request_method",
+        "http_route",
+        "network_protocol_name",
+        "network_protocol_version",
+        "otel_scope_name",
+        "otel_scope_schema_url",
+        "otel_scope_version",
+        "server_address",
+        "server_port",
+        "url_scheme"
+      ],
+      "safeLabels": {
+        "http_request_method": "POST"
+      },
+      "value": "7"
+    },
+    {
+      "name": "http_client_request_duration_seconds_count",
+      "labelNames": [
+        "http_request_method",
+        "http_response_status_code",
+        "http_route",
+        "network_protocol_name",
+        "network_protocol_version",
+        "otel_scope_name",
+        "otel_scope_schema_url",
+        "otel_scope_version",
+        "server_address",
+        "url_scheme"
+      ],
+      "safeLabels": {
+        "http_request_method": "POST",
+        "http_response_status_code": "200"
+      },
+      "value": "4146"
+    },
+    {
+      "name": "http_client_request_duration_seconds_count",
+      "labelNames": [
+        "http_request_method",
+        "http_response_status_code",
+        "http_route",
+        "network_protocol_name",
+        "network_protocol_version",
+        "otel_scope_name",
+        "otel_scope_schema_url",
+        "otel_scope_version",
+        "server_address",
+        "server_port",
+        "url_scheme"
+      ],
+      "safeLabels": {
+        "http_request_method": "GET",
+        "http_response_status_code": "404"
+      },
+      "value": "1"
+    },
+    {
+      "name": "http_client_request_duration_seconds_count",
+      "labelNames": [
+        "http_request_method",
+        "http_response_status_code",
+        "http_route",
+        "network_protocol_name",
+        "network_protocol_version",
+        "otel_scope_name",
+        "otel_scope_schema_url",
+        "otel_scope_version",
+        "server_address",
+        "server_port",
+        "url_scheme"
+      ],
+      "safeLabels": {
+        "http_request_method": "GET",
+        "http_response_status_code": "404"
+      },
+      "value": "1"
+    },
+    {
+      "name": "http_client_request_duration_seconds_count",
+      "labelNames": [
+        "http_request_method",
+        "http_response_status_code",
+        "http_route",
+        "network_protocol_name",
+        "network_protocol_version",
+        "otel_scope_name",
+        "otel_scope_schema_url",
+        "otel_scope_version",
+        "server_address",
+        "server_port",
+        "url_scheme"
+      ],
+      "safeLabels": {
+        "http_request_method": "GET",
+        "http_response_status_code": "405"
+      },
+      "value": "1"
+    },
+    {
+      "name": "http_client_request_duration_seconds_count",
+      "labelNames": [
+        "http_request_method",
+        "http_response_status_code",
+        "http_route",
+        "network_protocol_name",
+        "network_protocol_version",
+        "otel_scope_name",
+        "otel_scope_schema_url",
+        "otel_scope_version",
+        "server_address",
+        "server_port",
+        "url_scheme"
+      ],
+      "safeLabels": {
+        "http_request_method": "POST",
+        "http_response_status_code": "200"
+      },
+      "value": "4135"
+    },
+    {
+      "name": "http_client_request_duration_seconds_count",
+      "labelNames": [
+        "http_request_method",
+        "http_response_status_code",
+        "http_route",
+        "network_protocol_name",
+        "network_protocol_version",
+        "otel_scope_name",
+        "otel_scope_schema_url",
+        "otel_scope_version",
+        "server_address",
+        "server_port",
+        "url_scheme"
+      ],
+      "safeLabels": {
+        "http_request_method": "POST",
+        "http_response_status_code": "415"
+      },
+      "value": "1"
+    },
+    {
+      "name": "http_client_request_duration_seconds_count",
+      "labelNames": [
+        "http_request_method",
+        "http_response_status_code",
+        "http_route",
+        "network_protocol_name",
+        "network_protocol_version",
+        "otel_scope_name",
+        "otel_scope_schema_url",
+        "otel_scope_version",
+        "server_address",
+        "server_port",
+        "url_scheme"
+      ],
+      "safeLabels": {
+        "http_request_method": "POST",
+        "http_response_status_code": "503"
+      },
+      "value": "7"
+    }
+  ],
+  "causation": "No request or timestamp joins; cumulative counters cannot attribute historical 502s or prove new merge behavior"
+}

@@ -1,0 +1,510 @@
+
+ RUN  v4.1.11 /Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008
+
+ ✓ test/macosHelperServer.test.ts (55 tests) 108853ms
+     ✓ remembers distinct explicit Codex homes already used by the Helper without a folder picker  806ms
+     ✓ keeps a pending auth change inert on ordinary start and applies it only through a drained restart  991ms
+     ✓ keeps the prior choice pending when a launched authentication runtime never becomes ready  1923ms
+     ✓ recovers profile A after profile B fails to launch and applies the same verified B candidate on retry  3884ms
+     ✓ does not resolve an unconfirmed activation while its runtime still runs  555ms
+     ✓ keeps the original runtime when a persisted job still belongs to the old authentication  866ms
+     ✓ applies authentication while retaining a completed result protected by user-hold  951ms
+     ✓ applies authentication while retaining a completed result protected by host-accepted  951ms
+     ✓ applies authentication while retaining a completed result protected by acceptance-unknown  953ms
+     ✓ keeps a running job and its restart reservation for over 60 seconds, then restarts on its event  61931ms
+     ✓ preserves memory-only conversations with unfinished work for restart and lets the user cancel  622ms
+     ✓ preserves memory-only conversations with unfinished work for stop and lets the user cancel  620ms
+     ✓ preserves memory-only conversations with unfinished work for configure and lets the user cancel  618ms
+     ✓ preserves memory-only conversations with unfinished work for repair and lets the user cancel  623ms
+     ✓ preserves memory-only conversations with unfinished work for shutdown and lets the user cancel  619ms
+     ✓ preserves memory-only conversations with unfinished work for mode-switch and lets the user cancel  617ms
+     ✓ preserves memory-only conversations with unfinished work for helper-replace and lets the user cancel  623ms
+     ✓ allows a safe restart when only completed memory-only contexts remain  922ms
+     ✓ preserves an unconfirmed completion and its exact result across a safe helper restart  1121ms
+     ✓ rejects a superseded CLI target and leaves the old runtime running  668ms
+     ✓ does not let automatic crash recovery override a pending stop  1212ms
+     ✓ creates a private dotenv and starts the runtime on a fresh install  570ms
+     ✓ imports a discovered tunnel-client profile without returning its secret  559ms
+     ✓ atomically applies configuration and restarts the managed runtime  1086ms
+     ✓ redacts secrets split across runtime output chunks  722ms
+     ✓ rejects launcher readiness from 'a different tunnel profile'  783ms
+     ✓ rejects launcher readiness from 'the legacy stdio transport'  782ms
+     ✓ tolerates a 750ms status response and retains bounded failure and recovery diagnostics  5386ms
+     ✓ does not change the dotenv when active work misses the drain deadline  1877ms
+     ✓ requires force when verified background processes would be interrupted  1118ms
+     ✓ blocks graceful stop when background process impact cannot be verified  1121ms
+     ✓ force stop verifies and removes detached descendants from the managed runtime tree  3838ms
+     ✓ re-enables admissions when a graceful-stop status request fails  1403ms
+     ✓ rechecks memory-only sessions after closing admission and preserves the running backend  892ms
+     ✓ rolls back the dotenv and restores the old runtime when new startup fails  1397ms
+     ✓ restarts the unchanged runtime when a concurrent dotenv edit prevents commit  1135ms
+     ✓ safely adopts an app-managed runtime left behind by a helper crash  1110ms
+     ✓ adopts and drains an existing runtime before changing its dotenv  1120ms
+     ✓ uses Codex command and CODEX_HOME from dotenv without returning raw CLI output  793ms
+     ✓ does not report an account read failure as a logged-out Codex account  662ms
+ ✓ test/tools.test.ts (55 tests) 91111ms
+     ✓ preserves an admitted speed through a settings change and handles later support loss explicitly: false  563ms
+     ✓ preserves an admitted speed through a settings change and handles later support loss explicitly: true  304ms
+     ✓ continues, replaces and forks the same Agent across accounts while keeping Bridge scope and logout admission checks  386ms
+     ✓ keeps an original Job's completed result and session with its owner through an external login change and commit retry  1250ms
+     ✓ keeps an original Job's failed result and session with its owner through an external login change and commit retry  1284ms
+     ✓ keeps an original Job's interrupted result and session with its owner through an external login change and commit retry  1289ms
+     ✓ preserves the original Job through a lost queued request, external auth change and transport ACK retries  5369ms
+     ✓ preserves the original Job through a lost completed response, external auth change and transport ACK retries  4875ms
+     ✓ retains an original host-accepted completion receipt through a new login and lost result response  426ms
+     ✓ retains an original acceptance-unknown completion receipt through a new login and lost result response  338ms
+     ✓ keeps the original Job question and ACK after an external login change: 'worker proof recovered before send'  303ms
+     ✓ reports an exact owner result awaiting terminal storage without claiming the Job is still executing  1261ms
+     ✓ returns durable admission immediately while the admitted Job runs for more than one minute  61267ms
+     ✓ does not admit a task when transport fails before dispatch and admits it once on exact retry  309ms
+     ✓ recovers an admitted Job by requestId and rejects conflicting reuse without redispatch  342ms
+     ✓ recovers an approved second turn after response loss and repeated parent reads without stalling independent work  487ms
+     ✓ recovers a scoped terminal admission fact after its result expires and the bridge restarts  421ms
+     ✓ does not distinguish scope-mismatched handles from missing handles  424ms
+     ✓ records a detached HTTP task call without turning it into cancellation  305ms
+     ✓ records an aborted exact status wait while the same Job keeps running  3233ms
+     ✓ opens Dashboard explicitly and rejects every retired sender operation without mutating a Job  312ms
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+ ✓ test/runtimeProcess.test.ts (27 tests) 79037ms
+     ✓ forwards W3 committed readiness and read-only availability across the runtime generation boundary  1191ms
+     ✓ supervises Codex execution separately from the operational state owner  4709ms
+     ✓ keeps liveness responsive, reports a blocked write, and recovers after the DB lock  4310ms
+     ✓ keeps the stdio companion boundary responsive during the same DB lock  5039ms
+     ✓ fails admission after SQLite reports a full state database  1603ms
+     ✓ reports a SQLite busy failure at transaction admission and clears it after a commit  7038ms
+     ✓ fails actual Job admission after a non-transaction task read surfaces SQLITE_BUSY  3692ms
+     ✓ fails actual Job admission after a non-transaction task read surfaces SQLITE_IOERR_FSYNC  3454ms
+     ✓ fails actual Job admission after a non-transaction task read surfaces SQLITE_CORRUPT_VTAB  3435ms
+     ✓ fails actual Job admission after a non-transaction task read surfaces SQLITE_READONLY_DBMOVED  3512ms
+     ✓ preserves a forwarded MCP request through a stale heartbeat  5911ms
+     ✓ preserves a complete split UTF-8 ID when the forwarded response is lost  944ms
+     ✓ separates a proxy connection failure from still-fresh runtime readiness  1120ms
+     ✓ reports request capacity separately when only the added body crosses the limit  957ms
+     ✓ reserves MCP byte capacity for exact recovery reads  872ms
+     ✓ applies the same bounded exact-read reservation to declared and chunked bodies  1035ms
+     ✓ preserves a chunked exact read when another request fills ordinary bytes after its headers  1025ms
+     ✓ keeps every retired card sender operation out of the control reserve  877ms
+     ✓ finishes valid question, cancellation and exact result controls during observer saturation  7034ms
+     ✓ reserves native control capacity when incomplete MCP requests saturate the proxy  1281ms
+     ✓ bounds MCP control reservations and releases disconnected observers  4897ms
+     ✓ releases the HTTP observer when a complete caller disconnects  879ms
+     ✓ keeps timed-out native requests reserved until their physical responses arrive  1386ms
+     ✓ keeps public liveness responsive while bounded large MCP payloads are parsed  1010ms
+     ✓ recovers a killed runtime without claiming an in-flight write committed  4423ms
+     ✓ continues recovery when a replacement runtime misses its startup deadline  5142ms
+     ✓ keeps the operational database rollback-compatible and rebuilds telemetry independently  2258ms
+ ✓ test/launcherLifecycle.integration.test.ts (4 tests) 59674ms
+     ✓ starts authenticated HTTP with https metadata and rebuilds the profile when OAuth identity changes  8276ms
+     ✓ starts authenticated HTTP with loopback metadata and rebuilds the profile when OAuth identity changes  8135ms
+     ✓ publishes actual daemon exit independently of the previous healthy snapshot  1930ms
+     ✓ waits for tunnel readiness and shutdown, then reuses only an unchanged profile  41329ms
+ ✓ test/executionServiceProcess.test.ts (16 tests) 51794ms
+     ✓ binds existing controls and terminal ACK to the original IPC request and worker turn  1960ms
+     ✓ runs turns, progress, account reads, and steering outside the state owner  1954ms
+     ✓ retains a running executor across a parent wall-clock jump  3447ms
+     ✓ keeps private interaction input in the execution process proxy only  1940ms
+     ✓ reserves request slots for interaction responses and forced termination  5435ms
+     ✓ reserves byte capacity for steering an existing turn  1956ms
+     ✓ retains an exited App Server until its same-group command is gone  5580ms
+     ✓ contains actual worker loss while its sibling completes and its detached descendant is cleaned  3869ms
+     ✓ kills a detached descendant group before replacing a crashed executor  6103ms
+     ✓ rechecks release eligibility across the process boundary (retireContext=false)  1934ms
+     ✓ rechecks release eligibility across the process boundary (retireContext=true)  1933ms
+     ✓ does not grant the execution process Bridge database or listener authority  1935ms
+     ✓ continues Codex work while the state-owner event loop is blocked  2453ms
+     ✓ keeps two in-flight Jobs across a 1.1 second synchronous SQLite pause  3054ms
+     ✓ retains an active turn after the executor event loop resumes  5940ms
+     ✓ bounds executor progress IPC while the state owner cannot receive messages  2298ms
+ ✓ test/releasePayload.test.ts (6 tests) 33824ms
+     ✓ preserves native executable permissions while excluding DMG signatures  16801ms
+     ✓ normalizes the linkedit allocation left by re-signing promoted app metadata  16983ms
+ ✓ test/executionRecovery.test.ts (12 tests) 46454ms
+   ✓ reconnects a broken control socket without duplicating its turn or result  2212ms
+   ✓ drains a large restored acknowledgement history through the bounded reconnect queue  2272ms
+   ✓ reattaches a replacement controller to an exact question and preserves its answer/result  1969ms
+   ✓ recovers completion produced while no controller was connected  2398ms
+   ✓ lets exact completion win a late cancellation without killing another turn on the same worker  1983ms
+   ✓ completes old and new turns throughout continuous ps slow failure  12191ms
+   ✓ completes old and new turns throughout continuous ps spawn failure  2063ms
+   ✓ completes old and new turns throughout continuous ps exit failure  2068ms
+   ✓ completes old and new turns throughout continuous ps output-limit failure  2073ms
+   ✓ completes old and new turns throughout continuous ps output-invalid failure  2064ms
+   ✓ completes old and new turns throughout continuous ps output-utf8 failure  2060ms
+   ✓ keeps healthy protocol traffic alive when only heartbeat is missing beyond the old kill threshold  13098ms
+ ✓ test/authHelperProcess.test.ts (2 tests) 33783ms
+   ✓ preserves a replacement Helper's API candidate when an older Helper receives a late browser-login exit  1976ms
+   ✓ keeps a real API timeout quarantined across Helper process loss and replacement  31806ms
+ ✓ test/experimentRetirement.test.ts (20 tests) 16682ms
+   ✓ verifies a standalone restore and preserves source state during inspection  1379ms
+   ✓ retires the unmerged experiment without changing dev or main and retains recovery evidence  1018ms
+   ✓ rejects a file archive that cannot preserve the original state  411ms
+   ✓ rejects a prerequisite archive that cannot preserve the original state  325ms
+   ✓ rejects untracked work that the archive does not preserve  419ms
+   ✓ rejects ignored work that the archive does not preserve  411ms
+   ✓ rejects tracked work that the archive does not preserve  389ms
+   ✓ blocks active processes and an incomplete or stale open-work review  1312ms
+   ✓ rejects archives within active worktrees, a current checkout, and protected branches  491ms
+   ✓ preserves a branch that changes after initial verification  459ms
+   ✓ restores backed-up files if ordinary worktree removal fails  626ms
+   ✓ checks GitHub open work and deletes only the archived remote branch  3114ms
+   ✓ preserves the experiment when remote review finds open-pr  1681ms
+   ✓ preserves the experiment when remote review finds open-issue  1720ms
+   ✓ preserves the experiment when remote review finds changed-head  1562ms
+ ✓ test/stateServiceProcess.test.ts (12 tests) 15570ms
+     ✓ keeps the parent responsive and retains the blocked write phase and queue depth  2855ms
+     ✓ keeps timed-out commands charged to capacity until their late response arrives  652ms
+     ✓ reports an explicit storage-busy result when SQLite lock waiting expires  5613ms
+     ✓ replays a durable receipt after response loss and rejects hash conflicts  817ms
+     ✓ restarts a crashed state owner with one live writer generation  316ms
+     ✓ retires a live but stale state owner before starting its replacement  4664ms
+ ✓ test/mcpEvents.test.ts (49 tests) 14315ms
+     ✓ subscribes before completion and commits result plus delivery intent atomically  470ms
+     ✓ discovers the extension and late-subscribes to one durable exact result without leaking its content  429ms
+     ✓ rejects foreign conversations, unauthenticated No Auth metadata and failed callback challenges  582ms
+     ✓ preserves unsubscribe while another webhook is in flight  370ms
+     ✓ preserves renewed expiry and signing keys while another webhook is in flight  391ms
+     ✓ preserves delivery progress during subscription verification  391ms
+     ✓ bounds exhausted attempts and denies refresh when project access is revoked  333ms
+     ✓ revokes pending delivery when project access is withdrawn  2274ms
+     ✓ keeps pending delivery recoverable when an authorization state read temporarily fails  370ms
+     ✓ keeps one logical event across retries, expires delivery without cancelling work, and does not retry 410 or 413  935ms
+     ✓ recovers the persisted delivery after restart and keeps exact-result retrieval scope checks  334ms
+     ✓ recovers issued references from an exact A read and its event after admission response loss  712ms
+     ✓ rejects caller-issued stage identifiers and rolls back an uncommitted issued reference  693ms
+     ✓ keeps separately approved identical prompts distinct while deduplicating each issued reference  871ms
+     ✓ preserves a retained v1 approval's canonical request receipt during upgrade  631ms
+     ✓ converges duplicate callers, response loss and restart to exactly one approved B  1046ms
+     ✓ never admits unapproved B or authorizes a step from another conversation  369ms
+     ✓ rejects unrelated work occupying the approved step's canonical requestId  531ms
+     ✓ recovers one admitted B after a response is lost and the bridge restarts  744ms
+     ✓ expires unconsumed approvals while preserving admission tombstones  403ms
+ ✓ test/stateDatabaseLifecycle.test.ts (11 tests) 14023ms
+     ✓ fails capacity preflight before changing the supported source database  558ms
+     ✓ fails permission preflight before changing the supported source database  550ms
+     ✓ rejects malformed and unsupported databases before creating lifecycle sidecars  1334ms
+     ✓ derives every supported intermediate start from real committed checkpoints  10199ms
+     ✓ records a completed progress status for the exact committed path  359ms
+     ✓ reconciles a crash after schema commit without inventing a provenance gap  398ms
+     ✓ rejects a changed applied-migration checksum on a later startup  382ms
+ ✓ test/issue162CrossCli.test.ts (10 tests) 13938ms
+     ✓ reports a removed saved CLI without running the different CLI on PATH  822ms
+     ✓ keeps the selected auth source for app account, model fallback, and work while blocking shared login  1939ms
+     ✓ keeps the selected auth source for terminal account, model fallback, and work while blocking shared login  1580ms
+     ✓ keeps the selected auth source for bridge account, model fallback, and work while blocking shared login  1548ms
+     ✓ uses the app CLI with a saved bridge-chatgpt profile without switching auth sources  1555ms
+     ✓ uses the terminal CLI with a saved bridge-chatgpt profile without switching auth sources  1226ms
+     ✓ uses the bridge CLI with a saved bridge-chatgpt profile without switching auth sources  1249ms
+     ✓ uses the app CLI with a saved bridge-api profile without switching auth sources  1531ms
+     ✓ uses the terminal CLI with a saved bridge-api profile without switching auth sources  1244ms
+     ✓ uses the bridge CLI with a saved bridge-api profile without switching auth sources  1243ms
+ ✓ test/mcpEventDelegation.test.ts (44 tests) 10087ms
+     ✓ replays the original OAuth B with its legacy selector after Events is disabled  392ms
+     ✓ exposes terminal callback failure through exact status and task replay (503)  785ms
+     ✓ omits automatic issue after revoke and resumes only with a new original-scope issuance  311ms
+     ✓ preserves revoke intent across legacy receipt cleanup and restart, without retaining credentials  332ms
+     ✓ preserves unsubscribe intent across legacy receipt cleanup and restart, without retaining credentials  358ms
+     ✓ delivers exact A then exactly one preapproved B without Dashboard or ui/message  442ms
+     ✓ recovers the same opaque grant and exact subscription after response loss, token refresh and restart  374ms
+     ✓ bounds receipt capacity and requires a new system reference after explicit revocation  431ms
+ ✓ test/executionRetention.test.ts (4 tests) 10682ms
+   ✓ reclaims settled metadata receipts before admitting the next bounded batch  1955ms
+   ✓ retries dropped ACKs on a live link and reconnect without replaying completed execution  4210ms
+   ✓ reports durable receipt saturation, preserves results, and allows metadata/control until commits release capacity  3227ms
+   ✓ keeps reply-release waiters inside parent request limits and preserves the control reserve  1286ms
+ ✓ test/issue221Delivery.test.ts (21 tests) 9207ms
+     ✓ uses direct-wait for the legacy switch value false  363ms
+     ✓ keeps the entire ordinary path independent of Events  610ms
+     ✓ requires current review for new B but returns admitted B when replay has an older reviewedVersion  695ms
+     ✓ rejects an unadmitted historical live-card followup without modifying approval  649ms
+     ✓ rejects an unadmitted historical events followup without modifying approval  645ms
+     ✓ replays an already admitted historical live-card B before retired-policy rejection  542ms
+     ✓ replays an already admitted historical events B before retired-policy rejection  565ms
+     ✓ preserves an admitted live-card B replay carrying its original delivery selector  772ms
+     ✓ preserves an admitted events B replay carrying its original delivery selector  778ms
+     ✓ reports probe reason unsupported without orphaning or replacing the Agent  341ms
+     ✓ reports probe reason transient without orphaning or replacing the Agent  343ms
+     ✓ preserves retained structured error 'CONTEXT_WINDOW_EXCEEDED'/true on all five MCP read surfaces  325ms
+     ✓ preserves retained structured error 'UPSTREAM_TURN_FAILED'/false on all five MCP read surfaces  318ms
+     ✓ preserves retained structured error 'UPSTREAM_TURN_FAILED'/undefined on all five MCP read surfaces  362ms
+ ✓ test/processTreeSupervisor.test.ts (9 tests) 8585ms
+     ✓ settles a completed probe across the 1.0 to 1.25 second pause boundary  3358ms
+     ✓ does not time out an in-flight probe after the supervisor event loop pauses  2013ms
+     ✓ bounds a genuinely hung probe and records a sanitized timeout diagnostic  3110ms
+ ✓ test/codexAuthSelection.test.ts (34 tests) 8493ms
+   ✓ selects one of several saved bridge profiles without replacing its credential  410ms
+   ✓ checks effective managed login, store, and workspace restrictions for a candidate  449ms
+   ✓ passes a synthetic API key through stdin without storing it in selection state or process arguments  511ms
+   ✓ keeps a timed-out API login blocked until its credential writer actually exits  549ms
+   ✓ records a timed-out API login as failed only after exit, even if its late exit succeeds  950ms
+   ✓ records a browser-login process exit 0 as login-completed until candidate verification  480ms
+   ✓ records a browser-login process exit 1 as login-failed until candidate verification  421ms
+   ✓ records a failed login launch and API key check without changing the applied authentication  430ms
+   ✓ keeps an old Helper's late login isolated after a replacement cancels it and prepares another profile  484ms
+   ✓ cancels an in-flight candidate key login without changing the applied connection  472ms
+   ✓ rejects a candidate that changed account or CLI after verification, even when display email is unchanged  462ms
+   ✓ revalidates a staged candidate at activation and preserves the pending choice after drift  344ms
+   ✓ commits an owned profile only when the ready runtime reports its exact home  338ms
+   ✓ logs out only an inactive bridge ChatGPT profile and records an uncertain reply  341ms
+ ✓ test/issue242R502Tunnel.test.ts (1 test) 8370ms
+   ✓ compares direct resets and bridge responses with the pinned local Go tunnel classification  7446ms
+ ✓ test/issue242R502.test.ts (15 tests) 7177ms
+     ✓ returns capacity exactly once after an idle expiry delayed by a high event-loop stall  369ms
+     ✓ returns structured unavailable for a real child response exceeding the idle budget before headers  602ms
+     ✓ observes the real child's later response after its complete-body caller disconnects  594ms
+ ✓ test/stateReadProcess.test.ts (6 tests) 6823ms
+     ✓ uses the selected CLI schema before any Job, missing method undefined  2588ms
+     ✓ uses the selected CLI schema before any Job, missing method turn/start  841ms
+     ✓ keeps a session visible through IPC during account loss, change and reader restart  984ms
+     ✓ reads current WAL state without registering a writer and recovers its own process  1370ms
+     ✓ keeps timed-out reads charged to bounded capacity until the child replies  418ms
+     ✓ keeps current reads and writes moving while an older WAL snapshot delays truncation  620ms
+ ✓ test/appServerUpstream.test.ts (47 tests) 7930ms
+     ✓ closes a starting worker immediately and clears its initialize request  482ms
+     ✓ terminates the worker process group when init-error prevents startup  498ms
+     ✓ terminates the worker process group when init-incompatible prevents startup  511ms
+     ✓ reports late bounded control responses without corrupting newer requests  816ms
+     ✓ recovers a durable thread after worker crash, pool reassignment, terminal cleanup, and pool restart  757ms
+ ✓ test/companionServer.test.ts (19 tests) 6004ms
+     ✓ carries the full worst-case JSON-escaped Bridge skill content over the native socket  5958ms
+stderr | test/server.test.ts > MCP 2026-07-28 HTTP server > rejects the retired initialize handshake and stateful HTTP verbs
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+
+stderr | test/server.test.ts > MCP 2026-07-28 HTTP server > rejects the retired initialize handshake and stateful HTTP verbs
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+
+stderr | test/server.test.ts > MCP 2026-07-28 HTTP server > rejects the retired initialize handshake and stateful HTTP verbs
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+
+stderr | test/server.test.ts > MCP 2026-07-28 HTTP server > uses the current request envelope and rejects protocol/header mismatches
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+
+stderr | test/server.test.ts > MCP 2026-07-28 HTTP server > uses the current request envelope and rejects protocol/header mismatches
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+
+stderr | test/server.test.ts > MCP 2026-07-28 HTTP server > uses the current request envelope and rejects protocol/header mismatches
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+
+stderr | test/server.test.ts > MCP 2026-07-28 HTTP server > uses the current request envelope and rejects protocol/header mismatches
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+
+stderr | test/server.test.ts > MCP 2026-07-28 HTTP server > uses the current request envelope and rejects protocol/header mismatches
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+
+ ✓ test/server.test.ts (11 tests) 5315ms
+     ✓ discovers and serves only the current tools and resources  309ms
+     ✓ opens, closes, and reopens current change subscriptions  4131ms
+ ✓ test/jobRegistry.test.ts (47 tests) 5042ms
+     ✓ acknowledges a recovered completed outcome only after its durable commit  1044ms
+     ✓ acknowledges a recovered failed outcome only after its durable commit  1064ms
+     ✓ preserves a deferred completion through DB contention when cancellation arrives too late  1045ms
+ ✓ test/runtimeLifecycleRecovery.test.ts (10 tests) 5036ms
+   ✓ a new app launch starts after recovering a completed native shutdown without menu interaction  1292ms
+   ✓ a helper-only respawn leaves a recovered shutdown stopped until a fresh app launch  415ms
+   ✓ helper shutdown preserves a graceful reservation and its active runtime  636ms
+   ✓ a new helper claims execution and completes replacement only after the runtime is ready  397ms
+   ✓ a real helper SIGTERM preserves active work, then a new helper adopts and finishes the reservation  2024ms
+ ✓ test/issue162Context.test.ts (3 tests) 4784ms
+     ✓ uses a private-env-only runtime home for the helper's applied CLI selection  1228ms
+     ✓ marks a changed file environment pending while the old launcher still runs  3554ms
+ ✓ test/telemetryService.test.ts (6 tests) 4715ms
+     ✓ bounds and drains diagnostics without sharing an operational SQLite wait  621ms
+     ✓ contains a diagnostic database capacity failure without blocking operational state  825ms
+     ✓ quarantines telemetry from a different operational database and rebuilds  431ms
+     ✓ starts degraded and recovers after a transient telemetry startup lock  696ms
+     ✓ rebases startup records and merges drops after an initially locked database  1860ms
+ ✓ test/stateSchemaMigration.test.ts (16 tests) 4528ms
+     ✓ uses the Agent history index on fresh and upgraded state without changing latest Job identity  361ms
+     ✓ creates the current schema directly and matches an authentic schema 18 upgrade  384ms
+     ✓ upgrades the published schema 3 fixture through every supported checkpoint  650ms
+     ✓ 'does not resurrect a rejected legacy …'  345ms
+     ✓ 'rejects an invalid Agent mirror besid…'  349ms
+     ✓ 'uses a valid Agent mirror only when t…'  347ms
+     ✓ rolls back an interrupted rebuild and reuses one recovery backup on retry  401ms
+     ✓ replaces a stale same-version backup before beginning a new upgrade  370ms
+     ✓ keeps the original recovery point when a multi-checkpoint upgrade resumes  401ms
+ ✓ test/tunnelHealth.test.ts (21 tests) 4363ms
+     ✓ accepts 700ms endpoint latency with a complete first snapshot and never exposes bodies  721ms
+     ✓ retains recent external success after a multi-second API timeout without inventing endpoint success  2039ms
+     ✓ fences PID mismatch and locator replacement before and after requests  325ms
+ ✓ test/issue162Launcher.integration.test.ts (1 test) 4114ms
+   ✓ runs the built launcher and MCP model path against the private-file runtime home  4113ms
+ ✓ test/mcpOAuth.test.ts (29 tests) 3716ms
+     ✓ rejects OAuth stdio before creating a database or starting children  446ms
+     ✓ returns linking metadata through the actual current SDK client  301ms
+     ✓ keeps one user principal across token and client-ID renewal, A/B admission, callback and restart  360ms
+ ✓ test/stateRecovery.test.ts (8 tests) 3817ms
+     ✓ restores the verified original only before service-open and preserves the replaced files  932ms
+     ✓ refuses snapshot rollback after either HTTP or stdio service-open evidence  717ms
+     ✓ requires an explicit source-runtime attestation when old metadata had none  395ms
+     ✓ reports a checksum-corrupted recovery point as ineligible before restore  374ms
+     ✓ rejects partially recorded source-runtime identity in backup metadata  357ms
+     ✓ rejects a recovery point created by a different target build  361ms
+     ✓ treats an invalid service-open marker as an unknown and unsafe boundary  381ms
+ ✓ test/projectLifecycleHost.test.ts (5 tests) 2975ms
+     ✓ repeats full HTTP admission/use/delete cycles with fresh identities and preserves real Git/files/conversation evidence  1454ms
+     ✓ fences task retries across host restart and same-cwd registration with public envelope known=true  492ms
+     ✓ fences task retries across host restart and same-cwd registration with public envelope known=false  450ms
+     ✓ blocks fresh/continue/fork during failed cleanup and preserves a shared worker peer across delete and late callbacks  347ms
+ ✓ test/codexRuntime.test.ts (37 tests) 2084ms
+ ✓ test/issue242Reads.test.ts (5 tests) 2204ms
+     ✓ preserves paged ordering, counts and detail revisions with bounded SQL  706ms
+     ✓ coalesces equal queries, cancelling A without cancelling B  382ms
+     ✓ keeps the physical slot after the last waiter leaves, skips queued work and permits a fresh retry  364ms
+     ✓ does not join a pending query after a committed write and includes queue wait in the caller deadline  380ms
+     ✓ rejects A's completed late read after archive/delete and same-cwd B registration  371ms
+ ✓ test/gitLifecycleHooks.test.ts (5 tests) 2264ms
+   ✓ continues once for an unintegrated task commit, then accepts integration  453ms
+   ✓ guards local branch deletion without changing Git state  547ms
+   ✓ uses the explicit parent branch target for a task checkout  487ms
+   ✓ guards dirty and unintegrated worktrees, including git -C from another worktree  651ms
+ ✓ test/executionAccess.test.ts (19 tests) 1949ms
+ ✓ test/issue212DashboardUsage.test.ts (9 tests) 1789ms
+     ✓ distinguishes timeout, temporary failure, no limit, and sign-out without inventing a percentage  1547ms
+ ✓ test/runtimeCli.integration.test.ts (2 tests) 1549ms
+   ✓ starts native and remote app connections in the built cli entrypoint  820ms
+   ✓ starts native and remote app connections in the built stdio entrypoint  729ms
+ ✓ test/releaseAssets.test.ts (2 tests) 1641ms
+     ✓ accepts exactly one checked asset set and writes stable aggregate checksums  918ms
+     ✓ rejects tampering and undeclared release files  722ms
+ ✓ test/automaticRecovery.test.ts (9 tests) 1473ms
+     ✓ surveys 1,200 Agents and retained Jobs in small indexed pages, then reaches a late incident  1287ms
+ ✓ test/issue242ProxyCharacterization.test.ts (5 tests) 1507ms
+ ✓ test/issue198ValidationRunner.test.ts (5 tests) 1480ms
+     ✓ records a separate failure if a scenario log cannot be created  1440ms
+ ✓ test/projectLifecycle.test.ts (27 tests) 1472ms
+ ✓ test/eventRetention.test.ts (8 tests) 1260ms
+     ✓ enforces the global byte budget independently of per-job limits and makes freed pages reusable  967ms
+ ✓ test/openaiMcpAuthorization.test.ts (33 tests) 1122ms
+ ✓ test/appServerCompatibility.test.ts (10 tests) 1020ms
+     ✓ checks an isolated public connection and cleans up (valid=true)  504ms
+     ✓ checks an isolated public connection and cleans up (valid=false)  481ms
+ ✓ test/issue242ReadTransport.test.ts (1 test) 882ms
+     ✓ forwards local deadlines and cancellation through supervisor IPC without cancelling work  881ms
+ ✓ test/appServerLateResponses.test.ts (4 tests) 1271ms
+     ✓ records late identifiers without replaying upstream archive state into logical Agents  1179ms
+ ✓ test/releaseValidation.test.ts (8 tests) 779ms
+ ✓ test/operationalCommandReceipt.test.ts (8 tests) 752ms
+     ✓ drops legacy Decision tables when upgrading schema 24 and restoring its source snapshot  430ms
+ ✓ test/skillLibrary.test.ts (16 tests) 694ms
+     ✓ keeps the documented 3 MiB Markdown source capacity without a lower prompt cap  620ms
+ ✓ test/stdioServer.test.ts (3 tests) 665ms
+     ✓ records the rollback boundary after the migrated stdio transport connects  380ms
+ ✓ test/remoteCompanionServer.test.ts (7 tests) 956ms
+ ✓ test/executionRuntime.test.ts (3 tests) 662ms
+     ✓ releases through the runtime factory for idle and keeps reads detached  305ms
+ ✓ test/cliProtocol.test.ts (13 tests) 651ms
+ ✓ test/userSettings.test.ts (25 tests) 637ms
+ ✓ test/runtimeLifecycle.test.ts (23 tests) 667ms
+ ✓ test/appServerRelease.test.ts (4 tests) 615ms
+ ✓ test/releaseManifest.test.ts (14 tests) 575ms
+ ✓ test/workHistory.test.ts (3 tests) 605ms
+     ✓ rotates past a full protected batch and respects the selected retention period  513ms
+ ✓ test/jsonRpcProcess.test.ts (15 tests) 557ms
+ ✓ test/sessionRegistry.test.ts (14 tests) 545ms
+ ✓ test/codexService.test.ts (50 tests) 519ms
+     ✓ starts the account App Server in a stable home directory  422ms
+ ✓ test/issue242Characterization.test.ts (2 tests) 536ms
+     ✓ measures fresh query-only projections without changing results or writer ownership  450ms
+ ✓ test/activityStore.test.ts (11 tests) 456ms
+ ✓ test/uiResourceFiles.test.ts (1 test) 450ms
+     ✓ overwrites one file per card, removes legacy snapshots, and packages only current files  449ms
+ ✓ test/workerIsolation.test.ts (1 test) 411ms
+   ✓ reserves A during failed registration/cleanup while B answers and free worker C completes  410ms
+ ✓ test/stateStore.test.ts (17 tests) 413ms
+ ✓ test/currentSelectorReplay.test.ts (1 test) 413ms
+     ✓ preserves the admitted v6 record but rejects a stale project selector after restart  413ms
+ ✓ test/questionOrchestration.test.ts (2 tests) 424ms
+     ✓ uses codex_status and codex_answer while keeping questions in the host conversation  358ms
+ ✓ test/threadConnections.test.ts (14 tests) 340ms
+ ✓ test/modelDescriptions.test.ts (7 tests) 329ms
+ ✓ test/executionPolicy.test.ts (7 tests) 287ms
+ ✓ test/uiI18n.test.ts (19 tests) 296ms
+ ✓ test/issue242Completion.test.ts (5 tests) 273ms
+ ✓ test/projectRecovery.test.ts (9 tests) 260ms
+ ✓ test/executionJournal.test.ts (6 tests) 174ms
+ ✓ test/processingSpeed.test.ts (24 tests) 200ms
+ ✓ test/automaticRecoveryRelease.test.ts (3 tests) 174ms
+ ✓ test/stateAccessArchitecture.test.ts (10 tests) 150ms
+ ✓ test/scopeResolver.test.ts (11 tests) 112ms
+ ✓ test/questionStore.test.ts (3 tests) 120ms
+ ✓ test/runtimeStatus.test.ts (9 tests) 99ms
+ ✓ test/buildFingerprint.test.ts (2 tests) 97ms
+ ✓ test/runtimeEnv.test.ts (22 tests) 83ms
+ ✓ test/codexBilling.test.ts (5 tests) 74ms
+ ✓ test/agentState.test.ts (3 tests) 67ms
+ ✓ test/executionStorage.test.ts (11 tests) 56ms
+ ✓ test/dashboardAccountRefresh.test.ts (1 test) 52ms
+ ✓ test/uiResourceCompatibility.test.ts (8 tests) 40ms
+ ✓ test/skillPackage.test.ts (13 tests) 39ms
+ ✓ test/outputContracts.test.ts (16 tests) 37ms
+ ✓ test/stateSchemaOwnership.test.ts (1 test) 32ms
+ ✓ test/displayReadPool.test.ts (5 tests) 28ms
+ ✓ test/problemReview.test.ts (3 tests) 21ms
+ ✓ test/mcpWebhook.test.ts (4 tests) 20ms
+ ✓ test/childShutdown.test.ts (2 tests) 16ms
+ ✓ test/tunnelProfile.test.ts (2 tests) 20ms
+ ✓ test/config.test.ts (34 tests) 15ms
+ ✓ test/runtimeDownloads.test.ts (3 tests) 15ms
+ ✓ test/upstreamRouter.test.ts (6 tests) 4ms
+ ✓ test/releasePolicy.test.ts (4 tests) 15ms
+ ✓ test/modelCatalog.test.ts (15 tests) 13ms
+ ✓ test/tunnelSetupDiscovery.test.ts (5 tests) 13ms
+ ✓ test/independentTestAuth.test.ts (4 tests) 11ms
+ ✓ test/projectRegistry.test.ts (10 tests) 9ms
+ ✓ test/codexRuntimeLease.test.ts (2 tests) 8ms
+ ✓ test/httpDiagnostics.test.ts (3 tests) 8ms
+ ✓ test/toolGuidance.test.ts (9 tests) 7ms
+ ✓ test/documentationNaming.test.ts (5 tests) 7ms
+ ✓ test/modelPolicy.test.ts (18 tests) 6ms
+ ✓ test/uiToolCallFallback.test.ts (9 tests) 6ms
+ ✓ test/runtimeLock.test.ts (6 tests) 6ms
+ ✓ test/changeSignal.test.ts (2 tests) 6ms
+ ✓ test/issue221Summary.test.ts (15 tests) 5ms
+ ✓ test/releaseWorkflow.test.ts (4 tests) 5ms
+ ✓ test/uiControlProofs.test.ts (1 test) 4ms
+ ✓ test/scopeFairQueue.test.ts (3 tests) 4ms
+ ✓ test/releaseRemotePolicy.test.ts (3 tests) 3ms
+ ✓ test/textIntegrity.test.ts (5 tests) 3ms
+ ✓ test/executionAudit.test.ts (8 tests) 3ms
+ ✓ test/modelPolicyTransport.test.ts (1 test) 3ms
+ ✓ test/launcherOptions.test.ts (5 tests) 3ms
+ ✓ test/runtimeEnvProjectGuard.test.ts (4 tests) 3ms
+ ✓ test/dashboardCardState.test.ts (5 tests) 3ms
+ ✓ test/issue221Profiles.test.ts (3 tests) 2ms
+ ✓ test/uiHostToolResult.test.ts (7 tests) 2ms
+ ✓ test/diagnosticLog.test.ts (3 tests) 2ms
+ ✓ test/completionDelivery.test.ts (3 tests) 2ms
+ ✓ test/runtimeAdmission.test.ts (1 test) 2ms
+ ✓ test/tokenUsage.test.ts (2 tests) 2ms
+ ✓ test/managedFile.test.ts (1 test) 2ms
+ ✓ test/cancellation.test.ts (1 test) 2ms
+
+ Test Files  135 passed (135)
+      Tests  1493 passed (1493)
+   Start at  04:20:05
+   Duration  773.45s (transform 1.94s, setup 0ms, import 11.99s, tests 752.47s, environment 6ms)
+
+JSON report written to /tmp/issue-242-independent-20261008/node-full.json

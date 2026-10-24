@@ -1,0 +1,13 @@
+{
+  "version": "0.4.1",
+  "bundleBuild": "17",
+  "buildInfo": {
+    "id": "0d26c7f14353:41d00390ea3a",
+    "sourceHash": "41d00390ea3aa34cfd9005c14102c8cde2f51ffec32544f33e84ad859d8fc6da",
+    "commit": "0d26c7f14353243aa7db221e025095b9a7a60026",
+    "dirty": false,
+    "builtAt": "2026-10-16T04:36:17.262Z"
+  },
+  "nativeBinarySha256": "0ff0ca1dc32a6f5fcde7ec8af1ccc8f43852d1084861dfc92c0d91588d6c6c97",
+  "previousBoot": "{ sec = 1791756596, usec = 663448 } Mon Oct 12 07:09:56 2026"
+}

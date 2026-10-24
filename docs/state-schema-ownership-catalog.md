@@ -1,0 +1,184 @@
+# State schema ownership catalog
+
+This catalog is the schema-32 operational inventory and telemetry schema
+inventory required by issues #142 and #143. In production the operational
+state-owner process is the only `state.sqlite` writer, the read process opens it
+read-only, and the telemetry process is the only `telemetry.sqlite` writer.
+
+Indexes and triggers inherit the writer, durability, migration, backup and
+destination contract of their parent table. No caller may address an index or
+trigger through the state-owner IPC protocol; callers use semantic commands and
+queries only.
+
+## Tables and paths
+
+| Table | Current writer / command path | Principal readers and maintenance | Recovery or durability dependency | Target |
+| --- | --- | --- | --- | --- |
+| `bridge_meta` | `BridgeStateStore` startup, migration and service-open commands | startup verification, HMAC, migration and rollback checks | database identity, schema provenance, service-open rollback boundary | state |
+| `bridge_instances` | `BridgeStateStore` runtime registration and shutdown | startup recovery and forensics | live/old owner detection and termination evidence | state |
+| `scopes` | Activity/Agent/Job Units of Work | exact status, Dashboard and scope event cursors | scope version is authorization and ordering evidence | state |
+| `project_registry` | project/settings mutations | task admission and project projection refresh | monotonic registry revision | state |
+| `projects` | project/settings mutations | admission, Settings and Dashboard projections | project identity and restartable archive intent/confirmation | state |
+| `retired_requests` | project lifecycle delete UoW | request retry and exact management-ended status | independent admission/control deduplication; no registration FK | state |
+| `retired_threads` | project lifecycle archive completion UoW | session/thread assignment guards | independent stale-write fence | state |
+| `user_settings` | `UserSettingsStore` mutation | Settings and task admission | execution policy and settings revision | state |
+| `model_description_versions` | `UserSettingsStore` mutation through `BridgeStateStore` | macOS Settings and Settings card history reads | retained user-authored description versions and official-selection markers | state |
+| `sessions` | `SessionRegistry` and Activity admission UoW | resume, Agent thread and backend routing queries | retained backend context and persistence classification | state |
+| `activities` | `CodexJobRegistry` Activity commands and Job UoW | exact status, Dashboard, completion and recovery | goal lifecycle, version and terminal counters | state |
+| `agents` | Agent commands and Job assignment UoW | admission, Dashboard and recovery | execution owner, lifecycle and current Job/thread | state |
+| `agent_threads` | Agent link/replace commands | resume, handoff and Dashboard | current thread uniqueness and history | state |
+| `activity_agents` | assign/release commands | activity and scope projections | assignment provenance and active-pair uniqueness | state |
+| `jobs` | admission, progress, interaction and terminal UoW | exact status, Dashboard, history, completion and recovery | request idempotency, terminal state and bounded result | state |
+| `job_interactions` | Job progress/input UoW | exact input/status and Dashboard | unresolved user input authority | state |
+| `activity_events` | Activity/Job UoW | activity cursors, status summary and Dashboard | scope ordering and authoritative lifecycle projection | state (mixed; review later) |
+| `job_events` | Job UoW | exact status cursor, usage/summary extraction and recovery | current Job event ordering and summary evidence | state (mixed; review later) |
+| `event_budget` | `job_events` triggers only | event retention budget checks | event size/count diagnostics; no early persistent-history deletion | state |
+| `event_retention_state` | `EventRetention` maintenance | restartable event cleanup | retention cursor and budget progress | state |
+| `result_holds` | completion/read commands and retention | result access and event retention | control lease only; cannot change history retention | state |
+| `completion_outbox` | Activity completion UoW and native delivery commands | native completion delivery | durable pending/leased/delivered evidence | state |
+| `job_completion_deliveries` | terminal Job UoW and host receipt commands | exact completion result paths | acceptance uncertainty, leases and offer evidence | state |
+| `agent_mutations` | Agent mutation UoW | duplicate-request lookup | mutation idempotency receipt | state |
+| `cancellation_operations` | cancellation UoW | duplicate lookup and recovery | logical cancellation idempotency and aggregate result | state |
+| `cancellation_intents` | cancellation UoW | impact review, status and recovery | cancellation provenance and dispatch certainty | state |
+| `steering_deliveries` | steering UoW | duplicate lookup and recovery | prepared/dispatching/delivered uncertainty journal | state |
+| `user_questions` | `QuestionStore` commands | question/result tools and expiry maintenance | user-response authority and expiry | state |
+| `codex_question_deliveries` | `QuestionStore` delivery commands | question notification recovery | delivery claim and uncertainty evidence | state |
+| `thread_connections` | `ThreadConnectionStore` commands | admission and connection controller | unfinished-work and handoff/release state | state |
+| `work_history_state` | `WorkHistoryStore` commands and history maintenance | Dashboard/history projections | acknowledgement and expiry state | state |
+| `work_history_control` | `WorkHistoryStore` policy commands | retention policy | cleanup policy revision | state |
+| `runtime_problem_resolutions` | problem review commands | Dashboard problem projection | acknowledged runtime problem revision | state |
+| `automatic_recovery` | `AutomaticRecoveryStore` commands | recovery controller | retry budget, lease and terminal recovery state | state |
+| `automatic_recovery_incidents` | `AutomaticRecoveryStore` commands/maintenance | recovery diagnostics and review | bounded incident evidence used by recovery policy | state |
+| `transport_observations` | compatibility-only; production appends go to the telemetry service | older private diagnostics retained for rollback compatibility | no mutation authority; age follows the same saved policy | retained unused in state until a later schema migration |
+| `operational_command_receipts` | isolated state command Unit of Work | response-loss recovery and identical-command replay | commit proof for the IPC uncertainty window; payload-hash conflicts fail closed | state |
+
+| `job_result_bodies` | terminal Job UoW | exact scoped original-result reads and policy expiry | sanitized complete body survives registry eviction; Job FK owns explicit deletion | state |
+| `agent_history_revisions` | Job history triggers | bounded Dashboard/history cache metadata | actual history changes, independent of progress | state |
+| `recovery_controls` | automatic recovery and scope-retirement UoW | retry admission and confirmed incident closure | minimal current incident identity/attempt barrier; no historical reason/evidence | state |
+| `automatic_recovery_steps` | automatic recovery UoW | read-only problem progression and common policy cleanup | append-only observed/attempt/result/evidence, same occurrence basis as its incident | state |
+| `question_history` | question UoW | scoped retained question read and common policy cleanup | question validity is separate from original-history lifetime | state |
+
+## Index inventory
+
+The current schema contains these explicit indexes. Every name is tied to its
+parent table and is covered by the same owner above.
+
+- `activities`: `activities_continuation`, `activities_project_pin`,
+  `activities_scope_attention`, `activities_scope_recent`
+- `activity_agents`: `activity_agents_active_pair`,
+  `activity_agents_activity_history`, `activity_agents_agent_history`
+- `activity_events`: `activity_events_activity_cursor`,
+  `activity_events_scope_cursor`
+- `agent_threads`: `agent_threads_agent_history`, `agent_threads_one_current`
+- `agents`: `agents_scope_state_recent`
+- `automatic_recovery`: `automatic_recovery_agent_state`, `automatic_recovery_due`,
+  `automatic_recovery_interrupted`, `automatic_recovery_job`,
+  `automatic_recovery_retention`, `automatic_recovery_scope`, `recovery_policy_clock`
+- `automatic_recovery_steps`: `recovery_steps_parent`
+- `question_history`: `question_history_clock`
+- `automatic_recovery_incidents`: `automatic_recovery_incident_retention`
+- `cancellation_intents`: `cancellation_intents_cascade`,
+  `cancellation_intents_operation`, `cancellation_intents_target_activity`,
+  `cancellation_intents_target_job`
+- `cancellation_operations`: `cancellation_operations_target_activity`,
+  `cancellation_operations_target_job`
+- `completion_outbox`: `completion_outbox_pending`
+- `codex_question_deliveries`: `codex_question_deliveries_job`
+- `job_completion_deliveries`: `job_completion_deliveries_claimable`
+- `job_events`: `job_events_job_cursor`, `job_events_scope_cursor`
+- `job_interactions`: `job_interactions_blocking`
+- `jobs`: `jobs_activity_recent`, `jobs_agent_active`, `jobs_agent_recent_history`, `jobs_scope_recent`,
+  `jobs_history_retention`, `jobs_policy_clock`, `jobs_source_thread_active`, `jobs_status_recent`, `jobs_thread_active`
+- `operational_command_receipts`: `operational_command_receipts_committed`
+- `projects`: `projects_active_cwd`, `projects_active_name`, `projects_ordered`, `projects_archive_pending`
+- `retired_requests`: `retired_requests_subject`
+- `sessions`: `sessions_project_recent`, `sessions_scope_recent`
+- `steering_deliveries`: `steering_deliveries_job_recent`,
+  `steering_deliveries_status_recent`
+- `thread_connections`: `thread_connections_agent`, `thread_connections_handoff`,
+  `thread_connections_idle`, `thread_connections_protected`,
+  `thread_connections_release_due`, `thread_connections_worker`
+- `transport_observations`: `transport_observations_recent`
+- `user_questions`: `user_questions_expiry`
+- `work_history_state`: `work_history_expired`
+
+SQLite automatically created indexes are implementation details of declared
+primary-key and unique constraints and inherit the table contract. They are
+intentionally excluded by the `sqlite_%` rule in the inventory test.
+
+## Trigger inventory
+
+`event_budget_insert`, `event_budget_delete` and `event_budget_update` are the
+current event-budget triggers. `job_history_insert` and `job_history_change` maintain
+`agent_history_revisions` in the Job UoW. The event-budget triggers are owned by the `job_events` write UoW and
+update `event_budget` in the same transaction. Neither object can move to
+telemetry while Job events remain operational.
+
+## Telemetry schema
+
+These objects exist only in `telemetry.sqlite` and are created by the telemetry
+child. They are intentionally absent from the operational schema inventory test.
+
+| Table | Writer | Content and failure policy |
+| --- | --- | --- |
+| `telemetry_meta` | telemetry startup transaction | schema version, telemetry UUID and source `state_database_id`; a wrong source is quarantined and rebuilt |
+| `transport_observations` | bounded telemetry queue | sanitized aborted/detached/presentation observations; detail may be dropped |
+| `runtime_measurements` | bounded telemetry queue | component/metric count, min, max and sum duration samples |
+| `diagnostic_events` | bounded telemetry queue | sanitized severity/component/reason transitions |
+| `telemetry_drop_counters` | reserved telemetry control message | persistent kind/count/first/last evidence for queue, send and write loss |
+| `telemetry_retention_state` | each successful detail transaction | restartable per-kind cleanup cursor and completion time |
+| `telemetry_record_deliveries` | each successful detail transaction | bounded idempotency map from delivery UUID to actual record ID; startup collisions are remapped and ACK-loss retries cannot be silently ignored |
+
+Telemetry indexes are `transport_observations_recent`,
+`runtime_measurements_recent` and `diagnostic_events_recent`. Persistent transport observations, measurements and diagnostic events follow the
+same saved policy through the telemetry owner. The existing maintenance events
+slice requests bounded cleanup; the child rereads a read-only policy source at
+delete time. Memory/queue limits are presentation and admission limits, not
+persistent row deletion. Policy read failure retains records and reports failure.
+
+## File, IPC and backup security contract
+
+- The state and telemetry directories are mode `0700`; database, WAL, SHM,
+  backup, migration journal and digest files are mode `0600`. Startup refuses a
+  non-regular canonical database target or an ownership/alias conflict rather
+  than following an unsafe replacement.
+- The telemetry child inherits only a minimal process environment and its local
+  IPC channel. The Codex executor receives the CLI environment but explicitly
+  receives no Bridge database path, bearer token, skills path or companion
+  socket. Its separate private execution socket and finite in-memory receipt
+  journal survive a control reconnect; its auxiliary ownership ledger contains
+  process identities, not Job payloads or another state database. The state owner
+  receives authoritative command payloads; the read
+  child has read-only database authority and opens no listener.
+- `state.sqlite` backups are sensitive operational artifacts and receive the
+  same permissions and retention handling as the live database. A backup must
+  include committed WAL content through the verified SQLite backup path; copying
+  the main file alone is invalid.
+- `telemetry.sqlite` and its backups remain private even though raw prompts,
+  results, secrets, absolute project paths and unsanitized subprocess output are
+  forbidden. Sanitization happens before queue admission, not after persistence.
+- Backup manifests record database identity, schema, source generation, byte
+  size and digest. Restore validation uses those fields and SQLite integrity and
+  foreign-key checks before any service-open marker is written.
+- Telemetry loss never authorizes restoring older operational state. Once the
+  new operational generation accepts a command, an older state backup cannot be
+  automatically selected; rollback must preserve the new authoritative writes.
+
+## Coverage rule
+
+`test/stateSchemaOwnership.test.ts` opens a fresh schema-32 fixture and requires
+every non-SQLite-internal table, explicit index and trigger in `sqlite_master` to
+appear in this catalog. Adding or renaming a schema object without updating its
+owner and destination therefore fails the test.
+
+## Cross-owner policy mutex (#251)
+
+`<canonical-state-file>.history-policy-gate.sqlite` is an empty coordination
+file, not a second operational/telemetry record store. It has no SQLite schema
+objects or historical contents. The operational owner acquires it for a settings
+write through its outer commit/rollback; the telemetry owner acquires it for
+policy read plus destructive telemetry transaction. Timeout-zero SQLite locking
+serializes these boundaries across processes and releases on crash, without
+allowing telemetry to write the operational source. Busy/failure preserves data
+and does not change policy. No new cleanup daemon, manual approval or alternate
+history TTL is introduced. The existing state/telemetry table owners stay intact.

@@ -100,9 +100,11 @@ describe("scope-level bridge Agents", () => {
       now: 10
     });
     const agent = store.createAgent({ scopeId: SCOPE_A, agentName: "Ａlice", now: 20 });
-    expect(agent).toMatchObject({ agentName: "Alice", normalizedName: "alice", lifecycle: "idle" });
-    expect(() => store.createAgent({ scopeId: SCOPE_A, agentName: "ALICE", now: 21 }))
+    expect(agent).toMatchObject({ agentName: "Ａlice", normalizedName: "ａlice", lifecycle: "idle" });
+    expect(() => store.createAgent({ scopeId: SCOPE_A, agentName: "ＡLICE", now: 21 }))
       .toThrow(/AGENT_NAME_CONFLICT/);
+    expect(store.createAgent({ scopeId: SCOPE_A, agentName: "ALICE", now: 21 }).normalizedName)
+      .toBe("alice");
     expect(store.createAgent({ scopeId: SCOPE_B, agentName: "alice", now: 22 }).scopeId).toBe(SCOPE_B);
 
     const firstAssignment = store.assignAgent({
@@ -187,7 +189,7 @@ describe("scope-level bridge Agents", () => {
     store.close();
 
     const restored = new BridgeStateStore({ file });
-    expect(restored.schemaVersion).toBe(19);
+    expect(restored.schemaVersion).toBe(32);
     expect(restored.getActivity(ACTIVITY_A)).toMatchObject({
       lifecycle: "open",
       projectId: project.id,

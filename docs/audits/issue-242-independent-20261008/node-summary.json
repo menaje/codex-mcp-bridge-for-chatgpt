@@ -1,0 +1,1767 @@
+{
+  "passed": 1493,
+  "failed": 0,
+  "skipped": 0,
+  "total": 1493,
+  "files": 135,
+  "rawReport": {
+    "path": "/tmp/issue-242-independent-20261008/node-full.json",
+    "sha256": "a399ea2463c714e12862b139bc7bd9b29ecdd461f3313d1bd87946e211031753",
+    "bytes": 535848,
+    "retention": "Complete stdout retained here; bounded summary substitutes for the larger machine report."
+  },
+  "fileResults": [
+    {
+      "file": "test/activityStore.test.ts",
+      "status": "passed",
+      "passed": 11,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/agentState.test.ts",
+      "status": "passed",
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/appServerCompatibility.test.ts",
+      "status": "passed",
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/appServerLateResponses.test.ts",
+      "status": "passed",
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/appServerRelease.test.ts",
+      "status": "passed",
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/appServerUpstream.test.ts",
+      "status": "passed",
+      "passed": 47,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/authHelperProcess.test.ts",
+      "status": "passed",
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/automaticRecovery.test.ts",
+      "status": "passed",
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/automaticRecoveryRelease.test.ts",
+      "status": "passed",
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/buildFingerprint.test.ts",
+      "status": "passed",
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/cancellation.test.ts",
+      "status": "passed",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/changeSignal.test.ts",
+      "status": "passed",
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/childShutdown.test.ts",
+      "status": "passed",
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/cliProtocol.test.ts",
+      "status": "passed",
+      "passed": 13,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/codexAuthSelection.test.ts",
+      "status": "passed",
+      "passed": 34,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/codexBilling.test.ts",
+      "status": "passed",
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/codexRuntime.test.ts",
+      "status": "passed",
+      "passed": 37,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/codexRuntimeLease.test.ts",
+      "status": "passed",
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/codexService.test.ts",
+      "status": "passed",
+      "passed": 50,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/companionServer.test.ts",
+      "status": "passed",
+      "passed": 19,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/completionDelivery.test.ts",
+      "status": "passed",
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/config.test.ts",
+      "status": "passed",
+      "passed": 34,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/currentSelectorReplay.test.ts",
+      "status": "passed",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/dashboardAccountRefresh.test.ts",
+      "status": "passed",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/dashboardCardState.test.ts",
+      "status": "passed",
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/diagnosticLog.test.ts",
+      "status": "passed",
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/displayReadPool.test.ts",
+      "status": "passed",
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/documentationNaming.test.ts",
+      "status": "passed",
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/eventRetention.test.ts",
+      "status": "passed",
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/executionAccess.test.ts",
+      "status": "passed",
+      "passed": 19,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/executionAudit.test.ts",
+      "status": "passed",
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/executionJournal.test.ts",
+      "status": "passed",
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/executionPolicy.test.ts",
+      "status": "passed",
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/executionRecovery.test.ts",
+      "status": "passed",
+      "passed": 12,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/executionRetention.test.ts",
+      "status": "passed",
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/executionRuntime.test.ts",
+      "status": "passed",
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/executionServiceProcess.test.ts",
+      "status": "passed",
+      "passed": 16,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/executionStorage.test.ts",
+      "status": "passed",
+      "passed": 11,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/experimentRetirement.test.ts",
+      "status": "passed",
+      "passed": 20,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/gitLifecycleHooks.test.ts",
+      "status": "passed",
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/httpDiagnostics.test.ts",
+      "status": "passed",
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/independentTestAuth.test.ts",
+      "status": "passed",
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/issue162Context.test.ts",
+      "status": "passed",
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/issue162CrossCli.test.ts",
+      "status": "passed",
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/issue162Launcher.integration.test.ts",
+      "status": "passed",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/issue198ValidationRunner.test.ts",
+      "status": "passed",
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/issue212DashboardUsage.test.ts",
+      "status": "passed",
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/issue221Delivery.test.ts",
+      "status": "passed",
+      "passed": 21,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/issue221Profiles.test.ts",
+      "status": "passed",
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/issue221Summary.test.ts",
+      "status": "passed",
+      "passed": 15,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/issue242Characterization.test.ts",
+      "status": "passed",
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/issue242Completion.test.ts",
+      "status": "passed",
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/issue242ProxyCharacterization.test.ts",
+      "status": "passed",
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/issue242R502.test.ts",
+      "status": "passed",
+      "passed": 15,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/issue242R502Tunnel.test.ts",
+      "status": "passed",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/issue242ReadTransport.test.ts",
+      "status": "passed",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/issue242Reads.test.ts",
+      "status": "passed",
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/jobRegistry.test.ts",
+      "status": "passed",
+      "passed": 47,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/jsonRpcProcess.test.ts",
+      "status": "passed",
+      "passed": 15,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/launcherLifecycle.integration.test.ts",
+      "status": "passed",
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/launcherOptions.test.ts",
+      "status": "passed",
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/macosHelperServer.test.ts",
+      "status": "passed",
+      "passed": 55,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/managedFile.test.ts",
+      "status": "passed",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/mcpEventDelegation.test.ts",
+      "status": "passed",
+      "passed": 44,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/mcpEvents.test.ts",
+      "status": "passed",
+      "passed": 49,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/mcpOAuth.test.ts",
+      "status": "passed",
+      "passed": 29,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/mcpWebhook.test.ts",
+      "status": "passed",
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/modelCatalog.test.ts",
+      "status": "passed",
+      "passed": 15,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/modelDescriptions.test.ts",
+      "status": "passed",
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/modelPolicy.test.ts",
+      "status": "passed",
+      "passed": 18,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/modelPolicyTransport.test.ts",
+      "status": "passed",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/openaiMcpAuthorization.test.ts",
+      "status": "passed",
+      "passed": 33,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/operationalCommandReceipt.test.ts",
+      "status": "passed",
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/outputContracts.test.ts",
+      "status": "passed",
+      "passed": 16,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/problemReview.test.ts",
+      "status": "passed",
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/processTreeSupervisor.test.ts",
+      "status": "passed",
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/processingSpeed.test.ts",
+      "status": "passed",
+      "passed": 24,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/projectLifecycle.test.ts",
+      "status": "passed",
+      "passed": 27,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/projectLifecycleHost.test.ts",
+      "status": "passed",
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/projectRecovery.test.ts",
+      "status": "passed",
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/projectRegistry.test.ts",
+      "status": "passed",
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/questionOrchestration.test.ts",
+      "status": "passed",
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/questionStore.test.ts",
+      "status": "passed",
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/releaseAssets.test.ts",
+      "status": "passed",
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/releaseManifest.test.ts",
+      "status": "passed",
+      "passed": 14,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/releasePayload.test.ts",
+      "status": "passed",
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/releasePolicy.test.ts",
+      "status": "passed",
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/releaseRemotePolicy.test.ts",
+      "status": "passed",
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/releaseValidation.test.ts",
+      "status": "passed",
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/releaseWorkflow.test.ts",
+      "status": "passed",
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/remoteCompanionServer.test.ts",
+      "status": "passed",
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/runtimeAdmission.test.ts",
+      "status": "passed",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/runtimeCli.integration.test.ts",
+      "status": "passed",
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/runtimeDownloads.test.ts",
+      "status": "passed",
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/runtimeEnv.test.ts",
+      "status": "passed",
+      "passed": 22,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/runtimeEnvProjectGuard.test.ts",
+      "status": "passed",
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/runtimeLifecycle.test.ts",
+      "status": "passed",
+      "passed": 23,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/runtimeLifecycleRecovery.test.ts",
+      "status": "passed",
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/runtimeLock.test.ts",
+      "status": "passed",
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/runtimeProcess.test.ts",
+      "status": "passed",
+      "passed": 27,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/runtimeStatus.test.ts",
+      "status": "passed",
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/scopeFairQueue.test.ts",
+      "status": "passed",
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/scopeResolver.test.ts",
+      "status": "passed",
+      "passed": 11,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/server.test.ts",
+      "status": "passed",
+      "passed": 11,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/sessionRegistry.test.ts",
+      "status": "passed",
+      "passed": 14,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/skillLibrary.test.ts",
+      "status": "passed",
+      "passed": 16,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/skillPackage.test.ts",
+      "status": "passed",
+      "passed": 13,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/stateAccessArchitecture.test.ts",
+      "status": "passed",
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/stateDatabaseLifecycle.test.ts",
+      "status": "passed",
+      "passed": 11,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/stateReadProcess.test.ts",
+      "status": "passed",
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/stateRecovery.test.ts",
+      "status": "passed",
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/stateSchemaMigration.test.ts",
+      "status": "passed",
+      "passed": 16,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/stateSchemaOwnership.test.ts",
+      "status": "passed",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/stateServiceProcess.test.ts",
+      "status": "passed",
+      "passed": 12,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/stateStore.test.ts",
+      "status": "passed",
+      "passed": 17,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/stdioServer.test.ts",
+      "status": "passed",
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/telemetryService.test.ts",
+      "status": "passed",
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/textIntegrity.test.ts",
+      "status": "passed",
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/threadConnections.test.ts",
+      "status": "passed",
+      "passed": 14,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/tokenUsage.test.ts",
+      "status": "passed",
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/toolGuidance.test.ts",
+      "status": "passed",
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/tools.test.ts",
+      "status": "passed",
+      "passed": 55,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/tunnelHealth.test.ts",
+      "status": "passed",
+      "passed": 21,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/tunnelProfile.test.ts",
+      "status": "passed",
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/tunnelSetupDiscovery.test.ts",
+      "status": "passed",
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/uiControlProofs.test.ts",
+      "status": "passed",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/uiHostToolResult.test.ts",
+      "status": "passed",
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/uiI18n.test.ts",
+      "status": "passed",
+      "passed": 19,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/uiResourceCompatibility.test.ts",
+      "status": "passed",
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/uiResourceFiles.test.ts",
+      "status": "passed",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/uiToolCallFallback.test.ts",
+      "status": "passed",
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/upstreamRouter.test.ts",
+      "status": "passed",
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/userSettings.test.ts",
+      "status": "passed",
+      "passed": 25,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/workHistory.test.ts",
+      "status": "passed",
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/workerIsolation.test.ts",
+      "status": "passed",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0
+    }
+  ],
+  "focusedResults": [
+    {
+      "file": "test/automaticRecovery.test.ts",
+      "tests": [
+        {
+          "name": "bounded automatic recovery drains more than one page of obsolete retries without per-Agent cursor state",
+          "status": "passed"
+        },
+        {
+          "name": "bounded automatic recovery prioritizes a due retry outside the current reconciliation page",
+          "status": "passed"
+        },
+        {
+          "name": "bounded automatic recovery surveys 1,200 Agents and retained Jobs in small indexed pages, then reaches a late incident",
+          "status": "passed"
+        },
+        {
+          "name": "bounded automatic recovery surveys a changed Agent without reconciling another Agent's pending incident",
+          "status": "passed"
+        },
+        {
+          "name": "bounded automatic recovery persists attempts before dispatch, respects backoff across restart, and stops after three unconfirmed checks",
+          "status": "passed"
+        },
+        {
+          "name": "bounded automatic recovery requires evidence for resolution and never calls an interrupted final attempt successful",
+          "status": "passed"
+        },
+        {
+          "name": "bounded automatic recovery reaches later incidents without duplicating concurrent sweeps and preserves unresolved budgets",
+          "status": "passed"
+        },
+        {
+          "name": "bounded automatic recovery does not report success when the original incident disappears during later work",
+          "status": "passed"
+        },
+        {
+          "name": "bounded automatic recovery opens a new incident only after confirmed recovery, preserves old evidence, and retains the new budget across restart",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "file": "test/automaticRecoveryRelease.test.ts",
+      "tests": [
+        {
+          "name": "automatic recovery of a bounded shared-worker connection page releases the current incident at worker position 32 with terminal peers false",
+          "status": "passed"
+        },
+        {
+          "name": "automatic recovery of a bounded shared-worker connection page releases the current incident at worker position 33 with terminal peers false",
+          "status": "passed"
+        },
+        {
+          "name": "automatic recovery of a bounded shared-worker connection page releases the current incident at worker position 33 with terminal peers true",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "file": "test/completionDelivery.test.ts",
+      "tests": [
+        {
+          "name": "completion delivery routing uses the local native dispatcher or preserves a durable pending state",
+          "status": "passed"
+        },
+        {
+          "name": "completion delivery routing uses a stable opaque event ID for a future durable dispatcher",
+          "status": "passed"
+        },
+        {
+          "name": "completion delivery routing projects a native receipt without task or conversation content",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "file": "test/displayReadPool.test.ts",
+      "tests": [
+        {
+          "name": "display read budgets notifies a cached display that saw pending work before the original wait expired",
+          "status": "passed"
+        },
+        {
+          "name": "display read budgets wakes a skipped display when capacity frees even if the occupying read was invalidated",
+          "status": "passed"
+        },
+        {
+          "name": "display read budgets shares pending work across refreshes and keeps real concurrency bounded after display timeouts",
+          "status": "passed"
+        },
+        {
+          "name": "display read budgets does not publish invalidated results or free their slots prematurely",
+          "status": "passed"
+        },
+        {
+          "name": "display read budgets allows a retry after the actual transport deadline rejects",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "file": "test/executionRecovery.test.ts",
+      "tests": [
+        {
+          "name": "reconnects a broken control socket without duplicating its turn or result",
+          "status": "passed"
+        },
+        {
+          "name": "drains a large restored acknowledgement history through the bounded reconnect queue",
+          "status": "passed"
+        },
+        {
+          "name": "reattaches a replacement controller to an exact question and preserves its answer/result",
+          "status": "passed"
+        },
+        {
+          "name": "recovers completion produced while no controller was connected",
+          "status": "passed"
+        },
+        {
+          "name": "lets exact completion win a late cancellation without killing another turn on the same worker",
+          "status": "passed"
+        },
+        {
+          "name": "completes old and new turns throughout continuous ps slow failure",
+          "status": "passed"
+        },
+        {
+          "name": "completes old and new turns throughout continuous ps spawn failure",
+          "status": "passed"
+        },
+        {
+          "name": "completes old and new turns throughout continuous ps exit failure",
+          "status": "passed"
+        },
+        {
+          "name": "completes old and new turns throughout continuous ps output-limit failure",
+          "status": "passed"
+        },
+        {
+          "name": "completes old and new turns throughout continuous ps output-invalid failure",
+          "status": "passed"
+        },
+        {
+          "name": "completes old and new turns throughout continuous ps output-utf8 failure",
+          "status": "passed"
+        },
+        {
+          "name": "keeps healthy protocol traffic alive when only heartbeat is missing beyond the old kill threshold",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "file": "test/executionRuntime.test.ts",
+      "tests": [
+        {
+          "name": "production execution runtime connection lifecycle releases through the runtime factory for idle and keeps reads detached",
+          "status": "passed"
+        },
+        {
+          "name": "production execution runtime connection lifecycle releases through the runtime factory for handoff and keeps reads detached",
+          "status": "passed"
+        },
+        {
+          "name": "production execution runtime connection lifecycle applies restart protection before lazy initialization without starting a worker to record it",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "file": "test/httpDiagnostics.test.ts",
+      "tests": [
+        {
+          "name": "bounded private HTTP evidence bounds requests and merged ingress/child records over the entire runtime lifetime",
+          "status": "passed"
+        },
+        {
+          "name": "bounded private HTTP evidence rejects unknown/invalid child IDs and reconstructs only allowlisted fields",
+          "status": "passed"
+        },
+        {
+          "name": "bounded private HTTP evidence makes observer failure inert and rejects duplicate trusted IDs",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "file": "test/issue242Characterization.test.ts",
+      "tests": [
+        {
+          "name": "issue 242 latest-dev characterization measures fresh query-only projections without changing results or writer ownership",
+          "status": "passed"
+        },
+        {
+          "name": "issue 242 latest-dev characterization separates general progress notices and empty claims from actual changed rows",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "file": "test/issue242Completion.test.ts",
+      "tests": [
+        {
+          "name": "issue 242 W3 durable native completions emits readiness only after the outer durable commit; excludes progress, verify, duplicates and rollback",
+          "status": "passed"
+        },
+        {
+          "name": "issue 242 W3 durable native completions has zero empty writer transactions and distinguishes a concurrent consumer winning after preflight",
+          "status": "passed"
+        },
+        {
+          "name": "issue 242 W3 durable native completions drains 25 durable completions in batches of at most ten with stable IDs and no Job execution",
+          "status": "passed"
+        },
+        {
+          "name": "issue 242 W3 durable native completions persists bounded delivery backoff, ignores wrong owners and recovers ack loss, lease expiry and restart",
+          "status": "passed"
+        },
+        {
+          "name": "issue 242 W3 durable native completions carries epoch and per-topic revision for lost/coalesced events and ignores unknown cursors",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "file": "test/issue242ProxyCharacterization.test.ts",
+      "tests": [
+        {
+          "name": "issue 242 internal proxy termination boundaries returns a structured unavailable result for reset before headers",
+          "status": "passed"
+        },
+        {
+          "name": "issue 242 internal proxy termination boundaries destroys a partial response after headers without turning it into a complete error",
+          "status": "passed"
+        },
+        {
+          "name": "issue 242 internal proxy termination boundaries distinguishes internal idle expiry",
+          "status": "passed"
+        },
+        {
+          "name": "issue 242 internal proxy termination boundaries records caller-first disconnect after a complete request body",
+          "status": "passed"
+        },
+        {
+          "name": "issue 242 internal proxy termination boundaries recovers after faults and accepts a valid delayed response",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "file": "test/issue242R502.test.ts",
+      "tests": [
+        {
+          "name": "R502 deterministic lifecycle races preserves queued response framing after late-error follows upstream end",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races preserves queued response framing after late-response-error follows upstream end",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races preserves queued response framing after late-timeout follows upstream end",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races returns structured unavailable before headers, then recovers",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races leaves partial responses incomplete, then recovers",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races expires an upstream that never responds before headers exactly once",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races preserves a complete application-owned timeout response before headers",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races releases a caller disconnected during its incomplete body",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races detaches a complete-body caller while its application action continues once",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races preserves a completed response through normal socket close and connection reuse",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races returns capacity exactly once after an idle expiry delayed by a high event-loop stall",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races correlates admitted/queued/dispatch and strips a caller-supplied trace id",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races joins public ingress with the real supervised child and application response",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races returns structured unavailable for a real child response exceeding the idle budget before headers",
+          "status": "passed"
+        },
+        {
+          "name": "R502 deterministic lifecycle races observes the real child's later response after its complete-body caller disconnects",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "file": "test/issue242R502Tunnel.test.ts",
+      "tests": [
+        {
+          "name": "compares direct resets and bridge responses with the pinned local Go tunnel classification",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "file": "test/issue242ReadTransport.test.ts",
+      "tests": [
+        {
+          "name": "issue 242 read transport forwards local deadlines and cancellation through supervisor IPC without cancelling work",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "file": "test/issue242Reads.test.ts",
+      "tests": [
+        {
+          "name": "issue 242 shared read contract preserves paged ordering, counts and detail revisions with bounded SQL",
+          "status": "passed"
+        },
+        {
+          "name": "issue 242 shared read contract coalesces equal queries, cancelling A without cancelling B",
+          "status": "passed"
+        },
+        {
+          "name": "issue 242 shared read contract keeps the physical slot after the last waiter leaves, skips queued work and permits a fresh retry",
+          "status": "passed"
+        },
+        {
+          "name": "issue 242 shared read contract does not join a pending query after a committed write and includes queue wait in the caller deadline",
+          "status": "passed"
+        },
+        {
+          "name": "issue 242 shared read contract rejects A's completed late read after archive/delete and same-cwd B registration",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "file": "test/projectLifecycle.test.ts",
+      "tests": [
+        {
+          "name": "project retirement contract (#240) preserves cleanup intent and retries after a intent-read failure",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement contract (#240) preserves cleanup intent and retries after a unresolved-write failure",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement contract (#240) does not dispatch when the durable dispatch boundary cannot commit",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement contract (#240) repeats registration/use/archive/delete/re-registration/use/delete for two full cycles and preserves files and conversations",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement contract (#240) cleans idle persistent context without making open work completed",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement contract (#240) cleans idle ephemeral context without making open work completed",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement contract (#240) cleans idle unknown context without making open work completed",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement contract (#240) blocks fresh admission, continue/fork context, followup and automatic recovery immediately after intent acceptance",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement contract (#240) cancels worker-unassigned and execution-preparation Jobs before they can launch, including late activation",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement contract (#240) retries an undispatched cancellation after a failed commit without losing the accepted Job",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement contract (#240) does not complete archive for dispatched work until its delayed worker ownership can be stopped",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement contract (#240) preserves the dispatch boundary across restart before worker assignment and resumes exact cleanup",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement contract (#240) keeps termination-failed unresolved, retries precise stop without killing a shared worker, and ignores late results/progress",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement contract (#240) leaves unfinished cleanup restartable when the runtime closes during an exact stop",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement contract (#240) stops loaded background terminals and confirms their absence before releasing idle threads",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement contract (#240) does not restore past thread selection and fences late session/thread/Job snapshots",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement contract (#240) preserves unknown-hash compact admission facts and never guesses original content",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement contract (#240) resumes unresolved cleanup across two restarts and rejects stale CAS completion after retry",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement contract (#240) ends input management even for a legacy unattributed question journal without redispatch",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement contract (#240) cleans indirect control/event/followup/command records without fabricating delivery",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement contract (#240) resumes confirmed legacy deletion across process loss and delete failure=false",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement contract (#240) resumes confirmed legacy deletion across process loss and delete failure=true",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement contract (#240) migrates legacy archived/deleted=false data and cleans it through two restarts without DB editing by users",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement contract (#240) migrates legacy archived/deleted=true data and cleans it through two restarts without DB editing by users",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement contract (#240) does not clear a shared Agent current thread replaced by another project during release",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement contract (#240) terminates user-input waiting work and preserves its cancelled outcome",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement contract (#240) terminates command-execution-approval waiting work and preserves its cancelled outcome",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "file": "test/projectLifecycleHost.test.ts",
+      "tests": [
+        {
+          "name": "project retirement through the host boundary (#240) repeats full HTTP admission/use/delete cycles with fresh identities and preserves real Git/files/conversation evidence",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement through the host boundary (#240) fences task retries across host restart and same-cwd registration with public envelope known=true",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement through the host boundary (#240) fences task retries across host restart and same-cwd registration with public envelope known=false",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement through the host boundary (#240) blocks fresh/continue/fork during failed cleanup and preserves a shared worker peer across delete and late callbacks",
+          "status": "passed"
+        },
+        {
+          "name": "project retirement through the host boundary (#240) replays a lost delete response through Settings and MCP without deleting a new same-cwd identity or bypassing other CAS checks",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "file": "test/runtimeProcess.test.ts",
+      "tests": [
+        {
+          "name": "isolated production runtime forwards W3 committed readiness and read-only availability across the runtime generation boundary",
+          "status": "passed"
+        },
+        {
+          "name": "isolated production runtime supervises Codex execution separately from the operational state owner",
+          "status": "passed"
+        },
+        {
+          "name": "isolated production runtime keeps liveness responsive, reports a blocked write, and recovers after the DB lock",
+          "status": "passed"
+        },
+        {
+          "name": "isolated production runtime keeps the stdio companion boundary responsive during the same DB lock",
+          "status": "passed"
+        },
+        {
+          "name": "isolated production runtime fails admission after SQLite reports a full state database",
+          "status": "passed"
+        },
+        {
+          "name": "isolated production runtime reports a SQLite busy failure at transaction admission and clears it after a commit",
+          "status": "passed"
+        },
+        {
+          "name": "isolated production runtime fails actual Job admission after a non-transaction task read surfaces SQLITE_BUSY",
+          "status": "passed"
+        },
+        {
+          "name": "isolated production runtime fails actual Job admission after a non-transaction task read surfaces SQLITE_IOERR_FSYNC",
+          "status": "passed"
+        },
+        {
+          "name": "isolated production runtime fails actual Job admission after a non-transaction task read surfaces SQLITE_CORRUPT_VTAB",
+          "status": "passed"
+        },
+        {
+          "name": "isolated production runtime fails actual Job admission after a non-transaction task read surfaces SQLITE_READONLY_DBMOVED",
+          "status": "passed"
+        },
+        {
+          "name": "isolated production runtime preserves a forwarded MCP request through a stale heartbeat",
+          "status": "passed"
+        },
+        {
+          "name": "isolated production runtime preserves a complete split UTF-8 ID when the forwarded response is lost",
+          "status": "passed"
+        },
+        {
+          "name": "isolated production runtime separates a proxy connection failure from still-fresh runtime readiness",
+          "status": "passed"
+        },
+        {
+          "name": "isolated production runtime reports request capacity separately when only the added body crosses the limit",
+          "status": "passed"
+        },
+        {
+          "name": "isolated production runtime reserves MCP byte capacity for exact recovery reads",
+          "status": "passed"
+        },
+        {
+          "name": "isolated production runtime applies the same bounded exact-read reservation to declared and chunked bodies",
+          "status": "passed"
+        },
+        {
+          "name": "isolated production runtime preserves a chunked exact read when another request fills ordinary bytes after its headers",
+          "status": "passed"
+        },
+        {
+          "name": "isolated production runtime keeps every retired card sender operation out of the control reserve",
+          "status": "passed"
+        },
+        {
+          "name": "isolated production runtime finishes valid question, cancellation and exact result controls during observer saturation",
+          "status": "passed"
+        },
+        {
+          "name": "isolated production runtime reserves native control capacity when incomplete MCP requests saturate the proxy",
+          "status": "passed"
+        },
+        {
+          "name": "isolated production runtime bounds MCP control reservations and releases disconnected observers",
+          "status": "passed"
+        },
+        {
+          "name": "isolated production runtime releases the HTTP observer when a complete caller disconnects",
+          "status": "passed"
+        },
+        {
+          "name": "isolated production runtime keeps timed-out native requests reserved until their physical responses arrive",
+          "status": "passed"
+        },
+        {
+          "name": "isolated production runtime keeps public liveness responsive while bounded large MCP payloads are parsed",
+          "status": "passed"
+        },
+        {
+          "name": "isolated production runtime recovers a killed runtime without claiming an in-flight write committed",
+          "status": "passed"
+        },
+        {
+          "name": "isolated production runtime continues recovery when a replacement runtime misses its startup deadline",
+          "status": "passed"
+        },
+        {
+          "name": "isolated production runtime keeps the operational database rollback-compatible and rebuilds telemetry independently",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "file": "test/scopeFairQueue.test.ts",
+      "tests": [
+        {
+          "name": "ScopeFairQueue runs one item per scope in round-robin order",
+          "status": "passed"
+        },
+        {
+          "name": "ScopeFairQueue bounds one scope and admits another scope under saturation",
+          "status": "passed"
+        },
+        {
+          "name": "ScopeFairQueue removes stale work and drops remaining work on close",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "file": "test/stateReadProcess.test.ts",
+      "tests": [
+        {
+          "name": "settings speed support in the isolated read process uses the selected CLI schema before any Job, missing method undefined",
+          "status": "passed"
+        },
+        {
+          "name": "settings speed support in the isolated read process uses the selected CLI schema before any Job, missing method turn/start",
+          "status": "passed"
+        },
+        {
+          "name": "isolated state read projection keeps a session visible through IPC during account loss, change and reader restart",
+          "status": "passed"
+        },
+        {
+          "name": "isolated state read projection reads current WAL state without registering a writer and recovers its own process",
+          "status": "passed"
+        },
+        {
+          "name": "isolated state read projection keeps timed-out reads charged to bounded capacity until the child replies",
+          "status": "passed"
+        },
+        {
+          "name": "isolated state read projection keeps current reads and writes moving while an older WAL snapshot delays truncation",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "file": "test/threadConnections.test.ts",
+      "tests": [
+        {
+          "name": "durable thread connection lifetime streams only protected thread IDs through the startup protection index",
+          "status": "passed"
+        },
+        {
+          "name": "durable thread connection lifetime keeps unfinished Agent work on the active-only index after adding the history index",
+          "status": "passed"
+        },
+        {
+          "name": "durable thread connection lifetime finds unfinished work through each indexed thread, source, and Agent identity",
+          "status": "passed"
+        },
+        {
+          "name": "durable thread connection lifetime uses a separate six-hour clock, untouched by reads, sessions and terminal refreshes",
+          "status": "passed"
+        },
+        {
+          "name": "durable thread connection lifetime restores the actual finish time after restart and requires new release evidence",
+          "status": "passed"
+        },
+        {
+          "name": "durable thread connection lifetime gates new turns during a handoff without cancelling active work and distinguishes unsubscribe from release",
+          "status": "passed"
+        },
+        {
+          "name": "durable thread connection lifetime preserves ephemeral and unknown conversations and rolls back finish clocks with failed result commits",
+          "status": "passed"
+        },
+        {
+          "name": "durable thread connection lifetime rechecks release eligibility when another admission arrives while the runtime is inspected",
+          "status": "passed"
+        },
+        {
+          "name": "durable thread connection lifetime releases an obsolete handoff gate when an already active fork changes the Agent's current thread",
+          "status": "passed"
+        },
+        {
+          "name": "durable thread connection lifetime does not release a terminal Job with a retained blocking question",
+          "status": "passed"
+        },
+        {
+          "name": "durable thread connection lifetime advances past a full batch of permanently blocked requests",
+          "status": "passed"
+        },
+        {
+          "name": "durable thread connection lifetime reaches idle releases despite repeatedly slow, unconfirmed handoffs",
+          "status": "passed"
+        },
+        {
+          "name": "durable thread connection lifetime rotates lane priority when synchronous handoff inspection exhausts a slice",
+          "status": "passed"
+        },
+        {
+          "name": "durable thread connection lifetime keeps a released current conversation available after 30 days",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "file": "test/tunnelHealth.test.ts",
+      "tests": [
+        {
+          "name": "owned tunnel observation accepts 700ms endpoint latency with a complete first snapshot and never exposes bodies",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation retains recent external success after a multi-second API timeout without inventing endpoint success",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation does not establish startup readiness from a timestamp and missing first endpoints, including restart",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation expires cached success after 75 seconds of failed observations",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation immediately rejects explicit ready failure despite recent success",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation immediately rejects explicit health failure despite recent success",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation immediately rejects explicit external failure despite recent success",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation bounds an external control-plane outage with a frozen last-success metric while local APIs remain healthy",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation rejects a stale or implausibly future metric despite HTTP 200",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation shares physical probes and releases singleflight after timeout and cancellation",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation does not treat terminating a health command subprocess as daemon death",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation overrides cached success on actual daemon exit, including exit during a probe",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation fences PID mismatch and locator replacement before and after requests",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation rejects unexpected locator https://127.0.0.1:1 without sending requests",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation rejects unexpected locator http://example.test:1 without sending requests",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation rejects unexpected locator http://user:secret@127.0.0.1:1 without sending requests",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation rejects unexpected locator http://127.0.0.1:1/other without sending requests",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation rejects symlink locator and redirect rather than following them",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation does not hide a known HTTP failure behind a stalled body and fresh external success",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation bounds a stalled body and a too-large metric line and parses labelled metrics",
+          "status": "passed"
+        },
+        {
+          "name": "owned tunnel observation rejects success delivered after an absolute deadline under event-loop delay",
+          "status": "passed"
+        }
+      ]
+    }
+  ]
+}

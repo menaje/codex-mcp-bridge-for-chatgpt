@@ -1,0 +1,10 @@
+{
+  "command": "npm pack --dry-run --json",
+  "name": "codex-mcp-bridge-for-chatgpt",
+  "version": "0.4.1",
+  "tunnelHealthModuleIncluded": true,
+  "tunnelHealthSourceSha256": "9cac70df6b32cb5a7220875374e0916790f08c6d5d6e12b4fa3ebffd7870cc8c",
+  "packageManifestFileCount": 29,
+  "macOSBundleCopyIncluded": true,
+  "sourceDigestNote": "Final source digest after the non-2xx header regression fix; packaging paths unchanged from dry-run."
+}

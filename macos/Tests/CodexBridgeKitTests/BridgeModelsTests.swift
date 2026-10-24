@@ -2,6 +2,186 @@ import XCTest
 @testable import CodexBridgeKit
 
 final class BridgeModelsTests: XCTestCase {
+    func testBackgroundInventoryFailureRemainsUnknownAndOlderSnapshotsStillDecode() throws {
+        var object: [String: Any] = ["state": "enriched", "runtimeRequests": 0, "cacheHits": 0,
+            "timeouts": 0, "durationMs": 0, "usageTimedOut": false, "pendingReads": 0]
+        func decoded() throws -> CardEnrichment {
+            try JSONDecoder().decode(CardEnrichment.self, from: JSONSerialization.data(withJSONObject: object))
+        }
+        XCTAssertFalse(try decoded().hasFailures)
+        object["backgroundInventoryUnavailable"] = true
+        XCTAssertTrue(try decoded().hasFailures)
+        XCTAssertTrue(try decoded().isIncomplete)
+    }
+
+    func testProjectRecoveryCapabilitiesPreserveIdentityAndAcceptOlderServers() throws {
+        var capabilities: [String: Any] = [
+            "availableAccessStrategies": ["read-only"],
+            "availableUiLocalePreferences": ["en"],
+            "projectAvailability": [], "maxConcurrentJobs": 30,
+            "defaultBackend": "app-server", "allowWorkspaceWrite": false,
+            "allowDangerFullAccess": false, "persistent": true
+        ]
+        let old = try JSONDecoder().decode(SettingsCapabilities.self,
+            from: JSONSerialization.data(withJSONObject: capabilities))
+        XCTAssertNil(old.recoverableProjects)
+        capabilities["recoverableProjects"] = [[
+            "id": "original-id", "projectRef": "original-ref", "projectRevision": 4,
+            "name": "Recover me", "nameKey": "recover me", "cwd": "/private/project",
+            "sortOrder": 0, "createdAt": 1, "updatedAt": 2, "archivedAt": 2
+        ]]
+        let current = try JSONDecoder().decode(SettingsCapabilities.self,
+            from: JSONSerialization.data(withJSONObject: capabilities))
+        XCTAssertEqual(current.recoverableProjects?.first?.id, "original-id")
+        XCTAssertEqual(current.recoverableProjects?.first?.projectRef, "original-ref")
+        XCTAssertEqual(current.recoverableProjects?.first?.projectRevision, 4)
+    }
+
+    func testProjectArchiveIntentAndUnresolvedReasonsDecodeWithoutCompletionMarker() throws {
+        let data = Data(#"{"id":"11111111-1111-4111-8111-111111111111","projectRef":"prj_fixture","projectRevision":1,"name":"Project","nameKey":"project","cwd":"/tmp/project","sortOrder":0,"createdAt":1,"updatedAt":123,"archiveState":"unresolved","archiveRevision":2,"archiveRequestedAt":123,"archiveReasons":["Termination unconfirmed"]}"#.utf8)
+        let project = try JSONDecoder().decode(BridgeProject.self, from: data)
+        XCTAssertEqual(project.archiveState, "unresolved")
+        XCTAssertEqual(project.archiveRevision, 2)
+        XCTAssertEqual(project.archiveRequestedAt, 123)
+        XCTAssertEqual(project.archiveReasons, ["Termination unconfirmed"])
+        XCTAssertNil(project.archivedAt)
+    }
+
+    func testBridgeProjectDecodesTheServerProjectContract() throws {
+        let data = #"""
+        {
+          "id":"project-1",
+          "projectRef":"project_ref_1",
+          "projectRevision":3,
+          "name":"Bridge",
+          "nameKey":"bridge",
+          "cwd":"/private/bridge",
+          "sortOrder":0,
+          "createdAt":1700000000000,
+          "updatedAt":1700000001000
+        }
+        """#.data(using: .utf8)!
+
+        let project = try JSONDecoder().decode(BridgeProject.self, from: data)
+
+        XCTAssertEqual(project.id, "project-1")
+        XCTAssertEqual(project.name, "Bridge")
+        XCTAssertEqual(project.cwd, "/private/bridge")
+        XCTAssertNil(project.archivedAt)
+    }
+
+    func testBridgeSkillMutationAndVersionContractsPreserveFreeformMarkdown() throws {
+        let create = BridgeSkillCreateRequest(
+            requestId: "00000000-0000-4000-8000-000000000114",
+            name: "Report review",
+            description: "Review a report with evidence.",
+            content: "# Review\n\nCheck each claim against its source.",
+            files: [.init(path: "references/evidence.md", content: "# Evidence")]
+        )
+        let encoded = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(create)) as? [String: Any])
+        XCTAssertEqual(encoded["requestId"] as? String, "00000000-0000-4000-8000-000000000114")
+        XCTAssertEqual(encoded["content"] as? String, "# Review\n\nCheck each claim against its source.")
+        XCTAssertNil(encoded["document"])
+        XCTAssertEqual((encoded["files"] as? [[String: Any]])?.first?["path"] as? String, "references/evidence.md")
+        XCTAssertNil(encoded["instructions"])
+        XCTAssertNil(encoded["references"])
+
+        let history = try JSONDecoder().decode(
+            BridgeSkillVersionList.self,
+            from: Data(#"""
+            {
+              "skillId":"bridge_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "source":"bridge",
+              "currentVersion":"2",
+              "enabled":true,
+              "versions":[{
+                "skillId":"bridge_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "source":"bridge",
+                "version":"2",
+                "name":"Report review",
+                "description":"Review a report with evidence.",
+                "contentDigest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "createdAt":"2026-09-15T00:00:00.000Z",
+                "format":"markdown",
+                "legacy":false
+              }]
+            }
+            """#.utf8)
+        )
+        XCTAssertEqual(history.currentVersion, "2")
+        XCTAssertEqual(history.versions.first?.reference.version, "2")
+        XCTAssertEqual(history.versions.first?.format, "markdown")
+        XCTAssertFalse(history.versions.first?.legacy ?? true)
+
+        let skill = try JSONDecoder().decode(
+            BridgeSkill.self,
+            from: Data(#"""
+            {
+              "skill":{
+                "skillId":"bridge_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "source":"bridge",
+                "version":"2",
+                "name":"Report review",
+                "description":"Review a report with evidence.",
+                "contentDigest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "enabled":true,
+                "availability":"available"
+              },
+              "content":"# Review\r\n\r\n- preserve source",
+              "files":[{
+                "path":"references/evidence.md",
+                "format":"markdown",
+                "bytes":10,
+                "contentDigest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }],
+              "format":"markdown",
+              "legacy":false,
+              "sourceSnapshot":"versioned-bridge-record",
+              "warnings":[]
+            }
+            """#.utf8)
+        )
+        XCTAssertEqual(skill.content, "# Review\r\n\r\n- preserve source")
+        XCTAssertEqual(skill.format, "markdown")
+        XCTAssertFalse(skill.legacy)
+        XCTAssertEqual(skill.files.first?.path, "references/evidence.md")
+
+        let deletion = BridgeSkillDeleteRequest(
+            requestId: "00000000-0000-4000-8000-000000000115",
+            skillId: "bridge_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            expectedVersion: "2"
+        )
+        let deletionJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(deletion)) as? [String: Any])
+        XCTAssertNil(deletionJSON["confirmName"])
+
+        let deleted = try JSONDecoder().decode(
+            BridgeSkillDeletion.self,
+            from: Data(#"""
+            {
+              "skillId":"bridge_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "source":"bridge",
+              "deletedAt":"2026-09-15T00:00:00.000Z"
+            }
+            """#.utf8)
+        )
+        XCTAssertEqual(deleted.skillId, deletion.skillId)
+        XCTAssertEqual(deleted.source, "bridge")
+
+        let packageUpdate = BridgeSkillPackageUpdateRequest(
+            requestId: "00000000-0000-4000-8000-000000000116",
+            skillId: deletion.skillId,
+            expectedVersion: "2",
+            uploadId: "00000000-0000-4000-8000-000000000117",
+            mainPath: nil,
+            includePaths: ["references/evidence.md"]
+        )
+        let packageJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(packageUpdate)) as? [String: Any]
+        )
+        XCTAssertTrue(packageJSON["mainPath"] is NSNull)
+        XCTAssertEqual(packageJSON["includePaths"] as? [String], ["references/evidence.md"])
+    }
+
     @MainActor
     func testDisplayFormatParsesBackendTimestampsWithAndWithoutFractions() {
         XCTAssertNotNil(DisplayFormat.parseDate("2026-09-02T00:00:00.000Z"))
@@ -31,10 +211,7 @@ final class BridgeModelsTests: XCTestCase {
                     constraints: ModelPolicyConstraints(allowDelegation: true)
                 ),
                 usePriorityServiceTier: true,
-                activityCard: ActivityCardPatch(
-                    visibility: "background-only",
-                    completionHandoff: "auto-handoff"
-                )
+                experimentalDirectResultDelivery: true
             ))
         )
 
@@ -48,6 +225,10 @@ final class BridgeModelsTests: XCTestCase {
         let settings = try XCTUnwrap(operation["settings"] as? [String: Any])
         XCTAssertEqual(settings["accessStrategy"] as? String, "adaptive")
         XCTAssertEqual(settings["usePriorityServiceTier"] as? Bool, true)
+        XCTAssertEqual(settings["experimentalDirectResultDelivery"] as? Bool, true)
+        XCTAssertNil(settings["dashboardAutoOpen"])
+        XCTAssertNil(settings["completionFollowUp"])
+        XCTAssertNil(settings["activityCard"])
         let policy = try XCTUnwrap(settings["modelPolicy"] as? [String: Any])
         XCTAssertEqual(policy["mode"] as? String, "fixed")
         XCTAssertNil(policy["fallbackSelection"])
@@ -69,6 +250,27 @@ final class BridgeModelsTests: XCTestCase {
         let operation = try XCTUnwrap(object["operation"] as? [String: Any])
         let settings = try XCTUnwrap(operation["settings"] as? [String: Any])
         XCTAssertFalse(settings.keys.contains("modelPolicy"))
+        XCTAssertFalse(settings.keys.contains("processingSpeed"))
+    }
+
+    func testSettingsPatchSendsAnExplicitTurnSpeedAlongsideLegacyCompatibility() throws {
+        let patch = SettingsPatch(usePriorityServiceTier: false, processingSpeed: "ultrafast")
+        let encoded = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(patch)) as? [String: Any])
+        XCTAssertEqual(encoded["processingSpeed"] as? String, "ultrafast")
+        XCTAssertEqual(encoded["usePriorityServiceTier"] as? Bool, false)
+    }
+
+    func testNativeCompletionNotificationDecodesOnlyItsOpaqueReceipt() throws {
+        let notification = try JSONDecoder().decode(
+            NativeCompletionNotification.self,
+            from: Data(#"{"eventId":"completion-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","outboxId":7}"#.utf8)
+        )
+        XCTAssertEqual(notification.id, notification.eventId)
+        XCTAssertEqual(notification.outboxId, 7)
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(notification)) as? [String: Any]
+        )
+        XCTAssertEqual(Set(object.keys), ["eventId", "outboxId"])
     }
 
     func testProjectOperationsUseExplicitDeltaShapes() throws {
@@ -112,6 +314,8 @@ final class BridgeModelsTests: XCTestCase {
           "bridge":{
             "socketPath":"/private/config/run/bridge.sock",
             "connected":true,
+            "observation":"fresh",
+            "lastSuccessfulAt":"2026-09-02T00:00:00.000Z",
             "acceptingNewJobs":true,
             "activeJobs":2,
             "pendingAdmissions":0
@@ -132,6 +336,8 @@ final class BridgeModelsTests: XCTestCase {
         XCTAssertEqual(status.phase, "running")
         XCTAssertTrue(status.configuration.hasApiKey)
         XCTAssertEqual(status.bridge.activeJobs, 2)
+        XCTAssertEqual(status.bridge.observation, "fresh")
+        XCTAssertEqual(status.bridge.lastSuccessfulAt, "2026-09-02T00:00:00.000Z")
         XCTAssertTrue(status.tunnel.connected)
         XCTAssertFalse(String(data: json, encoding: .utf8)!.contains("CONTROL_PLANE_API_KEY"))
     }
@@ -250,6 +456,79 @@ final class BridgeModelsTests: XCTestCase {
         let afterIdle = afterRecent.mergingPage(nextIdle, bucket: .idle, requestedOffset: 1)
         XCTAssertEqual(afterIdle.terminalRows.map(\.rowKey), ["recent-1", "recent-2"])
         XCTAssertEqual(afterIdle.idleRows.map(\.rowKey), ["idle-1", "idle-2"])
+    }
+
+    func testPagedDashboardResponseKeepsUsageOnlyWithinTheSameDisplayContext() {
+        var initial = dashboardSnapshot(
+            terminalRows: [dashboardRow("recent-1", bucket: "recent")], idleRows: [],
+            terminalPage: dashboardPage(offset: 0, returned: 1, total: 2, hasNext: true),
+            idlePage: dashboardPage(offset: 0, returned: 0, total: 0, hasNext: false)
+        )
+        initial.usageContext = "account-a:cli-one"
+        initial.weeklyUsage = WeeklyUsage(
+            source: "codex-account", limitId: "codex", usedPercent: 40, remainingPercent: 60,
+            windowDurationMins: 10080, resetsAt: nil, observedAt: "2026-09-22T00:00:00Z"
+        )
+        var next = dashboardSnapshot(
+            terminalRows: [dashboardRow("recent-2", bucket: "recent")], idleRows: [],
+            terminalPage: dashboardPage(offset: 1, returned: 1, total: 2, hasNext: false),
+            idlePage: dashboardPage(offset: 0, returned: 0, total: 0, hasNext: false)
+        )
+        next.usageContext = initial.usageContext
+        let merged = initial.mergingPage(next, bucket: .terminal, requestedOffset: 1)
+            .retainingUsage(from: initial)
+        XCTAssertEqual(merged.terminalRows.map(\.rowKey), ["recent-1", "recent-2"])
+        XCTAssertEqual(merged.weeklyUsage?.remainingPercent, 60)
+        XCTAssertEqual(merged.weeklyUsage?.observedAt, "2026-09-22T00:00:00Z")
+
+        next.usageContext = "account-b:cli-one"
+        XCTAssertNil(initial.mergingPage(next, bucket: .terminal, requestedOffset: 1)
+            .retainingUsage(from: initial).weeklyUsage)
+    }
+
+    func testUnavailableAccountUsageKeepsTheNewestConfirmedObservation() throws {
+        func account(remaining: Double?, status: String, checkedAt: Double?, observedAt: Double,
+                     key: String = "account-a", plan: String = "plus") throws -> CodexAccountUsage {
+            var value: [String: Any] = [
+                "authMode": "chatgpt", "authenticated": true, "accountKey": key,
+                "ownershipKey": key,
+                "planType": plan, "usageStatus": status, "observedAt": observedAt,
+                "windows": remaining.map { [[
+                    "limitId": "codex", "usedPercent": 100 - $0, "remainingPercent": $0,
+                    "windowDurationMins": 10080
+                ]] } ?? []
+            ]
+            if let checkedAt { value["usageObservedAt"] = checkedAt }
+            return try JSONDecoder().decode(CodexAccountUsage.self,
+                from: JSONSerialization.data(withJSONObject: value))
+        }
+
+        let old = try account(remaining: 60, status: "available", checkedAt: 1_780_000_000_000,
+                              observedAt: 1_780_000_000_000)
+        let oldAfterFailedRead = try account(remaining: 60, status: "unavailable",
+            checkedAt: 1_780_000_000_000, observedAt: 1_780_000_600_000)
+        let newerRetainedByServer = try account(remaining: 40, status: "unavailable",
+            checkedAt: 1_780_000_300_000, observedAt: 1_780_000_660_000)
+        let newer = newerRetainedByServer.retainingUnavailableUsage(from: oldAfterFailedRead)
+        XCTAssertEqual(newer.weeklyUsage?.remainingPercent, 40)
+        XCTAssertEqual(newer.usageObservedAt, 1_780_000_300_000)
+
+        let olderRetainedByServer = try account(remaining: 80, status: "unavailable",
+            checkedAt: 1_779_999_700_000, observedAt: 1_780_000_360_000)
+        let retained = olderRetainedByServer.retainingUnavailableUsage(from: old)
+        XCTAssertEqual(retained.weeklyUsage?.remainingPercent, 60)
+        XCTAssertEqual(retained.usageObservedAt, old.usageObservedAt)
+
+        let missing = try account(remaining: nil, status: "unavailable", checkedAt: nil,
+            observedAt: 1_780_000_360_000)
+        XCTAssertEqual(missing.retainingUnavailableUsage(from: old).weeklyUsage?.remainingPercent, 60)
+        XCTAssertEqual(newerRetainedByServer.retainingUnavailableUsage(from:
+            try account(remaining: 60, status: "available", checkedAt: old.usageObservedAt,
+                        observedAt: old.observedAt, key: "account-b")).weeklyUsage?.remainingPercent, 40)
+        XCTAssertEqual(try account(remaining: 0, status: "available", checkedAt: 1_780_000_400_000,
+            observedAt: 1_780_000_400_000).retainingUnavailableUsage(from: old).weeklyUsage?.remainingPercent, 0)
+        XCTAssertNil(try account(remaining: nil, status: "none", checkedAt: nil,
+            observedAt: 1_780_000_400_000).retainingUnavailableUsage(from: old).weeklyUsage)
     }
 
     func testDashboardLoadMoreEvictsRowsThatBecomeActive() {

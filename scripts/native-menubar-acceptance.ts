@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 
-// Build the actual MenuBarExtra popover in an isolated application. The helper,
+// Build the actual native status-item popover in an isolated application. The helper,
 // work rows and actions are synthetic; no installed service or user task is used.
 if (process.platform !== "darwin") throw new Error("Requires macOS.");
 const repository = fileURLToPath(new URL("..", import.meta.url));
@@ -30,7 +30,9 @@ const row = (id: number, status: string) => ({ rowKey: `fixture-${id}`, activity
   conversationKey: `conversation-${id}`, sessionAlias: `fixture-${id}`, bucket: status === "failed" ? "terminal" : "active",
   projectKey: "fixture-project", projectName: "메뉴바 검증", agentName: `작업 ${id}`,
   activityTitle: status === "running" ? `진행 중인 작업 ${id}` : status === "failed" ? "종료된 실패 작업" : "승인을 기다리는 작업",
-  status, createdAt: observed, updatedAt: observed, elapsedMs: 5000, backgroundProcessCount: 0 });
+  status, createdAt: observed, updatedAt: observed, elapsedMs: 5000, backgroundProcessCount: 0,
+  history: [], historyCount: status === "running" ? 1 : 0,
+  ...(status === "running" ? { historyRevision: "a".repeat(64) } : {}) });
 const activeRows = [row(1, "running"), row(2, "approval-required")];
 const terminalRows = [row(3, "failed")];
 const page = (total: number) => ({ offset: 0, limit: 12, returned: total, total,
@@ -77,4 +79,4 @@ await writeFile(path.join(app, "Contents", "Info.plist"), `<?xml version="1.0" e
 execFileSync("xcrun", ["xcstringstool", "compile", path.join(repository, "macos/Resources/Localization/Localizable.xcstrings"),
   "--output-directory", path.join(app, "Contents", "Resources"), "--serialization-format", "text"]);
 execFileSync("codesign", ["--force", "--sign", "-", app], { stdio: "inherit" });
-console.log(JSON.stringify({ app, root, scope: "real native menu bar popover; synthetic work and socket state" }));
+console.log(JSON.stringify({ app, root, scope: "real native status-item popover; synthetic work and socket state" }));

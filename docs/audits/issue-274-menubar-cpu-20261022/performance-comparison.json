@@ -1,0 +1,57 @@
+{
+  "issue": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/274",
+  "date": "2026-10-22",
+  "sourceBase": "4eb72164817375a68704008b0900444422990125",
+  "sourceChange": "Guard helper/companion change-subscription availability publication when the Bool has not changed, including disconnection and cancellation.",
+  "environment": {
+    "architecture": "arm64",
+    "macOS": "26.6.2",
+    "macOSBuild": "25G83",
+    "swift": "Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)\nTarget: arm64-apple-macosx26.0",
+    "configuration": "SwiftPM debug XCTest, strict concurrency and warnings as errors"
+  },
+  "workload": {
+    "fixture": "Existing SkillTextFixture using production SkillsLibraryWindowView and AppModel over isolated real Unix sockets. No production jobs or data.",
+    "content": "200 Markdown sections, each containing heading, stable paragraph with emphasis/code/link and two list items.",
+    "window": "Skills library preview ordered front; Dashboard not opened.",
+    "companionNotices": "dashboard-only changes.wait replies, 100ms fixture delay between replies. Contents and selection stay unchanged.",
+    "helperNotices": "Quiet changes.wait replies every 25 seconds.",
+    "measurement": "After two seconds settling, 600 asynchronous 100ms sleeps. Whole-test-process user + system CPU from getrusage(RUSAGE_SELF); elapsed from ContinuousClock; layout calls counted on one NSHostingView subclass."
+  },
+  "measurements": {
+    "baseline": {
+      "hostingViewLayoutCalls": 603,
+      "processCPUSeconds": 17.974794,
+      "elapsedSeconds": 63.982559042000005,
+      "averageOneCoreCPUPercent": 28.093271461994547,
+      "output": "LAYOUT PROBE notice-traffic: passes=603, cpu=17.974794, elapsed=63.982559042000005 seconds"
+    },
+    "fixed": {
+      "hostingViewLayoutCalls": 1,
+      "processCPUSeconds": 0.8912179999999998,
+      "elapsedSeconds": 62.381960583,
+      "averageOneCoreCPUPercent": 1.4286469865181983,
+      "output": "LAYOUT PROBE notice-traffic: passes=1, cpu=0.8912179999999998, elapsed=62.381960583 seconds"
+    }
+  },
+  "cpuTimeReductionPercent": 95.04184582031928,
+  "reproduction": {
+    "patch": "layout-probe.patch",
+    "patchSHA256": "bc88515dd5ce2a0e30da37e2366861418c318104d88edc1e53143062c1b3f515",
+    "apply": "git apply --unidiff-zero docs/audits/issue-274-menubar-cpu-20261022/layout-probe.patch",
+    "command": "swift test --package-path macos --disable-swift-testing -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors --filter SkillsLibraryTextInputTests/testStableLibraryLayout",
+    "baseline": "Run the same probe with AppModel.swift from sourceBase; run fixed afterward with only the availability guards changed. Restore the optional probe afterward. The patch is archived as evidence, not part of the default test suite.",
+    "scope": "Use a clean, isolated checkout for the optional probe."
+  },
+  "limitations": [
+    "One sequential run per variant; machine-wide load, caches and Chrome Remote Desktop activity were not controlled.",
+    "The large preview and regular notice traffic are a synthetic amplification workload, not a reproduction of every production condition.",
+    "CPU includes socket-fixture threads and XCTest. Layout count covers the library hosting view, not all AppKit/SwiftUI nodes. Peaks and high-load stack samples were not collected for this isolated comparison.",
+    "No installed app was replaced or restarted; production app improvement, Dashboard/library combined scenarios and remote-desktop influence remain unverified."
+  ],
+  "regression": "ChangeObservationTests sends 200 notices on each subscription, then a disconnect/reconnect; expects exactly false/true/false/true availability publications, no hidden Dashboard snapshot reads, and one final false across repeated cancellation.",
+  "rawTestOutputFiles": [
+    "baseline.txt",
+    "fixed.txt"
+  ]
+}

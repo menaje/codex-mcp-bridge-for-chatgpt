@@ -1,0 +1,75 @@
+{
+  "capturedAt": "2026-10-23T08:19:03.816Z",
+  "productSourceCommit": "5925d7f042fc5cdd3612c99914dec1fe09c09b47",
+  "locale": "en",
+  "appearance": "light",
+  "data": "synthetic documentation fixtures",
+  "native": "Unmodified production SwiftUI/AppKit views in an isolated application; macOS window screencapture with OCR checks.",
+  "web": "Production Settings and Dashboard HTML in Chromium at 645 CSS pixels; local window.openai host fixture, not ChatGPT-host acceptance.",
+  "files": [
+    {
+      "file": "chatgpt-dashboard-light-en.png",
+      "sha256": "ee0d41af88c75457afa177d0c8177eeac68a61cd5852fb63bdbbe1fb2cb5a73a"
+    },
+    {
+      "file": "chatgpt-execution-history-light-en.png",
+      "sha256": "6302ac16c28bdc9a2a8cbc3af7bc3ebe5996df4844a76f1c9c8f8671c1875f49"
+    },
+    {
+      "file": "chatgpt-problem-history-light-en.png",
+      "sha256": "4c92f06bd43a2d0827bb2be42c94a7e199dde2bc212005935a670e4865c25913"
+    },
+    {
+      "file": "chatgpt-settings-light-en.png",
+      "sha256": "fcd9f08afc0b71da8b69d08d66425ed95835d72522e26c90e966ef25e7b1d037"
+    },
+    {
+      "file": "macos-app-roles-light-en.png",
+      "sha256": "328fe133a9819bb105235e1cd707ebe03e614bd220f43f2150828cee50661e4e"
+    },
+    {
+      "file": "macos-codex-account-light-en.png",
+      "sha256": "8073bcaa30ffd2d906fdc3a43140534ac74fa2c170aac5c47382f1df8f4856b0"
+    },
+    {
+      "file": "macos-connection-setup-light-en.png",
+      "sha256": "a26040f8eb03faaa34b997d3188f6772c979a6495a67f69541ff68238a97054b"
+    },
+    {
+      "file": "macos-dashboard-light-en.png",
+      "sha256": "8e4a4d0ca7aed1b1ce2b56bd4cbdabf078390146019e2bc8e5ac4b291f96686a"
+    },
+    {
+      "file": "macos-execution-history-light-en.png",
+      "sha256": "5f8f2151cdb03613560d0c8efebb58329123fbc3ad2a69867a58b941947f2656"
+    },
+    {
+      "file": "macos-menubar-usage-light-en.png",
+      "sha256": "3d0d7bb2588b98d24b5fc5e00cde004c184bb5d47d701115ccc9a7b98f3e950c"
+    },
+    {
+      "file": "macos-models-execution-light-en.png",
+      "sha256": "f9148b1448cf7bb8bae2aa345c68f7630e9e48f5bec55e612b559212e9a5b524"
+    },
+    {
+      "file": "macos-pairing-invitation-light-en.png",
+      "sha256": "328fe133a9819bb105235e1cd707ebe03e614bd220f43f2150828cee50661e4e"
+    },
+    {
+      "file": "macos-problem-history-light-en.png",
+      "sha256": "bb02025da48e55da1e584724846c0678d5249980cd738d36e17fb5052245f9e5"
+    },
+    {
+      "file": "macos-projects-light-en.png",
+      "sha256": "87f1579bfe80d0ccf057afb60477ea939287743c25662c5b8c4ec8b245ff8975"
+    },
+    {
+      "file": "macos-settings-sidebar-light-en.png",
+      "sha256": "83cfc9cdba862c66d4a9001ac6a94051c943c63232f8a41cae1d3814f1b7c20c"
+    },
+    {
+      "file": "macos-skill-library-light-en.png",
+      "sha256": "d9be6e2131f77a66bb2b1d5ffe5e298198d20a66f1bba1cc27743dd02594a68f"
+    }
+  ]
+}

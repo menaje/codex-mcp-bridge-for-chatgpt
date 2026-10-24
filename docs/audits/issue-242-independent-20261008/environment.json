@@ -1,0 +1,26 @@
+{
+  "node": "v24.11.1",
+  "platform": "darwin",
+  "arch": "arm64",
+  "npm": "11.6.2",
+  "swift": "Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)\nTarget: arm64-apple-macosx26.0",
+  "macOS": "26.6.2",
+  "dependencies": {
+    "vitest": "4.1.11",
+    "typescript": "5.9.3",
+    "better-sqlite3": "13.0.3"
+  },
+  "sqlite": "3.53.4",
+  "cli": {
+    "path": "/tmp/codex-cli-0.153.3/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex",
+    "version": "codex-cli 0.153.3",
+    "sha256": "0e1f892695844ad0798dab8895955846450a9e7663476ebf24615814dd377216"
+  },
+  "tunnel": {
+    "path": "/opt/homebrew/bin/tunnel-client",
+    "version": "0.0.14+0f870e50a973fa820d4c409000059e181e8d242b (git sha: 0f870e50a973fa820d4c409000059e181e8d242b)",
+    "sha256": "1f46f04ff45caa052903c63f6f652f549d4182ce9bfa3dcc2577c8098e3117d6"
+  },
+  "dependenciesCloned": "APFS clone of candidate node_modules; no install, dependency resolution, or lockfile change",
+  "isolation": "Only owned fixtures/home/databases/sockets/child processes and build outputs; no installed app or operational state read/write/restart/injection; no GitHub Actions or remote writes."
+}

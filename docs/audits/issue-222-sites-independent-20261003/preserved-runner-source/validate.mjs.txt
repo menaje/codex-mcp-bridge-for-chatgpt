@@ -1,0 +1,69 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+process.stdin.setRawMode(true);
+process.stderr.write('Ready for validation JSON on stdin (input is hidden).\n');
+const input = await new Promise(resolve => {
+  let value = '';
+  const onData = chunk => {
+    value += chunk;
+    if (value.includes('\n')) {
+      process.stdin.off('data', onData); process.stdin.setRawMode(false); process.stdin.pause();
+      resolve(JSON.parse(value));
+    }
+  };
+  process.stdin.setEncoding('utf8'); process.stdin.on('data', onData); process.stdin.resume();
+});
+const root = process.cwd();
+const evidence = 'docs/audits/issue-222-sites-independent-20261003';
+const read = name => JSON.parse(readFileSync(path.join(root, evidence, name), 'utf8'));
+const v1 = read('v1-http.json'), v2 = read('v2-http.json');
+assert.equal(v1.requests.length, 6); assert.equal(v2.requests.length, 6);
+assert.equal(v1.requests.at(-1).status, 404); assert.equal(v2.requests.at(-1).status, 401);
+assert.equal(v1.payloadSha256, v2.payloadSha256);
+assert.equal(createHash('sha256').update(JSON.stringify(v2.payload)).digest('hex'), v2.payloadSha256);
+assert(Object.values(v2.storageChecks).every(Boolean));
+assert.equal(v2.toolsList, 'not performed: initialize failed');
+assert.equal(v2.readFixture, 'not performed: initialize failed');
+assert.equal(v2.requests.filter(x => x.path === '/ingest').length, 2);
+assert(v2.requests.filter(x => x.path === '/ingest').every(x => x.payloadSha256 === v2.payloadSha256));
+assert.equal(v1.mockRequests + v2.mockRequests, 0);
+const post = read('post-deploy-observations.json').captures;
+const deployed = post.find(x => x.tool.endsWith('get_deployment_status')).response.structuredContent;
+assert.equal(deployed.status, 'succeeded'); assert.equal(deployed.has_mcp, true);
+const site = post.find(x => x.tool.endsWith('get_site')).response;
+assert.equal(site.current_user_role, 'owner'); assert.equal(site.access_mode, 'custom');
+assert.equal(site.allowed_user_count, 1); assert.equal(site.external_visitor_count, 0);
+assert.deepEqual(site.automations, []); assert.equal(new URL(site.mcp_connection.mcp_url).pathname, '/mcp');
+const files = [];
+function walk(relative) {
+  for (const item of readdirSync(path.join(root, relative), { withFileTypes: true })) {
+    const name = path.join(relative, item.name);
+    if (item.isDirectory()) walk(name); else if (item.isFile()) files.push(name);
+  }
+}
+walk(evidence); walk('scripts/issue-222-sites-independent-20261003');
+let jsonCount = 0, credentialMatches = 0, signedUrls = 0;
+for (const filename of files) {
+  const text = readFileSync(path.join(root, filename), 'utf8');
+  if (filename.endsWith('.json')) { JSON.parse(text); jsonCount++; }
+  for (const secret of input.secrets) if (secret && text.includes(secret)) credentialMatches++;
+  if (/https?:\/\/[^\s"<>]*[?&](?:sig|token)=/i.test(text)) signedUrls++;
+  if (/siwc_bypass_bearer_token"\s*:\s*"[^"\s]+/.test(text)) credentialMatches++;
+}
+assert.equal(credentialMatches, 0); assert.equal(signedUrls, 0);
+const validation = { recordedAt: new Date().toISOString(), evidenceJsonCount: jsonCount,
+  existingCredentialExactMatches: credentialMatches, sourceCredentialExactMatches: credentialMatches,
+  signedScreenshotUrlsInEvidence: signedUrls, semanticAssertions: 'passed', runtimeHttpRequests: 12,
+  writeRequests: 4, distinctPayloads: 1, v2Storage: 'PASS', actualMcp: 'BLOCKED_HTTP401',
+  toolsListCalls: 0, readFixtureCalls: 0, localCalls: 0, providerCallsAfter401: 0,
+  validationScope: 'task-owned evidence and scripts only; does not erase the initial signed URL tool-output incident' };
+const output = path.join(evidence, 'validation.json');
+writeFileSync(path.join(root, output), JSON.stringify(validation, null, 2) + '\n');
+const hashes = [...new Set([...files, output])].filter(name => !name.endsWith('/file-digests.json')).sort().map(name => {
+  const bytes = readFileSync(path.join(root, name));
+  return { path: name, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
+});
+writeFileSync(path.join(root, evidence, 'file-digests.json'), JSON.stringify({ recordedAt: new Date().toISOString(), files: hashes }, null, 2) + '\n');
+console.log(JSON.stringify(validation));

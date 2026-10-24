@@ -3,10 +3,19 @@ import { existsSync, lstatSync, readFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn, spawnSync, execFile } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { computeSourceHash } from "./build-fingerprint.mjs";
 import { parseLauncherArgs, requiredBuildOutputs } from "./launcher-options.mjs";
 import {
+  codexChildEnvironment,
+  codexChildEnvironmentFingerprint,
+  codexAppliedEnvironment,
+  codexProcessEnvironment,
+  mcpOAuthRequested,
+  mcpOAuthEnvironment,
+  isLoopbackOAuthMetadataUrl,
+  CODEX_CHILD_ENV_KEYS,
   loadRuntimeEnvFile,
   resolveRuntimeEnvFile,
   validateSecureTunnelEnvironment
@@ -23,7 +32,13 @@ import {
   readTunnelClientVersion,
   recordTunnelProfileMetadata
 } from "./tunnel-profile.mjs";
-import { hasRecentTunnelControlPlanePoll, writeManagedRuntimeStatus } from "./runtime-status.mjs";
+import { createStartupDiagnostics, writeManagedRuntimeStatus, initialStartupContext, initialStartupStageTimeout } from "./runtime-status.mjs";
+import { createTunnelHealthObserver } from "./tunnel-health.mjs";
+import {
+  assertWellFormedUnicode,
+  decodeUtf8Strict,
+  parseJsonUtf8Strict
+} from "./text-integrity.mjs";
 
 if (process.env.CODEX_MCP_BRIDGE_MANAGED_BY_APP === "1") {
   // The helper owns these log pipes, not the runtime's lifetime. A helper exit
@@ -41,35 +56,18 @@ if (process.platform === "darwin") {
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
+const inheritedEnvironment = { ...process.env };
 const MANAGED_APP_RUNTIME_EXACT_KEYS = new Set([
-  "CA_BUNDLE",
   "CLOUDFLARED_MANAGED",
   "CLOUDFLARED_PATH",
   "CLOUDFLARED_READY_TIMEOUT",
   "CLOUDFLARED_TUNNEL_TOKEN",
-  "CODEX_HOME",
-  "HTTP_PROXY",
-  "HTTPS_PROXY",
-  "ALL_PROXY",
-  "NO_PROXY",
-  "http_proxy",
-  "https_proxy",
-  "all_proxy",
-  "no_proxy",
-  "LANG",
-  "LC_ALL",
-  "LC_CTYPE",
   "LOG_LEVEL",
-  "NODE_EXTRA_CA_CERTS",
   "PROXY_CHECK_INTERVAL",
-  "SSL_CERT_DIR",
-  "SSL_CERT_FILE",
   "TUNNEL_CLIENT",
   "TUNNEL_CLIENT_CONFIG",
   "TUNNEL_CLIENT_PROFILE",
-  "TUNNEL_CLIENT_PROFILE_DIR",
-  "XDG_CONFIG_HOME",
-  "XDG_STATE_HOME"
+  "TUNNEL_CLIENT_PROFILE_DIR"
 ]);
 const args = parseLauncherArgs(process.argv.slice(2));
 // Capture the per-user ownership namespace before an alternate dotenv can
@@ -87,6 +85,9 @@ const runtimeEnvLoaded = args.help
         ? isManagedAppRuntimeKey
         : undefined
     });
+if (!args.help) Object.assign(process.env, codexChildEnvironment(runtimeEnvFile, inheritedEnvironment));
+const startup = createStartupDiagnostics("launcher");
+startup("environment-loaded");
 const mode = args.mode || process.env.CODEX_MCP_BRIDGE_MODE || "local";
 const tunnelTransport =
   args.transport || process.env.CODEX_MCP_BRIDGE_TUNNEL_TRANSPORT || "http";
@@ -113,8 +114,22 @@ let ownsRuntimeState = false;
 let tunnelHealthTimer;
 let tunnelHealthProbeRunning = false;
 let tunnelHealthCancellation;
+let tunnelHealthObserver;
 let tunnelHealthFailedAt;
 let runtimePhase = "starting";
+const initialStart = initialStartupContext(inheritedEnvironment);
+for (const name of Object.keys(process.env)) if (name.startsWith("CODEX_MCP_BRIDGE_INITIAL_START_")) delete process.env[name];
+if (initialStart) Object.assign(process.env, {
+  CODEX_MCP_BRIDGE_INITIAL_START_REQUEST: initialStart.requestId,
+  CODEX_MCP_BRIDGE_INITIAL_START_TOKEN: initialStart.token,
+  CODEX_MCP_BRIDGE_INITIAL_START_ATTEMPT: String(initialStart.attempt),
+  CODEX_MCP_BRIDGE_INITIAL_START_DEADLINE: String(initialStart.deadlineAt),
+  CODEX_MCP_BRIDGE_INITIAL_START_LAUNCHER_PID: String(process.pid)
+});
+let startupStage = "launching";
+let startupFailureCode = null;
+let startupCauseCode = null;
+let startupReadyAt = null;
 let activeRuntimeBuildId = "unbuilt";
 let tunnelState = {
   phase: mode === "secure" ? "stopped" : "not-applicable",
@@ -128,7 +143,29 @@ let tunnelState = {
   lastProblem: null
 };
 
+if (initialStart) process.on("message", message => {
+  if (message?.type !== "initial-start-deadline" || message.requestId !== initialStart.requestId ||
+      message.token !== initialStart.token || !Number.isSafeInteger(message.deadlineAt) ||
+      message.deadlineAt >= initialStart.deadlineAt) return;
+  initialStart.deadlineAt = message.deadlineAt;
+  process.env.CODEX_MCP_BRIDGE_INITIAL_START_DEADLINE = String(message.deadlineAt);
+  for (const child of children) if (child.connected) child.send(message, () => {});
+  tryPublishRuntimeStatus();
+});
+
+// Only this initial-start scope bounds setup subprocesses by remaining time.
+// Existing CLI/recovery invocations keep their original per-command behavior.
+function initialRun(command, arguments_, options) {
+  if (!initialStart) return spawnSync(command, arguments_, options);
+  const remaining = initialStart.deadlineAt - Date.now();
+  if (remaining <= 0) throw Object.assign(new Error("Initial startup budget expired."), { code: "STARTUP_BUDGET_EXHAUSTED" });
+  return spawnSync(command, arguments_, { ...options, timeout: Math.max(1, Math.min(options.timeout || 30_000, remaining)), killSignal: "SIGKILL" });
+}
+
 main().catch((error) => {
+  if (initialStart && !startupFailureCode) startupFailureCode =
+    error?.code === "STARTUP_HTTP_TIMEOUT" || error?.code === "STARTUP_TUNNEL_TIMEOUT"
+      ? error.code : error?.code === "STARTUP_BUDGET_EXHAUSTED" ? error.code : "STARTUP_LAUNCHER_FAILED";
   console.error(error instanceof Error ? error.message : String(error));
   void shutdown(1, "failed");
 });
@@ -143,6 +180,9 @@ async function main() {
   }
   if (tunnelTransport !== "http" && tunnelTransport !== "stdio") {
     throw new Error(`Unknown transport: ${tunnelTransport}. Use http or stdio.`);
+  }
+  if (mcpOAuthRequested(process.env) && tunnelTransport === "stdio") {
+    throw new Error("MCP OAuth requires HTTP transport; stdio cannot supply a verified user principal.");
   }
   if (mode === "local" && tunnelTransport === "stdio") {
     throw new Error("Local stdio uses npm run dev:stdio or npm run start:stdio directly.");
@@ -159,7 +199,14 @@ async function main() {
         )
       : undefined;
   enforceManagedAppAuthenticationBoundary();
+  startup("build-check-start");
   ensureBuilt();
+  startup("build-check-complete");
+  if (mcpOAuthRequested(process.env)) {
+    const { loadConfig } = await import(resolve(repoRoot, "dist/config.js"));
+    // Validate the explicit settings before acquiring locks or starting children.
+    loadConfig({ ...process.env, CODEX_MCP_BRIDGE_HOST: host, CODEX_MCP_BRIDGE_PORT: port });
+  }
   activeRuntimeBuildId = installedRuntimeBuildId();
   runtimeLocks = acquireRuntimeOwnershipLocks(
     resolve(args.runtimeLockDirectory || canonicalRuntimeLockDirectory),
@@ -168,8 +215,12 @@ async function main() {
   ownsRuntimeState = true;
   publishRuntimeStatus();
   if (tunnelTransport === "http") {
+    startup("bridge-start");
+    startupStage = "http";
+    publishRuntimeStatus();
     startBridge();
     await waitForHealth(`${localOriginUrl}/healthz`);
+    startup("bridge-healthy");
   }
 
   if (mode === "local") {
@@ -202,7 +253,7 @@ function acquireRuntimeOwnershipLocks(primaryDirectory, compatibilityDirectory) 
   const locks = [];
   try {
     for (const directory of directories) {
-      locks.push(acquireRuntimeLock(directory));
+      locks.push(acquireRuntimeLock(directory, initialStart ? { token: initialStart.token } : {}));
     }
     return locks;
   } catch (error) {
@@ -227,7 +278,7 @@ function isManagedAppRuntimeKey(name) {
   ) {
     return true;
   }
-  return MANAGED_APP_RUNTIME_EXACT_KEYS.has(name);
+  return MANAGED_APP_RUNTIME_EXACT_KEYS.has(name) || CODEX_CHILD_ENV_KEYS.includes(name);
 }
 
 
@@ -258,17 +309,22 @@ function ensureBuilt() {
 function buildMatchesSource(outputPaths) {
   if (!outputPaths.every((outputPath) => existsSync(outputPath))) return false;
   try {
-    const buildInfo = JSON.parse(readFileSync(resolve(repoRoot, "dist/build-info.json"), "utf8"));
+    const buildInfo = parseJsonUtf8Strict(
+      readFileSync(resolve(repoRoot, "dist/build-info.json")),
+      "Installed build metadata"
+    );
     return buildInfo.sourceHash === computeSourceHash(repoRoot);
   } catch {
     return false;
   }
 }
 
-async function startSecureTunnel({ tunnelId }) {
+async function startSecureTunnel({ apiKey, tunnelId }) {
+  startupStage = "tunnel";
+  publishRuntimeStatus();
   const tunnelClient = args.tunnelClient || process.env.TUNNEL_CLIENT || defaultTunnelClient();
   const profile = args.profile || process.env.TUNNEL_CLIENT_PROFILE ||
-    (tunnelTransport === "stdio" ? "codex-mcp-bridge-stdio" : "codex-mcp-bridge");
+    (tunnelTransport === "stdio" ? "codex-mcp-bridge-stdio" : mcpOAuthRequested(process.env) ? "codex-mcp-bridge-oauth" : "codex-mcp-bridge");
   const endpointArguments = tunnelTransport === "stdio"
     ? [
         "--sample",
@@ -278,18 +334,23 @@ async function startSecureTunnel({ tunnelId }) {
       ]
     : [
         "--sample",
-        "sample_mcp_remote_no_auth",
+        mcpOAuthRequested(process.env) ? "sample_mcp_with_dcr" : "sample_mcp_remote_no_auth",
         "--mcp-server-url",
         localMcpUrl,
         "--health-listen-addr",
         "127.0.0.1:0"
       ];
-  const childEnvironment = bridgeEnvironment();
+  const childEnvironment = {
+    ...codexProcessEnvironment(bridgeEnvironment()),
+    CONTROL_PLANE_API_KEY: apiKey,
+    CONTROL_PLANE_TUNNEL_ID: tunnelId
+  };
   const runtimeBuildId = activeRuntimeBuildId;
   const tunnelClientVersion = readTunnelClientVersion(
     tunnelClient,
     childEnvironment,
-    repoRoot
+    repoRoot,
+    initialRun
   );
   const profileMetadataFile = resolve(
     args.profileMetadataFile || defaultTunnelProfileMetadataFile(runtimeEnvFile, profile)
@@ -303,7 +364,9 @@ async function startSecureTunnel({ tunnelId }) {
     runtimeRoot: repoRoot,
     nodeExecutable: process.execPath,
     tunnelClient,
-    tunnelClientVersion
+    tunnelClientVersion,
+    authentication: mcpOAuthRequested(process.env)
+      ? createHash("sha256").update(JSON.stringify(mcpOAuthEnvironment(process.env))).digest("hex") : "noauth"
   });
   const reuse = args.reuseProfile
     ? inspectReusableTunnelProfile({
@@ -312,7 +375,8 @@ async function startSecureTunnel({ tunnelId }) {
         environment: childEnvironment,
         cwd: repoRoot,
         metadataFile: profileMetadataFile,
-        expected: identity
+        expected: identity,
+        run: initialRun
       })
     : { reusable: false, reason: "profile rebuild was requested" };
   if (reuse.reusable) {
@@ -330,7 +394,7 @@ async function startSecureTunnel({ tunnelId }) {
       ...endpointArguments,
       "--force"
     ];
-    const init = spawnSync(
+    const init = initialRun(
       tunnelClient,
       initArguments,
       { cwd: repoRoot, env: childEnvironment, stdio: "inherit" }
@@ -338,23 +402,27 @@ async function startSecureTunnel({ tunnelId }) {
     if (init.status !== 0) throw new Error("tunnel-client init failed.");
   }
 
-  const doctor = spawnSync(tunnelClient, ["doctor", "--profile", profile, "--explain"], {
+  startup("tunnel-doctor-start");
+  const doctor = initialRun(tunnelClient, ["doctor", "--profile", profile, "--explain"], {
     cwd: repoRoot,
-    env: childEnvironment,
-    encoding: "utf8"
+    env: childEnvironment
   });
-  if (doctor.stdout) process.stdout.write(doctor.stdout);
-  if (doctor.stderr) process.stderr.write(doctor.stderr);
-  if (doctor.status !== 0 && !isIgnorableNoAuthDoctorFailure(`${doctor.stdout || ""}\n${doctor.stderr || ""}`)) {
+  const doctorStdout = processOutputText(doctor.stdout, "tunnel-client doctor stdout");
+  const doctorStderr = processOutputText(doctor.stderr, "tunnel-client doctor stderr");
+  if (doctorStdout) process.stdout.write(doctorStdout);
+  if (doctorStderr) process.stderr.write(doctorStderr);
+  if (doctor.status !== 0 && (mcpOAuthRequested(process.env) || !isIgnorableNoAuthDoctorFailure(`${doctorStdout}\n${doctorStderr}`))) {
     throw new Error("tunnel-client doctor failed. Fix the tunnel or API-key setup first.");
   }
+  startup("tunnel-doctor-complete");
   recordTunnelProfileMetadata({
     tunnelClient,
     profile,
     environment: childEnvironment,
     cwd: repoRoot,
     metadataFile: profileMetadataFile,
-    identity
+    identity,
+    run: initialRun
   });
 
   const mcpConcurrency =
@@ -377,6 +445,9 @@ async function startSecureTunnel({ tunnelId }) {
     lastProblem: null
   };
   publishRuntimeStatus();
+  startupStage = "tunnel";
+  publishRuntimeStatus();
+  startup("tunnel-spawn-start");
   const tunnel = spawnChild(tunnelClient, [
     "run",
     "--profile",
@@ -392,11 +463,22 @@ async function startSecureTunnel({ tunnelId }) {
     "--control-plane.max-inflight",
     controlPlaneInflight,
     "--log.level",
-    logLevel
-  ], { env: childEnvironment });
+    logLevel,
+    ...(mcpOAuthRequested(process.env) && isLoopbackOAuthMetadataUrl(
+      process.env.CODEX_MCP_BRIDGE_OAUTH_RESOURCE_METADATA_URL ?? process.env.CODEX_GPT_BRIDGE_OAUTH_RESOURCE_METADATA_URL ?? "",
+      host, port
+    ) ? ["--harpoon.allow-plaintext-http=true"] : [])
+  ], { env: childEnvironment, privateFileCreation: true });
+  startup("tunnel-spawned");
   tunnelState = { ...tunnelState, processRunning: true };
   publishRuntimeStatus();
-  await waitForTunnelReady(tunnelClient, childEnvironment, tunnel);
+  tunnelHealthObserver = createTunnelHealthObserver({
+    urlFile: tunnelHealthUrlFile, pidFile: tunnelPidFile, expectedPid: tunnel.pid
+  });
+  await waitForTunnelReady(tunnel);
+  startup("tunnel-ready");
+  startupStage = "ready";
+  startupReadyAt = Date.now();
   runtimePhase = "running";
   tunnelState = {
     ...tunnelState,
@@ -408,7 +490,7 @@ async function startSecureTunnel({ tunnelId }) {
     lastProblem: null
   };
   publishRuntimeStatus();
-  beginTunnelHealthMonitoring(tunnelClient, childEnvironment, tunnel);
+  beginTunnelHealthMonitoring(tunnel);
   console.log(
     `Secure MCP Tunnel is running with profile ${profile} over ${tunnelTransport}.`
   );
@@ -421,16 +503,17 @@ async function startSecureTunnel({ tunnelId }) {
 
 function startBridge() {
   return spawnChild("node", [resolve(repoRoot, "dist/cli.js")], {
-    env: bridgeEnvironment()
+    env: bridgeEnvironment(), initialStartupBridge: true
   });
 }
 
 function bridgeEnvironment() {
   const env = {
-    ...process.env,
+    ...codexProcessEnvironment(process.env),
+    ...(mcpOAuthRequested(process.env) ? mcpOAuthEnvironment(process.env) : {}),
     CODEX_MCP_BRIDGE_HOST: host,
     CODEX_MCP_BRIDGE_PORT: port,
-    CODEX_MCP_BRIDGE_NO_AUTH: "1",
+    CODEX_MCP_BRIDGE_NO_AUTH: mcpOAuthRequested(process.env) ? "0" : "1",
     CODEX_MCP_BRIDGE_ALLOWED_HOSTS: "127.0.0.1,localhost"
   };
   if (args.write) {
@@ -464,12 +547,38 @@ function shellQuote(value) {
 }
 
 function spawnChild(command, childArgs, options = {}) {
-  const child = spawn(command, childArgs, {
-    cwd: repoRoot,
-    env: options.env || process.env,
-    stdio: ["ignore", "pipe", "pipe"]
-  });
+  // tunnel-client writes its PID with mode 0644. Restrict the inherited mask
+  // before it can create either locator; chmod after creation leaves a race.
+  // Restore synchronously so other children retain the launcher's own mask.
+  const previousMask = options.privateFileCreation && process.platform !== "win32"
+    ? process.umask() : undefined;
+  let child;
+  try {
+    if (previousMask !== undefined) process.umask(previousMask | 0o077);
+    child = spawn(command, childArgs, {
+      cwd: repoRoot,
+      env: options.env || process.env,
+      stdio: initialStart && options.initialStartupBridge ? ["ignore", "pipe", "pipe", "ipc"] : ["ignore", "pipe", "pipe"]
+    });
+  } finally {
+    if (previousMask !== undefined) process.umask(previousMask);
+  }
   children.add(child);
+  if (initialStart && options.initialStartupBridge) {
+    child.on("message", message => {
+      if (message?.type === "initial-start-stage" && ["state-owner", "http"].includes(message.stage)) {
+        startupStage = message.stage;
+        tryPublishRuntimeStatus();
+        return;
+      }
+      if (message?.type !== "initial-start-failure" ||
+          !["STARTUP_STATE_TIMEOUT", "STARTUP_STATE_FAILED", "STARTUP_PROTOCOL_MISMATCH"].includes(message.code)) return;
+      startupFailureCode = message.code;
+      startupCauseCode = /^(STATE_STORAGE_(BUSY|FULL|IO|CORRUPT|READ_ONLY)|RUNTIME_REQUEST_FAILED)$/.test(message.causeCode || "")
+        ? message.causeCode : null;
+      tryPublishRuntimeStatus();
+    });
+  }
   child.stdout.on("data", (chunk) => process.stdout.write(chunk));
   child.stderr.on("data", (chunk) => process.stderr.write(chunk));
   child.on("exit", (code) => {
@@ -484,7 +593,8 @@ function spawnChild(command, childArgs, options = {}) {
           connected: false,
           lastCheckedAt: new Date().toISOString(),
           lastError: "The tunnel-client process exited unexpectedly.",
-          lastProblem: statusProblem("tunnel-process-exited")
+          lastProblem: statusProblem("tunnel-process-exited"),
+          observation: stoppedTunnelObservation("process-exited")
         };
         tryPublishRuntimeStatus();
       }
@@ -501,13 +611,15 @@ function spawnChild(command, childArgs, options = {}) {
 }
 
 async function waitForHealth(url) {
-  const started = Date.now();
-  while (Date.now() - started < 30_000) {
-    const result = spawnSync("curl", ["-fsS", "--max-time", "5", url], { encoding: "utf8" });
+  const deadline = Date.now() + initialStartupStageTimeout(90_000, 30_000);
+  while (Date.now() < Math.min(deadline, initialStart?.deadlineAt ?? Infinity)) {
+    if (shuttingDown) throw new Error("STARTUP_CHILD_EXITED");
+    const remainingSeconds = Math.max(0.001, Math.min(5, (Math.min(deadline, initialStart?.deadlineAt ?? Infinity) - Date.now()) / 1000));
+    const result = spawnSync("curl", ["-fsS", "--max-time", String(remainingSeconds), url]);
     if (result.status === 0) return;
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, Math.max(0, Math.min(500, deadline - Date.now()))));
   }
-  throw new Error(`Timed out waiting for ${url}.`);
+  throw Object.assign(new Error(`Timed out waiting for ${url}.`), { code: "STARTUP_HTTP_TIMEOUT" });
 }
 
 function defaultTunnelClient() {
@@ -517,7 +629,10 @@ function defaultTunnelClient() {
 
 function installedRuntimeBuildId() {
   try {
-    const build = JSON.parse(readFileSync(resolve(repoRoot, "dist/build-info.json"), "utf8"));
+    const build = parseJsonUtf8Strict(
+      readFileSync(resolve(repoRoot, "dist/build-info.json")),
+      "Installed build metadata"
+    );
     if (typeof build.id === "string" && build.id) return build.id;
   } catch {
     // ensureBuilt reports missing installed output before secure startup.
@@ -525,19 +640,20 @@ function installedRuntimeBuildId() {
   return "unbuilt";
 }
 
-async function waitForTunnelReady(tunnelClient, environment, child) {
-  const deadline = Date.now() + 60_000;
-  while (Date.now() < deadline) {
+async function waitForTunnelReady(child) {
+  const deadline = Date.now() + initialStartupStageTimeout(60_000, 60_000);
+  while (Date.now() < Math.min(deadline, initialStart?.deadlineAt ?? Infinity)) {
     if (child.exitCode !== null || child.signalCode !== null) {
       throw new Error("tunnel-client exited before the control-plane connection became ready.");
     }
-    const { connected } = await probeTunnelHealth(tunnelClient, environment);
+    const { connected, observation } = await probeTunnelHealth(Math.min(deadline, initialStart?.deadlineAt ?? Infinity));
     if (shuttingDown || child.exitCode !== null || child.signalCode !== null) throw new Error("Tunnel stopped while checking readiness.");
     tunnelState = {
       ...tunnelState,
       phase: connected ? "connected" : "starting",
       processRunning: true,
       connected,
+      observation,
       lastCheckedAt: new Date().toISOString(),
       // A control-plane poll that has not succeeded yet is normal startup
       // progress, not an error. The native client presents phase=starting in
@@ -546,36 +662,41 @@ async function waitForTunnelReady(tunnelClient, environment, child) {
       lastProblem: null
     };
     publishRuntimeStatus();
-    if (connected) return;
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
+    if (connected && Date.now() < Math.min(deadline, initialStart?.deadlineAt ?? Infinity)) return;
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, Math.max(0, Math.min(500, Math.min(deadline, initialStart?.deadlineAt ?? Infinity) - Date.now()))));
   }
-  throw new Error("Timed out waiting for a successful Secure MCP Tunnel control-plane poll.");
+  throw Object.assign(new Error("Timed out waiting for a successful Secure MCP Tunnel control-plane poll."), { code: "STARTUP_TUNNEL_TIMEOUT" });
 }
 
-function beginTunnelHealthMonitoring(tunnelClient, environment, child) {
+function beginTunnelHealthMonitoring(child) {
   tunnelHealthTimer = setInterval(async () => {
     if (shuttingDown || tunnelHealthProbeRunning) return;
     tunnelHealthProbeRunning = true;
     try {
       const processRunning = child.exitCode === null && child.signalCode === null;
       const probe = processRunning
-        ? await probeTunnelHealth(tunnelClient, environment)
+        ? await probeTunnelHealth()
         : { connected: false, reason: "tunnel process is not running" };
       if (shuttingDown || child.exitCode !== null || child.signalCode !== null) return;
-      const { connected } = probe;
-      recordTunnelHealthTransition(connected, probe.reason, child.pid);
+      const { connected, observation } = probe;
+      recordTunnelHealthTransition(connected && !observation?.failure, probe.reason, child.pid);
       tunnelState = {
         ...tunnelState,
         phase: connected ? "connected" : "degraded",
         processRunning,
         connected,
+        observation,
         lastCheckedAt: new Date().toISOString(),
-        lastError: connected
+        lastError: observation?.failure
+          ? "The tunnel health observation could not be confirmed."
+          : connected
           ? null
           : processRunning
             ? "The tunnel readiness probe is failing; reconnecting may be in progress."
             : "The tunnel-client process is not running.",
-        lastProblem: connected
+        lastProblem: observation?.failure && connected
+          ? statusProblem("tunnel-health-probe-failed")
+          : connected
           ? null
           : statusProblem(
               processRunning
@@ -603,57 +724,25 @@ function beginTunnelHealthMonitoring(tunnelClient, environment, child) {
   tunnelHealthTimer.unref();
 }
 
-async function probeTunnelHealth(tunnelClient, environment) {
-  if (!existsSync(tunnelHealthUrlFile) || !existsSync(tunnelPidFile)) {
-    return { connected: false, reason: "health endpoint locator or pid file is missing" };
-  }
+async function probeTunnelHealth(deadline) {
   const cancellation = new AbortController();
+  const timeout = deadline !== undefined ? setTimeout(() => cancellation.abort(), Math.max(0, deadline - Date.now())) : undefined;
   tunnelHealthCancellation = cancellation;
-  const result = await new Promise(resolveProbe => execFile(tunnelClient, [
-    "health",
-    "--json",
-    "--url-file",
-    tunnelHealthUrlFile,
-    "--pid-file",
-    tunnelPidFile,
-    "--require-control-plane-poll"
-  ], {
-    cwd: repoRoot,
-    env: environment,
-    encoding: "utf8",
-    timeout: 5_000,
-    signal: cancellation.signal,
-    killSignal: "SIGKILL",
-    maxBuffer: 64 * 1024
-  }, (error, stdout) => resolveProbe({
-    status: error ? (typeof error.code === "number" ? error.code : null) : 0,
-    error, signal: error?.signal, stdout
-  })));
-  if (tunnelHealthCancellation === cancellation) tunnelHealthCancellation = undefined;
-  if (result.status === 0) {
-    try {
-      if (hasRecentTunnelControlPlanePoll(JSON.parse(result.stdout))) return { connected: true };
-    } catch { /* Missing or malformed successful-poll evidence is not readiness. */ }
-    return { connected: false, reason: "control-plane-poll-stale-or-unverified" };
-  }
-  const evidence = [`exit=${result.status ?? "none"}`];
-  if (result.error?.code) evidence.push(`error=${safeStatusText(result.error.code)}`);
-  if (result.signal) evidence.push(`signal=${result.signal}`);
-  // Only retain known non-secret fields. Never log the CLI's raw output,
-  // response bodies, URLs, or credentials returned by a failed endpoint.
   try {
-    const report = JSON.parse(result.stdout);
-    for (const name of ["healthz", "readyz"]) {
-      if (Number.isInteger(report[name]?.status)) evidence.push(`${name}=${report[name].status}`);
-    }
-    if (typeof report.control_plane_poll?.ok === "boolean") {
-      evidence.push(`control-plane-poll=${report.control_plane_poll.ok}`);
-    }
-    if (typeof report.process?.running === "boolean") evidence.push(`process-running=${report.process.running}`);
-  } catch {
-    // A command that could not execute may not produce a JSON report.
+    return await tunnelHealthObserver.probe({ signal: cancellation.signal });
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    if (tunnelHealthCancellation === cancellation) tunnelHealthCancellation = undefined;
   }
-  return { connected: false, reason: evidence.join(", ") };
+}
+
+function processOutputText(value, field) {
+  if (value instanceof Uint8Array) return decodeUtf8Strict(value, field);
+  if (typeof value === "string") {
+    assertWellFormedUnicode(value, field);
+    return value;
+  }
+  return "";
 }
 
 function recordTunnelHealthTransition(connected, reason, pid) {
@@ -666,11 +755,24 @@ function recordTunnelHealthTransition(connected, reason, pid) {
   }
 }
 
+function stoppedTunnelObservation(failure) {
+  if (!tunnelState.observation) return undefined;
+  return {
+    healthz: { status: null, failure: "not-observed" },
+    readyz: { status: null, failure: "not-observed" },
+    controlPlanePoll: { ...tunnelState.observation.controlPlanePoll, fresh: false, failure: "not-observed" },
+    failure: tunnelState.observation.failure === "process-exited" ? "process-exited" : failure
+  };
+}
+
 function publishRuntimeStatus() {
   if (!ownsRuntimeState) return;
   writeManagedRuntimeStatus(runtimeStatusFile, {
     phase: runtimePhase,
+    ...(initialStart ? { startup: { ...initialStart, stage: startupStage, failureCode: startupFailureCode, causeCode: startupCauseCode, readyAt: startupReadyAt } } : {}),
     runtimeBuildId: activeRuntimeBuildId,
+    codexEnvironmentFingerprint: codexChildEnvironmentFingerprint(process.env),
+    codexEnvironment: codexAppliedEnvironment(process.env),
     tunnel: tunnelState
   });
 }
@@ -745,6 +847,7 @@ function shutdown(code = 0, phase = "stopped") {
   if (shutdownPromise) return shutdownPromise;
   shuttingDown = true;
   tunnelHealthCancellation?.abort();
+  tunnelHealthObserver?.close();
   shutdownPromise = (async () => {
     if (tunnelHealthTimer) {
       clearInterval(tunnelHealthTimer);
@@ -755,6 +858,7 @@ function shutdown(code = 0, phase = "stopped") {
       ...tunnelState,
       phase: tunnelState.phase === "not-applicable" ? "not-applicable" : "stopping",
       connected: false,
+      observation: stoppedTunnelObservation("aborted"),
       lastCheckedAt: new Date().toISOString()
     };
     tryPublishRuntimeStatus();
@@ -770,6 +874,7 @@ function shutdown(code = 0, phase = "stopped") {
       phase: tunnelState.phase === "not-applicable" ? "not-applicable" : phase,
       processRunning: false,
       connected: false,
+      observation: stoppedTunnelObservation("aborted"),
       lastCheckedAt: new Date().toISOString()
     };
     tryPublishRuntimeStatus();

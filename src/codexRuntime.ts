@@ -1,6 +1,6 @@
 import { CLI_INSTALL_VALIDATION_ID, verifyCliConnection } from "./runtimeCompatibility.js";
 import { inspectCliProtocol, type CliProtocolSupport } from "./cliProtocol.js";
-import { constants } from "node:fs";
+import { accessSync, constants, readFileSync, realpathSync, statSync } from "node:fs";
 import { access, chmod, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -9,6 +9,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
 import { installManagedCli } from "./runtimeDownloads.js";
+import { decodeUtf8Strict, parseJsonUtf8Strict } from "./textIntegrity.js";
 
 const executeFile = promisify(execFile);
 const versionSchema = z.string().regex(/^\d+\.\d+\.\d+$/);
@@ -48,6 +49,11 @@ export type CliRuntimeSnapshot = {
   knownVersions?: string[];
   selection: CliCandidate | null; candidates: CliCandidate[]; selectionRequired: boolean;
   configuredCommand?: string;
+  environmentPending?: boolean;
+  appliedEnvironment?: CliEnvironmentSummary;
+  runningEnvironment?: CliEnvironmentSummary | null;
+  requestedEnvironment?: CliEnvironmentSummary | null;
+  requestedEnvironmentProblem?: { code: string; arguments: Record<string, string> } | null;
   pendingSelection: CliSelection | null; installedVersion: string | null; runningVersions: string[];
   updateVersion: string | null; latestVersion: string | null; checkedAt: string | null; lastSuccessfulCheckAt?: string | null; updateCheckError?: string | null;
   preferences: RuntimePreferences; operation: RuntimeState["operation"];
@@ -56,7 +62,14 @@ export type CliRuntimeSnapshot = {
     rollback: boolean; cleanup: boolean; retry: boolean; applyPending: boolean; skip: boolean };
   billing?: import("./codexBilling.js").CodexBillingSnapshot;
   account?: import("./codexAccount.js").CodexAccountSnapshot | null;
+  authSelection?: import("./codexAuthSelection.js").AuthSelectionSnapshot;
   managedVersions: { version: string; bytes: number; active: boolean; staged: boolean; recovery: boolean }[];
+};
+export type CliEnvironmentSummary = {
+  runtimeHome: string;
+  codexHome: string;
+  configuredCommand: string | null;
+  selection: CliCandidate | null;
 };
 export type RuntimeInstaller = (options: {
   directory: string; version: string; previousCommand?: string;
@@ -73,6 +86,15 @@ export type RuntimeManagerOptions = {
   validationId?: string;
 };
 type RuntimeLease = { pid: number; selection: CliSelection; startedAt: string };
+
+export function defaultCodexAppPaths(home = homedir(), applicationsDirectory = "/Applications"): string[] {
+  const userApplicationsDirectory = path.join(home, "Applications");
+  return [applicationsDirectory, userApplicationsDirectory].flatMap(directory => [
+    path.join(directory, "Codex.app/Contents/Resources/codex"),
+    path.join(directory, "ChatGPT.app/Contents/Resources/codex"),
+    path.join(directory, "ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex")
+  ]);
+}
 
 /** One saved choice. Discovery never changes an existing choice or an explicit removal. */
 export class CodexRuntimeManager {
@@ -91,8 +113,9 @@ export class CodexRuntimeManager {
   constructor(options: RuntimeManagerOptions = {}) {
     this.options = options;
     this.environment = options.environment || process.env;
-    this.root = path.resolve(options.root || this.environment.CODEX_MCP_BRIDGE_RUNTIME_HOME ||
+    const root = path.resolve(options.root || this.environment.CODEX_MCP_BRIDGE_RUNTIME_HOME ||
       path.join(homedir(), ".codex-mcp-bridge", "runtimes"));
+    this.root = canonicalRuntimePath(root);
   }
 
   private get validationId(): string { return this.options.validationId || CLI_INSTALL_VALIDATION_ID; }
@@ -100,6 +123,43 @@ export class CodexRuntimeManager {
   private configuredCommand(): string | undefined {
     if (this.options.discoverExternal === false) return undefined;
     return this.options.explicitCommand || this.environment.CODEX_MCP_BRIDGE_CODEX || this.environment.CODEX_GPT_BRIDGE_CODEX || undefined;
+  }
+
+  /**
+   * Synchronous, non-sensitive cache identity for the applied selection. The
+   * same command and native-binary resolution used by admission is used here;
+   * pending choices and installation progress are intentionally excluded.
+   */
+  appliedContextFingerprint(): string {
+    const stateFile = path.join(this.root, "cli-state.json");
+    let selection: CliSelection | null = null;
+    let stateIssue: string | null = null;
+    try {
+      selection = stateSchema.parse(parseJsonUtf8Strict(readFileSync(stateFile), "runtime state")).selection;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        try { stateIssue = createHash("sha256").update(readFileSync(stateFile)).digest("hex"); }
+        catch (readError) { stateIssue = (readError as NodeJS.ErrnoException).code || "invalid"; }
+      }
+    }
+    const configured = this.configuredCommand();
+    const command = configured || selection?.command || null;
+    let resolved = command;
+    let physical: string | null = null;
+    let commandStamp: string | null = null;
+    let nativeStamp: string | null = null;
+    if (command) {
+      try {
+        resolved = resolveOnPath(command, this.environment);
+        physical = physicalCodexPath(resolved);
+        commandStamp = fileStamp(resolved);
+        nativeStamp = fileStamp(physical);
+      } catch { /* A missing choice has its own identity and cannot borrow PATH. */ }
+    }
+    return createHash("sha256").update(JSON.stringify([
+      this.root, configured ? "configured" : "saved", command, configured ? null : selection?.source,
+      resolved, physical, commandStamp, nativeStamp, stateIssue
+    ])).digest("hex");
   }
 
   private async managedPaths(state: RuntimeState): Promise<Map<string, ManagedInstall>> {
@@ -128,11 +188,7 @@ export class CodexRuntimeManager {
   async discover(savedState?: RuntimeState): Promise<CliCandidate[]> {
     const state = savedState || await this.readState();
     const managedPaths = await this.managedPaths(state);
-    const apps = this.options.discoverExternal === false ? [] : this.options.appPaths || [
-      "/Applications/Codex.app/Contents/Resources/codex", "/Applications/ChatGPT.app/Contents/Resources/codex",
-      path.join(homedir(), "Applications/Codex.app/Contents/Resources/codex"),
-      path.join(homedir(), "Applications/ChatGPT.app/Contents/Resources/codex")
-    ];
+    const apps = this.options.discoverExternal === false ? [] : this.options.appPaths || defaultCodexAppPaths();
     const paths: { command: string; source: CliSelection["source"] }[] = [
       ...apps.map(command => ({ command, source: "app" as const })),
       ...(this.options.discoverExternal === false ? "" : this.environment.PATH || "").split(path.delimiter).filter(Boolean)
@@ -158,15 +214,13 @@ export class CodexRuntimeManager {
     return [...unique.values()];
   }
 
-  async snapshot(): Promise<CliRuntimeSnapshot> {
+  async snapshot(options: { selectInitial?: boolean } = {}): Promise<CliRuntimeSnapshot> {
     let state = await this.readState();
     const candidates = await this.discover(state);
     const configuredCommand = this.configuredCommand();
-    if (!configuredCommand && !state.selection && !state.selectionRequired) {
-      const external = candidates.filter(candidate => candidate.source !== "bridge");
-      const initial = external.length === 1 ? external[0] : external.length === 0
-        ? candidates.find(candidate => state.managed.find(install => install.id === state.activeId && this.managedCommand(install) === candidate.command))
-        : undefined;
+    if (options.selectInitial !== false && !configuredCommand && !state.selection && !state.selectionRequired) {
+      const initial = candidates.find(candidate => state.managed.find(install =>
+        install.id === state.activeId && this.managedCommand(install) === candidate.command));
       if (initial) {
         await this.changeState(current => {
           if (!current.selection && !current.selectionRequired) current.selection = selectionSchema.parse(initial);
@@ -285,7 +339,7 @@ export class CodexRuntimeManager {
   }
 
   /** Seal the selection and its usage record under the same lock as activation/removal. */
-  async acquire(explicitCommand: string | undefined = this.configuredCommand()): Promise<{ selection: CliSelection; release: () => Promise<void> }> {
+  async acquire(explicitCommand: string | undefined = this.configuredCommand()): Promise<{ selection: CliSelection; fingerprint: string; protocol?: CliProtocolSupport; release: () => Promise<void> }> {
     const selection = await this.resolve(explicitCommand);
     return withRuntimeLock(this.root, "cli", async () => {
       const state = await this.readState();
@@ -295,7 +349,13 @@ export class CodexRuntimeManager {
       const inspected = await this.inspectSelection(selection);
       if (!inspected.available) throw new Error("CODEX_SELECTION_UNAVAILABLE: The selected installation needs recovery.");
       assertCompatibleSelection(inspected);
-      return { selection, release: await this.lease(selection) };
+      const release = await this.lease(selection);
+      try {
+        return { selection, fingerprint: this.appliedContextFingerprint(), protocol: inspected.protocol, release };
+      } catch (error) {
+        await release();
+        throw error;
+      }
     });
   }
 
@@ -516,7 +576,10 @@ export class CodexRuntimeManager {
       if (!entry.isDirectory() || !/^\d+\.\d+\.\d+-[a-f0-9-]{36}$/.test(entry.name) || state.managed.some(item => item.id === entry.name)) continue;
       const directory = path.join(this.root, "cli", entry.name);
       try {
-        const marker = JSON.parse(await readFile(path.join(directory, "bridge-install.json"), "utf8"));
+        const marker = parseJsonUtf8Strict<Record<string, unknown>>(
+          await readFile(path.join(directory, "bridge-install.json")),
+          "managed runtime installation marker"
+        );
         if (marker.schemaVersion === 1 && marker.id === entry.name && marker.owner === "codex-mcp-bridge") result.push({ id: entry.name, bytes: await directoryBytes(directory) });
       } catch { /* Never reclaim unrecognized user files or incomplete ownership markers. */ }
     }
@@ -591,7 +654,9 @@ export class CodexRuntimeManager {
     for (const name of await readdir(directory).catch(() => [] as string[])) {
       const file = path.join(directory, name);
       try {
-        const value = z.object({ pid: z.number().int().positive(), selection: selectionSchema, startedAt: z.string() }).parse(JSON.parse(await readFile(file, "utf8")));
+        const value = z.object({ pid: z.number().int().positive(), selection: selectionSchema, startedAt: z.string() }).parse(
+          parseJsonUtf8Strict(await readFile(file), "runtime lease")
+        );
         if (pidAlive(value.pid)) leases.push(value); else await rm(file, { force: true });
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("CODEX_LEASE_INVALID: Cannot safely determine whether a runtime is in use.");
@@ -601,7 +666,9 @@ export class CodexRuntimeManager {
   }
   private async readState(): Promise<RuntimeState> {
     try {
-      const state = stateSchema.parse(JSON.parse(await readFile(path.join(this.root, "cli-state.json"), "utf8")));
+      const state = stateSchema.parse(
+        parseJsonUtf8Strict(await readFile(path.join(this.root, "cli-state.json")), "runtime state")
+      );
       if (state.operation && ["downloading", "installing", "verifying"].includes(state.operation.phase) && !pidAlive(state.operation.ownerPid)) {
         state.operation = { ...state.operation, phase: "failed", error: "CODEX_INSTALL_INTERRUPTED" };
       }
@@ -638,7 +705,12 @@ export async function withRuntimeLock<T>(root: string, name: string, task: () =>
     try { await mkdir(lock, { mode: 0o700 }); acquired = true; await writeFile(path.join(lock, "pid"), String(process.pid), { mode: 0o600 }); break; }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const owner = Number(await readFile(path.join(lock, "pid"), "utf8").catch(() => "0"));
+      const owner = Number(await readFile(path.join(lock, "pid"))
+        .then((data) => decodeUtf8Strict(data, "runtime lock owner"))
+        .catch((error: unknown) => {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return "0";
+          throw error;
+        }));
       if (owner > 0 && !pidAlive(owner)) { await rm(lock, { recursive: true, force: true }); continue; }
       await new Promise(resolve => setTimeout(resolve, 25));
     }
@@ -679,36 +751,63 @@ function newerThan(candidate: string, current: string | null): boolean {
 async function latestStableCli(): Promise<string> {
   const response = await fetch("https://registry.npmjs.org/@openai/codex/latest", { signal: AbortSignal.timeout(15_000) });
   if (!response.ok) throw new Error("CODEX_UPDATE_CHECK_FAILED: The version service is unavailable.");
-  return (await response.json() as { version: string }).version;
+  const body = new Uint8Array(await response.arrayBuffer());
+  if (body.byteLength > 1024 * 1024) throw new Error("CODEX_UPDATE_CHECK_FAILED: The version service returned too much data.");
+  const metadata = parseJsonUtf8Strict<{ version?: unknown }>(body, "Codex update metadata");
+  if (typeof metadata.version !== "string") throw new Error("CODEX_UPDATE_CHECK_FAILED: The version service returned invalid data.");
+  return metadata.version;
 }
-async function resolveOnPath(command: string, environment: NodeJS.ProcessEnv): Promise<string> {
+function resolveOnPath(command: string, environment: NodeJS.ProcessEnv): string {
   if (path.isAbsolute(command) || command.includes(path.sep)) return path.resolve(command);
   for (const directory of (environment.PATH || "").split(path.delimiter).filter(Boolean)) {
     const file = path.join(directory, command);
-    try { await access(file, constants.X_OK); return file; } catch { /* next PATH entry */ }
+    try { accessSync(file, constants.X_OK); return file; } catch { /* next PATH entry */ }
   }
   throw new Error("CODEX_SELECTION_UNAVAILABLE: The explicitly configured executable was not found.");
 }
-async function physicalCodexPath(command: string): Promise<string> {
-  const resolved = await realpath(command);
+function physicalCodexPath(command: string): string {
+  const resolved = realpathSync(command);
   // The official npm JS launcher and its packaged native executable are one installation.
   if (resolved.endsWith(`${path.sep}bin${path.sep}codex.js`) || (process.platform === "win32" && resolved.endsWith(`${path.sep}codex.cmd`))) {
     const packageRoot = resolved.endsWith(".cmd") ? path.join(path.dirname(resolved), "node_modules", "@openai", "codex") : path.dirname(path.dirname(resolved));
     try {
-      const metadata = JSON.parse(await readFile(path.join(packageRoot, "package.json"), "utf8"));
+      const metadata = parseJsonUtf8Strict<Record<string, unknown>>(
+        readFileSync(path.join(packageRoot, "package.json")),
+        "Codex package metadata"
+      );
       if (metadata.name === "@openai/codex") {
         const target = `${process.arch === "arm64" ? "aarch64" : "x86_64"}-${process.platform === "darwin" ? "apple-darwin" : process.platform === "win32" ? "pc-windows-msvc" : "unknown-linux-musl"}`;
         const executable = `codex${process.platform === "win32" ? ".exe" : ""}`;
         for (const root of [path.join(packageRoot, "node_modules", "@openai", `codex-${process.platform}-${process.arch}`),
           path.join(path.dirname(packageRoot), `codex-${process.platform}-${process.arch}`), packageRoot]) {
           for (const directory of ["bin", "codex"]) {
-            try { return await realpath(path.join(root, "vendor", target, directory, executable)); } catch { /* another official package layout */ }
+            try { return realpathSync(path.join(root, "vendor", target, directory, executable)); } catch { /* another official package layout */ }
           }
         }
       }
     } catch { /* standalone executable */ }
   }
   return resolved;
+}
+
+function fileStamp(file: string): string {
+  const info = statSync(file);
+  return `${info.dev}:${info.ino}:${info.size}:${info.mode}:${info.mtimeMs}:${info.ctimeMs}`;
+}
+
+function canonicalRuntimePath(file: string): string {
+  let candidate = file;
+  const missing: string[] = [];
+  for (;;) {
+    try { return path.join(realpathSync(candidate), ...missing.reverse()); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      const parent = path.dirname(candidate);
+      if (parent === candidate) return file;
+      missing.push(path.basename(candidate));
+      candidate = parent;
+    }
+  }
 }
 
 function assertCompatibleSelection(candidate: CliCandidate): void {

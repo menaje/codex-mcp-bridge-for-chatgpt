@@ -40,7 +40,7 @@ function html(index: number): string {
     agentName: offset ? "Second Agent" : row.agentName, bucket: "active", status: "input-required", controlKind: "request",
     history: [], historyCount: 0 }));
   const activeRows = [...requestRows, { ...row, rowKey: "row-c", activityKey: "ordinary-running",
-    agentName: "Ordinary running Agent", bucket: "active", status: "running", controlKind: "manage",
+    agentName: "Ordinary running Agent", bucket: "active", status: "running", controlKind: null,
     history: [], historyCount: 0 }];
   const view = { ...original,
     activeRows,
@@ -88,7 +88,7 @@ try {
     await cli("run-code", `async page=>{
       await page.locator('[data-status-filter="running"]').click();
       if(!(await page.locator('#active-list').innerText()).includes('Ordinary running Agent'))throw new Error('Running fixture missing');
-      if(await page.locator('[data-control-row="row-c"]').count())throw new Error('Retired work management control remains');
+      if(await page.locator('[data-control-row="row-c"]').count())throw new Error('Inactive work unexpectedly exposed a control');
       await page.locator('[data-status-filter="response-required"]').click();
       if(await page.locator('#terminal-list .work-control-toggle').count())throw new Error('Completed work has an empty control');
       const executionText=await page.locator('#active-list').innerText();

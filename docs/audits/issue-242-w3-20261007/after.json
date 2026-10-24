@@ -1,0 +1,123 @@
+{
+  "schema": 1,
+  "sourceHead": "fa0cc254596621da00370d8e1459bbf2f539e362",
+  "sourceDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "environment": {
+    "node": "v24.11.1",
+    "platform": "darwin",
+    "arch": "arm64",
+    "sqlite": "3.53.4"
+  },
+  "fixture": {
+    "retainedJobs": 40,
+    "progressJobs": 4,
+    "progressEvents": 400,
+    "backlog": 25
+  },
+  "progress400": {
+    "wallMs": 73.3157910000009,
+    "sql": {},
+    "changedRows": 0,
+    "walFileBytesDelta": 0,
+    "topics": {
+      "dashboard": 400
+    },
+    "nativeClaimsTriggered": 0
+  },
+  "empty20": {
+    "wallMs": 19.330415999998877,
+    "sql": {
+      "SELECT": 20
+    },
+    "changedRows": 0,
+    "walFileBytesDelta": 0,
+    "methods": {
+      "claim": 20
+    }
+  },
+  "availability20": {
+    "wallMs": 26.216166000000158,
+    "sql": {
+      "SELECT": 20
+    },
+    "changedRows": 0,
+    "walFileBytesDelta": 0,
+    "methods": {
+      "availability": 20
+    }
+  },
+  "enqueue25": {
+    "wallMs": 3989.476040999998,
+    "sql": {
+      "BEGIN": 100,
+      "SELECT": 1100,
+      "INSERT": 475,
+      "PRAGMA": 100,
+      "UPDATE": 250,
+      "COMMIT": 100,
+      "DELETE": 50
+    },
+    "changedRows": 775,
+    "walFileBytesDelta": 3271280,
+    "readinessNotices": 25
+  },
+  "drain25": {
+    "wallMs": 396.09037499999977,
+    "sql": {
+      "SELECT": 82,
+      "BEGIN": 6,
+      "UPDATE": 50,
+      "COMMIT": 6
+    },
+    "changedRows": 50,
+    "walFileBytesDelta": 0,
+    "batches": [
+      10,
+      10,
+      5
+    ],
+    "methods": {
+      "claim": 4,
+      "delivered": 3
+    }
+  },
+  "releaseReclaim10": {
+    "wallMs": 4.755250000001979,
+    "sql": {
+      "BEGIN": 1,
+      "SELECT": 11,
+      "UPDATE": 1,
+      "COMMIT": 1
+    },
+    "changedRows": 1,
+    "walFileBytesDelta": 0,
+    "methods": {
+      "claim": 10,
+      "release": 1
+    },
+    "attemptCount": 1
+  },
+  "dueRetry": {
+    "wallMs": 1.5924169999998412,
+    "sql": {
+      "SELECT": 3,
+      "BEGIN": 1,
+      "UPDATE": 1,
+      "COMMIT": 1
+    },
+    "changedRows": 1,
+    "walFileBytesDelta": 0
+  },
+  "claimDiagnostics": {
+    "emptyPreflights": 31,
+    "transactions": 5,
+    "lostRaces": 0
+  },
+  "limits": [
+    "Counts are direct application/store calls on temporary SQLite, not installed-app rates.",
+    "Native real-socket method counts and event scheduling are verified separately by Swift tests.",
+    "WAL file byte delta is not frame writes, fsync, disk IO or lock wait.",
+    "Wall time is descriptive only; concurrent development/builds and filesystem cache were uncontrolled.",
+    "Fixture progress is in-memory under the existing immediate persistence budget; no required durable progress/terminal record is removed."
+  ]
+}

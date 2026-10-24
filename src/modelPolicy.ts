@@ -4,7 +4,7 @@ import type {
   CodexModelDescriptor
 } from "./modelCatalog.js";
 
-export const MODEL_POLICY_SCHEMA_VERSION = 4 as const;
+export const MODEL_POLICY_SCHEMA_VERSION = 8 as const;
 
 export type ModelChoice = {
   model: string;
@@ -13,6 +13,7 @@ export type ModelChoice = {
 
 export type ModelSelection = ModelChoice & {
   serviceTier?: string;
+  serviceTierScope?: "turn";
 };
 
 export type ModelPolicyConstraints = {
@@ -46,6 +47,10 @@ export type BackendCapabilities = {
   supportsModelOverrideOnContinue: boolean;
   supportsEffortOverrideOnContinue: boolean;
   supportsServiceTierOverrideOnContinue: boolean;
+  supportsPerTurnServiceTier?: boolean;
+  supportedPerTurnServiceTiers?: string[];
+  supportsThreadArchive?: boolean;
+  supportsThreadUnarchive?: boolean;
   supportsFork: boolean;
   supportsSteering?: boolean;
   supportsPreciseCancellation?: boolean;
@@ -84,6 +89,7 @@ export type ExecutionDecision = {
   catalogValidation: CatalogValidationState;
   backendKind: CodexBackendKind;
   requestedSelection?: ModelChoice;
+  processingSpeed?: string;
   effectiveSelection: ModelSelection;
   effectiveReasoningEffort: string;
   savedSelectionSupported: boolean;
@@ -256,8 +262,6 @@ export function resolveModelPolicy(input: ResolveModelPolicyInput): ExecutionDec
 
   let effectiveSelection: ModelSelection;
   let source: ExecutionDecisionSource;
-  let savedSelectionSupported = true;
-  let fallbackWarning: string | undefined;
   if (policy.mode === "fixed") {
     if (input.requestedSelection) {
       throw new ModelPolicyError(
@@ -272,24 +276,11 @@ export function resolveModelPolicy(input: ResolveModelPolicyInput): ExecutionDec
       effectiveSelection = cloneSelection(policy.selection);
       source = "fixed";
     } else {
-      const fallback = savedSelectionFallback(
-        policy.selection,
-        input.catalog,
-        input.operatorCeiling,
-        policy.constraints.allowDelegation
+      throw unavailable(
+        input.policyRevision,
+        `Saved fixed selection ${selectionLabel(policy.selection)} is unavailable. ` +
+        "The saved choice is preserved. Select a supported model and reasoning effort in Settings before starting new work."
       );
-      if (!fallback) {
-        throw unavailable(
-          input.policyRevision,
-          `Saved fixed selection ${selectionLabel(policy.selection)} is no longer available and no compatible upstream default exists.`
-        );
-      }
-      effectiveSelection = fallback;
-      source = "compatibility-fallback";
-      savedSelectionSupported = false;
-      fallbackWarning =
-        `Saved selection ${selectionLabel(policy.selection)} is unsupported by the current catalog. ` +
-        `This turn uses ${selectionLabel(fallback)} without rewriting the saved selection.`;
     }
   } else if (input.requestedSelection) {
     effectiveSelection = readModelChoice(input.requestedSelection, "requested model selection");
@@ -321,23 +312,13 @@ export function resolveModelPolicy(input: ResolveModelPolicyInput): ExecutionDec
     );
   }
 
-  if (source === "compatibility-fallback") {
-    assertFallbackAllowed(
-      effectiveSelection,
-      policy.constraints.allowDelegation,
-      input.catalog,
-      input.operatorCeiling,
-      input.policyRevision
-    );
-  } else {
-    assertSelectionAllowed(
-      effectiveSelection,
-      policy,
-      input.catalog,
-      input.operatorCeiling,
-      input.policyRevision
-    );
-  }
+  assertSelectionAllowed(
+    effectiveSelection,
+    policy,
+    input.catalog,
+    input.operatorCeiling,
+    input.policyRevision
+  );
 
   if (
     input.operation === "continue" &&
@@ -377,61 +358,11 @@ export function resolveModelPolicy(input: ResolveModelPolicyInput): ExecutionDec
       : {}),
     effectiveSelection,
     effectiveReasoningEffort: effectiveSelection.reasoningEffort,
-    savedSelectionSupported,
-    ...(fallbackWarning ? { fallbackWarning } : {}),
+    savedSelectionSupported: true,
     source,
     appliedAt: turnOverride ? "turn-start" : "thread-start",
     reason: decisionReason(source, input.operation, input.backendKind, catalogValidation)
   };
-}
-
-function savedSelectionFallback(
-  saved: ModelChoice,
-  catalog: CodexModelCatalogSnapshot,
-  operatorCeiling: ModelChoice[] | undefined,
-  allowDelegation: boolean
-): ModelChoice | undefined {
-  const model = catalog.models.find((entry) => entry.id === saved.model && !entry.hidden);
-  const orderedModels = model
-    ? [model]
-    : [
-        ...catalog.models.filter((entry) => !entry.hidden && entry.isDefault),
-        ...catalog.models.filter((entry) => !entry.hidden && !entry.isDefault)
-      ];
-  for (const candidateModel of orderedModels) {
-    const efforts = [
-      candidateModel.defaultReasoningEffort,
-      ...candidateModel.supportedReasoningEfforts.map((entry) => entry.effort)
-    ].filter((value, index, values): value is string =>
-      Boolean(value) && values.indexOf(value) === index && (allowDelegation || value !== "ultra")
-    );
-    for (const reasoningEffort of efforts) {
-      const selection: ModelSelection = { model: candidateModel.id, reasoningEffort };
-      if (
-        catalogSupportsSelection(catalog, selection) &&
-        (!operatorCeiling || operatorCeiling.some((entry) => sameModelChoice(entry, selection)))
-      ) return selection;
-    }
-  }
-  return undefined;
-}
-
-function assertFallbackAllowed(
-  selection: ModelChoice,
-  allowDelegation: boolean,
-  catalog: CodexModelCatalogSnapshot,
-  operatorCeiling: ModelChoice[] | undefined,
-  policyRevision: number
-): void {
-  if (!catalogSupportsSelection(catalog, selection)) {
-    throw unavailable(policyRevision, `Fallback selection ${selectionLabel(selection)} is unavailable.`);
-  }
-  if (!allowDelegation && selection.reasoningEffort === "ultra") {
-    throw forbidden(policyRevision, "Ultra reasoning is disabled by the active model policy.");
-  }
-  if (operatorCeiling && !operatorCeiling.some((entry) => sameModelChoice(entry, selection))) {
-    throw forbidden(policyRevision, `Fallback selection ${selectionLabel(selection)} exceeds the operator ceiling.`);
-  }
 }
 
 export function listAllowedModelSelections(
@@ -489,7 +420,8 @@ export function modelSelectionKey(selection: ModelSelection): string {
   return JSON.stringify([
     selection.model,
     selection.reasoningEffort,
-    selection.serviceTier || null
+    selection.serviceTier || null,
+    selection.serviceTierScope || "conversation"
   ]);
 }
 
@@ -504,7 +436,7 @@ function assertSelectionAllowed(
   operatorCeiling: ModelChoice[] | undefined,
   policyRevision: number
 ): void {
-  if (!catalogSupportsSelection(catalog, selection)) {
+  if (!catalogSupportsSelection(catalog, { model: selection.model, reasoningEffort: selection.reasoningEffort })) {
     throw unavailable(
       policyRevision,
       `Selection ${selectionLabel(selection)} is not available in catalog ${catalog.fingerprint}.`
@@ -587,10 +519,11 @@ function readSelection(value: unknown, label: string): ModelSelection {
     ? undefined
     : identifier(value.serviceTier, `${label} service tier`, 100);
   const keys = Object.keys(value);
-  if (keys.some((key) => key !== "model" && key !== "reasoningEffort" && key !== "serviceTier")) {
+  if (value.serviceTierScope !== undefined && value.serviceTierScope !== "turn") throw new Error(`Invalid ${label} speed scope.`);
+  if (keys.some((key) => !["model", "reasoningEffort", "serviceTier", "serviceTierScope"].includes(key))) {
     throw new Error(`Invalid ${label}: unknown fields are not allowed.`);
   }
-  return { model, reasoningEffort, ...(serviceTier ? { serviceTier } : {}) };
+  return { model, reasoningEffort, ...(serviceTier ? { serviceTier } : {}), ...(value.serviceTierScope === "turn" ? { serviceTierScope: "turn" as const } : {}) };
 }
 
 function readModelChoice(value: unknown, label: string): ModelChoice {
@@ -632,7 +565,8 @@ function cloneSelection(selection: ModelSelection): ModelSelection {
   return {
     model: selection.model,
     reasoningEffort: selection.reasoningEffort,
-    ...(selection.serviceTier ? { serviceTier: selection.serviceTier } : {})
+    ...(selection.serviceTier ? { serviceTier: selection.serviceTier } : {}),
+    ...(selection.serviceTierScope ? { serviceTierScope: selection.serviceTierScope } : {})
   };
 }
 

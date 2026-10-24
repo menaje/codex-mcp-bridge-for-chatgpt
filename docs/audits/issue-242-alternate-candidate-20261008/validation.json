@@ -1,0 +1,362 @@
+{
+  "schema": 1,
+  "verifiedImplementationHead": "0bd61eb7c29521e1c4e33ecb8e0fe54a983bb42c",
+  "verifiedImplementationTree": "0710230427c409199cbcb4d0d0f72efe05c28c80",
+  "formatterOnlyFollowup": "36ffd412249822390478631cdef4092f370ec0fc",
+  "processPolicy": "taskpolicy -a; serial validation; no timeout overrides",
+  "checks": [
+    {
+      "name": "browser-221",
+      "head": "0bd61eb7c29521e1c4e33ecb8e0fe54a983bb42c",
+      "tree": "0710230427c409199cbcb4d0d0f72efe05c28c80",
+      "command": ["npm", "run", "test:issue-221-card"],
+      "exitCode": 0,
+      "seconds": 37.535,
+      "logSha256": "c2400b395cb9b5aceda48afc7640366d0e1fff490629be0c652954a0d683a949"
+    },
+    {
+      "name": "browser-240",
+      "head": "0bd61eb7c29521e1c4e33ecb8e0fe54a983bb42c",
+      "tree": "0710230427c409199cbcb4d0d0f72efe05c28c80",
+      "command": ["npm", "run", "test:issue-224-project-recovery"],
+      "exitCode": 0,
+      "seconds": 11.295,
+      "logSha256": "617b26634c7c6b7080c76d4030a44ab668f336cb1e55b32c788c0a4d06839fa9"
+    },
+    {
+      "name": "build-code",
+      "head": "0bd61eb7c29521e1c4e33ecb8e0fe54a983bb42c",
+      "tree": "0710230427c409199cbcb4d0d0f72efe05c28c80",
+      "command": ["npm", "run", "build"],
+      "exitCode": 0,
+      "seconds": 3.894,
+      "logSha256": "63e20803a392af499b0e485fdf1ee1aadcaab81dd7eb1fb68e267d8346710825"
+    },
+    {
+      "name": "build",
+      "head": "b52c1b8a8094cb9df9f7ca8781ad4ec8c5838b8b",
+      "tree": "bd16f8660708be06c525d49a13eaaaa0d4a942fe",
+      "command": ["npm", "run", "build"],
+      "exitCode": 0,
+      "seconds": 5.628,
+      "logSha256": "63e20803a392af499b0e485fdf1ee1aadcaab81dd7eb1fb68e267d8346710825"
+    },
+    {
+      "name": "completion-after",
+      "head": "0bd61eb7c29521e1c4e33ecb8e0fe54a983bb42c",
+      "tree": "0710230427c409199cbcb4d0d0f72efe05c28c80",
+      "command": ["node_modules/.bin/tsx", "scripts/issue-242-completion.ts"],
+      "exitCode": 0,
+      "seconds": 0.706,
+      "logSha256": "a6a86dfcc62775764fbddbc0c866d00c406c458c852352a045732187a9526270"
+    },
+    {
+      "name": "completion-before",
+      "head": "f710974b33fc40432653c815d175058cba1adaee",
+      "tree": "bef9e8603b790327152beea63fa230f638f7aac4",
+      "command": [
+        "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-candidate-20261008/node_modules/.bin/tsx",
+        "scripts/issue-242-characterization.ts",
+        "40"
+      ],
+      "exitCode": 0,
+      "seconds": 1.869,
+      "logSha256": "545fc74b0e1c9ec293ba2dcfdedda11df43e1d1b52a0ad0702a18a9b709728e5"
+    },
+    {
+      "name": "diff-check",
+      "head": "0bd61eb7c29521e1c4e33ecb8e0fe54a983bb42c",
+      "tree": "0710230427c409199cbcb4d0d0f72efe05c28c80",
+      "command": [
+        "git",
+        "diff",
+        "--check",
+        "264fa5c99ca1c8edeef50af247614204c8f3df53",
+        "HEAD"
+      ],
+      "exitCode": 2,
+      "seconds": 0.231,
+      "logSha256": "996d82d11ef784e0d8280f84f99ac9fc51d9f116a376bd7275528713b7ad92bc"
+    },
+    {
+      "name": "fast-code",
+      "head": "0bd61eb7c29521e1c4e33ecb8e0fe54a983bb42c",
+      "tree": "0710230427c409199cbcb4d0d0f72efe05c28c80",
+      "command": ["npm", "run", "validate:fast"],
+      "exitCode": 0,
+      "seconds": 1.477,
+      "logSha256": "55c97c2c2deef1f76d03b91f22f7f4e3a7d7114d1d5c013592426c08376a7ff7"
+    },
+    {
+      "name": "fast",
+      "head": "b52c1b8a8094cb9df9f7ca8781ad4ec8c5838b8b",
+      "tree": "bd16f8660708be06c525d49a13eaaaa0d4a942fe",
+      "command": ["npm", "run", "validate:fast"],
+      "exitCode": 0,
+      "seconds": 1.588,
+      "logSha256": "55c97c2c2deef1f76d03b91f22f7f4e3a7d7114d1d5c013592426c08376a7ff7"
+    },
+    {
+      "name": "focused",
+      "head": "b52c1b8a8094cb9df9f7ca8781ad4ec8c5838b8b",
+      "tree": "bd16f8660708be06c525d49a13eaaaa0d4a942fe",
+      "command": [
+        "node_modules/.bin/vitest",
+        "run",
+        "test/issue242ReadTransport.test.ts",
+        "test/issue242Completion.test.ts",
+        "test/issue242ProxyCharacterization.test.ts",
+        "test/issue242R502.test.ts",
+        "test/issue242R502Tunnel.test.ts",
+        "test/issue242Reads.test.ts",
+        "test/issue242Characterization.test.ts",
+        "test/httpDiagnostics.test.ts",
+        "test/tunnelHealth.test.ts",
+        "--maxWorkers=1",
+        "--reporter=verbose",
+        "--reporter=json",
+        "--outputFile=output/issue-242-integration-20261008/focused.json"
+      ],
+      "exitCode": 1,
+      "seconds": 29.081,
+      "logSha256": "654c91a974e13aea12d443b045c638f38bdc882b35395b0afd9c616444c85cff"
+    },
+    {
+      "name": "format-check",
+      "head": "0bd61eb7c29521e1c4e33ecb8e0fe54a983bb42c",
+      "tree": "0710230427c409199cbcb4d0d0f72efe05c28c80",
+      "command": [
+        "node",
+        "/Users/seongsik/.npm/_npx/83e71da30ae7cab2/node_modules/prettier/bin/prettier.cjs",
+        "--check",
+        ".changes/issue-242-characterization.json",
+        ".changes/issue-242-native-observation.json",
+        ".changes/issue-242-read-observation.json",
+        ".changes/issue-242-w3-completion.json",
+        "package.json",
+        "release-manifest.json",
+        "scripts/issue-242-characterization.ts",
+        "scripts/issue-242-completion.ts",
+        "scripts/issue-242-fixture.ts",
+        "scripts/issue-242-integration-read-cost.ts",
+        "scripts/issue-242-runtime-cost.mjs",
+        "scripts/runtime-status.d.mts",
+        "scripts/runtime-status.mjs",
+        "scripts/start-codex-mcp-bridge.mjs",
+        "scripts/tunnel-health.mjs",
+        "src/changeSignal.ts",
+        "src/companionServer.ts",
+        "src/completionDelivery.ts",
+        "src/displayReadPool.ts",
+        "src/httpDiagnostics.ts",
+        "src/macosHelperServer.ts",
+        "src/remoteCompanionServer.ts",
+        "src/runtimeProcess.ts",
+        "src/server.ts",
+        "src/stateReadModels.ts",
+        "src/stateReadProcess.ts",
+        "src/stateStore.ts",
+        "src/threadConnections.ts",
+        "src/tools.ts",
+        "test/companionServer.test.ts",
+        "test/httpDiagnostics.test.ts",
+        "test/issue242Characterization.test.ts",
+        "test/issue242Completion.test.ts",
+        "test/issue242ProxyCharacterization.test.ts",
+        "test/issue242R502.test.ts",
+        "test/issue242R502Tunnel.test.ts",
+        "test/issue242ReadTransport.test.ts",
+        "test/issue242Reads.test.ts",
+        "test/launcherLifecycle.integration.test.ts",
+        "test/macosHelperServer.test.ts",
+        "test/remoteCompanionServer.test.ts",
+        "test/runtimeProcess.test.ts",
+        "test/runtimeStatus.test.ts",
+        "test/stateReadProcess.test.ts",
+        "test/tunnelHealth.test.ts"
+      ],
+      "exitCode": 1,
+      "seconds": 1.633,
+      "logSha256": "99a4e01de1f99eff63011aebd445865c77f64fd3059bd0bf3f12ac9f1432387a"
+    },
+    {
+      "name": "format-integration",
+      "head": "36ffd412249822390478631cdef4092f370ec0fc",
+      "tree": "5a74c8ef1e73bf2f6b067664bf7a43b4bcdce398",
+      "command": [
+        "node",
+        "/Users/seongsik/.npm/_npx/83e71da30ae7cab2/node_modules/prettier/bin/prettier.cjs",
+        "--check",
+        "scripts/issue-242-integration-read-cost.ts"
+      ],
+      "exitCode": 0,
+      "seconds": 0.221,
+      "logSha256": "17aa973d3f004560237d9a95171210b0671deff23d61628eecf7322ff5938f20"
+    },
+    {
+      "name": "full-node",
+      "head": "0bd61eb7c29521e1c4e33ecb8e0fe54a983bb42c",
+      "tree": "0710230427c409199cbcb4d0d0f72efe05c28c80",
+      "command": [
+        "node_modules/.bin/vitest",
+        "run",
+        "--maxWorkers=1",
+        "--reporter=verbose",
+        "--reporter=json",
+        "--outputFile=output/issue-242-integration-20261008/full-node.json"
+      ],
+      "exitCode": 0,
+      "seconds": 786.449,
+      "logSha256": "6f884d67dc8ddecbabf0a450e0b8d628a64749e45046568baaf873f364033c09"
+    },
+    {
+      "name": "harness-types-code",
+      "head": "0bd61eb7c29521e1c4e33ecb8e0fe54a983bb42c",
+      "tree": "0710230427c409199cbcb4d0d0f72efe05c28c80",
+      "command": [
+        "node_modules/.bin/tsc",
+        "--noEmit",
+        "--module",
+        "nodenext",
+        "--target",
+        "es2022",
+        "--strict",
+        "--skipLibCheck",
+        "--esModuleInterop",
+        "test/issue242ReadTransport.test.ts",
+        "test/issue242Completion.test.ts",
+        "test/issue242ProxyCharacterization.test.ts",
+        "test/issue242R502.test.ts",
+        "test/issue242R502Tunnel.test.ts",
+        "test/issue242Reads.test.ts",
+        "test/issue242Characterization.test.ts",
+        "scripts/issue-242-characterization.ts",
+        "scripts/issue-242-integration-read-cost.ts",
+        "scripts/issue-242-completion.ts",
+        "scripts/issue-242-fixture.ts"
+      ],
+      "exitCode": 0,
+      "seconds": 2.509,
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "harness-types",
+      "head": "b52c1b8a8094cb9df9f7ca8781ad4ec8c5838b8b",
+      "tree": "bd16f8660708be06c525d49a13eaaaa0d4a942fe",
+      "command": [
+        "node_modules/.bin/tsc",
+        "--noEmit",
+        "--module",
+        "nodenext",
+        "--target",
+        "es2022",
+        "--strict",
+        "--skipLibCheck",
+        "--esModuleInterop",
+        "test/issue242ReadTransport.test.ts",
+        "test/issue242Completion.test.ts",
+        "test/issue242ProxyCharacterization.test.ts",
+        "test/issue242R502.test.ts",
+        "test/issue242R502Tunnel.test.ts",
+        "test/issue242Reads.test.ts",
+        "test/issue242Characterization.test.ts",
+        "scripts/issue-242-characterization.ts",
+        "scripts/issue-242-completion.ts",
+        "scripts/issue-242-fixture.ts"
+      ],
+      "exitCode": 0,
+      "seconds": 2.51,
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "integration-diff-check",
+      "head": "36ffd412249822390478631cdef4092f370ec0fc",
+      "tree": "5a74c8ef1e73bf2f6b067664bf7a43b4bcdce398",
+      "command": ["git", "diff", "--check", "f710974", "HEAD"],
+      "exitCode": 0,
+      "seconds": 0.176,
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "native",
+      "head": "0bd61eb7c29521e1c4e33ecb8e0fe54a983bb42c",
+      "tree": "0710230427c409199cbcb4d0d0f72efe05c28c80",
+      "command": ["npm", "run", "macos:check"],
+      "exitCode": 0,
+      "seconds": 105.325,
+      "logSha256": "020823e56af4c03db3ce1aa208c4075521da6cc002ec57ba30669e740a37973d"
+    },
+    {
+      "name": "read-after",
+      "head": "0bd61eb7c29521e1c4e33ecb8e0fe54a983bb42c",
+      "tree": "0710230427c409199cbcb4d0d0f72efe05c28c80",
+      "command": [
+        "node_modules/.bin/tsx",
+        "scripts/issue-242-integration-read-cost.ts",
+        "1200"
+      ],
+      "exitCode": 0,
+      "seconds": 3.941,
+      "logSha256": "e5bf75b26fb3acedce1be5582599a733a56c47888b795cd13cb0195e17864603"
+    },
+    {
+      "name": "read-before",
+      "head": "8474165e523b47d881f688bd09caf2e4c78ac7af",
+      "tree": "6c5ca535bd2cd557b64d64f8868d258d455d6f71",
+      "command": [
+        "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-candidate-20261008/node_modules/.bin/tsx",
+        "scripts/issue-242-characterization.ts",
+        "1200"
+      ],
+      "exitCode": 0,
+      "seconds": 12.816,
+      "logSha256": "941be77537ae073eaf7d78719222ba3909dcd0c609c0c9152e358ad0bbacd834"
+    },
+    {
+      "name": "runtime-cost",
+      "head": "0bd61eb7c29521e1c4e33ecb8e0fe54a983bb42c",
+      "tree": "0710230427c409199cbcb4d0d0f72efe05c28c80",
+      "command": [
+        "node",
+        "scripts/issue-242-runtime-cost.mjs",
+        "compare",
+        "/opt/homebrew/bin/tunnel-client"
+      ],
+      "exitCode": 0,
+      "seconds": 10.718,
+      "logSha256": "10bffdcfc48addcf2a30eeb9f75c5e87ecb6a614af98b1dce712bfc455c407bb"
+    },
+    {
+      "name": "tsc-code",
+      "head": "0bd61eb7c29521e1c4e33ecb8e0fe54a983bb42c",
+      "tree": "0710230427c409199cbcb4d0d0f72efe05c28c80",
+      "command": ["node_modules/.bin/tsc", "--noEmit"],
+      "exitCode": 0,
+      "seconds": 2.552,
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "tsc",
+      "head": "b52c1b8a8094cb9df9f7ca8781ad4ec8c5838b8b",
+      "tree": "bd16f8660708be06c525d49a13eaaaa0d4a942fe",
+      "command": ["node_modules/.bin/tsc", "--noEmit"],
+      "exitCode": 0,
+      "seconds": 2.656,
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "fullNode": {
+    "files": 135,
+    "tests": 1493,
+    "failed": 0,
+    "skipped": 0
+  },
+  "native": {
+    "executed": 246,
+    "skippedLiveOptIn": 2,
+    "failed": 0
+  },
+  "rawEvidenceDirectory": "output/issue-242-integration-20261008",
+  "sourceHashBeforeFormat": "ace0fbc15cefb56e6f9875d096e08f9eeb4b29146ecb56e459975619d1a8b829",
+  "finalValidationProtocol": "After this audit is committed, run build, tsc, fast, harness typecheck, unfiltered full Node, strict native, browser contracts, focused Issue 242, read/completion/runtime cost fixtures and integration diff/format checks at that clean HEAD. Preserve exact-head receipts in ignored output; do not amend the candidate after validation."
+}

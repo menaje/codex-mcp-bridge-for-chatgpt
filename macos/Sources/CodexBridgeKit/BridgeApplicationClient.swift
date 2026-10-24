@@ -1,6 +1,15 @@
 import Foundation
 
+/// Matches the Bridge companion envelope for skill content plus files.
+public let bridgeSkillTransportEnvelopeMaxBytes = 72 * 1_024 * 1_024
+public let bridgeSkillPackageCompressedMaxBytes = 16 * 1_024 * 1_024
+
 public protocol BridgeApplicationClient: Sendable {
+    func dashboardJobs(limit: Int, terminalOffset: Int, statusOffset: Int?, enrich: Bool, statusFilter: DashboardStatusFilter, problems: ProblemQuery, includeHistory: Bool) async throws -> DashboardSnapshot
+    func dashboardExecutionDetail(_ target: DashboardExecutionDetailParameters) async throws -> DashboardExecutionDetail
+
+    func dashboardBackgroundPage(limit: Int, offset: Int) async throws -> DashboardSnapshot
+    func dashboardStatusPage(limit: Int, offset: Int) async throws -> DashboardSnapshot
     func dashboard(
         limit: Int,
         terminalOffset: Int,
@@ -15,8 +24,27 @@ public protocol BridgeApplicationClient: Sendable {
     ) async throws -> SettingsSnapshot
 
     func updateSettings(_ mutation: SettingsMutation) async throws -> SettingsSnapshot
+    func modelDescriptionHistory(modelID: String, beforeVersion: Int?) async throws -> ModelDescriptionHistoryPage
+
+    func skillLibrary() async throws -> BridgeSkillLibrarySnapshot
+    func readBridgeSkill(_ reference: BridgeSkillReference) async throws -> BridgeSkill
+    func readBridgeSkillFile(_ reference: BridgeSkillReference, path: String) async throws -> BridgeSkillFile
+    func bridgeSkillVersions(skillId: String) async throws -> BridgeSkillVersionList
+    func createBridgeSkill(_ request: BridgeSkillCreateRequest) async throws -> BridgeSkillSummary
+    func updateBridgeSkill(_ request: BridgeSkillUpdateRequest) async throws -> BridgeSkillSummary
+    func restoreBridgeSkill(_ request: BridgeSkillRestoreRequest) async throws -> BridgeSkillSummary
+    func setBridgeSkillEnabled(_ request: BridgeSkillSetEnabledRequest) async throws -> BridgeSkillSummary
+    func deleteBridgeSkill(_ request: BridgeSkillDeleteRequest) async throws -> BridgeSkillDeletion
+    func uploadBridgeSkillPackage(_ archive: Data) async throws -> BridgeSkillPackageInspection
+    func uploadBridgeSkillPackage(at archiveURL: URL) async throws -> BridgeSkillPackageInspection
+    func createBridgeSkillPackage(_ request: BridgeSkillPackageCreateRequest) async throws -> BridgeSkillSummary
+    func updateBridgeSkillPackage(_ request: BridgeSkillPackageUpdateRequest) async throws -> BridgeSkillSummary
+    func exportBridgeSkillPackage(_ reference: BridgeSkillReference) async throws -> BridgeSkillPackageExport
 
     func historyAction(_ action: HistoryAction) async throws -> HistoryActionResult
+
+    func dashboardHistoryDetail(rowKey: String) async throws -> DashboardHistoryDetail
+    func dashboardHistoryDetail(rowKey: String, historyCursor: String?) async throws -> DashboardHistoryDetail
 
     func dashboardWithProblems(limit: Int, terminalOffset: Int, idleOffset: Int, enrich: Bool,
                                statusFilter: DashboardStatusFilter, problems: ProblemQuery) async throws -> DashboardSnapshot
@@ -31,6 +59,62 @@ public protocol BridgeApplicationClient: Sendable {
 }
 
 public extension BridgeApplicationClient {
+    /// Refresh the running rows the user has already expanded. A collection
+    /// revision proves membership, not the freshness of individual observations.
+    func refreshingExpandedRunning(_ first: DashboardSnapshot, from previous: DashboardSnapshot?, limit: Int, problems: ProblemQuery) async throws -> DashboardSnapshot {
+        guard let previous, first.historyModeApplied == "jobs", previous.historyModeApplied == "jobs",
+              let revision = first.progressRevision, revision == previous.progressRevision,
+              first.scope == previous.scope,
+              first.historyPolicy?.policyRevision == previous.historyPolicy?.policyRevision,
+              first.historyPolicy?.totalRemoved == previous.historyPolicy?.totalRemoved,
+              first.counts.progressJobCount == previous.counts.progressJobCount,
+              first.pagination.active.offset == 0, previous.pagination.active.offset > 0 else { return first }
+        let desired = previous.activeRows.filter { $0.jobId != nil }.count
+        var result = first
+        while result.activeRows.filter({ $0.jobId != nil }).count < desired, result.pagination.active.hasNext {
+            try Task.checkCancellation()
+            let page = result.pagination.active
+            guard page.returned > 0 else { return first }
+            let offset = page.offset + page.returned
+            let next = try await dashboardJobs(limit: limit, terminalOffset: 0, statusOffset: offset,
+                enrich: false, statusFilter: .running, problems: problems, includeHistory: false)
+            guard next.historyModeApplied == "jobs", next.progressRevision == revision,
+                  next.scope == first.scope, next.counts.progressJobCount == first.counts.progressJobCount,
+                  next.historyPolicy?.policyRevision == first.historyPolicy?.policyRevision,
+                  next.historyPolicy?.totalRemoved == first.historyPolicy?.totalRemoved,
+                  next.pagination.active.offset == offset else {
+                // Membership changed during the read. Start from a coherent first
+                // page instead of joining pages from different collections.
+                return try await dashboardJobs(limit: limit, terminalOffset: first.pagination.terminal.offset,
+                    statusOffset: nil, enrich: false, statusFilter: .all, problems: problems,
+                    includeHistory: first.historyIncluded != false)
+            }
+            var seen = Set(result.activeRows.map(\.rowKey))
+            result.activeRows += next.activeRows.filter { seen.insert($0.rowKey).inserted }
+            result.pagination.active = next.pagination.active
+        }
+        return result
+    }
+
+    func dashboardBackgroundPage(limit: Int, offset: Int) async throws -> DashboardSnapshot {
+        throw NSError(domain: "DASHBOARD_BACKGROUND_UNAVAILABLE", code: 1)
+    }
+
+    func dashboardJobs(limit: Int, terminalOffset: Int, statusOffset: Int? = nil, enrich: Bool, statusFilter: DashboardStatusFilter, problems: ProblemQuery, includeHistory: Bool) async throws -> DashboardSnapshot {
+        try await dashboardWithProblems(limit: limit, terminalOffset: terminalOffset, idleOffset: 0, enrich: enrich, statusFilter: statusFilter, problems: problems, includeHistory: includeHistory)
+    }
+    func dashboardExecutionDetail(_ target: DashboardExecutionDetailParameters) async throws -> DashboardExecutionDetail {
+        throw NSError(domain: "DASHBOARD_EXECUTION_DETAIL_UNSUPPORTED", code: 1)
+    }
+
+    func dashboardStatusPage(limit: Int, offset: Int) async throws -> DashboardSnapshot {
+        throw NSError(domain: "DASHBOARD_STATUS_PAGING_UNSUPPORTED", code: 1)
+    }
+
+    func modelDescriptionHistory(modelID: String, beforeVersion: Int? = nil) async throws -> ModelDescriptionHistoryPage {
+        throw NSError(domain: "MODEL_DESCRIPTION_HISTORY_UNAVAILABLE", code: 1)
+    }
+
     func dashboardWithProblems(limit: Int, terminalOffset: Int, idleOffset: Int, enrich: Bool,
                                statusFilter: DashboardStatusFilter, problems: ProblemQuery) async throws -> DashboardSnapshot {
         try await dashboard(limit: limit, terminalOffset: terminalOffset, idleOffset: idleOffset, enrich: enrich, statusFilter: statusFilter)
@@ -51,6 +135,71 @@ public extension BridgeApplicationClient {
 
     func historyAction(_ action: HistoryAction) async throws -> HistoryActionResult {
         throw NSError(domain: "HISTORY_UNSUPPORTED", code: 1)
+    }
+
+    func dashboardHistoryDetail(rowKey: String, historyCursor: String?) async throws -> DashboardHistoryDetail {
+        guard historyCursor == nil else { throw NSError(domain: "DASHBOARD_HISTORY_PAGING_UNSUPPORTED", code: 1) }
+        return try await dashboardHistoryDetail(rowKey: rowKey)
+    }
+
+    func dashboardHistoryDetail(rowKey: String) async throws -> DashboardHistoryDetail {
+        throw NSError(domain: "DASHBOARD_HISTORY_DETAIL_UNSUPPORTED", code: 1)
+    }
+
+    func skillLibrary() async throws -> BridgeSkillLibrarySnapshot {
+        throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
+    }
+
+    func readBridgeSkill(_ reference: BridgeSkillReference) async throws -> BridgeSkill {
+        throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
+    }
+
+    func readBridgeSkillFile(_ reference: BridgeSkillReference, path: String) async throws -> BridgeSkillFile {
+        throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
+    }
+
+    func bridgeSkillVersions(skillId: String) async throws -> BridgeSkillVersionList {
+        throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
+    }
+
+    func createBridgeSkill(_ request: BridgeSkillCreateRequest) async throws -> BridgeSkillSummary {
+        throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
+    }
+
+    func updateBridgeSkill(_ request: BridgeSkillUpdateRequest) async throws -> BridgeSkillSummary {
+        throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
+    }
+
+    func restoreBridgeSkill(_ request: BridgeSkillRestoreRequest) async throws -> BridgeSkillSummary {
+        throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
+    }
+
+    func setBridgeSkillEnabled(_ request: BridgeSkillSetEnabledRequest) async throws -> BridgeSkillSummary {
+        throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
+    }
+
+    func deleteBridgeSkill(_ request: BridgeSkillDeleteRequest) async throws -> BridgeSkillDeletion {
+        throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
+    }
+    func uploadBridgeSkillPackage(_ archive: Data) async throws -> BridgeSkillPackageInspection {
+        throw NSError(domain: "SKILL_PACKAGE_UNAVAILABLE", code: 1)
+    }
+
+    func uploadBridgeSkillPackage(at archiveURL: URL) async throws -> BridgeSkillPackageInspection {
+        let archive = try Data(contentsOf: archiveURL, options: [.mappedIfSafe])
+        return try await uploadBridgeSkillPackage(archive)
+    }
+
+    func createBridgeSkillPackage(_ request: BridgeSkillPackageCreateRequest) async throws -> BridgeSkillSummary {
+        throw NSError(domain: "SKILL_PACKAGE_UNAVAILABLE", code: 1)
+    }
+
+    func updateBridgeSkillPackage(_ request: BridgeSkillPackageUpdateRequest) async throws -> BridgeSkillSummary {
+        throw NSError(domain: "SKILL_PACKAGE_UNAVAILABLE", code: 1)
+    }
+
+    func exportBridgeSkillPackage(_ reference: BridgeSkillReference) async throws -> BridgeSkillPackageExport {
+        throw NSError(domain: "SKILL_PACKAGE_UNAVAILABLE", code: 1)
     }
 }
 
@@ -99,15 +248,38 @@ public struct RemoteManagementStatus: Codable, Sendable, Equatable {
     public let devices: [RemoteManagementDevice]
 }
 
+public struct RemoteManagementConfiguration: Codable, Sendable, Equatable {
+    public let serverId: String
+    public let enabled: Bool
+    public let endpoint: String?
+    public let displayName: String
+    public init(status: RemoteManagementStatus) {
+        serverId = status.serverId; enabled = status.enabled
+        endpoint = status.endpoint; displayName = status.displayName
+    }
+    private enum CodingKeys: String, CodingKey { case serverId, enabled, endpoint, displayName }
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(serverId, forKey: .serverId)
+        try container.encode(enabled, forKey: .enabled)
+        // null is the expected unconfigured endpoint; omission is not a CAS value.
+        try container.encode(endpoint, forKey: .endpoint)
+        try container.encode(displayName, forKey: .displayName)
+    }
+}
+
 public struct RemoteManagementConfigureParameters: Codable, Sendable {
     public let enabled: Bool
     public let endpoint: String
     public let displayName: String
 
-    public init(enabled: Bool, endpoint: String, displayName: String) {
+    public let expectedConfiguration: RemoteManagementConfiguration?
+
+    public init(enabled: Bool, endpoint: String, displayName: String, expectedConfiguration: RemoteManagementConfiguration? = nil) {
         self.enabled = enabled
         self.endpoint = endpoint
         self.displayName = displayName
+        self.expectedConfiguration = expectedConfiguration
     }
 }
 
@@ -147,14 +319,16 @@ public extension BridgeCompanionClient {
     func configureRemoteManagement(
         enabled: Bool,
         endpoint: String,
-        displayName: String
+        displayName: String,
+        expectedConfiguration: RemoteManagementConfiguration? = nil
     ) async throws -> RemoteManagementStatus {
         try await rpc.call(
             "remote.configure",
             params: RemoteManagementConfigureParameters(
                 enabled: enabled,
                 endpoint: endpoint,
-                displayName: displayName
+                displayName: displayName,
+                expectedConfiguration: expectedConfiguration
             ),
             timeout: 45
         )

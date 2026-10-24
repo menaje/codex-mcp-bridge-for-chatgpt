@@ -20,6 +20,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
+import { parseJsonTextStrict, parseJsonUtf8Strict } from "./textIntegrity.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 import {
@@ -178,7 +179,10 @@ export function inspectStateDatabase(
     let pendingOriginalSource: number | null = null;
     if (pendingRaw !== undefined) {
       try {
-        const pending = JSON.parse(pendingRaw) as Record<string, unknown>;
+        const pending = parseJsonTextStrict<Record<string, unknown>>(
+          pendingRaw,
+          "Bridge state pending migration provenance"
+        );
         const entry = STATE_MIGRATIONS.find((candidate) => candidate.id === pending.id);
         pendingOriginalSource = Number(pending.originalSourceSchema);
         if (
@@ -583,7 +587,7 @@ export function readPrivateJson(file: string): unknown {
     if (typeof process.getuid === "function" && stat.uid !== process.getuid()) {
       throw new Error(`Private state metadata is owned by another user: ${file}.`);
     }
-    return JSON.parse(readFileSync(descriptor, "utf8"));
+    return parseJsonUtf8Strict(readFileSync(descriptor), "Private state metadata");
   } finally {
     closeSync(descriptor);
   }

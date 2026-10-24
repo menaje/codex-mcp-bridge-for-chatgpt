@@ -1,0 +1,33 @@
+{
+  "purpose": "Byte-preserving documentation snapshots; originals remain untracked and unchanged. Historical manifests resolve original script paths through this mapping. No preserved script is executed during finalization.",
+  "files": [
+    {
+      "originalPath": "scripts/issue-222-sites-independent-20261003/http-probe.mjs",
+      "durablePath": "docs/audits/issue-222-sites-independent-20261003/preserved-runner-source/http-probe.mjs.txt",
+      "bytes": 6780,
+      "sha256": "fdc773feda82774b519af7acb7a0a7b65094244c0162b885826017a2d415645e",
+      "executedThisFinalization": false
+    },
+    {
+      "originalPath": "scripts/issue-222-sites-independent-20261003/roundtrip.mjs",
+      "durablePath": "docs/audits/issue-222-sites-independent-20261003/preserved-runner-source/roundtrip.mjs.txt",
+      "bytes": 10165,
+      "sha256": "e7e4c8b1e45e2d8d97ce3da9420186bdb6a5bb20f92b3e7892c543957da2261b",
+      "executedThisFinalization": false
+    },
+    {
+      "originalPath": "scripts/issue-222-sites-independent-20261003/validate-roundtrip.mjs",
+      "durablePath": "docs/audits/issue-222-sites-independent-20261003/preserved-runner-source/validate-roundtrip.mjs.txt",
+      "bytes": 7751,
+      "sha256": "1e78c1a29367b3bd19b8d26ebb3157ca11f6af99f14cb8cf313aadf9c963f253",
+      "executedThisFinalization": false
+    },
+    {
+      "originalPath": "scripts/issue-222-sites-independent-20261003/validate.mjs",
+      "durablePath": "docs/audits/issue-222-sites-independent-20261003/preserved-runner-source/validate.mjs.txt",
+      "bytes": 4335,
+      "sha256": "ed6c9557dde8dd563d7d5bb0cda9fbb5cd75c13e8ecc0782e046df42c64804e4",
+      "executedThisFinalization": false
+    }
+  ]
+}

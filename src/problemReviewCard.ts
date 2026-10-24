@@ -72,7 +72,7 @@ export const PROBLEM_REVIEW_SCRIPT = String.raw`
       for(const problem of data.rows){
         const article=node("article","problem-row"),body=node("div","activity-agent");article.dataset.problemKey=problem.problemKey;
         if(problem.canAcknowledge){const label=node("label","problem-select"),check=document.createElement("input");check.type="checkbox";check.checked=selectedProblemKeys.has(problem.problemKey);check.setAttribute("aria-label",t["problem.select"].replace("{name}",problem.row.agentName));check.addEventListener("change",()=>{if(check.checked)selectedProblemKeys.add(problem.problemKey);else selectedProblemKeys.delete(problem.problemKey);syncProblemControls()});label.append(check,document.createTextNode(t["problem.selectShort"]));article.appendChild(label)}
-        appendAgentBody(body,{...problem.row,historyControls:null});article.appendChild(body);
+        appendAgentBody(body,problem.row);article.appendChild(body);
         if(problem.reason)article.appendChild(node("p","problem-reason",problem.reason));else if(problem.source==="execution")article.appendChild(node("p","problem-note",t["problem.noDetails"]));
         if(problem.source==="runtime"){article.appendChild(node("p","problem-note",t["problem.observed"].replace("{time}",relativeTime(problem.observedAt))));if(problem.review==="pending")article.appendChild(node("p","problem-note",t["problem.liveNotice"]))}
         if(problem.acknowledgedAt)article.appendChild(node("p","problem-note",t["problem.ackAt"].replace("{time}",relativeTime(problem.acknowledgedAt))));

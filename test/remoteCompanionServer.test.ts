@@ -3,6 +3,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { request as httpsRequest } from "node:https";
+import { randomUUID } from "node:crypto";
 import type { TLSSocket } from "node:tls";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -27,6 +28,120 @@ afterEach(async () => {
 });
 
 describe("remote native companion", () => {
+  it.each([false, true])("keeps pairing bodies small while accepting authenticated skill payloads (chunked=%s)", async chunked => {
+    const applicationService = fakeApplicationService();
+    const unexpectedSkillMethod = vi.fn(async () => { throw new Error("unexpected_skill_method"); });
+    Object.assign(applicationService, {
+      skillLibrarySnapshot: unexpectedSkillMethod,
+      readBridgeSkill: unexpectedSkillMethod,
+      readBridgeSkillFile: unexpectedSkillMethod,
+      listBridgeSkillVersions: unexpectedSkillMethod,
+      updateBridgeSkill: unexpectedSkillMethod,
+      restoreBridgeSkill: unexpectedSkillMethod,
+      setBridgeSkillEnabled: unexpectedSkillMethod,
+      deleteBridgeSkill: unexpectedSkillMethod
+    });
+    applicationService.createBridgeSkill = vi.fn(async input => ({
+      skillId: randomUUID(), source: "bridge" as const, version: "1", name: input.name,
+      description: "", contentDigest: "a".repeat(64), enabled: true, availability: "available" as const
+    }));
+    const manager = new RemoteCompanionManager({ stateFile: path.join(temporaryDirectory(), "remote.json"), applicationService });
+    managers.push(manager);
+    const endpoint = `https://127.0.0.1:${await availablePort()}`;
+    await manager.configure({ enabled: true, endpoint, displayName: "Fixture" });
+    const invitation = await manager.beginPairing();
+    const pair = JSON.parse(Buffer.from(invitation.invitation, "base64url").toString("utf8"));
+    const oversized = await jsonRequest(`${endpoint}/remote-companion/v1/pair`, "POST", {
+      serverId: pair.serverId, code: pair.code, deviceName: "x".repeat(32 * 1024)
+    }, {}, chunked);
+    expect(oversized).toMatchObject({ status: 413, body: { message: "request_too_large" } });
+    const paired = await jsonRequest(`${endpoint}/remote-companion/v1/pair`, "POST", {
+      serverId: pair.serverId, code: pair.code, deviceName: "Fixture Mac"
+    });
+    expect(paired.status).toBe(200);
+    const payload = { jsonrpc: "2.0", id: "large-skill", method: "skills.create", params: {
+      requestId: randomUUID(), name: "Large", content: "x".repeat(2 * 1024 * 1024)
+    } };
+    const headers = { authorization: `Bearer ${paired.body.credential}`, "x-codex-bridge-server-id": pair.serverId };
+    expect(await jsonRequest(`${endpoint}/remote-companion/v1/rpc`, "POST", { ...payload, params: {} })).toMatchObject({ status: 401 });
+    expect(await jsonRequest(`${endpoint}/remote-companion/v1/rpc`, "POST", payload, headers, chunked))
+      .toMatchObject({ status: 200, body: { result: { name: "Large" } } });
+    expect(applicationService.createBridgeSkill).toHaveBeenCalledExactlyOnceWith(expect.objectContaining(payload.params));
+  });
+
+  it("bounds in-flight RPC capacity and keeps aborted work charged until it settles", async () => {
+    const applicationService = fakeApplicationService();
+    const releases: Array<() => void> = [];
+    let calls = 0;
+    applicationService.settingsSnapshot = vi.fn(async () => {
+      if (++calls <= 2) await new Promise<void>(resolve => releases.push(resolve));
+      return { settings: { settingsRevision: 3 } } as SettingsView;
+    });
+    const manager = new RemoteCompanionManager({ stateFile: path.join(temporaryDirectory(), "remote.json"), applicationService });
+    managers.push(manager);
+    const endpoint = `https://127.0.0.1:${await availablePort()}`;
+    await manager.configure({ enabled: true, endpoint, displayName: "Fixture" });
+    const invitation = await manager.beginPairing();
+    const pair = JSON.parse(Buffer.from(invitation.invitation, "base64url").toString("utf8"));
+    const paired = await jsonRequest(`${endpoint}/remote-companion/v1/pair`, "POST", {
+      serverId: pair.serverId, code: pair.code, deviceName: "Fixture Mac"
+    });
+    const headers = { authorization: `Bearer ${paired.body.credential}`, "x-codex-bridge-server-id": pair.serverId };
+    const payload = { jsonrpc: "2.0", id: "settings", method: "settings.snapshot", params: {} };
+    const abort = new AbortController();
+    const pending = [
+      jsonRequest(`${endpoint}/remote-companion/v1/rpc`, "POST", payload, headers, false, abort.signal),
+      jsonRequest(`${endpoint}/remote-companion/v1/rpc`, "POST", payload, headers)
+    ];
+    void pending[0].catch(() => {});
+    try {
+      await vi.waitFor(() => expect(releases).toHaveLength(2));
+      expect(await jsonRequest(`${endpoint}/remote-companion/v1/rpc`, "POST", payload, headers))
+        .toMatchObject({ status: 503, body: { error: "request_capacity_exhausted" } });
+      expect(await jsonRequest(`${endpoint}/remote-companion/v1/hello`, "GET")).toMatchObject({ status: 200 });
+      abort.abort();
+      await expect(pending[0]).rejects.toMatchObject({ name: "AbortError" });
+      expect(await jsonRequest(`${endpoint}/remote-companion/v1/rpc`, "POST", payload, headers))
+        .toMatchObject({ status: 503, body: { error: "request_capacity_exhausted" } });
+      releases[0]();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(await jsonRequest(`${endpoint}/remote-companion/v1/rpc`, "POST", payload, headers)).toMatchObject({ status: 200 });
+    } finally {
+      releases.forEach(release => release());
+      await Promise.allSettled(pending);
+    }
+  });
+  it("rejects stale configuration before stopping the listener or invalidating pairing", async () => {
+    const stateFile = path.join(temporaryDirectory(), "remote.json");
+    const manager = new RemoteCompanionManager({ stateFile, applicationService: fakeApplicationService() });
+    managers.push(manager);
+    const endpoint = `https://127.0.0.1:${await availablePort()}`;
+    const status = await manager.configure({ enabled: true, endpoint, displayName: "기준 서버" });
+    await manager.beginPairing();
+    const persisted = readFileSync(stateFile, "utf8");
+    const expectedConfiguration = { serverId: status.serverId, enabled: status.enabled, endpoint: status.endpoint, displayName: "outdated" };
+    await expect(manager.configure({ enabled: false, endpoint, displayName: "draft", expectedConfiguration })).rejects.toThrow("REMOTE_CONFIGURATION_CONFLICT");
+    expect(manager.status()).toEqual(status);
+    expect(readFileSync(stateFile, "utf8")).toBe(persisted);
+    expect(await manager.beginPairing()).toMatchObject({ serverId: status.serverId });
+  });
+
+  it("checks guarded writes inside the lifecycle queue and preserves legacy unguarded requests", async () => {
+    const manager = new RemoteCompanionManager({ stateFile: path.join(temporaryDirectory(), "remote.json"), applicationService: fakeApplicationService() });
+    managers.push(manager);
+    const status = manager.status();
+    const expectedConfiguration = { serverId: status.serverId, enabled: status.enabled, endpoint: status.endpoint, displayName: status.displayName };
+    const endpoint = `https://127.0.0.1:${await availablePort()}`;
+    const results = await Promise.allSettled([
+      manager.configure({ enabled: false, endpoint, displayName: "first", expectedConfiguration }),
+      manager.configure({ enabled: false, endpoint, displayName: "second", expectedConfiguration })
+    ]);
+    expect(results[0].status).toBe("fulfilled");
+    expect(results[1]).toMatchObject({ status: "rejected", reason: expect.objectContaining({ message: "REMOTE_CONFIGURATION_CONFLICT" }) });
+    expect(manager.status().displayName).toBe("first");
+    await expect(manager.configure({ enabled: false, endpoint, displayName: "legacy" })).resolves.toMatchObject({ displayName: "legacy" });
+  });
+
   it("pairs one device over pinned TLS and serves only the remote application API", async () => {
     const directory = temporaryDirectory();
     const stateFile = path.join(directory, "remote.json");
@@ -34,6 +149,11 @@ describe("remote native companion", () => {
     const endpoint = `https://127.0.0.1:${port}`;
     const applicationService = fakeApplicationService();
     applicationService.historyAction = vi.fn(async () => ({ok:true as const}));
+    applicationService.dashboardHistoryDetail = vi.fn(async ({ rowKey }) => ({
+      kind: "dashboard-history" as const, rowKey, history: [], historyCount: 0,
+      historyRevision: "b".repeat(64)
+    }));
+    applicationService.dashboardExecutionDetail=vi.fn(async args=>({kind:"dashboard-execution",...args,executionRevision:"a".repeat(64),policyRevision:"b".repeat(64),nextExpiryAt:null,execution:{}} as any));
     applicationService.problemAction = vi.fn(async () => ({ok:true as const,changed:1}));
     const manager = new RemoteCompanionManager({ stateFile, applicationService });
     managers.push(manager);
@@ -169,8 +289,29 @@ describe("remote native companion", () => {
       idleOffset: 0,
       inspectRuntime: false,
       includeHistory: false
-    });
+    }, expect.objectContaining({ signal: expect.any(AbortSignal), deadlineAt: expect.any(Number) }));
     expect(manager.status().devices[0]?.lastSeenAt).not.toBeNull();
+
+    const deferredHistory = await jsonRequest(`${endpoint}/remote-companion/v1/rpc`, "POST",
+      { jsonrpc: "2.0", id: "history-detail", method: "dashboard.history-detail", params: { rowKey: "a".repeat(32) } },
+      { authorization: `Bearer ${credential}`, "x-codex-bridge-server-id": enabled.serverId });
+    expect(deferredHistory).toMatchObject({ status: 200, body: { result: {
+      kind: "dashboard-history", historyCount: 0, historyRevision: "b".repeat(64)
+    } } });
+    expect(applicationService.dashboardHistoryDetail).toHaveBeenCalledWith({ rowKey: "a".repeat(32) }, expect.objectContaining({ signal: expect.any(AbortSignal), deadlineAt: expect.any(Number) }));
+
+    const backgroundPage=await jsonRequest(`${endpoint}/remote-companion/v1/rpc`,"POST",
+      {jsonrpc:"2.0",id:"background-page",method:"dashboard.snapshot",params:{historyMode:"jobs",backgroundOffset:12,enrich:true,includeHistory:false}},
+      {authorization:`Bearer ${credential}`,"x-codex-bridge-server-id":enabled.serverId});
+    expect(backgroundPage).toMatchObject({status:200,body:{result:{kind:"dashboard"}}});
+    expect(applicationService.dashboardSnapshot).toHaveBeenLastCalledWith(expect.objectContaining({historyMode:"jobs",backgroundOffset:12,inspectRuntime:true,includeHistory:false}),expect.anything());
+
+    const exactParams={scopeId:"11111111-1111-4111-8111-111111111111",jobId:"legacy-execution"};
+    const exactDetail=await jsonRequest(`${endpoint}/remote-companion/v1/rpc`,"POST",
+      {jsonrpc:"2.0",id:"exact-detail",method:"dashboard.execution-detail",params:exactParams},
+      {authorization:`Bearer ${credential}`,"x-codex-bridge-server-id":enabled.serverId});
+    expect(exactDetail).toMatchObject({status:200,body:{result:{kind:"dashboard-execution",jobId:"legacy-execution"}}});
+    expect(applicationService.dashboardExecutionDetail).toHaveBeenCalledWith(exactParams,expect.objectContaining({signal:expect.any(AbortSignal)}));
 
     const historyParams = {rowKey:"a".repeat(32),expectedRevision:"b".repeat(64),action:"acknowledge",requestId:"11111111-1111-4111-8111-111111111111"};
     const history = await jsonRequest(`${endpoint}/remote-companion/v1/rpc`,"POST",
@@ -444,12 +585,15 @@ function jsonRequest(
   url: string,
   method: "GET" | "POST",
   body?: unknown,
-  headers: Record<string, string> = {}
+  headers: Record<string, string> = {},
+  chunked = false,
+  signal?: AbortSignal
 ): Promise<{ status: number; body: Record<string, any>; fingerprint: string | null }> {
   return new Promise((resolve, reject) => {
     const encoded = body === undefined ? undefined : Buffer.from(JSON.stringify(body), "utf8");
     const request = httpsRequest(url, {
       method,
+      signal,
       agent: false,
       rejectUnauthorized: false,
       headers: {
@@ -457,7 +601,7 @@ function jsonRequest(
         ...(encoded
           ? {
               "content-type": "application/json",
-              "content-length": String(encoded.length)
+              ...(chunked ? { "transfer-encoding": "chunked" } : { "content-length": String(encoded.length) })
             }
           : {})
       }

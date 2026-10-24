@@ -1,0 +1,10 @@
+{
+  "installation": "local dev",
+  "appVersion": "0.4.1",
+  "bundleBuild": "17",
+  "sourceCommit": "0d26c7f14353243aa7db221e025095b9a7a60026",
+  "buildId": "0d26c7f14353:41d00390ea3a",
+  "sourceDirty": false,
+  "sourceHash": "41d00390ea3aa34cfd9005c14102c8cde2f51ffec32544f33e84ad859d8fc6da",
+  "publicDevAncestor": "3e87a5deefcc64e3e609c72bc626d85e2b729514"
+}

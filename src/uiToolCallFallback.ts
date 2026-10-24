@@ -16,14 +16,15 @@ export type UiToolCallFallbackOptions = {
 export function withUiToolCallTimeout<T>(
   attempt: UiToolCallAttempt<T>,
   timeoutMs: number,
-  timeoutMessage: string
+  timeoutMessage: string,
+  timeoutCode = "MCP_TOOL_CALL_DISPATCH_TIMEOUT"
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     let settled = false;
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
-      reject(new Error(timeoutMessage));
+      reject(Object.assign(new Error(timeoutMessage), { code: timeoutCode }));
     }, timeoutMs);
 
     Promise.resolve()

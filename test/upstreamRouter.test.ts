@@ -4,6 +4,12 @@ import type { CodexUpstream, ToolResult, UpstreamWorkerAssignment } from "../src
 import { backendRoutingArgument, CodexBackendRouter } from "../src/upstreamRouter.js";
 
 describe("CodexBackendRouter", () => {
+  it("forwards the live thread inventory without resuming historical threads", async () => {
+    const app=fakeBackend("app-server");app.backend.listLoadedThreadIds=async()=>["live-thread"];
+    const router=new CodexBackendRouter("app-server",app.backend);
+    await expect(router.listLoadedThreadIds()).resolves.toEqual(["live-thread"]);
+    expect(app.calls).toEqual([]);await router.close();
+  });
   it("forwards ephemeral only for App Server thread starts", async () => {
     const app = fakeBackend("app-server");
     const router = new CodexBackendRouter("app-server", app.backend);
@@ -24,6 +30,21 @@ describe("CodexBackendRouter", () => {
     });
 
     await router.close();
+  });
+
+  it("preserves separate bridge admission metadata across start and continue routing", async () => {
+    const app = fakeBackend("app-server");
+    const router = new CodexBackendRouter("app-server", app.backend);
+    try {
+      const started = await router.startThread({ backendKind: "app-server", prompt: "original prompt", executionContext: "admitted binding",
+        cwd: "/tmp/project", sandbox: "read-only", approvalPolicy: "never", selection: { model: "gpt-5.6-sol", reasoningEffort: "medium" } });
+      await router.continueThread({ backendKind: "app-server", threadId: started.structuredContent!.threadId as string,
+        prompt: "continued prompt", executionContext: "next binding" });
+      expect(app.calls.map(call => ({ prompt: call.args.prompt, executionContext: call.args.executionContext }))).toEqual([
+        { prompt: "original prompt", executionContext: "admitted binding" },
+        { prompt: "continued prompt", executionContext: "next binding" }
+      ]);
+    } finally { await router.close(); }
   });
 
   it("uses the configured backend for new threads and pins every continuation", async () => {

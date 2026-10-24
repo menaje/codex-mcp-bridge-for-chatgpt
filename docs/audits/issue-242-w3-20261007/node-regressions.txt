@@ -1,0 +1,403 @@
+
+ RUN  v4.1.11 /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w3-completion
+
+ ❯ test/tools.test.ts (55 tests | 20 failed) 345446ms
+     × preserves an admitted speed through a settings change and handles later support loss explicitly: false 10611ms
+     × preserves an admitted speed through a settings change and handles later support loss explicitly: true 7701ms
+     × preserves saved future-tier through old-client saves and refuses unverified new execution 9184ms
+     × preserves saved ultrafast through old-client saves and refuses unverified new execution 8777ms
+     × refuses an unavailable fixed choice before admitting work: 'removed-model'/'medium' 11312ms
+     × refuses an unavailable fixed choice before admitting work: 'gpt-5.6-sol'/'removed-effort' 11029ms
+     × starts a hidden persistent conversation using the independent storage preference 12804ms
+     × starts a hidden ephemeral conversation using the independent storage preference 12064ms
+     × continues, replaces and forks the same Agent across accounts while keeping Bridge scope and logout admission checks 9698ms
+     × does not admit a task when transport fails before dispatch and admits it once on exact retry 19024ms
+     × recovers a durable Job when the admission response is lost in transport 11706ms
+     × deduplicates concurrent exact retries into one durable Job and one upstream execution 10792ms
+     × recovers an admitted Job by requestId and rejects conflicting reuse without redispatch 13452ms
+     × recovers an approved second turn after response loss and repeated parent reads without stalling independent work 10995ms
+     × recovers a scoped terminal admission fact after its result expires and the bridge restarts 7548ms
+     × does not distinguish scope-mismatched handles from missing handles 9371ms
+     × records a detached HTTP task call without turning it into cancellation 6908ms
+     × records an aborted exact status wait while the same Job keeps running 7427ms
+     × keeps an asynchronous admission valid before App Server assigns its thread 6645ms
+     × opens Dashboard explicitly and rejects every retired sender operation without mutating a Job 9291ms
+ ❯ test/issue221Delivery.test.ts (21 tests | 19 failed) 189371ms
+     × keeps the entire ordinary path independent of Events 7668ms
+     × requires current review for new B but returns admitted B when replay has an older reviewedVersion 7139ms
+     × rejects an unadmitted historical live-card followup without modifying approval 6017ms
+     × rejects an unadmitted historical events followup without modifying approval 7333ms
+     × replays an already admitted historical live-card B before retired-policy rejection 7880ms
+     × replays an already admitted historical events B before retired-policy rejection 9074ms
+     × preserves an admitted live-card B replay carrying its original delivery selector 6840ms
+     × preserves an admitted events B replay carrying its original delivery selector 8028ms
+     × reports probe reason unsupported without orphaning or replacing the Agent 9463ms
+     × reports probe reason transient without orphaning or replacing the Agent 12383ms
+     × retrieves delivered summaries on every ordinary MCP surface without inserting answers 11294ms
+     × preserves retained structured error 'CONTEXT_WINDOW_EXCEEDED'/true on all five MCP read surfaces 11204ms
+     × preserves retained structured error 'UPSTREAM_TURN_FAILED'/false on all five MCP read surfaces 11938ms
+     × preserves retained structured error 'UPSTREAM_TURN_FAILED'/undefined on all five MCP read surfaces 14462ms
+     × keeps cancelled error semantics consistent across exact and summary reads: Cancelled at the user's request. 11742ms
+     × keeps interrupted error semantics consistent across exact and summary reads: Execution was interrupted. 11641ms
+     × keeps failed error semantics consistent across exact and summary reads: Execution failed. 9020ms
+     × keeps failed error semantics consistent across exact and summary reads: BRIDGE_TERMINAL_COMMIT_FAILED: Durable terminal commit failed. 8468ms
+     × continues bounded reads of the same historical active live-card Job 7362ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 39 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > keeps the entire ordinary path independent of Events
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue221Delivery.test.ts:271:3
+    269|     await exact((result.structuredContent as any).jobId);
+    270|   });
+    271|   it("keeps the entire ordinary path independent of Events", async () …
+       |   ^
+    272|     const tools = await client.listTools();
+    273|     const task = tools.tools.find(tool => tool.name === "codex_task")!;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/39]⎯
+
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > requires current review for new B but returns admitted B when replay has an older reviewedVersion
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue221Delivery.test.ts:288:3
+    286|     expect(upstream.calls).toHaveLength(2);
+    287|   });
+    288|   it("requires current review for new B but returns admitted B when re…
+       |   ^
+    289|     const a = await admit({ approvedFollowups: [{ prompt: "Fixture B" …
+    290|     const parent = (await exact((a.structuredContent as any).jobId)).i…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/39]⎯
+
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > rejects an unadmitted historical live-card followup without modifying approval
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > rejects an unadmitted historical events followup without modifying approval
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue221Delivery.test.ts:309:44
+    307|     expect(upstream.calls).toHaveLength(2);
+    308|   });
+    309|   it.each(["live-card", "events"] as const)("rejects an unadmitted his…
+       |                                            ^
+    310|     const a = await admit({ approvedFollowups: [{ prompt: "Fixture B" …
+    311|     const parent = await exact((a.structuredContent as any).jobId);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/39]⎯
+
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > replays an already admitted historical live-card B before retired-policy rejection
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > replays an already admitted historical events B before retired-policy rejection
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue221Delivery.test.ts:334:44
+    332|     expect(state.listMeta("task_followup_v1/", 100)).toEqual(before);
+    333|   });
+    334|   it.each(["live-card", "events"] as const)("replays an already admitt…
+       |                                            ^
+    335|     const a = await admit({ approvedFollowups: [{ prompt: "Fixture B" …
+    336|     const parent = await exact((a.structuredContent as any).jobId);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/39]⎯
+
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > preserves an admitted live-card B replay carrying its original delivery selector
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > preserves an admitted events B replay carrying its original delivery selector
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue221Delivery.test.ts:352:44
+    350|     expect(result.items[0].answer).toBe("Completed fixture work.");
+    351|   });
+    352|   it.each(["live-card", "events"] as const)("preserves an admitted %s …
+       |                                            ^
+    353|     const a = await admit({ approvedFollowups: [{ prompt: "Fixture B" …
+    354|     const parent = (await exact((a.structuredContent as any).jobId)).i…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/39]⎯
+
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > reports probe reason unsupported without orphaning or replacing the Agent
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > reports probe reason transient without orphaning or replacing the Agent
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue221Delivery.test.ts:371:49
+    369|     expect(state.listMeta("task_followup_v1/", 100)).toEqual(before);
+    370|   });
+    371|   it.each(["unsupported", "transient"] as const)("reports probe reason…
+       |                                                 ^
+    372|     const a = await admit(); const parent = (await exact((a.structured…
+    373|     Object.assign(upstream, { probeThread: async (threadId: string) =>…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/39]⎯
+
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > retrieves delivered summaries on every ordinary MCP surface without inserting answers
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue221Delivery.test.ts:384:3
+    382|     expect(state.listJobs()).toHaveLength(1);
+    383|   });
+    384|   it("retrieves delivered summaries on every ordinary MCP surface with…
+       |   ^
+    385|     const a = await admit(); const parent = (await exact((a.structured…
+    386|     for (const query of [undefined, { kind: "page", collection: "jobs"…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/39]⎯
+
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > preserves retained structured error 'CONTEXT_WINDOW_EXCEEDED'/true on all five MCP read surfaces
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > preserves retained structured error 'UPSTREAM_TURN_FAILED'/false on all five MCP read surfaces
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > preserves retained structured error 'UPSTREAM_TURN_FAILED'/undefined on all five MCP read surfaces
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue221Delivery.test.ts:397:5
+    395|     { code: "UPSTREAM_TURN_FAILED", retryable: false, missingFields: […
+    396|     { code: "UPSTREAM_TURN_FAILED" }
+    397|   ])("preserves retained structured error $code/$retryable on all five…
+       |     ^
+    398|     const held = upstream.holdNextCall();
+    399|     const a = await admit();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/39]⎯
+
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > keeps cancelled error semantics consistent across exact and summary reads: Cancelled at the user's request.
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > keeps interrupted error semantics consistent across exact and summary reads: Execution was interrupted.
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > keeps failed error semantics consistent across exact and summary reads: Execution failed.
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > keeps failed error semantics consistent across exact and summary reads: BRIDGE_TERMINAL_COMMIT_FAILED: Durable terminal commit failed.
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue221Delivery.test.ts:427:14
+    425|     ["failed", "Execution failed.", "JOB_FAILED"],
+    426|     ["failed", "BRIDGE_TERMINAL_COMMIT_FAILED: Durable terminal commit…
+    427|   ] as const)("keeps %s error semantics consistent across exact and su…
+       |              ^
+    428|     const a = await admit();
+    429|     const parent = (await exact((a.structuredContent as any).jobId)).i…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/39]⎯
+
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > continues bounded reads of the same historical active live-card Job
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue221Delivery.test.ts:454:3
+    452|     }
+    453|   });
+    454|   it("continues bounded reads of the same historical active live-card …
+       |   ^
+    455|     const held = upstream.holdNextCall();
+    456|     const a = await admit(); const id = (a.structuredContent as any).j…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/39]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > preserves an admitted speed through a settings change and handles later support loss explicitly: false
+ FAIL  test/tools.test.ts > current bridge tool contracts > preserves an admitted speed through a settings change and handles later support loss explicitly: true
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:217:25
+    215|   });
+    216|
+    217|   it.each([false, true])("preserves an admitted speed through a settin…
+       |                         ^
+    218|     Object.assign(upstream, { capabilities: () => APP_SERVER_CAPABILIT…
+    219|     const current = await server.applicationService.settingsSnapshot();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/39]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > preserves saved future-tier through old-client saves and refuses unverified new execution
+ FAIL  test/tools.test.ts > current bridge tool contracts > preserves saved ultrafast through old-client saves and refuses unverified new execution
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:290:40
+    288|   });
+    289|
+    290|   it.each(["future-tier", "ultrafast"])("preserves saved %s through ol…
+       |                                        ^
+    291|     settings.update({ processingSpeed: speed }, settings.current.setti…
+    292|     await client.close(); await new Promise<void>(resolve => server.cl…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/39]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > refuses an unavailable fixed choice before admitting work: 'removed-model'/'medium'
+ FAIL  test/tools.test.ts > current bridge tool contracts > refuses an unavailable fixed choice before admitting work: 'gpt-5.6-sol'/'removed-effort'
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:337:5
+    335|     { model: "removed-model", reasoningEffort: selection.reasoningEffo…
+    336|     { model: selection.model, reasoningEffort: "removed-effort" }
+    337|   ])("refuses an unavailable fixed choice before admitting work: $mode…
+       |     ^
+    338|     settings.update({ modelPolicy: { mode: "fixed", selection: saved, …
+    339|     await client.close();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/39]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > starts a hidden persistent conversation using the independent storage preference
+ FAIL  test/tools.test.ts > current bridge tool contracts > starts a hidden ephemeral conversation using the independent storage preference
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:360:48
+    358|   });
+    359|
+    360|   it.each(["persistent", "ephemeral"] as const)("starts a hidden %s co…
+       |                                                ^
+    361|     settings.update({ showBridgeThreadsInCodexApp: false, bridgeThread…
+    362|     await client.close();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/39]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > continues, replaces and forks the same Agent across accounts while keeping Bridge scope and logout admission checks
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:382:3
+    380|   });
+    381|
+    382|   it("continues, replaces and forks the same Agent across accounts whi…
+       |   ^
+    383|     const home = path.join(root, "codex-home");
+    384|     await mkdir(home);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/39]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > does not admit a task when transport fails before dispatch and admits it once on exact retry
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:2166:3
+    2164|   }, 75_000);
+    2165|
+    2166|   it("does not admit a task when transport fails before dispatch and a…
+       |   ^
+    2167|     const descriptor = (await client.listTools()).tools.find((tool) =>…
+    2168|     const properties = descriptor.inputSchema.properties as Record<str…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/39]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > recovers a durable Job when the admission response is lost in transport
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:2228:3
+    2226|   });
+    2227|
+    2228|   it("recovers a durable Job when the admission response is lost in tr…
+       |   ^
+    2229|     const descriptor = (await client.listTools()).tools.find((tool) =>…
+    2230|     const properties = descriptor.inputSchema.properties as Record<str…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/39]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > deduplicates concurrent exact retries into one durable Job and one upstream execution
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:2302:3
+    2300|   });
+    2301|
+    2302|   it("deduplicates concurrent exact retries into one durable Job and o…
+       |   ^
+    2303|     const descriptor = (await client.listTools()).tools.find((tool) =>…
+    2304|     const properties = descriptor.inputSchema.properties as Record<str…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/39]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > recovers an admitted Job by requestId and rejects conflicting reuse without redispatch
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:2345:3
+    2343|   });
+    2344|
+    2345|   it("recovers an admitted Job by requestId and rejects conflicting re…
+       |   ^
+    2346|     const descriptor = (await client.listTools()).tools.find((tool) =>…
+    2347|     const properties = descriptor.inputSchema.properties as Record<str…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/39]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > recovers an approved second turn after response loss and repeated parent reads without stalling independent work
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:2395:3
+    2393|   });
+    2394|
+    2395|   it("recovers an approved second turn after response loss and repeate…
+       |   ^
+    2396|     const descriptor = (await client.listTools()).tools.find((tool) =>…
+    2397|     const properties = descriptor.inputSchema.properties as Record<str…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/39]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > recovers a scoped terminal admission fact after its result expires and the bridge restarts
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:2582:3
+    2580|   });
+    2581|
+    2582|   it("recovers a scoped terminal admission fact after its result expir…
+       |   ^
+    2583|     settings.update({ experimentalDirectResultDelivery: true }, settin…
+    2584|     const descriptor = (await client.listTools()).tools.find((tool) =>…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[21/39]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > does not distinguish scope-mismatched handles from missing handles
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:2700:3
+    2698|   });
+    2699|
+    2700|   it("does not distinguish scope-mismatched handles from missing handl…
+       |   ^
+    2701|     const descriptor = (await client.listTools()).tools.find((tool) =>…
+    2702|     const properties = descriptor.inputSchema.properties as Record<str…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[22/39]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > records a detached HTTP task call without turning it into cancellation
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:2807:3
+    2805|   });
+    2806|
+    2807|   it("records a detached HTTP task call without turning it into cancel…
+       |   ^
+    2808|     const descriptor = (await client.listTools()).tools.find((tool) =>…
+    2809|     const properties = descriptor.inputSchema.properties as Record<str…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[23/39]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > records an aborted exact status wait while the same Job keeps running
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:2869:3
+    2867|   });
+    2868|
+    2869|   it("records an aborted exact status wait while the same Job keeps ru…
+       |   ^
+    2870|     const descriptor = (await client.listTools()).tools.find((tool) =>…
+    2871|     const properties = descriptor.inputSchema.properties as Record<str…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[24/39]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > keeps an asynchronous admission valid before App Server assigns its thread
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:2928:3
+    2926|   });
+    2927|
+    2928|   it("keeps an asynchronous admission valid before App Server assigns …
+       |   ^
+    2929|     const descriptor = (await client.listTools()).tools.find((tool) =>…
+    2930|     const properties = descriptor.inputSchema.properties as Record<str…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[25/39]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > opens Dashboard explicitly and rejects every retired sender operation without mutating a Job
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:2983:3
+    2981|   });
+    2982|
+    2983|   it("opens Dashboard explicitly and rejects every retired sender oper…
+       |   ^
+    2984|     const tools = await client.listTools();
+    2985|     expect(tools.tools.some(tool => tool.name === "codex_ui_completion…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[26/39]⎯
+
+
+ Test Files  2 failed | 4 passed (6)
+      Tests  39 failed | 64 passed (103)
+   Start at  21:45:13
+   Duration  607.79s (transform 27.80s, setup 0ms, import 46.00s, tests 550.47s, environment 5ms)

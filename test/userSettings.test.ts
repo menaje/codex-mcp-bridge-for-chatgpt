@@ -42,6 +42,7 @@ describe("user settings and project registry", () => {
     expect(second.settings.current.historyRetentionDays).toBe(0);
     const legacy = second.stateStore.getSettingsRecord()!.payload as Record<string, unknown>;
     delete legacy.historyRetentionDays;
+    legacy.schemaVersion = 2;
     second.stateStore.close();
     replaceStoredSettingsPayloadForTest(databaseFile, legacy);
 
@@ -55,19 +56,83 @@ describe("user settings and project registry", () => {
     const config = configFor();
     const first = persistentSettings(config, databaseFile);
     expect(first.settings.current.showBridgeThreadsInCodexApp).toBe(true);
+    expect(first.settings.current.bridgeThreadPersistence).toBe("persistent");
     first.settings.update({ showBridgeThreadsInCodexApp: false }, 0);
     first.stateStore.close();
 
     const second = persistentSettings(config, databaseFile);
     expect(second.settings.current.showBridgeThreadsInCodexApp).toBe(false);
+    expect(second.settings.current.bridgeThreadPersistence).toBe("persistent");
     const legacy = second.stateStore.getSettingsRecord()!.payload as Record<string, unknown>;
     delete legacy.showBridgeThreadsInCodexApp;
+    delete legacy.bridgeThreadPersistence;
     second.stateStore.close();
     replaceStoredSettingsPayloadForTest(databaseFile, legacy);
 
     const restored = persistentSettings(config, databaseFile);
     expect(restored.settings.current.showBridgeThreadsInCodexApp).toBe(false);
+    expect(restored.settings.current.bridgeThreadPersistence).toBe("persistent");
+    restored.settings.update({ bridgeThreadPersistence: "ephemeral" }, restored.settings.current.settingsRevision);
     restored.stateStore.close();
+    const memory = persistentSettings(config, databaseFile);
+    expect(memory.settings.current.bridgeThreadPersistence).toBe("ephemeral");
+    expect(() => memory.settings.update({ showBridgeThreadsInCodexApp: true }, memory.settings.current.settingsRevision)).toThrow("EPHEMERAL_NOT_VISIBLE");
+    memory.stateStore.close();
+  });
+
+  it.each([true, false, undefined])("normalizes retired direct-result preference %s once without changing other settings", legacyValue => {
+    const databaseFile = path.join(temporaryDirectory("settings-direct-results-"), "state.sqlite");
+    const config = configFor();
+    const first = persistentSettings(config, databaseFile);
+    expect(first.settings.current.experimentalDirectResultDelivery).toBe(true);
+    first.settings.update({ uiLocalePreference: "ko", historyRetentionDays: 7, experimentalDirectResultDelivery: false }, 0);
+    expect(first.settings.current.experimentalDirectResultDelivery).toBe(true);
+    const legacy = first.stateStore.getSettingsRecord()!.payload as Record<string, unknown>;
+    if (legacyValue === undefined) delete legacy.experimentalDirectResultDelivery;
+    else legacy.experimentalDirectResultDelivery = legacyValue;
+    first.stateStore.close();
+    replaceStoredSettingsPayloadForTest(databaseFile, legacy);
+    const migrated = persistentSettings(config, databaseFile);
+    expect(migrated.settings.current).toMatchObject({ experimentalDirectResultDelivery: true, uiLocalePreference: "ko", historyRetentionDays: 7 });
+    const normalized = migrated.stateStore.getSettingsRecord();
+    const marker = migrated.stateStore.getMeta("ordinary_delivery_transition_v2");
+    expect(JSON.parse(marker!)).toMatchObject({ policy: "direct-wait", cardSender: "retired", historicalAdmissions: "preserved" });
+    migrated.stateStore.close();
+    const restarted = persistentSettings(config, databaseFile);
+    expect(restarted.stateStore.getSettingsRecord()).toEqual(normalized);
+    expect(restarted.stateStore.getMeta("ordinary_delivery_transition_v2")).toBe(marker);
+    restarted.stateStore.close();
+  });
+
+  it("retires legacy Dashboard and completion delivery preferences", () => {
+    const databaseFile = path.join(temporaryDirectory("settings-completion-delivery-"), "state.sqlite");
+    const config = configFor();
+    const first = persistentSettings(config, databaseFile);
+    expect(first.settings.current).not.toHaveProperty("dashboardAutoOpen");
+    expect(first.settings.current).not.toHaveProperty("completionFollowUp");
+    first.settings.update({ uiLocalePreference: "ko" }, first.settings.current.settingsRevision);
+    const legacy = first.stateStore.getSettingsRecord()!.payload as Record<string, unknown>;
+    legacy.schemaVersion = 5;
+    legacy.dashboardAutoOpen = false;
+    legacy.dashboardAutoOpenBackground = true;
+    legacy.completionFollowUp = false;
+    legacy.activityCardVisibility = "never";
+    legacy.completionHandoff = "auto-handoff";
+    first.stateStore.close();
+    replaceStoredSettingsPayloadForTest(databaseFile, legacy);
+
+    const migrated = persistentSettings(config, databaseFile);
+    expect(migrated.settings.current.schemaVersion).toBe(8);
+    expect(migrated.settings.current).not.toHaveProperty("dashboardAutoOpen");
+    expect(migrated.settings.current).not.toHaveProperty("completionFollowUp");
+    const rewritten = migrated.stateStore.getSettingsRecord()!.payload as Record<string, unknown>;
+    expect(rewritten.schemaVersion).toBe(8);
+    expect(rewritten).not.toHaveProperty("dashboardAutoOpen");
+    expect(rewritten).not.toHaveProperty("dashboardAutoOpenBackground");
+    expect(rewritten).not.toHaveProperty("completionFollowUp");
+    expect(rewritten).not.toHaveProperty("activityCardVisibility");
+    expect(rewritten).not.toHaveProperty("completionHandoff");
+    migrated.stateStore.close();
   });
 
   it("persists inactive Ultra selections through restart and restores them when enabled", () => {
@@ -112,7 +177,7 @@ describe("user settings and project registry", () => {
   it("starts without a default project, slug, or implicit selection", () => {
     const store = new UserSettingsStore(configFor());
     expect(store.current).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 8,
       settingsRevision: 0,
       registryRevision: 0,
       projects: [],
@@ -263,26 +328,27 @@ describe("user settings and project registry", () => {
     expect(store.current.projects[0]).toMatchObject({ projectRef, projectRevision: 3 });
     expect(() => store.resolveProject({ name: "Renamed", registryRevision: 3 }))
       .toThrow(PROJECT_NOT_FOUND);
+    state.transaction(() => state.projectLifecycle.complete(id, 1));
 
     store.updateWithProjectOperations(
       {},
       [{ kind: "restore", projectId: id, name: "Restored", cwd: first }],
       undefined,
-      3
+      4
     );
     expect(store.current.projects[0]).toMatchObject({
       id,
       projectRef,
-      projectRevision: 4,
+      projectRevision: 5,
       name: "Restored",
       cwd: first
     });
     expect(store.current.projects[0]).not.toHaveProperty("archivedAt");
-    expect(store.current.registryRevision).toBe(4);
+    expect(store.current.registryRevision).toBe(5);
     state.close();
   });
 
-  it("deletes only archived registrations while retaining pinned work history", () => {
+  it("deletes only confirmed archives and ends finished work management", () => {
     const root = temporaryDirectory("settings-delete-project-");
     const state = new BridgeStateStore({ file: ":memory:" });
     const store = new UserSettingsStore(configFor(), { stateStore: state });
@@ -311,26 +377,24 @@ describe("user settings and project registry", () => {
     )).toThrow(PROJECT_DELETE_REQUIRES_ARCHIVE);
     expect(store.current.registryRevision).toBe(1);
 
+    state.completeActivity(activityId, "Finished before deleting the registration", 2);
     store.updateWithProjectOperations(
       {},
       [{ kind: "archive", projectId: project.id }],
       undefined,
       1
     );
+    state.transaction(() => state.projectLifecycle.complete(project.id, 1));
     store.updateWithProjectOperations(
       {},
       [{ kind: "delete", projectId: project.id }],
       undefined,
-      2
+      3
     );
 
-    expect(store.current).toMatchObject({ registryRevision: 3, projects: [] });
+    expect(store.current).toMatchObject({ registryRevision: 4, projects: [] });
     expect(store.projectRegistry.selectableProjects).toEqual([]);
-    expect(state.getActivityProjectAdmission(activityId)).toEqual({
-      projectId: project.id,
-      projectName: project.name,
-      projectCwd: root
-    });
+    expect(state.getActivityProjectAdmission(activityId)).toBeUndefined();
     expect(() => store.resolveProject({
       name: project.name,
       projectRef: project.projectRef,
@@ -459,7 +523,8 @@ describe("user settings and project registry", () => {
   it("rejects active restore conflicts without changing UUID or revision", () => {
     const first = temporaryDirectory("settings-restore-first-");
     const second = temporaryDirectory("settings-restore-second-");
-    const store = new UserSettingsStore(configFor());
+    const state = new BridgeStateStore({ file: ":memory:" });
+    const store = new UserSettingsStore(configFor(), { stateStore: state });
     store.updateWithProjectOperations(
       {},
       [
@@ -476,17 +541,19 @@ describe("user settings and project registry", () => {
       undefined,
       1
     );
+    state.transaction(() => state.projectLifecycle.complete(one!.id, 1));
     expect(() => store.updateWithProjectOperations(
       {},
       [{ kind: "restore", projectId: one!.id, name: two!.name, cwd: first }],
       undefined,
-      2
+      3
     )).toThrow(PROJECT_NAME_CONFLICT);
-    expect(store.current.registryRevision).toBe(2);
+    expect(store.current.registryRevision).toBe(3);
     expect(store.current.projects.find(({ id }) => id === one!.id)?.archivedAt).toBeTypeOf("number");
+    state.close();
   });
 
-  it("blocks old cwd takeover while another UUID has a resumable Activity pin", () => {
+  it("allows old cwd reuse when only an open Activity remains", () => {
     const first = temporaryDirectory("settings-pin-first-");
     const second = temporaryDirectory("settings-pin-second-");
     const state = new BridgeStateStore({ file: ":memory:" });
@@ -512,18 +579,18 @@ describe("user settings and project registry", () => {
       1
     );
 
-    expect(() => store.updateWithProjectOperations(
+    store.updateWithProjectOperations(
       {},
       [{ kind: "add", project: { name: "Takeover", cwd: first } }],
       undefined,
       2
-    )).toThrow(PROJECT_CWD_STILL_PINNED);
-    expect(store.current.registryRevision).toBe(2);
-    expect(store.current.projects).toHaveLength(1);
+    );
+    expect(store.current.registryRevision).toBe(3);
+    expect(store.current.projects).toHaveLength(2);
     state.close();
   });
 
-  it("blocks old cwd takeover while an idle Agent retains its pinned thread", () => {
+  it("allows old cwd reuse when only an idle current thread remains", () => {
     const first = temporaryDirectory("settings-agent-pin-first-");
     const second = temporaryDirectory("settings-agent-pin-second-");
     const state = new BridgeStateStore({ file: ":memory:" });
@@ -558,13 +625,13 @@ describe("user settings and project registry", () => {
       1
     );
 
-    expect(() => store.updateWithProjectOperations(
+    store.updateWithProjectOperations(
       {},
       [{ kind: "add", project: { name: "Takeover", cwd: first } }],
       undefined,
       2
-    )).toThrow(PROJECT_CWD_STILL_PINNED);
-    expect(store.current.registryRevision).toBe(2);
+    );
+    expect(store.current.registryRevision).toBe(3);
     state.close();
   });
 
@@ -628,7 +695,7 @@ describe("user settings and project registry", () => {
 
     const restored = persistentSettings(config, databaseFile, () => 5_000);
     expect(restored.settings.current).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 8,
       settingsRevision: 2,
       modelPolicy: {
         mode: "automatic",

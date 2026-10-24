@@ -36,19 +36,28 @@ import {
   type RemotePairingInvitation
 } from "./companionServer.js";
 import { PRODUCT_INFO } from "./productInfo.js";
+import { BRIDGE_SKILL_LIMITS } from "./skillLibrary.js";
+import { assertJsonTextIntegrity, decodeUtf8Strict, parseJsonUtf8Strict } from "./textIntegrity.js";
 import type { BridgeApplicationService } from "./tools.js";
 
 export const REMOTE_COMPANION_PROTOCOL_NAME = "codex-mcp-bridge-remote-companion";
-export const REMOTE_COMPANION_PROTOCOL_VERSION = 1;
+/** v9 removes retired Dashboard and completion-delivery Settings fields. */
+export const REMOTE_COMPANION_PROTOCOL_VERSION = 10;
 const REMOTE_API_PREFIX = "/remote-companion/v1";
-const REMOTE_MAX_REQUEST_BYTES = 1024 * 1024;
-const REMOTE_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+const REMOTE_MAX_REQUEST_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;
+const REMOTE_MAX_PAIRING_REQUEST_BYTES = 16 * 1024;
+// Reserve complete envelopes through dispatch and response flushing, shared by
+// both address-family listeners. Even small RPCs may produce large exports.
+const REMOTE_MAX_REQUEST_BYTES_IN_FLIGHT = 2 * REMOTE_MAX_REQUEST_BYTES;
+const REMOTE_MAX_RESPONSE_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;
 const REMOTE_MAX_DEVICES = 32;
 const REMOTE_DEFAULT_PAIRING_TTL_SECONDS = 300;
 const REMOTE_DEVICE_CAPABILITIES = [
   "dashboard.read",
   "settings.read",
   "settings.write",
+  "skills.read",
+  "skills.write",
   "runtime.read"
 ];
 
@@ -109,6 +118,7 @@ export class RemoteCompanionManager implements RemoteCompanionControl {
   private lastError: string | null = null;
   private pairing: PairingSession | undefined;
   private lifecycleOperation: Promise<void> = Promise.resolve();
+  private reservedRequestBytes = 0;
 
   constructor(options: RemoteCompanionManagerOptions) {
     this.stateFile = path.resolve(options.stateFile);
@@ -151,6 +161,7 @@ export class RemoteCompanionManager implements RemoteCompanionControl {
     enabled: boolean;
     endpoint: string;
     displayName: string;
+    expectedConfiguration?: { serverId: string; enabled: boolean; endpoint: string | null; displayName: string };
   }): Promise<RemoteCompanionStatus> {
     const displayName = input.displayName.trim();
     if (!displayName || displayName.length > 120) {
@@ -159,6 +170,15 @@ export class RemoteCompanionManager implements RemoteCompanionControl {
     const endpoint = normalizeEndpoint(input.endpoint);
     const enabled = input.enabled;
     return this.enqueueLifecycle(async () => {
+      // Compare inside the serialized lifecycle, before stopping a listener or
+      // modifying state. Queued writes cannot both accept the same baseline.
+      const expected = input.expectedConfiguration;
+      const current = this.state.configuration;
+      if (expected && (expected.serverId !== this.state.serverId ||
+          expected.enabled !== current.enabled || expected.endpoint !== current.endpoint ||
+          expected.displayName !== current.displayName)) {
+        throw new Error("REMOTE_CONFIGURATION_CONFLICT");
+      }
       await this.stopListener();
       this.pairing = undefined;
       this.state = {
@@ -243,8 +263,8 @@ export class RemoteCompanionManager implements RemoteCompanionControl {
     const servers: HttpsServer[] = [];
     try {
       ensureCertificate(this.certificateFile, this.privateKeyFile);
-      const certificate = readFileSync(this.certificateFile, "utf8");
-      const privateKey = readFileSync(this.privateKeyFile, "utf8");
+      const certificate = decodeUtf8Strict(readFileSync(this.certificateFile), "remote TLS certificate");
+      const privateKey = decodeUtf8Strict(readFileSync(this.privateKeyFile), "remote TLS private key");
       this.certificateSha256 = certificateFingerprint(certificate);
       // Own both address families explicitly: on macOS a dual-stack IPv6 bind
       // can succeed even when another process already owns the IPv4 port.
@@ -323,6 +343,7 @@ export class RemoteCompanionManager implements RemoteCompanionControl {
       sendJson(response, 503, { error: "remote_management_not_listening" });
       return;
     }
+    let settled: (() => void) | undefined;
     try {
       const url = new URL(request.url || "/", "https://remote.invalid");
       if (request.method === "GET" && url.pathname === `${REMOTE_API_PREFIX}/hello`) {
@@ -330,7 +351,8 @@ export class RemoteCompanionManager implements RemoteCompanionControl {
         return;
       }
       if (request.method === "POST" && url.pathname === `${REMOTE_API_PREFIX}/pair`) {
-        const body = pairingRequestSchema.parse(await readJsonBody(request));
+        settled = this.reserveRequestBody(response, REMOTE_MAX_PAIRING_REQUEST_BYTES);
+        const body = pairingRequestSchema.parse(await readJsonBody(request, REMOTE_MAX_PAIRING_REQUEST_BYTES));
         sendJson(response, 200, await this.completePairing(body));
         return;
       }
@@ -344,7 +366,8 @@ export class RemoteCompanionManager implements RemoteCompanionControl {
           sendJson(response, 409, { error: "server_identity_mismatch" });
           return;
         }
-        const payload = await readJsonBody(request);
+        settled = this.reserveRequestBody(response, REMOTE_MAX_REQUEST_BYTES);
+        const payload = await readJsonBody(request, REMOTE_MAX_REQUEST_BYTES);
         const method = companionMethod(payload);
         if (!method || !REMOTE_COMPANION_APPLICATION_METHODS.has(method)) {
           sendJson(response, 403, { error: "method_not_available_remotely" });
@@ -355,7 +378,12 @@ export class RemoteCompanionManager implements RemoteCompanionControl {
           return;
         }
         this.noteDeviceSeen(device);
-        const result = await dispatchCompanionPayload(payload, this.applicationService);
+        const cancellation = new AbortController();
+        const cancel = () => { if (!response.writableFinished) cancellation.abort(); };
+        response.once("close", cancel);
+        let result: Record<string, unknown>;
+        try { result = await dispatchCompanionPayload(payload, this.applicationService, undefined, undefined, cancellation.signal); }
+        finally { response.removeListener("close", cancel); }
         if (method === "companion.hello" && !result.error) {
           result.result = this.hello();
         }
@@ -365,9 +393,41 @@ export class RemoteCompanionManager implements RemoteCompanionControl {
       sendJson(response, 404, { error: "not_found" });
     } catch (error) {
       const message = safeErrorMessage(error);
-      const status = message === "request_too_large" ? 413 : 400;
-      sendJson(response, status, { error: "invalid_request", message });
+      const busy = message === "request_capacity_exhausted";
+      const status = busy ? 503 : message === "request_too_large" ? 413 : 400;
+      if (status !== 400) {
+        response.setHeader("Connection", "close");
+        request.resume();
+      }
+      sendJson(response, status, { error: busy ? "request_capacity_exhausted" : "invalid_request", message });
+    } finally {
+      settled?.();
     }
+  }
+
+  private reserveRequestBody(response: ServerResponse, bytes: number): () => void {
+    if (this.reservedRequestBytes + bytes > REMOTE_MAX_REQUEST_BYTES_IN_FLIGHT) {
+      throw new Error("request_capacity_exhausted");
+    }
+    this.reservedRequestBytes += bytes;
+    let operationSettled = false;
+    let responseCompleted = false;
+    let released = false;
+    const release = () => {
+      if (released || !operationSettled || !responseCompleted) return;
+      released = true;
+      this.reservedRequestBytes -= bytes;
+      response.removeListener("finish", completed);
+      response.removeListener("close", completed);
+    };
+    const completed = () => { responseCompleted = true; release(); };
+    response.once("finish", completed);
+    response.once("close", completed);
+    return () => {
+      operationSettled = true;
+      responseCompleted ||= response.writableFinished || response.destroyed;
+      release();
+    };
   }
 
   private hello(): Record<string, unknown> {
@@ -460,7 +520,7 @@ function loadOrCreateState(stateFile: string, displayName: string): PersistedRem
     return state;
   }
   assertPrivateRegularFile(stateFile);
-  return persistedStateSchema.parse(JSON.parse(readFileSync(stateFile, "utf8")));
+  return persistedStateSchema.parse(parseJsonUtf8Strict(readFileSync(stateFile), "Remote companion state"));
 }
 
 function persistState(stateFile: string, state: PersistedRemoteState): void {
@@ -623,12 +683,32 @@ function capabilityForMethod(method: string, payload?: unknown): string {
   switch (method) {
     case "companion.hello":
     case "dashboard.snapshot":
+    case "dashboard.history-detail":
+    case "dashboard.execution-detail":
       return "dashboard.read";
     case "settings.snapshot":
+    case "settings.model-description-history":
       return "settings.read";
     case "settings.update":
     case "dashboard.history":
       return "settings.write";
+    case "skills.snapshot":
+    case "skills.read":
+    case "skills.read-file":
+    case "skills.versions":
+      return "skills.read";
+    case "skills.create":
+    case "skills.update":
+    case "skills.restore":
+    case "skills.set-enabled":
+    case "skills.delete":
+    case "skills.package-upload.begin":
+    case "skills.package-upload.chunk":
+    case "skills.package-upload.inspect":
+    case "skills.package.create":
+    case "skills.package.update":
+    case "skills.package.export":
+      return "skills.write";
     case "dashboard.problem": {
       const action = (payload as {params?:{action?:unknown}} | undefined)?.params?.action;
       return action === "retry-stop" ? "unavailable" : "settings.write";
@@ -651,19 +731,20 @@ function digestMatches(expected: string, input: string, inputIsDigest = false): 
   return expectedBuffer.length === actualBuffer.length && timingSafeEqual(expectedBuffer, actualBuffer);
 }
 
-async function readJsonBody(request: IncomingMessage): Promise<unknown> {
+async function readJsonBody(request: IncomingMessage, maxBytes: number): Promise<unknown> {
   const contentType = request.headers["content-type"]?.split(";", 1)[0]?.trim();
   if (contentType !== "application/json") throw new Error("content_type_must_be_application_json");
+  if (Number(request.headers["content-length"]) > maxBytes) throw new Error("request_too_large");
   const chunks: Buffer[] = [];
   let bytes = 0;
-  for await (const chunk of request) {
+  for await (const chunk of request.iterator({ destroyOnReturn: false })) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     bytes += buffer.length;
-    if (bytes > REMOTE_MAX_REQUEST_BYTES) throw new Error("request_too_large");
+    if (bytes > maxBytes) throw new Error("request_too_large");
     chunks.push(buffer);
   }
   if (bytes === 0) throw new Error("request_body_required");
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  return parseJsonUtf8Strict(Buffer.concat(chunks), "Remote companion request");
 }
 
 function setSecurityHeaders(response: ServerResponse): void {
@@ -676,7 +757,14 @@ function setSecurityHeaders(response: ServerResponse): void {
 
 function sendJson(response: ServerResponse, status: number, value: unknown): void {
   if (response.writableEnded || response.destroyed) return;
-  let body = JSON.stringify(value);
+  let body: string;
+  try {
+    assertJsonTextIntegrity(value, "Remote companion response");
+    body = JSON.stringify(value);
+  } catch {
+    status = 500;
+    body = JSON.stringify({ error: "response_invalid_unicode" });
+  }
   if (Buffer.byteLength(body, "utf8") > REMOTE_MAX_RESPONSE_BYTES) {
     status = 500;
     body = JSON.stringify({ error: "response_too_large" });

@@ -1,0 +1,64 @@
+{
+  "base": "8474165e523b47d881f688bd09caf2e4c78ac7af",
+  "branch": "codex/issue-242-w4-runtime",
+  "integrationTarget": "dev",
+  "integration": "pending-explicit-no-merge",
+  "cleanup": "pending-unintegrated-task-worktree-preserved",
+  "originalDev": "ea8f93e2acbb9f4b6deca113165d27e8c9c23857",
+  "runtimeScriptSourceHash": "1acbe37cf5c0e481b86feb717f604f1e020fd6aeacadd70d1148862a555669c7",
+  "tests": {
+    "observationAndLifecycle": {
+      "passed": 69
+    },
+    "helperContracts": {
+      "passed": 4,
+      "skipped": 51
+    },
+    "helperIdentity": {
+      "passed": 2,
+      "skipped": 53
+    },
+    "daemonExit": {
+      "passed": 1,
+      "skipped": 3
+    },
+    "native": {
+      "executed": 229,
+      "skipped": 2,
+      "failures": 0
+    },
+    "fullNode": {
+      "filesPassed": 95,
+      "filesFailed": 34,
+      "testsPassed": 1225,
+      "testsFailed": 236,
+      "errors": 12,
+      "clean": false
+    },
+    "fastGate": {
+      "clean": false,
+      "reason": "default-codex-executable-not-on-PATH"
+    },
+    "build": {
+      "passed": true
+    },
+    "finalProbe": {
+      "passed": 21
+    }
+  },
+  "logs": [
+    "node-check.txt",
+    "native-tests.txt",
+    "observation-tests.txt",
+    "helper-contract-tests.txt",
+    "helper-identity-tests.txt",
+    "daemon-exit-tests.txt",
+    "launcher-tests.txt",
+    "fast-validation.txt",
+    "build.txt",
+    "final-probe-tests.txt"
+  ],
+  "installedValidation": false,
+  "githubActions": false,
+  "scope": "W4 runtime/tunnel observation only"
+}

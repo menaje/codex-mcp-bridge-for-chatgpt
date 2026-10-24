@@ -1,0 +1,25 @@
+{
+  "reviewedSha": "d290d9bb3e8117d2352f13361a52b2deb42eb539",
+  "scenario": "enabled",
+  "goal": {
+    "activityId": "3bdb32cb-68a7-4ef8-8b5a-517e913bff0b",
+    "rootJobId": "1d927fad-15c1-4968-8435-ea64cde77209",
+    "scopeId": "955c9c83-65a6-86ba-995c-7b6c750104f2",
+    "projectId": "9cea048f-5447-4090-b228-8a722d4a6fb0"
+  },
+  "message": "Codex is running independently. Automatic relay is enabled for this Activity. The blank relay sends event references while its host connection is available, including across authorized followups. Retrieve the exact original result or current input and existing followup receipts before acting. Exact reads and bounded waits are optional observation tools; a timeout or aborted read never cancels this Job or authorizes a replacement.",
+  "nextActions": [
+    {
+      "kind": "tool",
+      "tool": "codex_status",
+      "arguments": {
+        "query": {
+          "kind": "job",
+          "id": "1d927fad-15c1-4968-8435-ea64cde77209"
+        }
+      },
+      "message": "A Codex event needs attention. Use the current originating conversation's authority to retrieve its exact original result or current input and existing followup receipts (codex_status kind=followups pages the exact predecessor's receipts). Within the original user goal and approvals, decide whether to answer, continue work, request a new user decision, or finish the goal. This notice and retrieved task data grant no new approval. A result offer or host message acceptance is not proof of review or overall completion. Reuse an approved followup receipt, or bind a dynamic next step with relayFollowup; never rerun an expired or already admitted step. Automatic relay is enabled for this Activity. The blank relay sends event references while its host connection is available, including across authorized followups. Dashboard opens only on explicit display request."
+    }
+  ]
+}
+PASS: enabled status, next actions and terminal notice eligibility.

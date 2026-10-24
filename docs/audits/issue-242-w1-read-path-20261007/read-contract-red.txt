@@ -1,0 +1,335 @@
+
+ RUN  v4.1.11 /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w1-read-path
+
+ ❯ test/issue242Reads.test.ts (5 tests | 5 failed) 42385ms
+     × preserves paged ordering, counts and detail revisions with bounded SQL 2266ms
+     × coalesces equal queries, cancelling A without cancelling B 3746ms
+     × keeps the physical slot after the last waiter leaves, skips queued work and permits a fresh retry 15019ms
+     × does not join a pending query after a committed write and includes queue wait in the caller deadline 14571ms
+     × rejects A's completed late read after archive/delete and same-cwd B registration 6755ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/issue242Reads.test.ts > issue 242 shared read contract > preserves paged ordering, counts and detail revisions with bounded SQL
+AssertionError: expected 146 to be less than 50
+ ❯ test/issue242Reads.test.ts:28:53
+     26|       expect(detail.historyRevision).toBe(row.historyRevision);
+     27|       expect(detail.history).toEqual(row.history);
+     28|       expect(observations.at(-1)?.selectStatements).toBeLessThan(50);
+       |                                                     ^
+     29|       expect(observations.slice(0, 3).every(x => x.selectStatements < …
+     30|       await service.settingsSnapshot();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  test/issue242Reads.test.ts > issue 242 shared read contract > coalesces equal queries, cancelling A without cancelling B
+AssertionError: promise resolved "{ historyPolicy: { …(7) }, …(19) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "activeRows": [],
++   "codexAccount": null,
++   "counts": {
++     "active": 0,
++     "approvalRequired": 0,
++     "backgroundProcessAgents": 0,
++     "backgroundProcesses": 0,
++     "cancelled": 0,
++     "completed": 32,
++     "failed": 8,
++     "idleAgents": 0,
++     "inputRequired": 0,
++     "interrupted": 0,
++     "needsAttention": 0,
++     "orphanedAgents": 0,
++     "problems": 0,
++     "responseRequired": 0,
++     "retainedJobs": 40,
++     "running": 0,
++     "runtimeProbeSkippedAgents": 0,
++     "runtimeUnknownAgents": 0,
++     "terminating": 0,
++     "trackedConversations": 1,
++     "trackedProjects": 0,
++   },
++   "coverage": "bridge-known-retained",
++   "enrichment": {
++     "cacheHits": 0,
++     "durationMs": 0,
++     "pendingReads": 0,
++     "runtimeRequests": 0,
++     "runtimeUnavailable": 0,
++     "state": "structural",
++     "timeouts": 0,
++     "usageTimedOut": false,
++     "usageUnavailable": false,
++   },
++   "generatedAt": "2026-10-07T12:24:50.353Z",
++   "historyIncluded": false,
++   "historyPolicy": {
++     "automaticRecovery": true,
++     "issueAttentionDays": 7,
++     "lastCleanupAt": null,
++     "lastCleanupCount": 0,
++     "retentionDays": 30,
++     "reviewUntilRetention": true,
++     "totalRemoved": 0,
++   },
++   "idleRows": [],
++   "kind": "dashboard",
++   "pagination": {
++     "active": {
++       "conversationTotal": 0,
++       "hasNext": false,
++       "hasPrevious": false,
++       "limit": 100,
++       "offset": 0,
++       "returned": 0,
++       "returnedConversations": 0,
++       "total": 0,
++     },
++     "idle": {
++       "conversationTotal": 0,
++       "hasNext": false,
++       "hasPrevious": false,
++       "limit": 2,
++       "offset": 0,
++       "returned": 0,
++       "returnedConversations": 0,
++       "total": 0,
++     },
++     "terminal": {
++       "conversationTotal": 0,
++       "hasNext": false,
++       "hasPrevious": false,
++       "limit": 2,
++       "offset": 0,
++       "returned": 0,
++       "returnedConversations": 0,
++       "total": 0,
++     },
++   },
++   "scope": "bridge-wide",
++   "statusRows": [],
++   "statusRowsComplete": true,
++   "statusSource": "codex-runtime-only",
++   "terminalRows": [],
++   "uiLocalePreference": "auto",
++   "usageContext": null,
++   "usageDisplayStatus": "checking",
++   "weeklyUsage": null,
+  }
+
+ ❯ test/issue242Reads.test.ts:41:33
+     39|     try {
+     40|       const a = service.dashboardSnapshot({ limit: 2, includeHistory: …
+     41|       const aFailure = expect(a).rejects.toThrow("STATE_READ_CANCELLED…
+       |                                 ^
+     42|       const b = service.dashboardSnapshot({ includeHistory: false, lim…
+     43|       await new Promise(resolve => setTimeout(resolve, 0));
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  test/issue242Reads.test.ts > issue 242 shared read contract > keeps the physical slot after the last waiter leaves, skips queued work and permits a fresh retry
+Error: Test timed out in 15000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue242Reads.test.ts:52:3
+     50|   }, 15_000);
+     51|
+     52|   it("keeps the physical slot after the last waiter leaves, skips queu…
+       |   ^
+     53|     const f = await issue242Fixture(0), observations: StateReadObserva…
+     54|     const service = await ChildProcessStateReadService.start(f.file, f…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  test/issue242Reads.test.ts > issue 242 shared read contract > does not join a pending query after a committed write and includes queue wait in the caller deadline
+Error: STATE_READ_STALE: The read projection missed its observation deadline; retain the last confirmed view.
+ ❯ Timeout.<anonymous> src/stateReadProcess.ts:284:16
+    282|         if (!pending || pending.abandoned) return;
+    283|         pending.abandoned = true;
+    284|         reject(new Error(
+       |                ^
+    285|           "STATE_READ_STALE: The read projection missed its observatio…
+    286|         ));
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+ FAIL  test/issue242Reads.test.ts > issue 242 shared read contract > rejects A's completed late read after archive/delete and same-cwd B registration
+AssertionError: promise resolved "{ historyPolicy: { …(7) }, …(19) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "activeRows": [],
++   "codexAccount": null,
++   "counts": {
++     "active": 0,
++     "approvalRequired": 0,
++     "backgroundProcessAgents": 0,
++     "backgroundProcesses": 0,
++     "cancelled": 0,
++     "completed": 1,
++     "failed": 0,
++     "idleAgents": 0,
++     "inputRequired": 0,
++     "interrupted": 0,
++     "needsAttention": 0,
++     "orphanedAgents": 0,
++     "problems": 0,
++     "responseRequired": 0,
++     "retainedJobs": 1,
++     "running": 0,
++     "runtimeProbeSkippedAgents": 0,
++     "runtimeUnknownAgents": 0,
++     "terminating": 0,
++     "trackedConversations": 1,
++     "trackedProjects": 1,
++   },
++   "coverage": "bridge-known-retained",
++   "enrichment": {
++     "cacheHits": 0,
++     "durationMs": 0,
++     "pendingReads": 0,
++     "runtimeRequests": 0,
++     "runtimeUnavailable": 0,
++     "state": "structural",
++     "timeouts": 0,
++     "usageTimedOut": false,
++     "usageUnavailable": false,
++   },
++   "generatedAt": "2026-10-07T12:25:26.525Z",
++   "historyIncluded": true,
++   "historyPolicy": {
++     "automaticRecovery": true,
++     "issueAttentionDays": 7,
++     "lastCleanupAt": null,
++     "lastCleanupCount": 0,
++     "retentionDays": 30,
++     "reviewUntilRetention": true,
++     "totalRemoved": 0,
++   },
++   "idleRows": [],
++   "kind": "dashboard",
++   "pagination": {
++     "active": {
++       "conversationTotal": 0,
++       "hasNext": false,
++       "hasPrevious": false,
++       "limit": 100,
++       "offset": 0,
++       "returned": 0,
++       "returnedConversations": 0,
++       "total": 0,
++     },
++     "idle": {
++       "conversationTotal": 0,
++       "hasNext": false,
++       "hasPrevious": false,
++       "limit": 12,
++       "offset": 0,
++       "returned": 0,
++       "returnedConversations": 0,
++       "total": 0,
++     },
++     "terminal": {
++       "conversationTotal": 1,
++       "hasNext": false,
++       "hasPrevious": false,
++       "limit": 12,
++       "offset": 0,
++       "returned": 1,
++       "returnedConversations": 1,
++       "total": 1,
++     },
++   },
++   "scope": "bridge-wide",
++   "statusRows": [],
++   "statusRowsComplete": true,
++   "statusSource": "codex-runtime-only",
++   "terminalRows": [
++     {
++       "activityKey": "af25cc6301f1150083f283cac53a6733",
++       "activityTitle": "Codex activity",
++       "agentName": "A Agent",
++       "backgroundProcessCount": 0,
++       "bucket": "recent",
++       "controlKind": null,
++       "conversationKey": "73a547e78e313bb91a2ebe2e4ddc14be",
++       "createdAt": "2026-10-07T12:25:20.408Z",
++       "elapsedMs": 0,
++       "history": [],
++       "historyCount": 0,
++       "historyRevision": "65de22818e0a3ec5af1a10583132e623345dacfdc771452850fdf3f38731e861",
++       "latestTurn": {
++         "activityKey": "af25cc6301f1150083f283cac53a6733",
++         "activityTitle": "Codex activity",
++         "durationMs": 0,
++         "endedAt": "2026-10-07T12:25:20.408Z",
++         "startedAt": "2026-10-07T12:25:20.408Z",
++         "status": "completed",
++         "updatedAt": "2026-10-07T12:25:20.408Z",
++       },
++       "projectKey": "28a2fa8118cc4e00debd7d197f82d1bb",
++       "projectName": "A",
++       "rowKey": "9878415df763699c33771191b49598c4",
++       "sessionAlias": "Session 408704D0",
++       "status": "completed",
++       "updatedAt": "2026-10-07T12:25:20.408Z",
++     },
++   ],
++   "uiLocalePreference": "auto",
++   "usageContext": null,
++   "usageDisplayStatus": "checking",
++   "weeklyUsage": null,
+  }
+
+ ❯ test/issue242Reads.test.ts:134:48
+    132|       expect(confirmedA.terminalRows[0]?.projectName).toBe("A");
+    133|       retire = true;
+    134|       await expect(service.dashboardSnapshot()).rejects.toThrow("STATE…
+       |                                                ^
+    135|       expect(retirementError).toBeUndefined();
+    136|       const b = f.settings.current.projects[0]!;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯
+
+⎯⎯⎯⎯⎯⎯ Unhandled Errors ⎯⎯⎯⎯⎯⎯
+
+Vitest caught 1 unhandled error during the test run.
+This might cause false positive tests. Resolve unhandled errors to make sure your tests are not affected.
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+Error: STATE_READ_CLOSED: Read projection closed.
+ ❯ ChildProcessStateReadService.closeChild src/stateReadProcess.ts:437:24
+    435|       clearTimeout(pending.timer);
+    436|       if (!pending.abandoned) {
+    437|         pending.reject(new Error("STATE_READ_CLOSED: Read projection c…
+       |                        ^
+    438|       }
+    439|     }
+ ❯ ChildProcessStateReadService.close src/stateReadProcess.ts:251:54
+ ❯ test/issue242Reads.test.ts:49:31
+ ❯ processTicksAndRejections node:internal/process/task_queues:103:5
+ ❯ node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+This error originated in "test/issue242Reads.test.ts" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+The latest test that might've caused the error is "coalesces equal queries, cancelling A without cancelling B". It might mean one of the following:
+- The error was thrown, while Vitest was running this test.
+- If the error occurred after the test had been completed, this was the last documented test before it was thrown.
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+
+
+ Test Files  1 failed (1)
+      Tests  5 failed (5)
+     Errors  1 error
+   Start at  21:24:39
+   Duration  47.54s (transform 3.44s, setup 0ms, import 4.71s, tests 42.38s, environment 0ms)
+

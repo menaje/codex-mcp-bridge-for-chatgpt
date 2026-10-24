@@ -3,6 +3,7 @@ import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { atomicRuntimeJson, withRuntimeLock } from "./codexRuntime.js";
+import { parseJsonUtf8Strict } from "./textIntegrity.js";
 
 const connectionSchema = z.object({ adminKey: z.string().trim().min(1).max(32768).regex(/^[^\s]+$/),
   organizationId: z.string().regex(/^org[-_][a-zA-Z0-9_-]{1,160}$/), projectId: z.string().regex(/^proj_[a-zA-Z0-9_-]{1,160}$/).nullable() });
@@ -55,7 +56,7 @@ export class CodexBilling {
     return request;
   }
   private async connection(): Promise<CodexBillingInput | null> {
-    try { return connectionSchema.parse(JSON.parse(await readFile(this.file, "utf8"))); }
+    try { return connectionSchema.parse(parseJsonUtf8Strict(await readFile(this.file), "billing connection")); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw new Error("CODEX_BILLING_SETTINGS_INVALID"); }
   }
   private key(connection: CodexBillingInput): string { return createHash("sha256").update(JSON.stringify(connection)).digest("hex"); }
@@ -77,9 +78,9 @@ export class CodexBilling {
         redirect: "error", signal: AbortSignal.timeout(15_000)
       });
       if (!response.ok) throw new Error("CODEX_BILLING_UNAVAILABLE");
-      const body = await response.text();
-      if (body.length > 2 * 1024 * 1024) throw new Error("CODEX_BILLING_RESPONSE_INVALID");
-      const result = pageSchema.parse(JSON.parse(body));
+      const body = new Uint8Array(await response.arrayBuffer());
+      if (body.byteLength > 2 * 1024 * 1024) throw new Error("CODEX_BILLING_RESPONSE_INVALID");
+      const result = pageSchema.parse(parseJsonUtf8Strict(body, "billing response"));
       for (const bucket of result.data) {
         if (bucket.start_time < startTime || bucket.start_time >= endTime || bucket.end_time <= bucket.start_time) throw new Error("CODEX_BILLING_RESPONSE_INVALID");
         for (const row of bucket.results) {

@@ -121,7 +121,7 @@ try {
         report.filesystem.push({ name: fixture.name, exitCode: response.exitCode, created, passed });
       }
       for (const [method, params] of [
-        ["model/list", {}], ["skills/list", { cwds: [project] }], ["mcpServerStatus/list", {}],
+        ["model/list", {}], ["mcpServerStatus/list", {}],
         ["thread/read", { threadId, includeTurns: false }], ["thread/backgroundTerminals/list", { threadId }],
         ["permissionProfile/list", { cwd: project }], ["collaborationMode/list", {}], ["experimentalFeature/list", {}]
       ] as const) {

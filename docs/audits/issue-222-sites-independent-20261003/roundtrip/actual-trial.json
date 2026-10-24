@@ -1,0 +1,211 @@
+{
+  "startedAt": "2026-10-03T00:29:09.035Z",
+  "projectId": "appgprj_6abf89d2d04c8191a617d5193ef5471a",
+  "version": 3,
+  "sourceCommit": "7755827919c042166cf5e2a7cfe3e0f5f76df577",
+  "transport": "explicit-one-shot-pull",
+  "cloudToLocalPush": false,
+  "credentialPersisted": false,
+  "fixtureDigest": "41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf",
+  "cloudRequests": [
+    {
+      "label": "original_fixture_before",
+      "path": "/fixture",
+      "method": "GET",
+      "startedAt": "2026-10-03T00:29:09.059Z",
+      "completedAt": "2026-10-03T00:29:11.510Z",
+      "status": 200,
+      "responseDate": "Sat, 03 Oct 2026 00:29:11 GMT",
+      "requestBody": null,
+      "requestSha256": null,
+      "responseBody": "{\"key\":\"issue-222-independent-20261003\",\"count\":1,\"fixture\":{\"probe\":\"issue-222\",\"phase\":\"A\",\"value\":222},\"payloadSha256\":\"41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf\",\"createdAt\":\"2026-10-02T23:38:53.750Z\",\"persisted\":true,\"storage\":\"D1\",\"localChannel\":false,\"workerVersion\":\"3\",\"roundtrip\":{\"mode\":\"explicit-one-shot-pull\",\"status\":\"not-started\",\"commandId\":null,\"requestDigest\":null,\"responseDigest\":null,\"executionCount\":null,\"executionCountBasis\":\"local-handler report validated and persisted in the ACK; independent local log is separate evidence\",\"resultMatchesFixture\":null,\"cloudToLocalPush\":false,\"persistentPolling\":false}}",
+      "responseSha256": "2bbb041984c7f4113a726ea74b82a8a8bd2e1be9a4a7d4311f879bed85ffd42e"
+    },
+    {
+      "label": "enqueue_fixed_command",
+      "path": "/roundtrip/enqueue",
+      "method": "POST",
+      "startedAt": "2026-10-03T00:29:11.517Z",
+      "completedAt": "2026-10-03T00:29:14.804Z",
+      "status": 200,
+      "responseDate": "Sat, 03 Oct 2026 00:29:14 GMT",
+      "requestBody": {},
+      "requestSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "responseBody": "{\"inserted\":true,\"trialKey\":\"issue-222-pull-roundtrip-20261003\",\"count\":1,\"transport\":\"explicit-one-shot-pull\",\"cloudToLocalPush\":false,\"state\":\"queued\",\"command\":{\"trialKey\":\"issue-222-pull-roundtrip-20261003\",\"operation\":\"read_fixture\",\"fixtureKey\":\"issue-222-independent-20261003\",\"payloadSha256\":\"41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf\"},\"commandSha256\":\"e1f0757524bb4b7e568ab3378c8aaba461ac8b5254729f74a06bbc3f2ee6b820\",\"response\":null,\"responseSha256\":null,\"createdAt\":\"2026-10-03T00:29:14.286Z\",\"claimedAt\":null,\"ackedAt\":null}",
+      "responseSha256": "b066f34bc8474f1fe602950f38caa0859f982afb993fbd55dc781bd15f1a617e"
+    },
+    {
+      "label": "duplicate_enqueue",
+      "path": "/roundtrip/enqueue",
+      "method": "POST",
+      "startedAt": "2026-10-03T00:29:14.805Z",
+      "completedAt": "2026-10-03T00:29:17.582Z",
+      "status": 200,
+      "responseDate": "Sat, 03 Oct 2026 00:29:17 GMT",
+      "requestBody": {},
+      "requestSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "responseBody": "{\"inserted\":false,\"trialKey\":\"issue-222-pull-roundtrip-20261003\",\"count\":1,\"transport\":\"explicit-one-shot-pull\",\"cloudToLocalPush\":false,\"state\":\"queued\",\"command\":{\"trialKey\":\"issue-222-pull-roundtrip-20261003\",\"operation\":\"read_fixture\",\"fixtureKey\":\"issue-222-independent-20261003\",\"payloadSha256\":\"41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf\"},\"commandSha256\":\"e1f0757524bb4b7e568ab3378c8aaba461ac8b5254729f74a06bbc3f2ee6b820\",\"response\":null,\"responseSha256\":null,\"createdAt\":\"2026-10-03T00:29:14.286Z\",\"claimedAt\":null,\"ackedAt\":null}",
+      "responseSha256": "699bdea2ebe1a442ffdb4c91efe1e143318f10bc599b5abde3d1bb7b0c9dc6a9"
+    },
+    {
+      "label": "single_claim",
+      "path": "/roundtrip/claim",
+      "method": "POST",
+      "startedAt": "2026-10-03T00:29:17.583Z",
+      "completedAt": "2026-10-03T00:29:20.282Z",
+      "status": 200,
+      "responseDate": "Sat, 03 Oct 2026 00:29:20 GMT",
+      "requestBody": {},
+      "requestSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "responseBody": "{\"claimed\":true,\"trialKey\":\"issue-222-pull-roundtrip-20261003\",\"count\":1,\"transport\":\"explicit-one-shot-pull\",\"cloudToLocalPush\":false,\"state\":\"claimed\",\"command\":{\"trialKey\":\"issue-222-pull-roundtrip-20261003\",\"operation\":\"read_fixture\",\"fixtureKey\":\"issue-222-independent-20261003\",\"payloadSha256\":\"41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf\"},\"commandSha256\":\"e1f0757524bb4b7e568ab3378c8aaba461ac8b5254729f74a06bbc3f2ee6b820\",\"response\":null,\"responseSha256\":null,\"createdAt\":\"2026-10-03T00:29:14.286Z\",\"claimedAt\":\"2026-10-03T00:29:19.747Z\",\"ackedAt\":null}",
+      "responseSha256": "c6b7c87ae8809f188b73a858eddec585a3ebe2742d35dacc968559ea7caf478c"
+    },
+    {
+      "label": "single_ack",
+      "path": "/roundtrip/ack",
+      "method": "POST",
+      "startedAt": "2026-10-03T00:29:20.305Z",
+      "completedAt": "2026-10-03T00:29:24.002Z",
+      "status": 200,
+      "responseDate": "Sat, 03 Oct 2026 00:29:24 GMT",
+      "requestBody": {
+        "response": {
+          "trialKey": "issue-222-pull-roundtrip-20261003",
+          "operation": "read_fixture",
+          "fixtureKey": "issue-222-independent-20261003",
+          "fixture": {
+            "probe": "issue-222",
+            "phase": "A",
+            "value": 222
+          },
+          "payloadSha256": "41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf",
+          "commandSha256": "e1f0757524bb4b7e568ab3378c8aaba461ac8b5254729f74a06bbc3f2ee6b820",
+          "localExecutionCount": 1
+        }
+      },
+      "requestSha256": "6ce87810ca647dcc6f587d6a8538c568108a0e608032e5b25ea76fe47c423a50",
+      "responseBody": "{\"accepted\":true,\"duplicate\":false,\"trialKey\":\"issue-222-pull-roundtrip-20261003\",\"count\":1,\"transport\":\"explicit-one-shot-pull\",\"cloudToLocalPush\":false,\"state\":\"acked\",\"command\":{\"trialKey\":\"issue-222-pull-roundtrip-20261003\",\"operation\":\"read_fixture\",\"fixtureKey\":\"issue-222-independent-20261003\",\"payloadSha256\":\"41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf\"},\"commandSha256\":\"e1f0757524bb4b7e568ab3378c8aaba461ac8b5254729f74a06bbc3f2ee6b820\",\"response\":{\"trialKey\":\"issue-222-pull-roundtrip-20261003\",\"operation\":\"read_fixture\",\"fixtureKey\":\"issue-222-independent-20261003\",\"fixture\":{\"probe\":\"issue-222\",\"phase\":\"A\",\"value\":222},\"payloadSha256\":\"41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf\",\"commandSha256\":\"e1f0757524bb4b7e568ab3378c8aaba461ac8b5254729f74a06bbc3f2ee6b820\",\"localExecutionCount\":1},\"responseSha256\":\"647a4c380af69927a3b47155cb936dba7939f493bb5dac2a3f7eeefbca73cbf7\",\"createdAt\":\"2026-10-03T00:29:14.286Z\",\"claimedAt\":\"2026-10-03T00:29:19.747Z\",\"ackedAt\":\"2026-10-03T00:29:23.477Z\"}",
+      "responseSha256": "17c58df4f59d3e1f95e5b34fb732e4d54b65409b3436fce57940a5a64fef3701"
+    },
+    {
+      "label": "duplicate_ack",
+      "path": "/roundtrip/ack",
+      "method": "POST",
+      "startedAt": "2026-10-03T00:29:24.002Z",
+      "completedAt": "2026-10-03T00:29:26.073Z",
+      "status": 200,
+      "responseDate": "Sat, 03 Oct 2026 00:29:26 GMT",
+      "requestBody": {
+        "response": {
+          "trialKey": "issue-222-pull-roundtrip-20261003",
+          "operation": "read_fixture",
+          "fixtureKey": "issue-222-independent-20261003",
+          "fixture": {
+            "probe": "issue-222",
+            "phase": "A",
+            "value": 222
+          },
+          "payloadSha256": "41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf",
+          "commandSha256": "e1f0757524bb4b7e568ab3378c8aaba461ac8b5254729f74a06bbc3f2ee6b820",
+          "localExecutionCount": 1
+        }
+      },
+      "requestSha256": "6ce87810ca647dcc6f587d6a8538c568108a0e608032e5b25ea76fe47c423a50",
+      "responseBody": "{\"accepted\":true,\"duplicate\":true,\"trialKey\":\"issue-222-pull-roundtrip-20261003\",\"count\":1,\"transport\":\"explicit-one-shot-pull\",\"cloudToLocalPush\":false,\"state\":\"acked\",\"command\":{\"trialKey\":\"issue-222-pull-roundtrip-20261003\",\"operation\":\"read_fixture\",\"fixtureKey\":\"issue-222-independent-20261003\",\"payloadSha256\":\"41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf\"},\"commandSha256\":\"e1f0757524bb4b7e568ab3378c8aaba461ac8b5254729f74a06bbc3f2ee6b820\",\"response\":{\"trialKey\":\"issue-222-pull-roundtrip-20261003\",\"operation\":\"read_fixture\",\"fixtureKey\":\"issue-222-independent-20261003\",\"fixture\":{\"probe\":\"issue-222\",\"phase\":\"A\",\"value\":222},\"payloadSha256\":\"41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf\",\"commandSha256\":\"e1f0757524bb4b7e568ab3378c8aaba461ac8b5254729f74a06bbc3f2ee6b820\",\"localExecutionCount\":1},\"responseSha256\":\"647a4c380af69927a3b47155cb936dba7939f493bb5dac2a3f7eeefbca73cbf7\",\"createdAt\":\"2026-10-03T00:29:14.286Z\",\"claimedAt\":\"2026-10-03T00:29:19.747Z\",\"ackedAt\":\"2026-10-03T00:29:23.477Z\"}",
+      "responseSha256": "a529ba848f95614743919673b5fcc802644d0b4b7975e452de11d45230d2b504"
+    },
+    {
+      "label": "independent_cloud_result_read",
+      "path": "/roundtrip/status",
+      "method": "GET",
+      "startedAt": "2026-10-03T00:29:26.074Z",
+      "completedAt": "2026-10-03T00:29:28.041Z",
+      "status": 200,
+      "responseDate": "Sat, 03 Oct 2026 00:29:28 GMT",
+      "requestBody": null,
+      "requestSha256": null,
+      "responseBody": "{\"trialKey\":\"issue-222-pull-roundtrip-20261003\",\"count\":1,\"transport\":\"explicit-one-shot-pull\",\"cloudToLocalPush\":false,\"state\":\"acked\",\"command\":{\"trialKey\":\"issue-222-pull-roundtrip-20261003\",\"operation\":\"read_fixture\",\"fixtureKey\":\"issue-222-independent-20261003\",\"payloadSha256\":\"41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf\"},\"commandSha256\":\"e1f0757524bb4b7e568ab3378c8aaba461ac8b5254729f74a06bbc3f2ee6b820\",\"response\":{\"trialKey\":\"issue-222-pull-roundtrip-20261003\",\"operation\":\"read_fixture\",\"fixtureKey\":\"issue-222-independent-20261003\",\"fixture\":{\"probe\":\"issue-222\",\"phase\":\"A\",\"value\":222},\"payloadSha256\":\"41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf\",\"commandSha256\":\"e1f0757524bb4b7e568ab3378c8aaba461ac8b5254729f74a06bbc3f2ee6b820\",\"localExecutionCount\":1},\"responseSha256\":\"647a4c380af69927a3b47155cb936dba7939f493bb5dac2a3f7eeefbca73cbf7\",\"createdAt\":\"2026-10-03T00:29:14.286Z\",\"claimedAt\":\"2026-10-03T00:29:19.747Z\",\"ackedAt\":\"2026-10-03T00:29:23.477Z\"}",
+      "responseSha256": "01b91f3bfbeae66dc226aef6780087a80bdbf6ac0c759983a1c098454ae338cc"
+    },
+    {
+      "label": "original_fixture_after",
+      "path": "/fixture",
+      "method": "GET",
+      "startedAt": "2026-10-03T00:29:28.044Z",
+      "completedAt": "2026-10-03T00:29:30.593Z",
+      "status": 200,
+      "responseDate": "Sat, 03 Oct 2026 00:29:30 GMT",
+      "requestBody": null,
+      "requestSha256": null,
+      "responseBody": "{\"key\":\"issue-222-independent-20261003\",\"count\":1,\"fixture\":{\"probe\":\"issue-222\",\"phase\":\"A\",\"value\":222},\"payloadSha256\":\"41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf\",\"createdAt\":\"2026-10-02T23:38:53.750Z\",\"persisted\":true,\"storage\":\"D1\",\"localChannel\":false,\"workerVersion\":\"3\",\"roundtrip\":{\"mode\":\"explicit-one-shot-pull\",\"status\":\"acked\",\"commandId\":\"issue-222-pull-roundtrip-20261003\",\"requestDigest\":\"e1f0757524bb4b7e568ab3378c8aaba461ac8b5254729f74a06bbc3f2ee6b820\",\"responseDigest\":\"647a4c380af69927a3b47155cb936dba7939f493bb5dac2a3f7eeefbca73cbf7\",\"executionCount\":1,\"executionCountBasis\":\"local-handler report validated and persisted in the ACK; independent local log is separate evidence\",\"resultMatchesFixture\":true,\"cloudToLocalPush\":false,\"persistentPolling\":false}}",
+      "responseSha256": "b3dd2674523685e1341d68c52f029229409ac547bed7c5a2cdec42cd42c57666"
+    }
+  ],
+  "localRequests": [
+    {
+      "startedAt": "2026-10-03T00:29:20.283Z",
+      "completedAt": "2026-10-03T00:29:20.305Z",
+      "status": 200,
+      "requestSha256": "e4f06a8035d31109bdce4d61c826a786d9da529d75e3bd76355425354fa45104",
+      "responseSha256": "647a4c380af69927a3b47155cb936dba7939f493bb5dac2a3f7eeefbca73cbf7",
+      "responseBody": "{\"trialKey\":\"issue-222-pull-roundtrip-20261003\",\"operation\":\"read_fixture\",\"fixtureKey\":\"issue-222-independent-20261003\",\"fixture\":{\"probe\":\"issue-222\",\"phase\":\"A\",\"value\":222},\"payloadSha256\":\"41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf\",\"commandSha256\":\"e1f0757524bb4b7e568ab3378c8aaba461ac8b5254729f74a06bbc3f2ee6b820\",\"localExecutionCount\":1}"
+    }
+  ],
+  "localHandlerExecutions": 1,
+  "scheduledRuns": 0,
+  "pollingLoops": 0,
+  "mockRequests": 0,
+  "offlineTest": "not performed",
+  "duplicateClaimTest": "not performed",
+  "processPid": 42709,
+  "verdict": "PASS: actual one-shot pull command/loopback response/cloud acknowledgement; no push",
+  "localReadyAt": "2026-10-03T00:29:09.059Z",
+  "loopbackPort": 65469,
+  "checks": {
+    "backendCommandDeliveredByClaim": true,
+    "actualLoopbackHandlerExecutedOnce": true,
+    "requestAndResponseDigestsMatch": true,
+    "actualCloudAckPersisted": true,
+    "independentCloudResultRead": true,
+    "duplicateEnqueueRetainedOne": true,
+    "duplicateAckRetainedOneAndTimestamp": true,
+    "originalFixturePreserved": true
+  },
+  "localClosedAt": "2026-10-03T00:29:30.595Z",
+  "localServerClosed": true,
+  "localEvents": [
+    {
+      "receivedAt": "2026-10-03T00:29:20.297Z",
+      "respondedAt": "2026-10-03T00:29:20.298Z",
+      "request": {
+        "command": {
+          "trialKey": "issue-222-pull-roundtrip-20261003",
+          "operation": "read_fixture",
+          "fixtureKey": "issue-222-independent-20261003",
+          "payloadSha256": "41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf"
+        },
+        "commandSha256": "e1f0757524bb4b7e568ab3378c8aaba461ac8b5254729f74a06bbc3f2ee6b820"
+      },
+      "requestSha256": "e4f06a8035d31109bdce4d61c826a786d9da529d75e3bd76355425354fa45104",
+      "response": {
+        "trialKey": "issue-222-pull-roundtrip-20261003",
+        "operation": "read_fixture",
+        "fixtureKey": "issue-222-independent-20261003",
+        "fixture": {
+          "probe": "issue-222",
+          "phase": "A",
+          "value": 222
+        },
+        "payloadSha256": "41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf",
+        "commandSha256": "e1f0757524bb4b7e568ab3378c8aaba461ac8b5254729f74a06bbc3f2ee6b820",
+        "localExecutionCount": 1
+      },
+      "responseSha256": "647a4c380af69927a3b47155cb936dba7939f493bb5dac2a3f7eeefbca73cbf7",
+      "operation": "read fixed task-owned fixture file",
+      "siteCredentialReceived": false
+    }
+  ],
+  "completedAt": "2026-10-03T00:29:30.595Z",
+  "cloudRequestCount": 8,
+  "localHttpRequestCount": 1
+}

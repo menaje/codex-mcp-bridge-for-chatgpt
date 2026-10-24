@@ -1,0 +1,3158 @@
+
+> codex-mcp-bridge-for-chatgpt@0.4.1 check
+> npm run build && npm run test
+
+
+> codex-mcp-bridge-for-chatgpt@0.4.1 build
+> npm run release:check && node -e "require('node:fs').rmSync('dist', { recursive: true, force: true })" && tsc -p tsconfig.json && node scripts/write-build-info.mjs
+
+
+> codex-mcp-bridge-for-chatgpt@0.4.1 release:check
+> npm run localization:check && node scripts/release-manifest.mjs check && node scripts/release-policy.mjs check
+
+
+> codex-mcp-bridge-for-chatgpt@0.4.1 localization:check
+> tsx scripts/localization.mts check
+
+Localization catalog and generated files are synchronized.
+Release manifest is synchronized for v0.4.1.
+Release policy is valid for development stage with 75 active fragment(s).
+
+> codex-mcp-bridge-for-chatgpt@0.4.1 test
+> vitest run --maxWorkers=4
+
+
+ RUN  v4.1.11 /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w4-runtime
+
+ ❯ test/jobRegistry.test.ts (47 tests | 1 failed) 44598ms
+     × admits exact reads and durable control while recovery and retention share the event loop 3746ms
+ ❯ test/macosHelperServer.test.ts (55 tests | 4 failed) 221978ms
+     × recovers profile A after profile B fails to launch and applies the same verified B candidate on retry 30029ms
+     × restarts the unchanged runtime when a concurrent dotenv edit prevents commit 5020ms
+     × uses Codex command and CODEX_HOME from dotenv without returning raw CLI output 6850ms
+     × does not report an account read failure as a logged-out Codex account 9295ms
+ ❯ test/mcpEventDelegation.test.ts (44 tests | 35 failed) 260733ms
+     × replays the original OAuth B with its legacy selector after Events is disabled 5538ms
+     × exposes terminal callback failure through exact status and task replay (413) 5110ms
+     × exposes terminal callback failure through exact status and task replay (410) 5136ms
+     × exposes terminal callback failure through exact status and task replay (503) 5506ms
+     × reports waiting, in-flight and acknowledged delivery independently of active subscription authority 5246ms
+     × omits automatic issue after revoke and resumes only with a new original-scope issuance 5473ms
+     × delivers exact A then exactly one preapproved B without Dashboard or ui/message 8803ms
+     × recovers the same opaque grant and exact subscription after response loss, token refresh and restart 5515ms
+     × never uses a reference to bypass present invalid/different session ({"openai/session":""}) 6414ms
+     × never uses a reference to bypass present invalid/different session ({"openai/session":null}) 5378ms
+     × never uses a reference to bypass present invalid/different session ({"openai/session":42}) 6346ms
+     × never uses a reference to bypass present invalid/different session ({"openai/session":"different","openai/subject":"host-correlation-only"}) 5090ms
+     × allows a valid original session while preserving the exact delegation and rejects unknown/ref-swapped Jobs 6026ms
+     × rejects the same reference under another authenticated OAuth principal 7078ms
+     × cannot authorize ordinary result reads, tasks or configuration through a subscriptionRef 10371ms
+     × rejects caller-generated reference/scope inputs on the grant tool 9347ms
+     × rejects Events admission before execution on bearer-only, disabled or explicit-scope-only hosts 6367ms
+     × keeps ordinary direct-wait Jobs outside delegated Events admission 9406ms
+     × denies old-card wait/claim and automatic mount while retaining manual Dashboard and exact results 5674ms
+     × expires at the grant and token boundaries and allows authenticated disabling after expiry 5150ms
+     × atomically binds at most one callback under simultaneous first challenges 5388ms
+     × does not revive a grant changed during callback verification (revoke) 6089ms
+     × does not revive a grant changed during callback verification (unsubscribe) 9364ms
+     × does not revive a grant changed during callback verification (project-unavailable) 5132ms
+     × atomically revokes a bound grant, rejects refresh and discards a late delivery ACK 5373ms
+     × rolls callback binding back when subscription storage fails 9038ms
+     × rolls issuance back on storage failure without retrying or cancelling its original Job 6264ms
+     × bounds receipt capacity and requires a new system reference after explicit revocation 5983ms
+     × never treats fixture canProceed output as a followup approval 5399ms
+     × preserves original results for a finite window even when no callback subscription is admitted 5267ms
+     × keeps an Events Job immutable and unavailable after restart with Events disabled 5810ms
+     × rejects delegation expiry during callback verification 6700ms
+     × preserves ACK and the exact binding while a signing-key refresh challenge awaits 5091ms
+     × rolls revoke, stop intent and linked-subscription disabling back together on a write failure 9268ms
+     × rolls unsubscribe, stop intent and linked-subscription disabling back together on a write failure 5734ms
+ ❯ test/appServerUpstream.test.ts (47 tests | 8 failed) 155938ms
+     × classifies 'nonblocking input' as 'unknown' with 'disabled' routing evidence 4461ms
+     × classifies 'nonblocking input' as 'unknown' with 'unsupported' routing evidence 4861ms
+     × classifies 'dynamic input' as 'unknown' with 'enabled' routing evidence 5749ms
+     × classifies 'legacy app input' as 'app-approval' with 'enabled' routing evidence 3771ms
+     × round-trips command, file, input, and permission requests by exact request ID 3644ms
+     × steers only the exact active turn and keeps the thread resumable 3488ms
+     × never falls back to shared-process termination during an automatic interruption retry 3885ms
+     × confirms exact turn interruption before falling back to process termination 3338ms
+ ❯ test/codexAuthSelection.test.ts (34 tests | 10 failed) 80706ms
+   × selects one of several saved bridge profiles without replacing its credential 5040ms
+   × offers only distinct previously used external homes and preserves their owner across explicit and saved selection 5011ms
+   × checks effective managed login, store, and workspace restrictions for a candidate 5216ms
+   × ignores a stale shared auth file when effective managed storage selects a different keyring account 8325ms
+   × verifies a native file login without optional user claims and refuses a replaced candidate 5016ms
+   × rejects a candidate that changed account or CLI after verification, even when display email is unchanged 5008ms
+   × revalidates a staged candidate at activation and preserves the pending choice after drift 5030ms
+   × commits an owned profile only when the ready runtime reports its exact home 5011ms
+   × removes only an inactive bridge API credential without touching shared authentication 5015ms
+   × logs out only an inactive bridge ChatGPT profile and records an uncertain reply 5022ms
+ ❯ test/companionServer.test.ts (19 tests | 1 failed) 22271ms
+     × carries the full worst-case JSON-escaped Bridge skill content over the native socket 20143ms
+ ❯ test/runtimeProcess.test.ts (26 tests | 26 failed) 459873ms
+     × supervises Codex execution separately from the operational state owner 20176ms
+     × keeps liveness responsive, reports a blocked write, and recovers after the DB lock 15041ms
+     × keeps the stdio companion boundary responsive during the same DB lock 15010ms
+     × fails admission after SQLite reports a full state database 15018ms
+     × reports a SQLite busy failure at transaction admission and clears it after a commit 27188ms
+     × fails actual Job admission after a non-transaction task read surfaces SQLITE_BUSY 22002ms
+     × fails actual Job admission after a non-transaction task read surfaces SQLITE_IOERR_FSYNC 25547ms
+     × fails actual Job admission after a non-transaction task read surfaces SQLITE_CORRUPT_VTAB 20017ms
+     × fails actual Job admission after a non-transaction task read surfaces SQLITE_READONLY_DBMOVED 20022ms
+     × preserves a forwarded MCP request through a stale heartbeat 15060ms
+     × preserves a complete split UTF-8 ID when the forwarded response is lost 15025ms
+     × separates a proxy connection failure from still-fresh runtime readiness 5013ms
+     × reports request capacity separately when only the added body crosses the limit 15013ms
+     × reserves MCP byte capacity for exact recovery reads 15099ms
+     × applies the same bounded exact-read reservation to declared and chunked bodies 20020ms
+     × preserves a chunked exact read when another request fills ordinary bytes after its headers 20024ms
+     × keeps every retired card sender operation out of the control reserve 20013ms
+     × finishes valid question, cancellation and exact result controls during observer saturation 20092ms
+     × reserves native control capacity when incomplete MCP requests saturate the proxy 20110ms
+     × bounds MCP control reservations and releases disconnected observers 15007ms
+     × releases the HTTP observer when a complete caller disconnects 12030ms
+     × keeps timed-out native requests reserved until their physical responses arrive 15024ms
+     × keeps public liveness responsive while bounded large MCP payloads are parsed 20093ms
+     × recovers a killed runtime without claiming an in-flight write committed 20062ms
+     × continues recovery when a replacement runtime misses its startup deadline 12031ms
+     × keeps the operational database rollback-compatible and rebuilds telemetry independently 20090ms
+(node:28024) PromiseRejectionHandledWarning: Promise rejection was handled asynchronously (rejection id: 434)
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ❯ test/tools.test.ts (55 tests | 38 failed) 490093ms
+     × preserves an admitted speed through a settings change and handles later support loss explicitly: false 16879ms
+     × preserves an admitted speed through a settings change and handles later support loss explicitly: true 11671ms
+     × preserves saved future-tier through old-client saves and refuses unverified new execution 10513ms
+     × preserves saved ultrafast through old-client saves and refuses unverified new execution 10110ms
+     × refuses an unavailable fixed choice before admitting work: 'removed-model'/'medium' 7653ms
+     × refuses an unavailable fixed choice before admitting work: 'gpt-5.6-sol'/'removed-effort' 7817ms
+     × starts a hidden persistent conversation using the independent storage preference 10089ms
+     × starts a hidden ephemeral conversation using the independent storage preference 8142ms
+     × continues, replaces and forks the same Agent across accounts while keeping Bridge scope and logout admission checks 6195ms
+     × preserves the original Job through a lost completed response, external auth change and transport ACK retries 21243ms
+     × retains an original host-accepted completion receipt through a new login and lost result response 9075ms
+     × retains an original acceptance-unknown completion receipt through a new login and lost result response 10591ms
+     × recovers an original Job through HTTP under another account using its exact retained receipt 12565ms
+     × keeps the original Job question and ACK after an external login change: 'live original worker' 15121ms
+     × keeps the original Job question and ACK after an external login change: 'worker proof recovered before send' 12401ms
+     × keeps the original Job question and ACK after an external login change: 'answer sent but reply lost' 17300ms
+     × cancels an original Job after an external login change only with live proof of its worker 14883ms
+     × rejects stale Decision Card calls without changing Codex or state 11312ms
+     × lets GPT search, read, and version Bridge Markdown skills without starting Codex 7650ms
+     × keeps Bridge skills outside the Codex task schema and prompt 7223ms
+     × publishes Dashboard hydration without undefined thread-handoff fields 12157ms
+     × admits a current v6 task and returns the durable asynchronous admission contract 7742ms
+     × reports an exact owner result awaiting terminal storage without claiming the Job is still executing 6095ms
+     × ignores retired delivery preferences for new Jobs without changing admitted identities 6394ms
+     × keeps a direct-wait Job pending at an unapproved Codex command boundary 7370ms
+     × recovers a direct-wait Job by exact identity after the host aborts a status read 16090ms
+     × returns durable admission immediately while the admitted Job runs for more than one minute 9330ms
+     × does not admit a task when transport fails before dispatch and admits it once on exact retry 11815ms
+     × recovers a durable Job when the admission response is lost in transport 12531ms
+     × deduplicates concurrent exact retries into one durable Job and one upstream execution 11732ms
+     × recovers an admitted Job by requestId and rejects conflicting reuse without redispatch 18922ms
+     × recovers an approved second turn after response loss and repeated parent reads without stalling independent work 12143ms
+     × recovers a scoped terminal admission fact after its result expires and the bridge restarts 12250ms
+     × does not distinguish scope-mismatched handles from missing handles 12387ms
+     × records a detached HTTP task call without turning it into cancellation 8462ms
+     × records an aborted exact status wait while the same Job keeps running 6311ms
+     × keeps an asynchronous admission valid before App Server assigns its thread 7658ms
+     × opens Dashboard explicitly and rejects every retired sender operation without mutating a Job 5666ms
+ ❯ test/openaiMcpAuthorization.test.ts (33 tests | 2 failed) 23790ms
+     × does not start implicitly or expose private config through CLI errors 5143ms
+     × uses broker-issued and renewed tokens for real Bridge Events and one canonical B admission 5114ms
+stdout | test/mcpEvents.test.ts > pre-approved followup admission across GPT runs > rejects caller-issued stage identifiers and rolls back an uncommitted issued reference
+Client.listTools() called but server does not advertise tools capability - returning empty list
+
+stdout | test/mcpEvents.test.ts > pre-approved followup admission across GPT runs > rejects caller-issued stage identifiers and rolls back an uncommitted issued reference
+Client.listTools() called but server does not advertise tools capability - returning empty list
+
+ ❯ test/mcpEvents.test.ts (49 tests | 25 failed) 206404ms
+     × subscribes before completion and commits result plus delivery intent atomically 5464ms
+     × rolls back a terminal result and its delivery intent together after a storage failure 24539ms
+     × discovers the extension and late-subscribes to one durable exact result without leaking its content 15777ms
+     × rejects foreign conversations, unauthenticated No Auth metadata and failed callback challenges 6379ms
+     × reports missing conversation metadata as an authorization failure before callback verification or persistence 10574ms
+     × rejects invalid conversation metadata with a bounded authorization reason without treating it as a callback or token failure 5698ms
+     × does not reactivate a new subscription when unsubscribe races callback verification 7393ms
+     × preserves unsubscribe while another webhook is in flight 5420ms
+     × preserves renewed expiry and signing keys while another webhook is in flight 5711ms
+     × preserves delivery progress during subscription verification 5428ms
+     × refreshes a finite lifetime and signs with both verified keys during rotation 5772ms
+     × bounds exhausted attempts and denies refresh when project access is revoked 8621ms
+     × revokes pending delivery when project access is withdrawn 5100ms
+     × keeps pending delivery recoverable when an authorization state read temporarily fails 5704ms
+     × keeps one logical event across retries, expires delivery without cancelling work, and does not retry 410 or 413 8861ms
+     × recovers the persisted delivery after restart and keeps exact-result retrieval scope checks 9538ms
+     × recovers issued references from an exact A read and its event after admission response loss 5533ms
+     × rejects caller-issued stage identifiers and rolls back an uncommitted issued reference 10635ms
+     × keeps separately approved identical prompts distinct while deduplicating each issued reference 12213ms
+     × preserves a retained v1 approval's canonical request receipt during upgrade 6264ms
+     × converges duplicate callers, response loss and restart to exactly one approved B 5287ms
+     × never admits unapproved B or authorizes a step from another conversation 8048ms
+     × rejects unrelated work occupying the approved step's canonical requestId 7691ms
+     × recovers one admitted B after a response is lost and the bridge restarts 6893ms
+     × expires unconsumed approvals while preserving admission tombstones 7019ms
+ ❯ test/mcpOAuth.test.ts (29 tests | 7 failed) 101432ms
+     × rejects OAuth stdio before creating a database or starting children 10237ms
+     × returns linking metadata through the actual current SDK client 14887ms
+     × keeps one user principal across token and client-ID renewal, A/B admission, callback and restart 10309ms
+     × rejects an unapproved followup and the same reference in another conversation 5510ms
+     × caps grants at token expiry and rejects expiry during callback verification 5689ms
+     × does not transfer existing bearer Jobs or approvals to the OAuth operator 6013ms
+     × stops expired delivery grants without cancelling or repeating the original Job 5235ms
+ ❯ test/skillLibrary.test.ts (16 tests | 1 failed) 9401ms
+     × keeps the documented 3 MiB Markdown source capacity without a lower prompt cap 7049ms
+ ❯ test/server.test.ts (11 tests | 2 failed) 30474ms
+     × keeps conformance fixtures opt-in and checks required client capabilities 5654ms
+     × discovers and serves only the current tools and resources 5132ms
+ ❯ test/projectLifecycleHost.test.ts (5 tests | 4 failed) 53896ms
+     × repeats full HTTP admission/use/delete cycles with fresh identities and preserves real Git/files/conversation evidence 22878ms
+     × fences task retries across host restart and same-cwd registration with public envelope known=true 7683ms
+     × fences task retries across host restart and same-cwd registration with public envelope known=false 8454ms
+     × replays a lost delete response through Settings and MCP without deleting a new same-cwd identity or bypassing other CAS checks 7465ms
+ ❯ test/executionServiceProcess.test.ts (16 tests | 5 failed) 169042ms
+     × runs turns, progress, account reads, and steering outside the state owner 11577ms
+     × retains a running executor across a parent wall-clock jump 11284ms
+     × keeps private interaction input in the execution process proxy only 11606ms
+     × reserves byte capacity for steering an existing turn 10375ms
+     × retains an exited App Server until its same-group command is gone 11623ms
+ ❯ test/sessionRegistry.test.ts (14 tests | 1 failed) 7988ms
+     × preserves 1,600 inherited sessions through first update, restart and scope pagination 5874ms
+ ❯ test/launcherLifecycle.integration.test.ts (4 tests | 3 failed) 73507ms
+     × starts authenticated HTTP with https metadata and rebuilds the profile when OAuth identity changes 10312ms
+     × starts authenticated HTTP with loopback metadata and rebuilds the profile when OAuth identity changes 10266ms
+     × waits for tunnel readiness and shutdown, then reuses only an unchanged profile 45017ms
+ ❯ test/remoteCompanionServer.test.ts (7 tests | 1 failed) 15227ms
+     × closes authenticated access after overlapping enable requests 5752ms
+ ❯ test/stateServiceProcess.test.ts (12 tests | 1 failed) 56013ms
+     × reports an explicit storage-busy result when SQLite lock waiting expires 10880ms
+ ❯ test/runtimeLifecycleRecovery.test.ts (10 tests | 1 failed) 17478ms
+   × a real helper SIGTERM preserves active work, then a new helper adopts and finishes the reservation 8147ms
+ ❯ test/issue221Delivery.test.ts (21 tests | 18 failed) 146767ms
+     × uses direct-wait for the legacy switch value false 6899ms
+     × keeps the entire ordinary path independent of Events 6719ms
+     × requires current review for new B but returns admitted B when replay has an older reviewedVersion 6050ms
+     × rejects an unadmitted historical live-card followup without modifying approval 8093ms
+     × rejects an unadmitted historical events followup without modifying approval 6565ms
+     × replays an already admitted historical live-card B before retired-policy rejection 6406ms
+     × replays an already admitted historical events B before retired-policy rejection 7132ms
+     × preserves an admitted live-card B replay carrying its original delivery selector 8197ms
+     × preserves an admitted events B replay carrying its original delivery selector 8332ms
+     × reports probe reason unsupported without orphaning or replacing the Agent 5970ms
+     × reports probe reason transient without orphaning or replacing the Agent 7982ms
+     × preserves retained structured error 'CONTEXT_WINDOW_EXCEEDED'/true on all five MCP read surfaces 6115ms
+     × preserves retained structured error 'UPSTREAM_TURN_FAILED'/false on all five MCP read surfaces 6015ms
+     × keeps cancelled error semantics consistent across exact and summary reads: Cancelled at the user's request. 6800ms
+     × keeps interrupted error semantics consistent across exact and summary reads: Execution was interrupted. 8137ms
+     × keeps failed error semantics consistent across exact and summary reads: Execution failed. 8137ms
+     × keeps failed error semantics consistent across exact and summary reads: BRIDGE_TERMINAL_COMMIT_FAILED: Durable terminal commit failed. 5824ms
+     × continues bounded reads of the same historical active live-card Job 15006ms
+ ❯ test/issue162Context.test.ts (3 tests | 2 failed) 37030ms
+     × uses a private-env-only runtime home for the helper's applied CLI selection 5025ms
+     × marks a changed file environment pending while the old launcher still runs 31856ms
+ ❯ test/telemetryService.test.ts (6 tests | 4 failed) 76209ms
+     × bounds and drains diagnostics without sharing an operational SQLite wait 7838ms
+     × quarantines telemetry from a different operational database and rebuilds 10013ms
+     × quarantines a corrupt diagnostic database without touching operational state 10004ms
+     × starts degraded and recovers after a transient telemetry startup lock 24092ms
+ ❯ test/stateReadProcess.test.ts (6 tests | 4 failed) 91252ms
+     × uses the selected CLI schema before any Job, missing method undefined 20041ms
+     × uses the selected CLI schema before any Job, missing method turn/start 10548ms
+     × keeps a session visible through IPC during account loss, change and reader restart 25092ms
+     × reads current WAL state without registering a writer and recovers its own process 11257ms
+ ❯ test/eventRetention.test.ts (8 tests | 2 failed) 27607ms
+     × coalesces one item's snapshots, keeps cursor order and preserves usage after result expiry 6710ms
+     × enforces the global byte budget independently of per-job limits and makes freed pages reusable 18635ms
+ ❯ test/issue162CrossCli.test.ts (10 tests | 4 failed) 210656ms
+     × keeps the selected auth source for app account, model fallback, and work while blocking shared login 34438ms
+     × keeps the selected auth source for terminal account, model fallback, and work while blocking shared login 31379ms
+     × keeps the selected auth source for bridge account, model fallback, and work while blocking shared login 31097ms
+     × uses the app CLI with a saved bridge-chatgpt profile without switching auth sources 30082ms
+ ❯ test/authHelperProcess.test.ts (2 tests | 1 failed) 75803ms
+   × preserves a replacement Helper's API candidate when an older Helper receives a late browser-login exit 25060ms
+ ❯ test/stateDatabaseLifecycle.test.ts (11 tests | 3 failed) 53765ms
+     × fails capacity preflight before changing the supported source database 5551ms
+     × fails permission preflight before changing the supported source database 6640ms
+     × rejects malformed and unsupported databases before creating lifecycle sidecars 12253ms
+ ❯ test/issue162Launcher.integration.test.ts (1 test | 1 failed) 13318ms
+   × runs the built launcher and MCP model path against the private-file runtime home 13311ms
+ ❯ test/experimentRetirement.test.ts (20 tests | 13 failed) 165532ms
+   × verifies a standalone restore and preserves source state during inspection 15253ms
+   × retires the unmerged experiment without changing dev or main and retains recovery evidence 14629ms
+   × rejects a file archive that cannot preserve the original state 6440ms
+   × rejects untracked work that the archive does not preserve 5090ms
+   × rejects ignored work that the archive does not preserve 5164ms
+   × blocks active processes and an incomplete or stale open-work review 11330ms
+   × rejects archives within active worktrees, a current checkout, and protected branches 5292ms
+   × preserves a branch that changes after initial verification 6509ms
+   × restores backed-up files if ordinary worktree removal fails 7748ms
+   × checks GitHub open work and deletes only the archived remote branch 25465ms
+   × preserves the experiment when remote review finds open-pr 14231ms
+   × preserves the experiment when remote review finds open-issue 10639ms
+   × preserves the experiment when remote review finds changed-head 9320ms
+ ❯ test/workHistory.test.ts (3 tests | 1 failed) 6454ms
+     × rotates past a full protected batch and respects the selected retention period 5659ms
+ ❯ test/uiResourceFiles.test.ts (1 test | 1 failed) 5342ms
+     × overwrites one file per card, removes legacy snapshots, and packages only current files 5330ms
+ ❯ test/gitLifecycleHooks.test.ts (5 tests | 4 failed) 25857ms
+   × continues once for an unintegrated task commit, then accepts integration 5142ms
+   × guards local branch deletion without changing Git state 6610ms
+   × uses the explicit parent branch target for a task checkout 6471ms
+   × guards dirty and unintegrated worktrees, including git -C from another worktree 6652ms
+ ❯ test/runtimeCli.integration.test.ts (2 tests | 2 failed) 10929ms
+   × starts native and remote app connections in the built cli entrypoint 5457ms
+   × starts native and remote app connections in the built stdio entrypoint 5466ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 236 ⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/appServerUpstream.test.ts > CodexAppServerUpstreamPool > classifies 'nonblocking input' as 'unknown' with 'disabled' routing evidence
+ FAIL  test/appServerUpstream.test.ts > CodexAppServerUpstreamPool > classifies 'nonblocking input' as 'unknown' with 'unsupported' routing evidence
+ FAIL  test/appServerUpstream.test.ts > CodexAppServerUpstreamPool > classifies 'legacy app input' as 'app-approval' with 'enabled' routing evidence
+Error: Condition did not become true before timeout.
+ ❯ eventually test/appServerUpstream.test.ts:1202:39
+    1200|   const deadline = Date.now() + timeoutMs;
+    1201|   while (!predicate()) {
+    1202|     if (Date.now() >= deadline) throw new Error("Condition did not bec…
+       |                                       ^
+    1203|     await new Promise((resolve) => setTimeout(resolve, 10));
+    1204|   }
+ ❯ nextInteraction test/appServerUpstream.test.ts:1195:3
+ ❯ test/appServerUpstream.test.ts:946:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/238]⎯
+
+ FAIL  test/appServerUpstream.test.ts > CodexAppServerUpstreamPool > classifies 'dynamic input' as 'unknown' with 'enabled' routing evidence
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/appServerUpstream.test.ts:938:5
+    936|     { prompt: "dynamic input", routing: "enabled", origin: "unknown" },
+    937|     { prompt: "legacy app input", routing: "enabled", origin: "app-app…
+    938|   ])("classifies $prompt as $origin with $routing routing evidence", a…
+       |     ^
+    939|     const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, { environm…
+    940|     const interactions: CodexPendingInteraction[] = [], events: CodexP…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/238]⎯
+
+ FAIL  test/appServerUpstream.test.ts > CodexAppServerUpstreamPool > round-trips command, file, input, and permission requests by exact request ID
+Error: Condition did not become true before timeout.
+ ❯ eventually test/appServerUpstream.test.ts:1202:39
+    1200|   const deadline = Date.now() + timeoutMs;
+    1201|   while (!predicate()) {
+    1202|     if (Date.now() >= deadline) throw new Error("Condition did not bec…
+       |                                       ^
+    1203|     await new Promise((resolve) => setTimeout(resolve, 10));
+    1204|   }
+ ❯ nextInteraction test/appServerUpstream.test.ts:1195:3
+ ❯ test/appServerUpstream.test.ts:965:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/238]⎯
+
+ FAIL  test/appServerUpstream.test.ts > CodexAppServerUpstreamPool > steers only the exact active turn and keeps the thread resumable
+Error: Condition did not become true before timeout.
+ ❯ eventually test/appServerUpstream.test.ts:1202:39
+    1200|   const deadline = Date.now() + timeoutMs;
+    1201|   while (!predicate()) {
+    1202|     if (Date.now() >= deadline) throw new Error("Condition did not bec…
+       |                                       ^
+    1203|     await new Promise((resolve) => setTimeout(resolve, 10));
+    1204|   }
+ ❯ test/appServerUpstream.test.ts:1083:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/238]⎯
+
+ FAIL  test/appServerUpstream.test.ts > CodexAppServerUpstreamPool > never falls back to shared-process termination during an automatic interruption retry
+Error: Condition did not become true before timeout.
+ ❯ eventually test/appServerUpstream.test.ts:1202:39
+    1200|   const deadline = Date.now() + timeoutMs;
+    1201|   while (!predicate()) {
+    1202|     if (Date.now() >= deadline) throw new Error("Condition did not bec…
+       |                                       ^
+    1203|     await new Promise((resolve) => setTimeout(resolve, 10));
+    1204|   }
+ ❯ test/appServerUpstream.test.ts:1114:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/238]⎯
+
+ FAIL  test/appServerUpstream.test.ts > CodexAppServerUpstreamPool > confirms exact turn interruption before falling back to process termination
+Error: Condition did not become true before timeout.
+ ❯ eventually test/appServerUpstream.test.ts:1202:39
+    1200|   const deadline = Date.now() + timeoutMs;
+    1201|   while (!predicate()) {
+    1202|     if (Date.now() >= deadline) throw new Error("Condition did not bec…
+       |                                       ^
+    1203|     await new Promise((resolve) => setTimeout(resolve, 10));
+    1204|   }
+ ❯ test/appServerUpstream.test.ts:1152:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/238]⎯
+
+ FAIL  test/authHelperProcess.test.ts > preserves a replacement Helper's API candidate when an older Helper receives a late browser-login exit
+Error: Test timed out in 25000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/authHelperProcess.test.ts:138:1
+    136| }
+    137|
+    138| it("preserves a replacement Helper's API candidate when an older Helpe…
+       | ^
+    139|   const f = await fixture();
+    140|   try {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/238]⎯
+
+ FAIL  test/codexAuthSelection.test.ts > selects one of several saved bridge profiles without replacing its credential
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/codexAuthSelection.test.ts:41:1
+     39| });
+     40|
+     41| it("selects one of several saved bridge profiles without replacing its…
+       | ^
+     42|   const f = await fixture();
+     43|   const first = (await f.manager.prepare("bridge-chatgpt", 0, f.enviro…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/238]⎯
+
+ FAIL  test/codexAuthSelection.test.ts > offers only distinct previously used external homes and preserves their owner across explicit and saved selection
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/codexAuthSelection.test.ts:79:1
+     77| });
+     78|
+     79| it("offers only distinct previously used external homes and preserves …
+       | ^
+     80|   const f = await fixture();
+     81|   const first = path.join(f.root, "external-first");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/238]⎯
+
+ FAIL  test/codexAuthSelection.test.ts > checks effective managed login, store, and workspace restrictions for a candidate
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/codexAuthSelection.test.ts:209:1
+    207| });
+    208|
+    209| it("checks effective managed login, store, and workspace restrictions …
+       | ^
+    210|   const f = await fixture();
+    211|   const candidate = (await f.manager.prepare("bridge-chatgpt", 0, f.en…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/238]⎯
+
+ FAIL  test/codexAuthSelection.test.ts > ignores a stale shared auth file when effective managed storage selects a different keyring account
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/codexAuthSelection.test.ts:242:1
+    240| });
+    241|
+    242| it("ignores a stale shared auth file when effective managed storage se…
+       | ^
+    243|   const f = await fixture();
+    244|   const home = path.join(f.root, ".codex"); await mkdir(home);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/238]⎯
+
+ FAIL  test/codexAuthSelection.test.ts > verifies a native file login without optional user claims and refuses a replaced candidate
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/codexAuthSelection.test.ts:263:1
+    261| });
+    262|
+    263| it("verifies a native file login without optional user claims and refu…
+       | ^
+    264|   const f = await fixture();
+    265|   const candidate = (await f.manager.prepare("bridge-chatgpt", 0, f.en…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/238]⎯
+
+ FAIL  test/codexAuthSelection.test.ts > rejects a candidate that changed account or CLI after verification, even when display email is unchanged
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/codexAuthSelection.test.ts:644:1
+    642| });
+    643|
+    644| it("rejects a candidate that changed account or CLI after verification…
+       | ^
+    645|   const f = await fixture();
+    646|   const candidate = (await f.manager.prepare("bridge-chatgpt", 0, f.en…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/238]⎯
+
+ FAIL  test/codexAuthSelection.test.ts > revalidates a staged candidate at activation and preserves the pending choice after drift
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/codexAuthSelection.test.ts:677:1
+    675| });
+    676|
+    677| it("revalidates a staged candidate at activation and preserves the pen…
+       | ^
+    678|   const f = await fixture();
+    679|   const candidate = (await f.manager.prepare("bridge-chatgpt", 0, f.en…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/238]⎯
+
+ FAIL  test/codexAuthSelection.test.ts > commits an owned profile only when the ready runtime reports its exact home
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/codexAuthSelection.test.ts:736:1
+    734| });
+    735|
+    736| it("commits an owned profile only when the ready runtime reports its e…
+       | ^
+    737|   const f = await fixture();
+    738|   const candidate = (await f.manager.prepare("bridge-chatgpt", 0, f.en…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/238]⎯
+
+ FAIL  test/codexAuthSelection.test.ts > removes only an inactive bridge API credential without touching shared authentication
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/codexAuthSelection.test.ts:753:1
+    751| });
+    752|
+    753| it("removes only an inactive bridge API credential without touching sh…
+       | ^
+    754|   const f = await fixture();
+    755|   const shared = path.join(f.root, ".codex"); await mkdir(shared);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/238]⎯
+
+ FAIL  test/codexAuthSelection.test.ts > logs out only an inactive bridge ChatGPT profile and records an uncertain reply
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/codexAuthSelection.test.ts:776:1
+    774| });
+    775|
+    776| it("logs out only an inactive bridge ChatGPT profile and records an un…
+       | ^
+    777|   const f = await fixture();
+    778|   const shared = path.join(f.root, ".codex"); await mkdir(shared);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/238]⎯
+
+ FAIL  test/companionServer.test.ts > native companion server > carries the full worst-case JSON-escaped Bridge skill content over the native socket
+Error: Test timed out in 20000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/companionServer.test.ts:298:3
+    296|   });
+    297|
+    298|   it("carries the full worst-case JSON-escaped Bridge skill content ov…
+       |   ^
+    299|     const socketPath = temporarySocketPath();
+    300|     const service = fakeApplicationService();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/238]⎯
+
+ FAIL  test/eventRetention.test.ts > bounded diagnostic retention > coalesces one item's snapshots, keeps cursor order and preserves usage after result expiry
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/eventRetention.test.ts:125:3
+    123|   });
+    124|
+    125|   it("coalesces one item's snapshots, keeps cursor order and preserves…
+       |   ^
+    126|     const store=new BridgeStateStore({file:":memory:"});const input=jo…
+    127|     store.recordJobTelemetryEvent(input.jobId,"app-command-started",{.…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/238]⎯
+
+ FAIL  test/eventRetention.test.ts > bounded diagnostic retention > enforces the global byte budget independently of per-job limits and makes freed pages reusable
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/eventRetention.test.ts:194:3
+    192|   });
+    193|
+    194|   it("enforces the global byte budget independently of per-job limits …
+       |   ^
+    195|     const directory=mkdtempSync(path.join(tmpdir(),"event-budget-")),f…
+    196|     const store=new BridgeStateStore({file});const input=job();store.u…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/238]⎯
+
+ FAIL  test/executionServiceProcess.test.ts > isolated Codex execution process > runs turns, progress, account reads, and steering outside the state owner
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ test/executionServiceProcess.test.ts:77:61
+     75|       );
+     76|       await eventually(() => Boolean(assignment?.threadId));
+     77|       expect(service.canSteerThread(assignment!.threadId!)).toBe(true);
+       |                                                             ^
+     78|       await expect(service.steerThread(assignment!.threadId!, "isolate…
+     79|         .resolves.toMatchObject({ turnId: assignment!.upstreamRequestI…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[21/238]⎯
+
+ FAIL  test/executionServiceProcess.test.ts > isolated Codex execution process > retains a running executor across a parent wall-clock jump
+Error: Condition did not become true before timeout.
+ ❯ eventually test/executionServiceProcess.test.ts:651:39
+    649|   const deadline = Date.now() + timeoutMs;
+    650|   while (!predicate()) {
+    651|     if (Date.now() >= deadline) throw new Error("Condition did not bec…
+       |                                       ^
+    652|     await new Promise(resolve => setTimeout(resolve, 20));
+    653|   }
+ ❯ test/executionServiceProcess.test.ts:107:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[22/238]⎯
+
+ FAIL  test/executionServiceProcess.test.ts > isolated Codex execution process > keeps private interaction input in the execution process proxy only
+Error: Condition did not become true before timeout.
+ ❯ eventually test/executionServiceProcess.test.ts:651:39
+    649|   const deadline = Date.now() + timeoutMs;
+    650|   while (!predicate()) {
+    651|     if (Date.now() >= deadline) throw new Error("Condition did not bec…
+       |                                       ^
+    652|     await new Promise(resolve => setTimeout(resolve, 20));
+    653|   }
+ ❯ test/executionServiceProcess.test.ts:133:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[23/238]⎯
+
+ FAIL  test/executionServiceProcess.test.ts > isolated Codex execution process > reserves byte capacity for steering an existing turn
+Error: Condition did not become true before timeout.
+ ❯ eventually test/executionServiceProcess.test.ts:651:39
+    649|   const deadline = Date.now() + timeoutMs;
+    650|   while (!predicate()) {
+    651|     if (Date.now() >= deadline) throw new Error("Condition did not bec…
+       |                                       ^
+    652|     await new Promise(resolve => setTimeout(resolve, 20));
+    653|   }
+ ❯ test/executionServiceProcess.test.ts:234:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[24/238]⎯
+
+ FAIL  test/executionServiceProcess.test.ts > isolated Codex execution process > retains an exited App Server until its same-group command is gone
+Error: Condition did not become true before timeout.
+ ❯ eventually test/executionServiceProcess.test.ts:651:39
+    649|   const deadline = Date.now() + timeoutMs;
+    650|   while (!predicate()) {
+    651|     if (Date.now() >= deadline) throw new Error("Condition did not bec…
+       |                                       ^
+    652|     await new Promise(resolve => setTimeout(resolve, 20));
+    653|   }
+ ❯ test/executionServiceProcess.test.ts:269:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[25/238]⎯
+
+ FAIL  test/experimentRetirement.test.ts > verifies a standalone restore and preserves source state during inspection
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/experimentRetirement.test.ts:91:1
+     89| }
+     90|
+     91| it("verifies a standalone restore and preserves source state during in…
+       | ^
+     92|   const result = f.command(); expect(result.status, result.stderr).toB…
+     93|   expect(JSON.parse(result.stdout)).toMatchObject({ verified: true, he…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[26/238]⎯
+
+ FAIL  test/experimentRetirement.test.ts > retires the unmerged experiment without changing dev or main and retains recovery evidence
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/experimentRetirement.test.ts:100:1
+     98| }));
+     99|
+    100| it("retires the unmerged experiment without changing dev or main and r…
+       | ^
+    101|   const result = f.command("retire-experiment"); expect(result.status,…
+    102|   expect(JSON.parse(result.stdout)).toMatchObject({ status: "completed…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[27/238]⎯
+
+ FAIL  test/experimentRetirement.test.ts > rejects a file archive that cannot preserve the original state
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/experimentRetirement.test.ts:123:44
+    121| }));
+    122|
+    123| it.each(["bundle", "file", "prerequisite"])("rejects a %s archive that…
+       |                                            ^
+    124|   if (kind === "bundle") writeFileSync(f.bundle, "corrupted\n");
+    125|   else if (kind === "file") writeFileSync(join(f.archive, "files", "no…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[28/238]⎯
+
+ FAIL  test/experimentRetirement.test.ts > rejects untracked work that the archive does not preserve
+ FAIL  test/experimentRetirement.test.ts > rejects ignored work that the archive does not preserve
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/experimentRetirement.test.ts:130:54
+    128| }));
+    129|
+    130| it.each(["untracked", "ignored", "tracked", "cache"])("rejects %s work…
+       |                                                      ^
+    131|   if (kind === "untracked") writeFileSync(join(f.worktree, "new-work.t…
+    132|   else if (kind === "ignored") writeFileSync(join(f.worktree, "output"…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[29/238]⎯
+
+ FAIL  test/experimentRetirement.test.ts > blocks active processes and an incomplete or stale open-work review
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/experimentRetirement.test.ts:138:1
+    136| }));
+    137|
+    138| it("blocks active processes and an incomplete or stale open-work revie…
+       | ^
+    139|   f.setProcesses('console.log("12345");');
+    140|   expect(f.command("retire-experiment").stderr).toContain("worktree us…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[30/238]⎯
+
+ FAIL  test/experimentRetirement.test.ts > rejects archives within active worktrees, a current checkout, and protected branches
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/experimentRetirement.test.ts:147:1
+    145| }));
+    146|
+    147| it("rejects archives within active worktrees, a current checkout, and …
+       | ^
+    148|   expect(f.command("retire-experiment", f.worktree).stderr).toContain(…
+    149|   f.record.archive.directory = f.worktree; f.write();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[31/238]⎯
+
+ FAIL  test/experimentRetirement.test.ts > preserves a branch that changes after initial verification
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/experimentRetirement.test.ts:155:1
+    153| }));
+    154|
+    155| it("preserves a branch that changes after initial verification", () =>…
+       | ^
+    156|   let inspections = 0;
+    157|   expect(() => retireExperiment(f.repository, f.recordFile, () => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[32/238]⎯
+
+ FAIL  test/experimentRetirement.test.ts > restores backed-up files if ordinary worktree removal fails
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/experimentRetirement.test.ts:168:1
+    166| }));
+    167|
+    168| it("restores backed-up files if ordinary worktree removal fails", () =…
+       | ^
+    169|   let inspections = 0;
+    170|   expect(() => retireExperiment(f.repository, f.recordFile, () => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[33/238]⎯
+
+ FAIL  test/experimentRetirement.test.ts > checks GitHub open work and deletes only the archived remote branch
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/experimentRetirement.test.ts:178:1
+    176| }));
+    177|
+    178| it("checks GitHub open work and deletes only the archived remote branc…
+       | ^
+    179|   const remote = remoteFixture(f);
+    180|   const result = f.command("retire-experiment"); expect(result.status,…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[34/238]⎯
+
+ FAIL  test/experimentRetirement.test.ts > preserves the experiment when remote review finds open-pr
+ FAIL  test/experimentRetirement.test.ts > preserves the experiment when remote review finds open-issue
+ FAIL  test/experimentRetirement.test.ts > preserves the experiment when remote review finds changed-head
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/experimentRetirement.test.ts:186:51
+    184| }));
+    185|
+    186| it.each(["open-pr", "open-issue", "changed-head"])("preserves the expe…
+       |                                                   ^
+    187|   const remote = remoteFixture(f, kind === "open-pr" ? [123] : [], kin…
+    188|   if (kind === "changed-head") {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[35/238]⎯
+
+ FAIL  test/gitLifecycleHooks.test.ts > continues once for an unintegrated task commit, then accepts integration
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/gitLifecycleHooks.test.ts:46:1
+     44| }
+     45|
+     46| it("continues once for an unintegrated task commit, then accepts integ…
+       | ^
+     47|   withRepository(repository => {
+     48|     git(repository, "switch", "-c", "codex/task");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[36/238]⎯
+
+ FAIL  test/gitLifecycleHooks.test.ts > guards local branch deletion without changing Git state
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/gitLifecycleHooks.test.ts:63:1
+     61| });
+     62|
+     63| it("guards local branch deletion without changing Git state", () => {
+       | ^
+     64|   withRepository(repository => {
+     65|     git(repository, "switch", "-c", "codex/task");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[37/238]⎯
+
+ FAIL  test/gitLifecycleHooks.test.ts > uses the explicit parent branch target for a task checkout
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/gitLifecycleHooks.test.ts:87:1
+     85| });
+     86|
+     87| it("uses the explicit parent branch target for a task checkout", () =>…
+       | ^
+     88|   withRepository(repository => {
+     89|     git(repository, "switch", "-c", "codex/parent");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[38/238]⎯
+
+ FAIL  test/gitLifecycleHooks.test.ts > guards dirty and unintegrated worktrees, including git -C from another worktree
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/gitLifecycleHooks.test.ts:104:1
+    102| });
+    103|
+    104| it("guards dirty and unintegrated worktrees, including git -C from ano…
+       | ^
+    105|   withRepository(repository => {
+    106|     const worker = join(repository, "..", `${basename(repository)} wor…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[39/238]⎯
+
+ FAIL  test/issue162Context.test.ts > issue 162 product context > uses a private-env-only runtime home for the helper's applied CLI selection
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue162Context.test.ts:45:3
+     43|     await expect(catalog.getCatalog()).rejects.toThrow("CODEX_CONTEXT_…
+     44|   });
+     45|   it("uses a private-env-only runtime home for the helper's applied CL…
+       |   ^
+     46|     const root = mkdtempSync(path.join(tmpdir(), "issue162-context-"));
+     47|     roots.push(root);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[40/238]⎯
+
+ FAIL  test/issue162Context.test.ts > issue 162 product context > marks a changed file environment pending while the old launcher still runs
+Error: Test timed out in 30000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue162Context.test.ts:86:3
+     84|   });
+     85|
+     86|   it("marks a changed file environment pending while the old launcher …
+       |   ^
+     87|     const root = mkdtempSync(path.join(tmpdir(), "issue162-pending-"));
+     88|     roots.push(root);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[41/238]⎯
+
+ FAIL  test/issue162CrossCli.test.ts > issue 162 selected CLI across product entry points > keeps the selected auth source for app account, model fallback, and work while blocking shared login
+ FAIL  test/issue162CrossCli.test.ts > issue 162 selected CLI across product entry points > keeps the selected auth source for terminal account, model fallback, and work while blocking shared login
+ FAIL  test/issue162CrossCli.test.ts > issue 162 selected CLI across product entry points > keeps the selected auth source for bridge account, model fallback, and work while blocking shared login
+Error: Test timed out in 30000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue162CrossCli.test.ts:116:50
+    114|   }, 30_000);
+    115|
+    116|   it.each(["app", "terminal", "bridge"] as const)("keeps the selected …
+       |                                                  ^
+    117|     const root = mkdtempSync(path.join(tmpdir(), `issue162-${choice}-`…
+    118|     roots.push(root);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[42/238]⎯
+
+ FAIL  test/issue162CrossCli.test.ts > issue 162 selected CLI across product entry points > uses the app CLI with a saved bridge-chatgpt profile without switching auth sources
+Error: Test timed out in 30000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue162CrossCli.test.ts:226:14
+    224|     ["app", "bridge-chatgpt"], ["terminal", "bridge-chatgpt"], ["bridg…
+    225|     ["app", "bridge-api"], ["terminal", "bridge-api"], ["bridge", "bri…
+    226|   ] as const)("uses the %s CLI with a saved %s profile without switchi…
+       |              ^
+    227|     const root = mkdtempSync(path.join(tmpdir(), `issue210-${choice}-`…
+    228|     roots.push(root);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[43/238]⎯
+
+ FAIL  test/issue162Launcher.integration.test.ts > runs the built launcher and MCP model path against the private-file runtime home
+AssertionError: expected 'Loaded runtime environment from /var/…' to contain 'listening on http://'
+
+- Expected
++ Received
+
+- listening on http://
++ Loaded runtime environment from /var/folders/0w/xl0qvy093052t14h6gpmfr1r0000gn/T/issue162-launcher-M79l5q/private/.env.
++
+
+ ❯ test/issue162Launcher.integration.test.ts:101:20
+     99|       await new Promise(resolve => setTimeout(resolve, 50));
+    100|     }
+    101|     expect(output).toContain("listening on http://");
+       |                    ^
+    102|     await client.connect(new StreamableHTTPClientTransport(new URL(`ht…
+    103|     const result = await client.callTool({ name: "codex_models", argum…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[44/238]⎯
+
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > uses direct-wait for the legacy switch value false
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue221Delivery.test.ts:263:25
+    261|     } finally { db.close(); }
+    262|   }
+    263|   it.each([false, true])("uses direct-wait for the legacy switch value…
+       |                         ^
+    264|     settings.update({ experimentalDirectResultDelivery: legacy }, sett…
+    265|     const result = await admit();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[45/238]⎯
+
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > keeps the entire ordinary path independent of Events
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue221Delivery.test.ts:271:3
+    269|     await exact((result.structuredContent as any).jobId);
+    270|   });
+    271|   it("keeps the entire ordinary path independent of Events", async () …
+       |   ^
+    272|     const tools = await client.listTools();
+    273|     const task = tools.tools.find(tool => tool.name === "codex_task")!;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[46/238]⎯
+
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > requires current review for new B but returns admitted B when replay has an older reviewedVersion
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue221Delivery.test.ts:288:3
+    286|     expect(upstream.calls).toHaveLength(2);
+    287|   });
+    288|   it("requires current review for new B but returns admitted B when re…
+       |   ^
+    289|     const a = await admit({ approvedFollowups: [{ prompt: "Fixture B" …
+    290|     const parent = (await exact((a.structuredContent as any).jobId)).i…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[47/238]⎯
+
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > rejects an unadmitted historical live-card followup without modifying approval
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > rejects an unadmitted historical events followup without modifying approval
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue221Delivery.test.ts:309:44
+    307|     expect(upstream.calls).toHaveLength(2);
+    308|   });
+    309|   it.each(["live-card", "events"] as const)("rejects an unadmitted his…
+       |                                            ^
+    310|     const a = await admit({ approvedFollowups: [{ prompt: "Fixture B" …
+    311|     const parent = await exact((a.structuredContent as any).jobId);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[48/238]⎯
+
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > replays an already admitted historical live-card B before retired-policy rejection
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > replays an already admitted historical events B before retired-policy rejection
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue221Delivery.test.ts:334:44
+    332|     expect(state.listMeta("task_followup_v1/", 100)).toEqual(before);
+    333|   });
+    334|   it.each(["live-card", "events"] as const)("replays an already admitt…
+       |                                            ^
+    335|     const a = await admit({ approvedFollowups: [{ prompt: "Fixture B" …
+    336|     const parent = await exact((a.structuredContent as any).jobId);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[49/238]⎯
+
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > preserves an admitted live-card B replay carrying its original delivery selector
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > preserves an admitted events B replay carrying its original delivery selector
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue221Delivery.test.ts:352:44
+    350|     expect(result.items[0].answer).toBe("Completed fixture work.");
+    351|   });
+    352|   it.each(["live-card", "events"] as const)("preserves an admitted %s …
+       |                                            ^
+    353|     const a = await admit({ approvedFollowups: [{ prompt: "Fixture B" …
+    354|     const parent = (await exact((a.structuredContent as any).jobId)).i…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[50/238]⎯
+
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > reports probe reason unsupported without orphaning or replacing the Agent
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > reports probe reason transient without orphaning or replacing the Agent
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue221Delivery.test.ts:371:49
+    369|     expect(state.listMeta("task_followup_v1/", 100)).toEqual(before);
+    370|   });
+    371|   it.each(["unsupported", "transient"] as const)("reports probe reason…
+       |                                                 ^
+    372|     const a = await admit(); const parent = (await exact((a.structured…
+    373|     Object.assign(upstream, { probeThread: async (threadId: string) =>…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[51/238]⎯
+
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > preserves retained structured error 'CONTEXT_WINDOW_EXCEEDED'/true on all five MCP read surfaces
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > preserves retained structured error 'UPSTREAM_TURN_FAILED'/false on all five MCP read surfaces
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue221Delivery.test.ts:397:5
+    395|     { code: "UPSTREAM_TURN_FAILED", retryable: false, missingFields: […
+    396|     { code: "UPSTREAM_TURN_FAILED" }
+    397|   ])("preserves retained structured error $code/$retryable on all five…
+       |     ^
+    398|     const held = upstream.holdNextCall();
+    399|     const a = await admit();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[52/238]⎯
+
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > keeps cancelled error semantics consistent across exact and summary reads: Cancelled at the user's request.
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > keeps interrupted error semantics consistent across exact and summary reads: Execution was interrupted.
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > keeps failed error semantics consistent across exact and summary reads: Execution failed.
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > keeps failed error semantics consistent across exact and summary reads: BRIDGE_TERMINAL_COMMIT_FAILED: Durable terminal commit failed.
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue221Delivery.test.ts:427:14
+    425|     ["failed", "Execution failed.", "JOB_FAILED"],
+    426|     ["failed", "BRIDGE_TERMINAL_COMMIT_FAILED: Durable terminal commit…
+    427|   ] as const)("keeps %s error semantics consistent across exact and su…
+       |              ^
+    428|     const a = await admit();
+    429|     const parent = (await exact((a.structuredContent as any).jobId)).i…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[53/238]⎯
+
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > continues bounded reads of the same historical active live-card Job
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue221Delivery.test.ts:454:3
+    452|     }
+    453|   });
+    454|   it("continues bounded reads of the same historical active live-card …
+       |   ^
+    455|     const held = upstream.holdNextCall();
+    456|     const a = await admit(); const id = (a.structuredContent as any).j…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[54/238]⎯
+
+ FAIL  test/jobRegistry.test.ts > CodexJobRegistry persistence > admits exact reads and durable control while recovery and retention share the event loop
+AssertionError: expected 364.3963340000046 to be less than 250
+ ❯ test/jobRegistry.test.ts:628:31
+    626|       await sweep;
+    627|       expect(read.inspectedAtRead).toBeLessThan(32);
+    628|       expect(read.durationMs).toBeLessThan(250);
+       |                               ^
+    629|       expect(inspected).toBeGreaterThan(0);
+    630|       expect(inspected).toBeLessThanOrEqual(32);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[55/238]⎯
+
+ FAIL  test/launcherLifecycle.integration.test.ts > managed launcher lifecycle > starts authenticated HTTP with https metadata and rebuilds the profile when OAuth identity changes
+Error: Error: Timed out waiting for managed tunnel status; runtime=starting; tunnel=stopped; observation=undefined; fixture launcher output: Loaded runtime environment from /var/folders/0w/xl0qvy093052t14h6gpmfr1r0000gn/T/codex-launcher-oauth-AjTpyJ/config/.env.
+
+ ❯ runLauncher test/launcherLifecycle.integration.test.ts:380:27
+    378|   try {
+    379|     try { await waitForConnectedStatus(paths.runtimeStatusFile, child)…
+    380|     catch (error) { throw new Error(`${String(error)}; fixture launche…
+       |                           ^
+    381|     await paths.checkWhileConnected?.();
+    382|     expect(existsSync(paths.runtimeLockDirectory)).toBe(true);
+ ❯ test/launcherLifecycle.integration.test.ts:68:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[56/238]⎯
+
+ FAIL  test/launcherLifecycle.integration.test.ts > managed launcher lifecycle > starts authenticated HTTP with loopback metadata and rebuilds the profile when OAuth identity changes
+Error: Error: Timed out waiting for managed tunnel status; runtime=starting; tunnel=stopped; observation=undefined; fixture launcher output: Loaded runtime environment from /var/folders/0w/xl0qvy093052t14h6gpmfr1r0000gn/T/codex-launcher-oauth-WLu8VA/config/.env.
+
+ ❯ runLauncher test/launcherLifecycle.integration.test.ts:380:27
+    378|   try {
+    379|     try { await waitForConnectedStatus(paths.runtimeStatusFile, child)…
+    380|     catch (error) { throw new Error(`${String(error)}; fixture launche…
+       |                           ^
+    381|     await paths.checkWhileConnected?.();
+    382|     expect(existsSync(paths.runtimeLockDirectory)).toBe(true);
+ ❯ test/launcherLifecycle.integration.test.ts:68:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[57/238]⎯
+
+ FAIL  test/launcherLifecycle.integration.test.ts > managed launcher lifecycle > waits for tunnel readiness and shutdown, then reuses only an unchanged profile
+Error: Test timed out in 45000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/launcherLifecycle.integration.test.ts:98:3
+     96|   }, 20_000);
+     97|
+     98|   it("waits for tunnel readiness and shutdown, then reuses only an unc…
+       |   ^
+     99|     const root = mkdtempSync(path.join(tmpdir(), "codex-launcher-lifec…
+    100|     const configDirectory = path.join(root, "config");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[58/238]⎯
+
+ FAIL  test/macosHelperServer.test.ts > central runtime lifecycle reservations > recovers profile A after profile B fails to launch and applies the same verified B candidate on retry
+Error: Test timed out in 30000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/macosHelperServer.test.ts:156:3
+    154|   }, 15_000);
+    155|
+    156|   it("recovers profile A after profile B fails to launch and applies t…
+       |   ^
+    157|     const command = path.resolve("test/fixtures/fake-codex-app-server.…
+    158|     const f = await lifecycleFixture(false, command);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[59/238]⎯
+
+ FAIL  test/macosHelperServer.test.ts > macOS runtime helper RPC > restarts the unchanged runtime when a concurrent dotenv edit prevents commit
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/macosHelperServer.test.ts:1497:3
+    1495|   });
+    1496|
+    1497|   it("restarts the unchanged runtime when a concurrent dotenv edit pre…
+       |   ^
+    1498|     const root = temporaryDirectory();
+    1499|     const bridgeRoot = path.join(root, "runtime");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[60/238]⎯
+
+ FAIL  test/macosHelperServer.test.ts > macOS runtime helper RPC > uses Codex command and CODEX_HOME from dotenv without returning raw CLI output
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/macosHelperServer.test.ts:1747:3
+    1745|   });
+    1746|
+    1747|   it("uses Codex command and CODEX_HOME from dotenv without returning …
+       |   ^
+    1748|     const root = temporaryDirectory();
+    1749|     const bridgeRoot = path.join(root, "runtime");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[61/238]⎯
+
+ FAIL  test/macosHelperServer.test.ts > macOS runtime helper RPC > does not report an account read failure as a logged-out Codex account
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/macosHelperServer.test.ts:1809:3
+    1807|   });
+    1808|
+    1809|   it("does not report an account read failure as a logged-out Codex ac…
+       |   ^
+    1810|     const root = temporaryDirectory();
+    1811|     const bridgeRoot = path.join(root, "runtime");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[62/238]⎯
+
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > replays the original OAuth B with its legacy selector after Events is disabled
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEventDelegation.test.ts:190:3
+    188|
+    189| describe("card-free OAuth Events delegation", () => {
+    190|   it("replays the original OAuth B with its legacy selector after Even…
+       |   ^
+    191|     const f = await start(); const token = await accessToken();
+    192|     const a = await task(f, token, { approvedFollowups: [{ prompt: "Ap…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[63/238]⎯
+
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > exposes terminal callback failure through exact status and task replay (413)
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > exposes terminal callback failure through exact status and task replay (410)
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > exposes terminal callback failure through exact status and task replay (503)
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEventDelegation.test.ts:213:27
+    211|   });
+    212|
+    213|   it.each([413, 410, 503])("exposes terminal callback failure through …
+       |                           ^
+    214|     const received: any[] = [];
+    215|     const callback = createServer(async (req, res) => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[64/238]⎯
+
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > reports waiting, in-flight and acknowledged delivery independently of active subscription authority
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEventDelegation.test.ts:272:3
+    270|   });
+    271|
+    272|   it("reports waiting, in-flight and acknowledged delivery independent…
+       |   ^
+    273|     const sending = deferred(); const releaseSend = deferred();
+    274|     const f = await start({ sender: async (_url, raw) => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[65/238]⎯
+
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > omits automatic issue after revoke and resumes only with a new original-scope issuance
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEventDelegation.test.ts:296:46
+    294|   });
+    295|
+    296|   it.each(["revoke", "unsubscribe"] as const)("omits automatic issue a…
+       |                                              ^
+    297|     const f = await start(); const token = await accessToken(); const …
+    298|     try {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[66/238]⎯
+
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > delivers exact A then exactly one preapproved B without Dashboard or ui/message
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEventDelegation.test.ts:379:3
+    377|   });
+    378|
+    379|   it("delivers exact A then exactly one preapproved B without Dashboar…
+       |   ^
+    380|     const f = await start(); const token = await accessToken();
+    381|     const releaseA = f.upstream.hold();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[67/238]⎯
+
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > recovers the same opaque grant and exact subscription after response loss, token refresh and restart
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEventDelegation.test.ts:427:3
+    425|   });
+    426|
+    427|   it("recovers the same opaque grant and exact subscription after resp…
+       |   ^
+    428|     const f = await start(); const token = await accessToken();
+    429|     const a = await task(f, token); await completed(f, a.jobId, token);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[68/238]⎯
+
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > never uses a reference to bypass present invalid/different session ({"openai/session":""})
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > never uses a reference to bypass present invalid/different session ({"openai/session":null})
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > never uses a reference to bypass present invalid/different session ({"openai/session":42})
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > never uses a reference to bypass present invalid/different session ({"openai/session":"different","openai/subject":"host-correlation-only"})
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEventDelegation.test.ts:456:83
+    454|
+    455|   it.each([{ "openai/session": "" }, { "openai/session": null }, { "op…
+    456|     { "openai/session": "different", "openai/subject": "host-correlati…
+       |                                                                                   ^
+    457|     "never uses a reference to bypass present invalid/different sessio…
+    458|       const f = await start(); const token = await accessToken(); cons…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[69/238]⎯
+
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > allows a valid original session while preserving the exact delegation and rejects unknown/ref-swapped Jobs
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEventDelegation.test.ts:466:3
+    464|     });
+    465|
+    466|   it("allows a valid original session while preserving the exact deleg…
+       |   ^
+    467|     const f = await start(); const token = await accessToken(); const …
+    468|     const grant = await issue(f, a.jobId, token);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[70/238]⎯
+
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > rejects the same reference under another authenticated OAuth principal
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEventDelegation.test.ts:476:3
+    474|   });
+    475|
+    476|   it("rejects the same reference under another authenticated OAuth pri…
+       |   ^
+    477|     const f = await start(); const token = await accessToken(); const …
+    478|     const grant = await issue(f, a.jobId, token);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[71/238]⎯
+
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > cannot authorize ordinary result reads, tasks or configuration through a subscriptionRef
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEventDelegation.test.ts:487:3
+    485|   });
+    486|
+    487|   it("cannot authorize ordinary result reads, tasks or configuration t…
+       |   ^
+    488|     const f = await start(); const token = await accessToken(); const …
+    489|     const grant = await issue(f, a.jobId, token);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[72/238]⎯
+
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > rejects caller-generated reference/scope inputs on the grant tool
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEventDelegation.test.ts:504:3
+    502|   });
+    503|
+    504|   it("rejects caller-generated reference/scope inputs on the grant too…
+       |   ^
+    505|     const f = await start(); const token = await accessToken(); const …
+    506|     for (const extra of [{ subscriptionRef: "esr_" + "a".repeat(43) },…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[73/238]⎯
+
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > rejects Events admission before execution on bearer-only, disabled or explicit-scope-only hosts
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEventDelegation.test.ts:513:3
+    511|   });
+    512|
+    513|   it("rejects Events admission before execution on bearer-only, disabl…
+       |   ^
+    514|     for (const options of [{ bearer: true }, { eventsEnabled: false },…
+    515|       const f = await start(options); const token = options.bearer ? s…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[74/238]⎯
+
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > keeps ordinary direct-wait Jobs outside delegated Events admission
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEventDelegation.test.ts:523:3
+    521|   });
+    522|
+    523|   it("keeps ordinary direct-wait Jobs outside delegated Events admissi…
+       |   ^
+    524|     const f = await start(); const token = await accessToken();
+    525|     const release = f.upstream.hold();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[75/238]⎯
+
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > denies old-card wait/claim and automatic mount while retaining manual Dashboard and exact results
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEventDelegation.test.ts:536:3
+    534|   });
+    535|
+    536|   it("denies old-card wait/claim and automatic mount while retaining m…
+       |   ^
+    537|     const f = await start(); const token = await accessToken(); const …
+    538|     try {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[76/238]⎯
+
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > expires at the grant and token boundaries and allows authenticated disabling after expiry
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEventDelegation.test.ts:557:3
+    555|   });
+    556|
+    557|   it("expires at the grant and token boundaries and allows authenticat…
+       |   ^
+    558|     const f = await start(); const token = await accessToken(); const …
+    559|     const grant = await issue(f, a.jobId, token);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[77/238]⎯
+
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > atomically binds at most one callback under simultaneous first challenges
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEventDelegation.test.ts:573:3
+    571|   });
+    572|
+    573|   it("atomically binds at most one callback under simultaneous first c…
+       |   ^
+    574|     const began = deferred(); const release = deferred(); let count = …
+    575|     const f = await start({ sender: async (_url, raw) => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[78/238]⎯
+
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > does not revive a grant changed during callback verification (revoke)
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > does not revive a grant changed during callback verification (unsubscribe)
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > does not revive a grant changed during callback verification (project-unavailable)
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEventDelegation.test.ts:597:60
+    595|   });
+    596|
+    597|   it.each(["revoke", "unsubscribe", "project-unavailable"])("does not …
+       |                                                            ^
+    598|     const began = deferred(); const release = deferred();
+    599|     const f = await start({ sender: async (_url, raw) => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[79/238]⎯
+
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > atomically revokes a bound grant, rejects refresh and discards a late delivery ACK
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEventDelegation.test.ts:623:3
+    621|   });
+    622|
+    623|   it("atomically revokes a bound grant, rejects refresh and discards a…
+       |   ^
+    624|     const sending = deferred(); const release = deferred();
+    625|     const f = await start({ sender: async (_url, raw) => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[80/238]⎯
+
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > rolls callback binding back when subscription storage fails
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEventDelegation.test.ts:650:3
+    648|   });
+    649|
+    650|   it("rolls callback binding back when subscription storage fails", as…
+       |   ^
+    651|     const f = await start(); const token = await accessToken(); const …
+    652|     const grant = await issue(f, a.jobId, token); const before = f.sta…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[81/238]⎯
+
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > rolls issuance back on storage failure without retrying or cancelling its original Job
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEventDelegation.test.ts:662:3
+    660|   });
+    661|
+    662|   it("rolls issuance back on storage failure without retrying or cance…
+       |   ^
+    663|     const f = await start(); const token = await accessToken(); const …
+    664|     const save = f.state.setMeta.bind(f.state);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[82/238]⎯
+
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > bounds receipt capacity and requires a new system reference after explicit revocation
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEventDelegation.test.ts:674:3
+    672|   });
+    673|
+    674|   it("bounds receipt capacity and requires a new system reference afte…
+       |   ^
+    675|     const f = await start(); const token = await accessToken(); const …
+    676|     const refs = new Set<string>();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[83/238]⎯
+
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > never treats fixture canProceed output as a followup approval
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEventDelegation.test.ts:687:3
+    685|   });
+    686|
+    687|   it("never treats fixture canProceed output as a followup approval", …
+       |   ^
+    688|     const f = await start(); const token = await accessToken();
+    689|     const original = f.upstream.callTool.bind(f.upstream);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[84/238]⎯
+
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > preserves original results for a finite window even when no callback subscription is admitted
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEventDelegation.test.ts:705:3
+    703|   });
+    704|
+    705|   it("preserves original results for a finite window even when no call…
+       |   ^
+    706|     const f = await start({ sender: async () => ({ status: 500, body: …
+    707|     const token = await accessToken(); const a = await task(f, token);…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[85/238]⎯
+
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > keeps an Events Job immutable and unavailable after restart with Events disabled
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEventDelegation.test.ts:720:3
+    718|   });
+    719|
+    720|   it("keeps an Events Job immutable and unavailable after restart with…
+       |   ^
+    721|     const f = await start(); const token = await accessToken(); const …
+    722|     const grant = await issue(f, a.jobId, token);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[86/238]⎯
+
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > rejects delegation expiry during callback verification
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEventDelegation.test.ts:734:3
+    732|   });
+    733|
+    734|   it("rejects delegation expiry during callback verification", async (…
+       |   ^
+    735|     const began = deferred(); const release = deferred();
+    736|     const f = await start({ sender: async (_url, raw) => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[87/238]⎯
+
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > preserves ACK and the exact binding while a signing-key refresh challenge awaits
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEventDelegation.test.ts:752:3
+    750|   });
+    751|
+    752|   it("preserves ACK and the exact binding while a signing-key refresh …
+       |   ^
+    753|     const sendBegan = deferred(); const verifyBegan = deferred();
+    754|     const releaseSend = deferred(); const releaseVerify = deferred();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[88/238]⎯
+
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > rolls revoke, stop intent and linked-subscription disabling back together on a write failure
+ FAIL  test/mcpEventDelegation.test.ts > card-free OAuth Events delegation > rolls unsubscribe, stop intent and linked-subscription disabling back together on a write failure
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEventDelegation.test.ts:783:46
+    781|   });
+    782|
+    783|   it.each(["revoke", "unsubscribe"] as const)("rolls %s, stop intent a…
+       |                                              ^
+    784|     const f = await start(); const token = await accessToken(); const …
+    785|     const grant = await issue(f, a.jobId, token); const sub = await rp…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[89/238]⎯
+
+ FAIL  test/mcpEvents.test.ts > MCP Events exact-Job lifecycle > subscribes before completion and commits result plus delivery intent atomically
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEvents.test.ts:128:3
+    126|
+    127| describe("MCP Events exact-Job lifecycle", () => {
+    128|   it("subscribes before completion and commits result plus delivery in…
+       |   ^
+    129|     const upstream = new Upstream();
+    130|     const release = upstream.hold();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[90/238]⎯
+
+ FAIL  test/mcpEvents.test.ts > MCP Events exact-Job lifecycle > rolls back a terminal result and its delivery intent together after a storage failure
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEvents.test.ts:144:3
+    142|   });
+    143|
+    144|   it("rolls back a terminal result and its delivery intent together af…
+       |   ^
+    145|     const upstream = new Upstream(); const release = upstream.hold();
+    146|     const f = await start(undefined, false, undefined, upstream);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[91/238]⎯
+
+ FAIL  test/mcpEvents.test.ts > MCP Events exact-Job lifecycle > rolls back a terminal result and its delivery intent together after a storage failure
+ FAIL  test/mcpEvents.test.ts > MCP Events exact-Job lifecycle > discovers the extension and late-subscribes to one durable exact result without leaking its content
+Error: Hook timed out in 10000ms.
+If this is a long-running hook, pass a timeout value as the last argument or configure it globally with "hookTimeout".
+ ❯ test/mcpEvents.test.ts:50:1
+     48| type Fixture = Awaited<ReturnType<typeof start>>;
+     49| const fixtures: Array<{ root: string; state: BridgeStateStore; server:…
+     50| afterEach(async () => {
+       | ^
+     51|   vi.useRealTimers();
+     52|   vi.restoreAllMocks();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[92/238]⎯
+
+ FAIL  test/mcpEvents.test.ts > MCP Events exact-Job lifecycle > discovers the extension and late-subscribes to one durable exact result without leaking its content
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEvents.test.ts:167:3
+    165|   });
+    166|
+    167|   it("discovers the extension and late-subscribes to one durable exact…
+       |   ^
+    168|     const f = await start();
+    169|     const discover = await rpc(f, "server/discover");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[93/238]⎯
+
+ FAIL  test/mcpEvents.test.ts > MCP Events exact-Job lifecycle > rejects foreign conversations, unauthenticated No Auth metadata and failed callback challenges
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEvents.test.ts:201:3
+    199|   });
+    200|
+    201|   it("rejects foreign conversations, unauthenticated No Auth metadata …
+       |   ^
+    202|     const f = await start();
+    203|     const a = await task(f);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[94/238]⎯
+
+ FAIL  test/mcpEvents.test.ts > MCP Events exact-Job lifecycle > reports missing conversation metadata as an authorization failure before callback verification or persistence
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEvents.test.ts:217:3
+    215|   });
+    216|
+    217|   it("reports missing conversation metadata as an authorization failur…
+       |   ^
+    218|     const f = await start();
+    219|     const a = await task(f); await completed(f, a.jobId);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[95/238]⎯
+
+ FAIL  test/mcpEvents.test.ts > MCP Events exact-Job lifecycle > rejects invalid conversation metadata with a bounded authorization reason without treating it as a callback or token failure
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEvents.test.ts:230:3
+    228|   });
+    229|
+    230|   it("rejects invalid conversation metadata with a bounded authorizati…
+       |   ^
+    231|     const f = await start();
+    232|     const a = await task(f); await completed(f, a.jobId);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[96/238]⎯
+
+ FAIL  test/mcpEvents.test.ts > MCP Events exact-Job lifecycle > does not reactivate a new subscription when unsubscribe races callback verification
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEvents.test.ts:239:3
+    237|   });
+    238|
+    239|   it("does not reactivate a new subscription when unsubscribe races ca…
+       |   ^
+    240|     let release!: () => void; let began!: () => void;
+    241|     const begin = new Promise<void>(resolve => { began = resolve; });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[97/238]⎯
+
+ FAIL  test/mcpEvents.test.ts > MCP Events exact-Job lifecycle > preserves unsubscribe while another webhook is in flight
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEvents.test.ts:257:3
+    255|   });
+    256|
+    257|   it("preserves unsubscribe while another webhook is in flight", async…
+       |   ^
+    258|     let releaseSend!: () => void; let began!: (url: string) => void;
+    259|     const gate = new Promise<void>(resolve => { releaseSend = resolve;…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[98/238]⎯
+
+ FAIL  test/mcpEvents.test.ts > MCP Events exact-Job lifecycle > preserves renewed expiry and signing keys while another webhook is in flight
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEvents.test.ts:298:3
+    296|   });
+    297|
+    298|   it("preserves renewed expiry and signing keys while another webhook …
+       |   ^
+    299|     let releaseSend!: () => void; let began!: (url: string) => void;
+    300|     const gate = new Promise<void>(resolve => { releaseSend = resolve;…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[99/238]⎯
+
+ FAIL  test/mcpEvents.test.ts > MCP Events exact-Job lifecycle > preserves delivery progress during subscription verification
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEvents.test.ts:344:3
+    342|   });
+    343|
+    344|   it("preserves delivery progress during subscription verification", a…
+       |   ^
+    345|     let releaseSend!: () => void; let releaseVerify!: () => void;
+    346|     let sendBegan!: () => void; let verifyBegan!: () => void;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[100/238]⎯
+
+ FAIL  test/mcpEvents.test.ts > MCP Events exact-Job lifecycle > refreshes a finite lifetime and signs with both verified keys during rotation
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEvents.test.ts:383:3
+    381|   });
+    382|
+    383|   it("refreshes a finite lifetime and signs with both verified keys du…
+       |   ^
+    384|     const next = "whsec_" + randomBytes(32).toString("base64");
+    385|     const sent: Array<{ body: any; headers: Record<string, string>; ra…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[101/238]⎯
+
+ FAIL  test/mcpEvents.test.ts > MCP Events exact-Job lifecycle > bounds exhausted attempts and denies refresh when project access is revoked
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEvents.test.ts:411:3
+    409|   });
+    410|
+    411|   it("bounds exhausted attempts and denies refresh when project access…
+       |   ^
+    412|     const f = await start(async (_url, raw) => {
+    413|       const body = JSON.parse(raw); return body.type === "verification"
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[102/238]⎯
+
+ FAIL  test/mcpEvents.test.ts > MCP Events exact-Job lifecycle > revokes pending delivery when project access is withdrawn
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEvents.test.ts:430:3
+    428|   });
+    429|
+    430|   it("revokes pending delivery when project access is withdrawn", asyn…
+       |   ^
+    431|     const ids: string[] = [];
+    432|     const f = await start(async (_url, raw) => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[103/238]⎯
+
+ FAIL  test/mcpEvents.test.ts > MCP Events exact-Job lifecycle > keeps pending delivery recoverable when an authorization state read temporarily fails
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEvents.test.ts:446:3
+    444|   });
+    445|
+    446|   it("keeps pending delivery recoverable when an authorization state r…
+       |   ^
+    447|     const f = await start();
+    448|     const a = await task(f); await completed(f, a.jobId);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[104/238]⎯
+
+ FAIL  test/mcpEvents.test.ts > MCP Events exact-Job lifecycle > keeps one logical event across retries, expires delivery without cancelling work, and does not retry 410 or 413
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEvents.test.ts:467:3
+    465|   });
+    466|
+    467|   it("keeps one logical event across retries, expires delivery without…
+       |   ^
+    468|     for (const status of [410, 413, 500]) {
+    469|       const ids: string[] = [];
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[105/238]⎯
+
+ FAIL  test/mcpEvents.test.ts > MCP Events exact-Job lifecycle > recovers the persisted delivery after restart and keeps exact-result retrieval scope checks
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEvents.test.ts:492:3
+    490|   });
+    491|
+    492|   it("recovers the persisted delivery after restart and keeps exact-re…
+       |   ^
+    493|     const f = await start(async (_url, raw) => {
+    494|       const body = JSON.parse(raw);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[106/238]⎯
+
+ FAIL  test/mcpEvents.test.ts > pre-approved followup admission across GPT runs > recovers issued references from an exact A read and its event after admission response loss
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEvents.test.ts:516:3
+    514|
+    515| describe("pre-approved followup admission across GPT runs", () => {
+    516|   it("recovers issued references from an exact A read and its event af…
+       |   ^
+    517|     const upstream = new Upstream(); const release = upstream.hold();
+    518|     const f = await start(undefined, false, undefined, upstream);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[107/238]⎯
+
+ FAIL  test/mcpEvents.test.ts > pre-approved followup admission across GPT runs > rejects caller-issued stage identifiers and rolls back an uncommitted issued reference
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEvents.test.ts:547:3
+    545|   });
+    546|
+    547|   it("rejects caller-issued stage identifiers and rolls back an uncomm…
+       |   ^
+    548|     const f = await start();
+    549|     for (const override of [{ stepId: "caller-B" }, { followupId: "fup…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[108/238]⎯
+
+ FAIL  test/mcpEvents.test.ts > pre-approved followup admission across GPT runs > keeps separately approved identical prompts distinct while deduplicating each issued reference
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEvents.test.ts:569:3
+    567|   });
+    568|
+    569|   it("keeps separately approved identical prompts distinct while dedup…
+       |   ^
+    570|     const f = await start();
+    571|     const a = await task(f, { approvedFollowups: [{ prompt: "Read fixt…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[109/238]⎯
+
+ FAIL  test/mcpEvents.test.ts > pre-approved followup admission across GPT runs > preserves a retained v1 approval's canonical request receipt during upgrade
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEvents.test.ts:585:3
+    583|   });
+    584|
+    585|   it("preserves a retained v1 approval's canonical request receipt dur…
+       |   ^
+    586|     const f = await start();
+    587|     const a = await task(f, { approvedFollowups: [{ prompt: "Read fixt…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[110/238]⎯
+
+ FAIL  test/mcpEvents.test.ts > pre-approved followup admission across GPT runs > converges duplicate callers, response loss and restart to exactly one approved B
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEvents.test.ts:614:3
+    612|   });
+    613|
+    614|   it("converges duplicate callers, response loss and restart to exactl…
+       |   ^
+    615|     const f = await start();
+    616|     const a = await task(f, { approvedFollowups: [{ prompt: "Read fixt…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[111/238]⎯
+
+ FAIL  test/mcpEvents.test.ts > pre-approved followup admission across GPT runs > never admits unapproved B or authorizes a step from another conversation
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEvents.test.ts:645:3
+    643|   });
+    644|
+    645|   it("never admits unapproved B or authorizes a step from another conv…
+       |   ^
+    646|     const f = await start();
+    647|     const a = await task(f); await completed(f, a.jobId);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[112/238]⎯
+
+ FAIL  test/mcpEvents.test.ts > pre-approved followup admission across GPT runs > rejects unrelated work occupying the approved step's canonical requestId
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEvents.test.ts:653:3
+    651|   });
+    652|
+    653|   it("rejects unrelated work occupying the approved step's canonical r…
+       |   ^
+    654|     const f = await start();
+    655|     const a = await task(f, { approvedFollowups: [{ prompt: "Read fixt…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[113/238]⎯
+
+ FAIL  test/mcpEvents.test.ts > pre-approved followup admission across GPT runs > recovers one admitted B after a response is lost and the bridge restarts
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEvents.test.ts:669:3
+    667|   });
+    668|
+    669|   it("recovers one admitted B after a response is lost and the bridge …
+       |   ^
+    670|     const f = await start();
+    671|     const a = await task(f, { approvedFollowups: [{ prompt: "Read fixt…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[114/238]⎯
+
+ FAIL  test/mcpEvents.test.ts > pre-approved followup admission across GPT runs > expires unconsumed approvals while preserving admission tombstones
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpEvents.test.ts:691:3
+    689|   });
+    690|
+    691|   it("expires unconsumed approvals while preserving admission tombston…
+       |   ^
+    692|     const f = await start();
+    693|     const a = await task(f, { approvedFollowups: [{ prompt: "Read fixt…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[115/238]⎯
+
+ FAIL  test/mcpOAuth.test.ts > MCP OAuth configuration and HTTP discovery > rejects OAuth stdio before creating a database or starting children
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpOAuth.test.ts:219:3
+    217|   });
+    218|
+    219|   it("rejects OAuth stdio before creating a database or starting child…
+       |   ^
+    220|     const result = spawnSync(process.execPath, ["scripts/start-codex-m…
+    221|       cwd: path.resolve(import.meta.dirname, ".."), env: { ...process.…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[116/238]⎯
+
+ FAIL  test/mcpOAuth.test.ts > MCP OAuth configuration and HTTP discovery > returns linking metadata through the actual current SDK client
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpOAuth.test.ts:259:3
+    257|   });
+    258|
+    259|   it("returns linking metadata through the actual current SDK client",…
+       |   ^
+    260|     const f = await start();
+    261|     const client = new Client({ name: "oauth-linking-fixture", version…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[117/238]⎯
+
+ FAIL  test/mcpOAuth.test.ts > verified access tokens and exact owned Events > keeps one user principal across token and client-ID renewal, A/B admission, callback and restart
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpOAuth.test.ts:303:3
+    301|   });
+    302|
+    303|   it("keeps one user principal across token and client-ID renewal, A/B…
+       |   ^
+    304|     const f = await start(); const first = await accessToken(); const …
+    305|     const a = await task(f, first, { approvedFollowups: [{ prompt: "Re…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[118/238]⎯
+
+ FAIL  test/mcpOAuth.test.ts > verified access tokens and exact owned Events > rejects an unapproved followup and the same reference in another conversation
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpOAuth.test.ts:326:3
+    324|   });
+    325|
+    326|   it("rejects an unapproved followup and the same reference in another…
+       |   ^
+    327|     const f = await start(); const token = await accessToken();
+    328|     const a = await task(f, token, { approvedFollowups: [{ prompt: "Re…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[119/238]⎯
+
+ FAIL  test/mcpOAuth.test.ts > verified access tokens and exact owned Events > caps grants at token expiry and rejects expiry during callback verification
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpOAuth.test.ts:340:3
+    338|   });
+    339|
+    340|   it("caps grants at token expiry and rejects expiry during callback v…
+       |   ^
+    341|     const f = await start(); const token = await accessToken({ exp: Ma…
+    342|     const a = await task(f, token);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[120/238]⎯
+
+ FAIL  test/mcpOAuth.test.ts > verified access tokens and exact owned Events > does not transfer existing bearer Jobs or approvals to the OAuth operator
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpOAuth.test.ts:360:3
+    358|   });
+    359|
+    360|   it("does not transfer existing bearer Jobs or approvals to the OAuth…
+       |   ^
+    361|     const old = await start({ bearer: true });
+    362|     const a = await task(old, sealingKey, { approvedFollowups: [{ prom…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[121/238]⎯
+
+ FAIL  test/mcpOAuth.test.ts > verified access tokens and exact owned Events > stops expired delivery grants without cancelling or repeating the original Job
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcpOAuth.test.ts:377:3
+    375|   });
+    376|
+    377|   it("stops expired delivery grants without cancelling or repeating th…
+       |   ^
+    378|     const f = await start(); const release = f.upstream.hold();
+    379|     const expiry = Math.floor(Date.now() / 1_000) + 60;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[122/238]⎯
+
+ FAIL  test/openaiMcpAuthorization.test.ts > isolated OpenAI / Bridge authorization > does not start implicitly or expose private config through CLI errors
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/openaiMcpAuthorization.test.ts:391:3
+    389|   });
+    390|
+    391|   it("does not start implicitly or expose private config through CLI e…
+       |   ^
+    392|     const result = spawnSync(process.execPath, ["--import", "tsx", "sr…
+    393|     expect(result.status).toBe(0); expect(result.stdout).toContain("lo…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[123/238]⎯
+
+ FAIL  test/openaiMcpAuthorization.test.ts > isolated OpenAI / Bridge authorization > uses broker-issued and renewed tokens for real Bridge Events and one canonical B admission
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/openaiMcpAuthorization.test.ts:422:3
+    420|   });
+    421|
+    422|   it("uses broker-issued and renewed tokens for real Bridge Events and…
+       |   ^
+    423|     const f = await start(), issued = await (await exchange(f, await a…
+    424|     const renewed = await (await refresh(f, issued.refresh_token)).jso…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[124/238]⎯
+
+ FAIL  test/projectLifecycleHost.test.ts > project retirement through the host boundary (#240) > repeats full HTTP admission/use/delete cycles with fresh identities and preserves real Git/files/conversation evidence
+Error: Test timed out in 20000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/projectLifecycleHost.test.ts:285:3
+    283|   }
+    284|
+    285|   it("repeats full HTTP admission/use/delete cycles with fresh identit…
+       |   ^
+    286|     reader = await ChildProcessStateReadService.start(file, {
+    287|       ...process.env,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[125/238]⎯
+
+ FAIL  test/projectLifecycleHost.test.ts > project retirement through the host boundary (#240) > fences task retries across host restart and same-cwd registration with public envelope known=true
+ FAIL  test/projectLifecycleHost.test.ts > project retirement through the host boundary (#240) > fences task retries across host restart and same-cwd registration with public envelope known=false
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/projectLifecycleHost.test.ts:407:25
+    405|   }, 20_000);
+    406|
+    407|   it.each([true, false])(
+       |                         ^
+    408|     "fences task retries across host restart and same-cwd registration…
+    409|     async (known) => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[126/238]⎯
+
+ FAIL  test/projectLifecycleHost.test.ts > project retirement through the host boundary (#240) > replays a lost delete response through Settings and MCP without deleting a new same-cwd identity or bypassing other CAS checks
+ FAIL  test/tools.test.ts > current bridge tool contracts > preserves the original Job through a lost completed response, external auth change and transport ACK retries
+TypeError: fetch failed
+ ❯ StreamableHTTPClientTransport._send node_modules/@modelcontextprotocol/client/src/client/streamableHttp.ts:1007:29
+
+Caused by: Error: read ECONNRESET
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { errno: -54, code: 'ECONNRESET', syscall: 'read' }
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[127/238]⎯
+
+ FAIL  test/remoteCompanionServer.test.ts > remote native companion > closes authenticated access after overlapping enable requests
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/remoteCompanionServer.test.ts:280:3
+    278|   });
+    279|
+    280|   it("closes authenticated access after overlapping enable requests", …
+       |   ^
+    281|     const endpoint = `https://127.0.0.1:${await availablePort()}`;
+    282|     const applicationService = fakeApplicationService();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[128/238]⎯
+
+ FAIL  test/runtimeCli.integration.test.ts > starts native and remote app connections in the built cli entrypoint
+ FAIL  test/runtimeCli.integration.test.ts > starts native and remote app connections in the built stdio entrypoint
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ test/runtimeCli.integration.test.ts:45:44
+     43|       await new Promise(resolve => setTimeout(resolve, 50));
+     44|     }
+     45|     expect(existsSync(socketPath), output).toBe(true);
+       |                                            ^
+     46|     expect(lstatSync(socketPath).mode & 0o777).toBe(0o600);
+     47|     expect(await rpc(socketPath, "companion.hello")).toMatchObject({
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[129/238]⎯
+
+ FAIL  test/runtimeLifecycleRecovery.test.ts > a real helper SIGTERM preserves active work, then a new helper adopts and finishes the reservation
+Error: connect ENOENT /var/folders/0w/xl0qvy093052t14h6gpmfr1r0000gn/T/bridge-79-review-sBicSL/config/run/helper.sock
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[130/238]⎯
+
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > supervises Codex execution separately from the operational state owner
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > finishes valid question, cancellation and exact result controls during observer saturation
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > keeps public liveness responsive while bounded large MCP payloads are parsed
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > recovers a killed runtime without claiming an in-flight write committed
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > keeps the operational database rollback-compatible and rebuilds telemetry independently
+Error: RUNTIME_START_TIMEOUT: Isolated Bridge runtime did not start within 20000 ms.
+ ❯ Timeout.<anonymous> src/runtimeProcess.ts:1053:28
+    1051|       if (this.child !== child || this.generation !== undefined) retur…
+    1052|       child.kill("SIGKILL");
+    1053|       this.startupReject?.(new Error(
+       |                            ^
+    1054|         `RUNTIME_START_TIMEOUT: Isolated Bridge runtime did not start …
+    1055|         `${startupTimeoutMs} ms.`
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[131/238]⎯
+
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > keeps liveness responsive, reports a blocked write, and recovers after the DB lock
+Error: Test timed out in 15000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/runtimeProcess.test.ts:389:3
+    387|   }, 25_000);
+    388|
+    389|   it("keeps liveness responsive, reports a blocked write, and recovers…
+       |   ^
+    390|     const runtime = await start();
+    391|     const initialReady = await fetch(`${runtime.baseUrl}/readyz`);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[132/238]⎯
+
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > keeps the stdio companion boundary responsive during the same DB lock
+Error: Test timed out in 15000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/runtimeProcess.test.ts:498:3
+    496|   }, 15_000);
+    497|
+    498|   it("keeps the stdio companion boundary responsive during the same DB…
+       |   ^
+    499|     const root = await mkdtemp(path.join(tmpdir(), "bridge-runtime-std…
+    500|     const environment = runtimeEnvironment(root);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[133/238]⎯
+
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > fails admission after SQLite reports a full state database
+Error: Test timed out in 15000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/runtimeProcess.test.ts:559:3
+    557|   }, 15_000);
+    558|
+    559|   it("fails admission after SQLite reports a full state database", asy…
+       |   ^
+    560|     const runtime = await start(undefined, undefined, {
+    561|       NODE_ENV: "test",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[134/238]⎯
+
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > reports a SQLite busy failure at transaction admission and clears it after a commit
+Error: Test timed out in 20000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/runtimeProcess.test.ts:608:3
+    606|   }, 15_000);
+    607|
+    608|   it("reports a SQLite busy failure at transaction admission and clear…
+       |   ^
+    609|     const runtime = await start();
+    610|     const current = await runtime.server.applicationService.settingsSn…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[135/238]⎯
+
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > fails actual Job admission after a non-transaction task read surfaces SQLITE_BUSY
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > fails actual Job admission after a non-transaction task read surfaces SQLITE_IOERR_FSYNC
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > fails actual Job admission after a non-transaction task read surfaces SQLITE_CORRUPT_VTAB
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > fails actual Job admission after a non-transaction task read surfaces SQLITE_READONLY_DBMOVED
+Error: Test timed out in 20000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/runtimeProcess.test.ts:676:14
+    674|     ["SQLITE_CORRUPT_VTAB", "corrupt"],
+    675|     ["SQLITE_READONLY_DBMOVED", "read-only"]
+    676|   ] as const)(
+       |              ^
+    677|     "fails actual Job admission after a non-transaction task read surf…
+    678|     async (driverCode, storageError) => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[136/238]⎯
+
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > preserves a forwarded MCP request through a stale heartbeat
+Error: Test timed out in 15000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/runtimeProcess.test.ts:769:3
+    767|   );
+    768|
+    769|   it("preserves a forwarded MCP request through a stale heartbeat", as…
+       |   ^
+    770|     const processIds: number[] = [];
+    771|     const runtime = await start(
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[137/238]⎯
+
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > preserves a complete split UTF-8 ID when the forwarded response is lost
+Error: Test timed out in 15000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/runtimeProcess.test.ts:812:3
+    810|   }, 15_000);
+    811|
+    812|   it("preserves a complete split UTF-8 ID when the forwarded response …
+       |   ^
+    813|     const processIds: number[] = [];
+    814|     const runtime = await start(
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[138/238]⎯
+
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > separates a proxy connection failure from still-fresh runtime readiness
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/runtimeProcess.test.ts:849:3
+    847|   }, 15_000);
+    848|
+    849|   it("separates a proxy connection failure from still-fresh runtime re…
+       |   ^
+    850|     const runtime = await start(undefined, undefined, {
+    851|       NODE_ENV: "test",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[139/238]⎯
+
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > reports request capacity separately when only the added body crosses the limit
+Error: Test timed out in 15000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/runtimeProcess.test.ts:881:3
+    879|   });
+    880|
+    881|   it("reports request capacity separately when only the added body cro…
+       |   ^
+    882|     const runtime = await start();
+    883|     const sockets: Socket[] = [];
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[140/238]⎯
+
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > reserves MCP byte capacity for exact recovery reads
+Error: Test timed out in 15000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/runtimeProcess.test.ts:920:3
+    918|   }, 15_000);
+    919|
+    920|   it("reserves MCP byte capacity for exact recovery reads", async () =…
+       |   ^
+    921|     const runtime = await start();
+    922|     const sockets: Socket[] = [];
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[141/238]⎯
+
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > applies the same bounded exact-read reservation to declared and chunked bodies
+Error: Test timed out in 20000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/runtimeProcess.test.ts:961:3
+    959|   }, 15_000);
+    960|
+    961|   it("applies the same bounded exact-read reservation to declared and …
+       |   ^
+    962|     const runtime = await start();
+    963|     const sockets: Socket[] = [];
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[142/238]⎯
+
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > preserves a chunked exact read when another request fills ordinary bytes after its headers
+Error: Test timed out in 20000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/runtimeProcess.test.ts:1025:3
+    1023|   }, 20_000);
+    1024|
+    1025|   it("preserves a chunked exact read when another request fills ordina…
+       |   ^
+    1026|     const runtime = await start();
+    1027|     const sockets: Socket[] = [];
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[143/238]⎯
+
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > keeps every retired card sender operation out of the control reserve
+Error: Test timed out in 20000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/runtimeProcess.test.ts:1103:3
+    1101|   }, 20_000);
+    1102|
+    1103|   it("keeps every retired card sender operation out of the control res…
+       |   ^
+    1104|     const runtime = await start();
+    1105|     const sockets: Socket[] = [];
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[144/238]⎯
+
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > reserves native control capacity when incomplete MCP requests saturate the proxy
+Error: Test timed out in 20000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/runtimeProcess.test.ts:1258:3
+    1256|   }, 35_000);
+    1257|
+    1258|   it("reserves native control capacity when incomplete MCP requests sa…
+       |   ^
+    1259|     const runtime = await start();
+    1260|     const sockets: Socket[] = [];
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[145/238]⎯
+
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > bounds MCP control reservations and releases disconnected observers
+Error: Test timed out in 15000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/runtimeProcess.test.ts:1434:3
+    1432|   }, 20_000);
+    1433|
+    1434|   it("bounds MCP control reservations and releases disconnected observ…
+       |   ^
+    1435|     const processIds: number[] = [];
+    1436|     const runtime = await start(processId => processIds.push(processId…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[146/238]⎯
+
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > releases the HTTP observer when a complete caller disconnects
+Error: Test timed out in 12000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/runtimeProcess.test.ts:1491:3
+    1489|   }, 15_000);
+    1490|
+    1491|   it("releases the HTTP observer when a complete caller disconnects", …
+       |   ^
+    1492|     const runtime = await start(undefined, undefined, {
+    1493|       NODE_ENV: "test",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[147/238]⎯
+
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > keeps timed-out native requests reserved until their physical responses arrive
+Error: Test timed out in 15000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/runtimeProcess.test.ts:1528:3
+    1526|   }, 12_000);
+    1527|
+    1528|   it("keeps timed-out native requests reserved until their physical re…
+       |   ^
+    1529|     const processIds: number[] = [];
+    1530|     const runtime = await start(processId => processIds.push(processId…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[148/238]⎯
+
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > continues recovery when a replacement runtime misses its startup deadline
+Error: Test timed out in 12000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/runtimeProcess.test.ts:1659:3
+    1657|   }, 25_000);
+    1658|
+    1659|   it("continues recovery when a replacement runtime misses its startup…
+       |   ^
+    1660|     const processIds: number[] = [];
+    1661|     const runtime = await start(processId => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[149/238]⎯
+
+ FAIL  test/server.test.ts > MCP 2026-07-28 HTTP server > keeps conformance fixtures opt-in and checks required client capabilities
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/server.test.ts:300:3
+    298|   });
+    299|
+    300|   it("keeps conformance fixtures opt-in and checks required client cap…
+       |   ^
+    301|     const normal = await start();
+    302|     const normalList = await fetch(`${normal.baseUrl}/mcp`, {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[150/238]⎯
+
+ FAIL  test/server.test.ts > MCP 2026-07-28 HTTP server > discovers and serves only the current tools and resources
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/server.test.ts:341:3
+    339|   });
+    340|
+    341|   it("discovers and serves only the current tools and resources", asyn…
+       |   ^
+    342|     const { baseUrl } = await start();
+    343|     const client = currentClient("current-http-client");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[151/238]⎯
+
+ FAIL  test/sessionRegistry.test.ts > SessionRegistry > preserves 1,600 inherited sessions through first update, restart and scope pagination
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/sessionRegistry.test.ts:36:3
+     34|   });
+     35|
+     36|   it("preserves 1,600 inherited sessions through first update, restart…
+       |   ^
+     37|     const root = mkdtempSync(path.join(tmpdir(), "bridge-auth-retentio…
+     38|     const file = path.join(root, "state.sqlite");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[152/238]⎯
+
+ FAIL  test/skillLibrary.test.ts > SkillLibrary > keeps the documented 3 MiB Markdown source capacity without a lower prompt cap
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/skillLibrary.test.ts:482:3
+    480|   });
+    481|
+    482|   it("keeps the documented 3 MiB Markdown source capacity without a lo…
+       |   ^
+    483|     const library = await createLibrary();
+    484|     // U+0001 is accepted source text but serializes as six ASCII byte…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[153/238]⎯
+
+ FAIL  test/stateDatabaseLifecycle.test.ts > state database lifecycle > fails capacity preflight before changing the supported source database
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/stateDatabaseLifecycle.test.ts:22:3
+     20|
+     21| describe("state database lifecycle", () => {
+     22|   it("fails capacity preflight before changing the supported source da…
+       |   ^
+     23|     const root = mkdtempSync(path.join(tmpdir(), "bridge-state-capacit…
+     24|     const file = path.join(root, "state.sqlite");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[154/238]⎯
+
+ FAIL  test/stateDatabaseLifecycle.test.ts > state database lifecycle > fails permission preflight before changing the supported source database
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/stateDatabaseLifecycle.test.ts:40:3
+     38|   });
+     39|
+     40|   it("fails permission preflight before changing the supported source …
+       |   ^
+     41|     const root = mkdtempSync(path.join(tmpdir(), "bridge-state-permiss…
+     42|     const file = path.join(root, "state.sqlite");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[155/238]⎯
+
+ FAIL  test/stateDatabaseLifecycle.test.ts > state database lifecycle > rejects malformed and unsupported databases before creating lifecycle sidecars
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/stateDatabaseLifecycle.test.ts:53:3
+     51|   });
+     52|
+     53|   it("rejects malformed and unsupported databases before creating life…
+       |   ^
+     54|     const root = mkdtempSync(path.join(tmpdir(), "bridge-state-readonl…
+     55|     const malformed = path.join(root, "malformed.sqlite");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[156/238]⎯
+
+ FAIL  test/stateReadProcess.test.ts > settings speed support in the isolated read process > uses the selected CLI schema before any Job, missing method undefined
+Error: Test timed out in 20000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/stateReadProcess.test.ts:25:37
+     23|
+     24| describe("settings speed support in the isolated read process", () => {
+     25|   it.each([undefined, "turn/start"])("uses the selected CLI schema bef…
+       |                                     ^
+     26|     const root = await mkdtemp(path.join(tmpdir(), "bridge-speed-read-…
+     27|     const file = path.join(root, "state.sqlite"), turnLog = path.join(…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[157/238]⎯
+
+ FAIL  test/stateReadProcess.test.ts > settings speed support in the isolated read process > uses the selected CLI schema before any Job, missing method turn/start
+ FAIL  test/stateReadProcess.test.ts > isolated state read projection > reads current WAL state without registering a writer and recovers its own process
+Error: STATE_READ_START_TIMEOUT: Read projection did not become ready.
+ ❯ Timeout.<anonymous> src/stateReadProcess.ts:333:23
+    331|       };
+    332|       const timer = setTimeout(() => {
+    333|         const error = new Error("STATE_READ_START_TIMEOUT: Read projec…
+       |                       ^
+    334|         finish(error);
+    335|         child.kill("SIGKILL");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[158/238]⎯
+
+ FAIL  test/stateReadProcess.test.ts > isolated state read projection > keeps a session visible through IPC during account loss, change and reader restart
+Error: Test timed out in 15000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/stateReadProcess.test.ts:71:3
+     69|
+     70| describe("isolated state read projection", () => {
+     71|   it("keeps a session visible through IPC during account loss, change …
+       |   ^
+     72|     const root = await mkdtemp(path.join(tmpdir(), "bridge-state-read-…
+     73|     roots.push(root);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[159/238]⎯
+
+ FAIL  test/stateServiceProcess.test.ts > operational state child process > reports an explicit storage-busy result when SQLite lock waiting expires
+AssertionError: expected OperationalStateProcessError: STATE_OUTCO… { …(2) } to match object { code: 'STATE_STORAGE_BUSY' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+- {
+-   "code": "STATE_STORAGE_BUSY",
++ OperationalStateProcessError {
++   "code": "STATE_OUTCOME_UNKNOWN",
+  }
+
+ ❯ test/stateServiceProcess.test.ts:342:9
+    340|         { operation: "maintain", slice: "events" },
+    341|         { deadlineMs: STATE_DATABASE_BUSY_TIMEOUT_MS + 3_000 }
+    342|       )).rejects.toMatchObject<Partial<OperationalStateProcessError>>({
+       |         ^
+    343|         code: "STATE_STORAGE_BUSY"
+    344|       });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[160/238]⎯
+
+ FAIL  test/telemetryService.test.ts > isolated telemetry persistence > bounds and drains diagnostics without sharing an operational SQLite wait
+Error: Timed out waiting for telemetry state.
+ ❯ waitFor test/telemetryService.test.ts:19:9
+     17|     await new Promise(resolve => setTimeout(resolve, 20));
+     18|   }
+     19|   throw new Error("Timed out waiting for telemetry state.");
+       |         ^
+     20| }
+     21|
+ ❯ test/telemetryService.test.ts:87:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[161/238]⎯
+
+ FAIL  test/telemetryService.test.ts > isolated telemetry persistence > quarantines telemetry from a different operational database and rebuilds
+Error: Test timed out in 10000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/telemetryService.test.ts:174:3
+    172|   }, 10_000);
+    173|
+    174|   it("quarantines telemetry from a different operational database and …
+       |   ^
+    175|     const root = await mkdtemp(path.join(tmpdir(), "bridge-telemetry-s…
+    176|     const file = path.join(root, "telemetry.sqlite");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[162/238]⎯
+
+ FAIL  test/telemetryService.test.ts > isolated telemetry persistence > quarantines a corrupt diagnostic database without touching operational state
+Error: Test timed out in 10000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/telemetryService.test.ts:212:3
+    210|   }, 10_000);
+    211|
+    212|   it("quarantines a corrupt diagnostic database without touching opera…
+       |   ^
+    213|     const root = await mkdtemp(path.join(tmpdir(), "bridge-telemetry-c…
+    214|     const file = path.join(root, "telemetry.sqlite");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[163/238]⎯
+
+ FAIL  test/telemetryService.test.ts > isolated telemetry persistence > starts degraded and recovers after a transient telemetry startup lock
+Error: Test timed out in 15000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/telemetryService.test.ts:243:3
+    241|   }, 10_000);
+    242|
+    243|   it("starts degraded and recovers after a transient telemetry startup…
+       |   ^
+    244|     const root = await mkdtemp(path.join(tmpdir(), "bridge-telemetry-s…
+    245|     const file = path.join(root, "telemetry.sqlite");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[164/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > preserves an admitted speed through a settings change and handles later support loss explicitly: false
+ FAIL  test/tools.test.ts > current bridge tool contracts > preserves an admitted speed through a settings change and handles later support loss explicitly: true
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:217:25
+    215|   });
+    216|
+    217|   it.each([false, true])("preserves an admitted speed through a settin…
+       |                         ^
+    218|     Object.assign(upstream, { capabilities: () => APP_SERVER_CAPABILIT…
+    219|     const current = await server.applicationService.settingsSnapshot();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[165/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > preserves saved future-tier through old-client saves and refuses unverified new execution
+ FAIL  test/tools.test.ts > current bridge tool contracts > preserves saved ultrafast through old-client saves and refuses unverified new execution
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:290:40
+    288|   });
+    289|
+    290|   it.each(["future-tier", "ultrafast"])("preserves saved %s through ol…
+       |                                        ^
+    291|     settings.update({ processingSpeed: speed }, settings.current.setti…
+    292|     await client.close(); await new Promise<void>(resolve => server.cl…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[166/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > refuses an unavailable fixed choice before admitting work: 'removed-model'/'medium'
+ FAIL  test/tools.test.ts > current bridge tool contracts > refuses an unavailable fixed choice before admitting work: 'gpt-5.6-sol'/'removed-effort'
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:337:5
+    335|     { model: "removed-model", reasoningEffort: selection.reasoningEffo…
+    336|     { model: selection.model, reasoningEffort: "removed-effort" }
+    337|   ])("refuses an unavailable fixed choice before admitting work: $mode…
+       |     ^
+    338|     settings.update({ modelPolicy: { mode: "fixed", selection: saved, …
+    339|     await client.close();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[167/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > starts a hidden persistent conversation using the independent storage preference
+ FAIL  test/tools.test.ts > current bridge tool contracts > starts a hidden ephemeral conversation using the independent storage preference
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:360:48
+    358|   });
+    359|
+    360|   it.each(["persistent", "ephemeral"] as const)("starts a hidden %s co…
+       |                                                ^
+    361|     settings.update({ showBridgeThreadsInCodexApp: false, bridgeThread…
+    362|     await client.close();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[168/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > continues, replaces and forks the same Agent across accounts while keeping Bridge scope and logout admission checks
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:382:3
+    380|   });
+    381|
+    382|   it("continues, replaces and forks the same Agent across accounts whi…
+       |   ^
+    383|     const home = path.join(root, "codex-home");
+    384|     await mkdir(home);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[169/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > retains an original host-accepted completion receipt through a new login and lost result response
+ FAIL  test/tools.test.ts > current bridge tool contracts > retains an original acceptance-unknown completion receipt through a new login and lost result response
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:798:60
+    796|   );
+    797|
+    798|   it.each(["host-accepted", "acceptance-unknown"] as const)(
+       |                                                            ^
+    799|     "retains an original %s completion receipt through a new login and…
+    800|       const stateFile = path.join(root, "state.sqlite");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[170/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > recovers an original Job through HTTP under another account using its exact retained receipt
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:905:3
+    903|   );
+    904|
+    905|   it("recovers an original Job through HTTP under another account usin…
+       |   ^
+    906|     const home = path.join(root, ".codex");
+    907|     const authFile = path.join(home, "auth.json");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[171/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > keeps the original Job question and ACK after an external login change: 'live original worker'
+ FAIL  test/tools.test.ts > current bridge tool contracts > keeps the original Job question and ACK after an external login change: 'worker proof recovered before send'
+ FAIL  test/tools.test.ts > current bridge tool contracts > keeps the original Job question and ACK after an external login change: 'answer sent but reply lost'
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:1013:5
+    1011|     { scenario: "worker proof recovered before send", initialWorkerPro…
+    1012|     { scenario: "answer sent but reply lost", initialWorkerProof: true…
+    1013|   ])("keeps the original Job question and ACK after an external login …
+       |     ^
+    1014|     const home = path.join(root, ".codex");
+    1015|     const authFile = path.join(home, "auth.json");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[172/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > cancels an original Job after an external login change only with live proof of its worker
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:1135:3
+    1133|   });
+    1134|
+    1135|   it("cancels an original Job after an external login change only with…
+       |   ^
+    1136|     const home = path.join(root, ".codex");
+    1137|     const authFile = path.join(home, "auth.json");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[173/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > rejects stale Decision Card calls without changing Codex or state
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:1249:3
+    1247|   });
+    1248|
+    1249|   it("rejects stale Decision Card calls without changing Codex or stat…
+       |   ^
+    1250|     const retired = [
+    1251|       {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[174/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > lets GPT search, read, and version Bridge Markdown skills without starting Codex
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:1294:3
+    1292|   });
+    1293|
+    1294|   it("lets GPT search, read, and version Bridge Markdown skills withou…
+       |   ^
+    1295|     const originalContent = "# Evidence review\n\n| Claim | Evidence |…
+    1296|     const created = await client.callTool({
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[175/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > keeps Bridge skills outside the Codex task schema and prompt
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:1417:3
+    1415|   });
+    1416|
+    1417|   it("keeps Bridge skills outside the Codex task schema and prompt", a…
+       |   ^
+    1418|     const created = await client.callTool({
+    1419|       name: "bridge_skill_manage",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[176/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > publishes Dashboard hydration without undefined thread-handoff fields
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:1494:3
+    1492|   });
+    1493|
+    1494|   it("publishes Dashboard hydration without undefined thread-handoff f…
+       |   ^
+    1495|     const descriptor = (await client.listTools()).tools.find((tool) =>…
+    1496|     const properties = descriptor.inputSchema.properties as Record<str…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[177/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > admits a current v6 task and returns the durable asynchronous admission contract
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:1765:3
+    1763|   });
+    1764|
+    1765|   it("admits a current v6 task and returns the durable asynchronous ad…
+       |   ^
+    1766|     const descriptor = (await client.listTools()).tools.find((tool) =>…
+    1767|     const properties = descriptor.inputSchema.properties as Record<str…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[178/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > reports an exact owner result awaiting terminal storage without claiming the Job is still executing
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:1804:3
+    1802|   });
+    1803|
+    1804|   it("reports an exact owner result awaiting terminal storage without …
+       |   ^
+    1805|     const acknowledgeExecution = vi.fn();
+    1806|     Object.assign(upstream, {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[179/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > ignores retired delivery preferences for new Jobs without changing admitted identities
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:1897:3
+    1895|   });
+    1896|
+    1897|   it("ignores retired delivery preferences for new Jobs without changi…
+       |   ^
+    1898|     const descriptor = (await client.listTools()).tools.find(tool => t…
+    1899|     const properties = descriptor.inputSchema.properties as any;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[180/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > keeps a direct-wait Job pending at an unapproved Codex command boundary
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:1919:3
+    1917|   });
+    1918|
+    1919|   it("keeps a direct-wait Job pending at an unapproved Codex command b…
+       |   ^
+    1920|     const enabled = await client.callTool({
+    1921|       name: "codex_update_settings",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[181/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > recovers a direct-wait Job by exact identity after the host aborts a status read
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:2020:3
+    2018|   });
+    2019|
+    2020|   it("recovers a direct-wait Job by exact identity after the host abor…
+       |   ^
+    2021|     const enabled = await client.callTool({
+    2022|       name: "codex_update_settings",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[182/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > returns durable admission immediately while the admitted Job runs for more than one minute
+AssertionError: expected 6219 to be less than 5000
+ ❯ test/tools.test.ts:2136:34
+    2134|       const admissionElapsedMs = Date.now() - startedAt;
+    2135|       expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true…
+    2136|       expect(admissionElapsedMs).toBeLessThan(5_000);
+       |                                  ^
+    2137|       jobId = (admitted.structuredContent as { jobId: string }).jobId;
+    2138|       await hold.started;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[183/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > does not admit a task when transport fails before dispatch and admits it once on exact retry
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:2166:3
+    2164|   }, 75_000);
+    2165|
+    2166|   it("does not admit a task when transport fails before dispatch and a…
+       |   ^
+    2167|     const descriptor = (await client.listTools()).tools.find((tool) =>…
+    2168|     const properties = descriptor.inputSchema.properties as Record<str…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[184/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > recovers a durable Job when the admission response is lost in transport
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:2228:3
+    2226|   });
+    2227|
+    2228|   it("recovers a durable Job when the admission response is lost in tr…
+       |   ^
+    2229|     const descriptor = (await client.listTools()).tools.find((tool) =>…
+    2230|     const properties = descriptor.inputSchema.properties as Record<str…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[185/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > deduplicates concurrent exact retries into one durable Job and one upstream execution
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:2302:3
+    2300|   });
+    2301|
+    2302|   it("deduplicates concurrent exact retries into one durable Job and o…
+       |   ^
+    2303|     const descriptor = (await client.listTools()).tools.find((tool) =>…
+    2304|     const properties = descriptor.inputSchema.properties as Record<str…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[186/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > recovers an admitted Job by requestId and rejects conflicting reuse without redispatch
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:2345:3
+    2343|   });
+    2344|
+    2345|   it("recovers an admitted Job by requestId and rejects conflicting re…
+       |   ^
+    2346|     const descriptor = (await client.listTools()).tools.find((tool) =>…
+    2347|     const properties = descriptor.inputSchema.properties as Record<str…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[187/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > recovers an approved second turn after response loss and repeated parent reads without stalling independent work
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:2395:3
+    2393|   });
+    2394|
+    2395|   it("recovers an approved second turn after response loss and repeate…
+       |   ^
+    2396|     const descriptor = (await client.listTools()).tools.find((tool) =>…
+    2397|     const properties = descriptor.inputSchema.properties as Record<str…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[188/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > recovers a scoped terminal admission fact after its result expires and the bridge restarts
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:2582:3
+    2580|   });
+    2581|
+    2582|   it("recovers a scoped terminal admission fact after its result expir…
+       |   ^
+    2583|     settings.update({ experimentalDirectResultDelivery: true }, settin…
+    2584|     const descriptor = (await client.listTools()).tools.find((tool) =>…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[189/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > does not distinguish scope-mismatched handles from missing handles
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:2700:3
+    2698|   });
+    2699|
+    2700|   it("does not distinguish scope-mismatched handles from missing handl…
+       |   ^
+    2701|     const descriptor = (await client.listTools()).tools.find((tool) =>…
+    2702|     const properties = descriptor.inputSchema.properties as Record<str…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[190/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > records a detached HTTP task call without turning it into cancellation
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:2807:3
+    2805|   });
+    2806|
+    2807|   it("records a detached HTTP task call without turning it into cancel…
+       |   ^
+    2808|     const descriptor = (await client.listTools()).tools.find((tool) =>…
+    2809|     const properties = descriptor.inputSchema.properties as Record<str…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[191/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > records an aborted exact status wait while the same Job keeps running
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:2869:3
+    2867|   });
+    2868|
+    2869|   it("records an aborted exact status wait while the same Job keeps ru…
+       |   ^
+    2870|     const descriptor = (await client.listTools()).tools.find((tool) =>…
+    2871|     const properties = descriptor.inputSchema.properties as Record<str…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[192/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > keeps an asynchronous admission valid before App Server assigns its thread
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:2928:3
+    2926|   });
+    2927|
+    2928|   it("keeps an asynchronous admission valid before App Server assigns …
+       |   ^
+    2929|     const descriptor = (await client.listTools()).tools.find((tool) =>…
+    2930|     const properties = descriptor.inputSchema.properties as Record<str…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[193/238]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > opens Dashboard explicitly and rejects every retired sender operation without mutating a Job
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:2983:3
+    2981|   });
+    2982|
+    2983|   it("opens Dashboard explicitly and rejects every retired sender oper…
+       |   ^
+    2984|     const tools = await client.listTools();
+    2985|     expect(tools.tools.some(tool => tool.name === "codex_ui_completion…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[194/238]⎯
+
+ FAIL  test/uiResourceFiles.test.ts > single-file UI resource lifecycle > overwrites one file per card, removes legacy snapshots, and packages only current files
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/uiResourceFiles.test.ts:24:3
+     22|
+     23| describe("single-file UI resource lifecycle", () => {
+     24|   it("overwrites one file per card, removes legacy snapshots, and pack…
+       |   ^
+     25|     const root = mkdtempSync(path.join(tmpdir(), "codex-ui-resources-"…
+     26|     try {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[195/238]⎯
+
+ FAIL  test/workHistory.test.ts > execution history retention > rotates past a full protected batch and respects the selected retention period
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/workHistory.test.ts:70:3
+     68|   });
+     69|
+     70|   it("rotates past a full protected batch and respects the selected re…
+       |   ^
+     71|     const store=new BridgeStateStore({file:":memory:"});
+     72|     store.transaction(()=>{for(let n=0;n<502;n++){const input=job(Stri…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[196/238]⎯
+
+⎯⎯⎯⎯⎯⎯ Unhandled Errors ⎯⎯⎯⎯⎯⎯
+
+Vitest caught 12 unhandled errors during the test run.
+This might cause false positive tests. Resolve unhandled errors to make sure your tests are not affected.
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+Error: Codex App Server initialization failed: codex-app:app-0:g1 process was closed.
+ ❯ appServerInitializationError src/appServerUpstream.ts:2409:5
+    2407|     : {};
+    2408|   return Object.assign(
+    2409|     new Error(`Codex App Server initialization failed: ${cause.message…
+       |     ^
+    2410|     metadata,
+    2411|     processIdentity ? { processIdentity } : {}
+ ❯ AppServerConnection.initializeForAdmission src/appServerUpstream.ts:1075:35
+ ❯ CodexAppServerUpstreamPool.connectionFor src/appServerUpstream.ts:904:14
+ ❯ CodexAppServerUpstreamPool.callTool src/appServerUpstream.ts:669:26
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { processIdentity: { pid: 33347, processGroupId: 33347 } }
+This error originated in "test/appServerUpstream.test.ts" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+The latest test that might've caused the error is "classifies 'nonblocking input' as 'unknown' with 'unsupported' routing evidence". It might mean one of the following:
+- The error was thrown, while Vitest was running this test.
+- If the error occurred after the test had been completed, this was the last documented test before it was thrown.
+Caused by: Error: codex-app:app-0:g1 process was closed.
+ ❯ JsonRpcProcess.close src/jsonRpcProcess.ts:286:24
+ ❯ AppServerConnection.close src/appServerUpstream.ts:1693:20
+ ❯ src/appServerUpstream.ts:800:75
+ ❯ src/appServerUpstream.ts:800:44
+ ❯ CodexAppServerUpstreamPool.close src/appServerUpstream.ts:794:20
+ ❯ test/appServerUpstream.test.ts:952:28
+ ❯ node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+Error: Codex App Server upstream is closed.
+ ❯ CodexAppServerUpstreamPool.connectionFor src/appServerUpstream.ts:863:31
+    861|     if (!worker.connecting) {
+    862|       await this.ensureCompatibleExecutable();
+    863|       if (this.closing) throw new Error("Codex App Server upstream is …
+       |                               ^
+    864|       if (worker.connection && !worker.connection.exited) return worke…
+    865|       if (!worker.connecting) {
+ ❯ CodexAppServerUpstreamPool.callTool src/appServerUpstream.ts:669:26
+
+This error originated in "test/appServerUpstream.test.ts" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+The latest test that might've caused the error is "classifies 'dynamic input' as 'unknown' with 'enabled' routing evidence". It might mean one of the following:
+- The error was thrown, while Vitest was running this test.
+- If the error occurred after the test had been completed, this was the last documented test before it was thrown.
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+Error: Codex App Server upstream is closed.
+ ❯ CodexAppServerUpstreamPool.connectionFor src/appServerUpstream.ts:863:31
+    861|     if (!worker.connecting) {
+    862|       await this.ensureCompatibleExecutable();
+    863|       if (this.closing) throw new Error("Codex App Server upstream is …
+       |                               ^
+    864|       if (worker.connection && !worker.connection.exited) return worke…
+    865|       if (!worker.connecting) {
+ ❯ CodexAppServerUpstreamPool.callTool src/appServerUpstream.ts:669:26
+
+This error originated in "test/appServerUpstream.test.ts" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+The latest test that might've caused the error is "classifies 'legacy app input' as 'app-approval' with 'enabled' routing evidence". It might mean one of the following:
+- The error was thrown, while Vitest was running this test.
+- If the error occurred after the test had been completed, this was the last documented test before it was thrown.
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+Error: Codex App Server upstream is closed.
+ ❯ CodexAppServerUpstreamPool.connectionFor src/appServerUpstream.ts:863:31
+    861|     if (!worker.connecting) {
+    862|       await this.ensureCompatibleExecutable();
+    863|       if (this.closing) throw new Error("Codex App Server upstream is …
+       |                               ^
+    864|       if (worker.connection && !worker.connection.exited) return worke…
+    865|       if (!worker.connecting) {
+ ❯ CodexAppServerUpstreamPool.callTool src/appServerUpstream.ts:669:26
+
+This error originated in "test/appServerUpstream.test.ts" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+The latest test that might've caused the error is "round-trips command, file, input, and permission requests by exact request ID". It might mean one of the following:
+- The error was thrown, while Vitest was running this test.
+- If the error occurred after the test had been completed, this was the last documented test before it was thrown.
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+Error: Codex App Server initialization failed: codex-app:app-0:g1 process was closed.
+ ❯ appServerInitializationError src/appServerUpstream.ts:2409:5
+    2407|     : {};
+    2408|   return Object.assign(
+    2409|     new Error(`Codex App Server initialization failed: ${cause.message…
+       |     ^
+    2410|     metadata,
+    2411|     processIdentity ? { processIdentity } : {}
+ ❯ AppServerConnection.initializeForAdmission src/appServerUpstream.ts:1075:35
+ ❯ CodexAppServerUpstreamPool.connectionFor src/appServerUpstream.ts:904:14
+ ❯ CodexAppServerUpstreamPool.callTool src/appServerUpstream.ts:669:26
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { processIdentity: { pid: 33708, processGroupId: 33708 } }
+This error originated in "test/appServerUpstream.test.ts" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+The latest test that might've caused the error is "clears an automatically resolved server request without sending a duplicate response". It might mean one of the following:
+- The error was thrown, while Vitest was running this test.
+- If the error occurred after the test had been completed, this was the last documented test before it was thrown.
+Caused by: Error: codex-app:app-0:g1 process was closed.
+ ❯ JsonRpcProcess.close src/jsonRpcProcess.ts:286:24
+ ❯ AppServerConnection.close src/appServerUpstream.ts:1693:20
+ ❯ src/appServerUpstream.ts:800:75
+ ❯ src/appServerUpstream.ts:800:44
+ ❯ CodexAppServerUpstreamPool.close src/appServerUpstream.ts:794:20
+ ❯ test/appServerUpstream.test.ts:1011:18
+ ❯ node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+Error: Codex App Server upstream is closed.
+ ❯ CodexAppServerUpstreamPool.connectionFor src/appServerUpstream.ts:863:31
+    861|     if (!worker.connecting) {
+    862|       await this.ensureCompatibleExecutable();
+    863|       if (this.closing) throw new Error("Codex App Server upstream is …
+       |                               ^
+    864|       if (worker.connection && !worker.connection.exited) return worke…
+    865|       if (!worker.connecting) {
+ ❯ CodexAppServerUpstreamPool.callTool src/appServerUpstream.ts:669:26
+
+This error originated in "test/appServerUpstream.test.ts" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+The latest test that might've caused the error is "never falls back to shared-process termination during an automatic interruption retry". It might mean one of the following:
+- The error was thrown, while Vitest was running this test.
+- If the error occurred after the test had been completed, this was the last documented test before it was thrown.
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+Error: Codex App Server upstream is closed.
+ ❯ CodexAppServerUpstreamPool.connectionFor src/appServerUpstream.ts:863:31
+    861|     if (!worker.connecting) {
+    862|       await this.ensureCompatibleExecutable();
+    863|       if (this.closing) throw new Error("Codex App Server upstream is …
+       |                               ^
+    864|       if (worker.connection && !worker.connection.exited) return worke…
+    865|       if (!worker.connecting) {
+ ❯ CodexAppServerUpstreamPool.callTool src/appServerUpstream.ts:669:26
+
+This error originated in "test/appServerUpstream.test.ts" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+SdkError: Connection closed
+ ❯ Client._onclose node_modules/@modelcontextprotocol/client/dist/src-D_zzAWoS.mjs:5780:17
+ ❯ Client._onclose node_modules/@modelcontextprotocol/client/dist/index.mjs:4056:9
+ ❯ StreamableHTTPClientTransport._transport.onclose node_modules/@modelcontextprotocol/client/dist/src-D_zzAWoS.mjs:5747:10
+ ❯ StreamableHTTPClientTransport.close node_modules/@modelcontextprotocol/client/dist/index.mjs:5290:18
+ ❯ Client.close node_modules/@modelcontextprotocol/client/dist/src-D_zzAWoS.mjs:5976:26
+ ❯ Client.close node_modules/@modelcontextprotocol/client/dist/index.mjs:3010:16
+ ❯ test/tools.test.ts:211:18
+    209|
+    210|   afterEach(async () => {
+    211|     await client.close();
+       |                  ^
+    212|     await new Promise<void>((resolve) => server.close(() => resolve())…
+    213|     state.close();
+ ❯ node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
+ ❯ wrapper node_modules/@vitest/runner/dist/chunk-artifact.js:750:10
+ ❯ node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { code: 'CONNECTION_CLOSED', data: undefined }
+This error originated in "test/tools.test.ts" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+The latest test that might've caused the error is "records an aborted exact status wait while the same Job keeps running". It might mean one of the following:
+- The error was thrown, while Vitest was running this test.
+- If the error occurred after the test had been completed, this was the last documented test before it was thrown.
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+Error: EXECUTION_CLOSED: Codex execution service closed.
+ ❯ ChildProcessCodexExecutionService.closeInternal src/executionServiceProcess.ts:1164:43
+    1162|     if (this.workerCleanupTimer) clearTimeout(this.workerCleanupTimer);
+    1163|     for (const [requestId] of this.pending) {
+    1164|       this.takePending(requestId)?.reject(new Error(
+       |                                           ^
+    1165|         "EXECUTION_CLOSED: Codex execution service closed."
+    1166|       ));
+ ❯ ChildProcessCodexExecutionService.close src/executionServiceProcess.ts:641:54
+ ❯ test/executionServiceProcess.test.ts:91:21
+ ❯ node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+This error originated in "test/executionServiceProcess.test.ts" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+The latest test that might've caused the error is "runs turns, progress, account reads, and steering outside the state owner". It might mean one of the following:
+- The error was thrown, while Vitest was running this test.
+- If the error occurred after the test had been completed, this was the last documented test before it was thrown.
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+Error: EXECUTION_CLOSED: Codex execution service closed.
+ ❯ ChildProcessCodexExecutionService.closeInternal src/executionServiceProcess.ts:1164:43
+    1162|     if (this.workerCleanupTimer) clearTimeout(this.workerCleanupTimer);
+    1163|     for (const [requestId] of this.pending) {
+    1164|       this.takePending(requestId)?.reject(new Error(
+       |                                           ^
+    1165|         "EXECUTION_CLOSED: Codex execution service closed."
+    1166|       ));
+ ❯ ChildProcessCodexExecutionService.close src/executionServiceProcess.ts:641:54
+ ❯ test/executionServiceProcess.test.ts:121:21
+ ❯ node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+This error originated in "test/executionServiceProcess.test.ts" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+The latest test that might've caused the error is "retains a running executor across a parent wall-clock jump". It might mean one of the following:
+- The error was thrown, while Vitest was running this test.
+- If the error occurred after the test had been completed, this was the last documented test before it was thrown.
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+Error: EXECUTION_CLOSED: Codex execution service closed.
+ ❯ ChildProcessCodexExecutionService.closeInternal src/executionServiceProcess.ts:1164:43
+    1162|     if (this.workerCleanupTimer) clearTimeout(this.workerCleanupTimer);
+    1163|     for (const [requestId] of this.pending) {
+    1164|       this.takePending(requestId)?.reject(new Error(
+       |                                           ^
+    1165|         "EXECUTION_CLOSED: Codex execution service closed."
+    1166|       ));
+ ❯ ChildProcessCodexExecutionService.close src/executionServiceProcess.ts:641:54
+ ❯ test/executionServiceProcess.test.ts:144:21
+ ❯ node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+This error originated in "test/executionServiceProcess.test.ts" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+The latest test that might've caused the error is "keeps private interaction input in the execution process proxy only". It might mean one of the following:
+- The error was thrown, while Vitest was running this test.
+- If the error occurred after the test had been completed, this was the last documented test before it was thrown.
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+Error: EXECUTION_CLOSED: Codex execution service closed.
+ ❯ ChildProcessCodexExecutionService.closeInternal src/executionServiceProcess.ts:1164:43
+    1162|     if (this.workerCleanupTimer) clearTimeout(this.workerCleanupTimer);
+    1163|     for (const [requestId] of this.pending) {
+    1164|       this.takePending(requestId)?.reject(new Error(
+       |                                           ^
+    1165|         "EXECUTION_CLOSED: Codex execution service closed."
+    1166|       ));
+ ❯ ChildProcessCodexExecutionService.close src/executionServiceProcess.ts:641:54
+ ❯ test/executionServiceProcess.test.ts:296:21
+ ❯ node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+This error originated in "test/executionServiceProcess.test.ts" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+The latest test that might've caused the error is "retains an exited App Server until its same-group command is gone". It might mean one of the following:
+- The error was thrown, while Vitest was running this test.
+- If the error occurred after the test had been completed, this was the last documented test before it was thrown.
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+
+
+ Test Files  34 failed | 95 passed (129)
+      Tests  236 failed | 1225 passed (1461)
+     Errors  12 errors
+   Start at  21:49:38
+   Duration  1129.23s (transform 100.15s, setup 0ms, import 302.08s, tests 4071.28s, environment 99ms)

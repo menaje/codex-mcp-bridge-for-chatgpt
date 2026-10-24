@@ -3,6 +3,18 @@ import CodexBridgeKit
 import SwiftUI
 
 enum ApplicationQuitConfirmationPolicy {
+    static func memoryOnlyThreadCount(for impact: RuntimeAdmissionSnapshot) -> Int {
+        max(
+            impact.memoryOnlyThreads ?? 0,
+            (impact.protectedMemoryOnlyThreads ?? 0) +
+                (impact.discardableMemoryOnlyThreads ?? 0)
+        )
+    }
+
+    static func protectedMemoryOnlyThreadCount(for impact: RuntimeAdmissionSnapshot) -> Int {
+        impact.protectedMemoryOnlyThreads ?? impact.memoryOnlyThreads ?? 0
+    }
+
     static func requiresConfirmation(
         for impact: RuntimeAdmissionSnapshot?,
         refreshFailed: Bool
@@ -10,14 +22,25 @@ enum ApplicationQuitConfirmationPolicy {
         guard !refreshFailed, let impact else { return true }
         return impact.activeJobs > 0 ||
             impact.pendingAdmissions > 0 ||
+            (impact.pendingInteractions ?? 0) > 0 ||
+            memoryOnlyThreadCount(for: impact) > 0 ||
             impact.backgroundProcesses > 0 ||
             impact.backgroundProcessUnknownAgents > 0 ||
             impact.backgroundProcessState != "confirmed"
     }
 }
 
+private struct DashboardUsageFrame: PreferenceKey {
+    static var defaultValue: CGRect? { nil }
+    static func reduce(value: inout CGRect?, nextValue: () -> CGRect?) {
+        value = nextValue() ?? value
+    }
+}
+
 struct DashboardPopoverView: View {
-    var fitsMenuBarWindow = false
+    var onContentSizeChange: ((CGSize) -> Void)?
+    var onUsageFrameChange: ((CGRect?) -> Void)?
+    var onRequestClose: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var model: AppModel
     @State private var showForceStopConfirmation = false
@@ -27,24 +50,39 @@ struct DashboardPopoverView: View {
     @State private var isRefreshingOverview = false
     @State private var regionHeights: [DashboardPopoverRegion: CGFloat] = [:]
     @State private var screenHeight: CGFloat = NSScreen.main?.visibleFrame.height ?? 800
-    @State private var isPresented = false
+
+    init(
+        onContentSizeChange: ((CGSize) -> Void)? = nil,
+        onUsageFrameChange: ((CGRect?) -> Void)? = nil,
+        onRequestClose: (() -> Void)? = nil
+    ) {
+        self.onContentSizeChange = onContentSizeChange
+        self.onUsageFrameChange = onUsageFrameChange
+        self.onRequestClose = onRequestClose
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             headerSection.dashboardHeight(.header)
+            ConnectionObservationNotice()
             Group {
                 if !model.hasConnectionTarget {
                     runtimeUnavailableView.frame(height: fallbackHeight)
                 } else if model.needsSetup {
-                    ConnectionRepairView().frame(height: fallbackHeight)
+                    ConnectionSetupRequiredPopoverView {
+                        presentConnectionSetupWindow()
+                    }
                 } else if !model.bridgeConnected, model.isBridgeConnectionChecking, model.dashboard == nil {
-                    connectionCheckingView.frame(height: fallbackHeight)
+                    connectionCheckingView
+                } else if !model.bridgeConnected, model.hasRetainedBridgeObservation,
+                          let dashboard = model.dashboard {
+                    dashboardContent(dashboard)
                 } else if !model.bridgeConnected, !model.isBridgeConnectionChecking {
                     runtimeUnavailableView.frame(height: fallbackHeight)
                 } else if let dashboard = model.dashboard {
                     dashboardContent(dashboard)
                 } else {
-                    loadingView.frame(height: fallbackHeight)
+                    loadingView
                 }
             }
             Divider()
@@ -52,76 +90,81 @@ struct DashboardPopoverView: View {
         }
         .frame(width: DashboardPopoverLayout.width)
         .fixedSize(horizontal: false, vertical: true)
-        .background(DashboardPopoverScreen(fitsWindow: fitsMenuBarWindow, isPresented: isPresented) {
+        .coordinateSpace(name: "dashboard-popover")
+        .background(DashboardPopoverScreen {
             screenHeight = $0
         })
+        .background(GeometryReader { geometry in
+            Color.clear.preference(key: DashboardPopoverContentSize.self, value: geometry.size)
+        })
         .onPreferenceChange(DashboardPopoverHeights.self) { regionHeights = $0 }
+        .onPreferenceChange(DashboardPopoverContentSize.self) { size in
+            guard size.width > 0, size.height > 0 else { return }
+            onContentSizeChange?(size)
+        }
+        .onPreferenceChange(DashboardUsageFrame.self) { onUsageFrameChange?($0) }
         .environment(\.locale, model.interfaceLocale)
-        .onAppear {
-            isPresented = true
-            model.setDashboardVisible(true)
-        }
-        .onDisappear {
-            isPresented = false
-            model.setDashboardVisible(false)
-        }
         .task {
             if model.isRemoteClient ? model.remoteHello == nil : model.helperStatus == nil {
                 await model.start()
             }
         }
         .confirmationDialog(
-            "작업과 백그라운드 프로세스를 중단하고 서버를 강제 종료할까요?",
+            "macos.interrupttasksandbackgroundprocessesandforcestop",
             isPresented: $showForceStopConfirmation
         ) {
-            Button("강제 종료", role: .destructive) {
+            Button("macos.forcequit", role: .destructive) {
                 Task { await model.stopRuntime(force: true) }
             }
         } message: {
             Text(forceImpactMessage(restarting: false))
         }
         .confirmationDialog(
-            "작업과 백그라운드 프로세스를 중단하고 서버를 강제 재시작할까요?",
+            "macos.interrupttasksandbackgroundprocessesandforcerestart",
             isPresented: $showForceRestartConfirmation
         ) {
-            Button("강제 재시작", role: .destructive) {
+            Button("macos.forcerestart", role: .destructive) {
                 Task { await model.restartRuntime(force: true) }
             }
         } message: {
             Text(forceImpactMessage(restarting: true))
         }
         .confirmationDialog(
-            "Secure MCP Tunnel 프로필을 다시 만들까요?",
+            "macos.rebuildthesecuremcptunnelprofile",
             isPresented: $showRepairConfirmation
         ) {
-            Button("작업을 마치고 프로필 복구") {
+            Button("macos.repairprofileafterfinishingwork") {
                 Task { await model.repairTunnelProfile() }
             }
         } message: {
-            Text("private .env와 Bridge 상태는 유지하고, 현재 Tunnel ID로 로컬 프로필만 다시 만듭니다.")
+            Text("macos.keepstheprivateenvandbridgestateand")
         }
         .confirmationDialog(
-            "앱과 관련 프로세스를 모두 종료할까요?",
+            "macos.quittheappandallrelatedprocesses",
             isPresented: $showApplicationQuitConfirmation
         ) {
-            Button("작업을 마치고 종료") {
+            Button {
                 shutdownAndQuit(force: false)
+            } label: {
+                Text(verbatim: applicationQuitSafeActionTitle)
             }
-            Button("강제 종료", role: .destructive) {
+            Button("macos.forcequit", role: .destructive) {
                 shutdownAndQuit(force: true)
             }
-            Button("취소", role: .cancel) {}
+            Button("common.cancel", role: .cancel) {}
         } message: {
             Text(applicationQuitImpactMessage)
         }
     }
 
     private var fallbackHeight: CGFloat {
-        min(440, max(160, screenHeight - 24 - (regionHeights[.header] ?? 80) - (regionHeights[.footer] ?? 50)))
+        min(440, max(160, screenHeight - DashboardPopoverLayout.screenMargin -
+            (regionHeights[.header] ?? 80) - (regionHeights[.footer] ?? 50)))
     }
 
     private var detailHeight: CGFloat {
         DashboardPopoverLayout.detailHeight(
+            for: model.dashboardPanel ?? .running,
             content: regionHeights[.detail] ?? 100,
             fixed: (regionHeights[.header] ?? 80) + (regionHeights[.summary] ?? 260) +
                 (regionHeights[.footer] ?? 50) + 2,
@@ -152,9 +195,14 @@ struct DashboardPopoverView: View {
             BridgeBrandStatusIcon(health: model.health, size: 32)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Codex MCP Bridge for ChatGPT")
+                Text("macos.codexmcpbridgeforchatgpt")
                     .font(.headline)
-                Text("\(model.connectionTargetName) · \(model.health.accessibilityLabel(locale: model.interfaceLocale))")
+                Text(BridgeAppLocalization.format(
+                    "macos.format.dotSeparatedPair",
+                    locale: model.interfaceLocale,
+                    model.connectionTargetName,
+                    model.health.accessibilityLabel(locale: model.interfaceLocale)
+                ))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -184,29 +232,28 @@ struct DashboardPopoverView: View {
             }
             .buttonStyle(.borderless)
             .disabled(isRefreshingOverview)
-            .help("새로고침")
-            .accessibilityLabel("현황 새로고침")
-            .accessibilityValue(isRefreshingOverview ? Text("현황을 불러오는 중…") : Text(""))
+            .help("macos.common.refreshAction")
+            .accessibilityLabel("macos.refreshoverview")
+            .accessibilityValue(isRefreshingOverview ? Text("macos.loadingoverview") : Text(verbatim: ""))
         }
         .padding(14)
     }
 
+    @ViewBuilder
     private var loadingView: some View {
-        VStack(spacing: 12) {
-            BridgeBrandMark()
-                .frame(width: 42, height: 42)
-            ProgressView()
-            Text("현황을 불러오는 중…")
-                .foregroundStyle(.secondary)
-            if let error = model.connectionErrorMessage ?? model.startupErrorMessage ??
-                model.statusErrorMessage ?? model.dashboardErrorMessage {
+        if model.dashboardReadFailure != nil {
+            DashboardReadFailureNotice(onOpenConnectionSettings: presentConnectionRepairWindow)
+                .padding(14)
+        } else if let error = model.connectionErrorMessage ?? model.startupErrorMessage ??
+            model.statusErrorMessage ?? model.dashboardErrorMessage {
+            VStack(spacing: 10) {
                 Text(error)
                     .font(.caption)
                     .foregroundStyle(.red)
                     .multilineTextAlignment(.center)
                     .textSelection(.enabled)
                 Button(BridgeAppLocalization.string(
-                    model.isRemoteClient ? "서버 다시 연결" : "helper 다시 연결",
+                    model.isRemoteClient ? "macos.reconnectserver" : "macos.reconnecthelper",
                     locale: model.interfaceLocale
                 )) {
                     Task {
@@ -216,29 +263,45 @@ struct DashboardPopoverView: View {
                 }
                 .disabled(model.isBusy)
             }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+        } else if !hasStartupLifecycleNotice {
+            compactProgress("macos.loadingoverview")
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding()
     }
 
     private var connectionCheckingView: some View {
-        VStack(spacing: 12) {
-            BridgeBrandStatusIcon(health: .checking, size: 48)
-            ProgressView()
-            Text("브리지 연결을 확인하고 있습니다…")
-                .font(.headline)
-            Text("연결되는 대로 현황을 표시합니다.")
+        Group {
+            if !hasStartupLifecycleNotice {
+                compactProgress("macos.checkingthebridgeconnection")
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+            }
+        }
+    }
+
+    private var hasStartupLifecycleNotice: Bool {
+        model.lifecycleOperation?.kind == "start" && model.lifecycleOperation?.isPending == true
+    }
+
+    private func compactProgress(_ title: LocalizedStringKey) -> some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text(title)
                 .font(.callout)
                 .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(28)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var runtimeUnavailableView: some View {
         VStack(spacing: 14) {
             BridgeBrandStatusIcon(health: .unavailable, size: 48)
-            Text("브리지 서버에 연결할 수 없습니다")
+            Text("macos.cannotconnecttothebridgeserver")
                 .font(.headline)
             Text(model.connectionErrorMessage ?? model.helperStatusErrorMessage ??
                  model.runtimeErrorMessage ?? model.statusErrorMessage ??
@@ -249,28 +312,28 @@ struct DashboardPopoverView: View {
                 .textSelection(.enabled)
             if model.isRemoteClient {
                 HStack {
-                    Button("다시 연결") { Task { await model.refreshAll() } }
+                    Button("macos.reconnect") { Task { await model.refreshAll() } }
                         .buttonStyle(.borderedProminent)
-                    Button("연결 설정") { presentSettingsWindow() }
+                    Button("macos.connectionsettings") { presentSettingsWindow() }
                 }
                 .disabled(model.isBusy)
             } else {
                 HStack {
                     if model.helperStatus?.phase == "stopped" {
-                        Button("시작") { Task { await model.startRuntime() } }
+                        Button("macos.start") { Task { await model.startRuntime() } }
                             .buttonStyle(.borderedProminent)
                     } else {
-                        Button("다시 연결") { Task { await model.refreshAll() } }
+                        Button("macos.reconnect") { Task { await model.refreshAll() } }
                             .buttonStyle(.borderedProminent)
                     }
-                    Button("재시작") { Task { await model.restartRuntime(force: false) } }
+                    Button("macos.runtime.restartAction") { Task { await model.restartRuntime(force: false) } }
                 }
                 .disabled(model.isBusy)
-                Button("Tunnel 프로필 복구") { showRepairConfirmation = true }
+                Button("macos.repairtunnelprofile") { showRepairConfirmation = true }
                     .disabled(model.isBusy)
             }
             if !model.isRemoteClient, model.helperStatus?.phase == "safe-mode" {
-                Label("반복 충돌로 자동 재시작이 중지되었습니다.", systemImage: "exclamationmark.octagon")
+                Label("macos.automaticrestartstoppedafterrepeatedcrashes", systemImage: "exclamationmark.octagon")
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
@@ -295,25 +358,16 @@ struct DashboardPopoverView: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
                 }
-                if let error = model.dashboardErrorMessage {
-                    Label(
-                        "최근 현황을 갱신하지 못했습니다: \(error)",
-                        systemImage: "clock.badge.exclamationmark"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .textSelection(.enabled)
-                }
                 if let error = model.runtimeErrorMessage {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(.orange)
                         .textSelection(.enabled)
                 }
-                if !model.isRemoteClient, model.helperStatus?.tunnel.connected != true {
+                if !model.isRemoteClient, !model.tunnelConnected {
                     if model.isTunnelConnectionChecking {
                         Label(
-                            "Secure MCP Tunnel 연결을 확인하고 있습니다.",
+                            "macos.checkingthesecuremcptunnelconnection",
                             systemImage: "arrow.triangle.2.circlepath"
                         )
                         .font(.caption)
@@ -325,12 +379,27 @@ struct DashboardPopoverView: View {
                             .textSelection(.enabled)
                     }
                 }
-                if let account = dashboard.codexAccount {
-                    CodexMenuAccountView(account: account, fallbackWeekly: dashboard.weeklyUsage)
-                } else if let usage = dashboard.weeklyUsage, model.shouldShowCodexWeeklyUsage {
-                    WeeklyUsageView(usage: usage)
+                Group {
+                    if model.shouldShowCodexWeeklyUsage {
+                        if let account = dashboard.codexAccount {
+                            CodexMenuAccountView(account: account, fallbackWeekly: dashboard.weeklyUsage)
+                        } else if let usage = dashboard.weeklyUsage {
+                            WeeklyUsageView(usage: usage)
+                        }
+                    }
+                }
+                .background {
+                    if onUsageFrameChange != nil {
+                        GeometryReader { geometry in
+                            Color.clear.preference(key: DashboardUsageFrame.self,
+                                value: geometry.frame(in: .named("dashboard-popover")))
+                        }
+                    }
                 }
                 DashboardSummary(counts: dashboard.counts)
+                if model.dashboardReadFailure != nil {
+                    DashboardReadFailureNotice(onOpenConnectionSettings: presentConnectionRepairWindow)
+                }
                 dashboardBackgroundStatus(dashboard)
                 dashboardFreshness(dashboard)
             }
@@ -343,9 +412,10 @@ struct DashboardPopoverView: View {
                         if model.dashboardDetailLoading {
                             if let error = model.dashboardErrorMessage {
                                 Text(error).font(.caption).foregroundStyle(.secondary)
-                                Button("새로고침") { Task { await model.refreshDashboard() } }
+                                Button("macos.dashboard.reload") { Task { await model.recoverDashboardRead() } }
+                                    .disabled(model.isDashboardRefreshing || model.isBusy)
                             } else {
-                                ProgressView("현황을 불러오는 중…")
+                                ProgressView("macos.loadingoverview")
                                     .frame(maxWidth: .infinity)
                             }
                         } else {
@@ -366,34 +436,18 @@ struct DashboardPopoverView: View {
     @ViewBuilder
     private func dashboardDetails(_ dashboard: DashboardSnapshot, panel: DashboardPanel) -> some View {
         if panel == .history {
-            Text("이 개인 브리지가 보존 중인 작업·Agent·대화만 표시합니다. 전체 ChatGPT 기록은 아닙니다.")
+            Text("macos.showsonlytasksagentsandconversationsretainedby")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
-            if shouldOfferCodexThreadPersistence {
-                VStack(alignment: .leading, spacing: 6) {
-                    Label(
-                        "새 Agent 작업을 Codex 앱에서 열 수 있게 할까요?",
-                        systemImage: "arrow.up.forward.app"
-                    )
-                    .font(.caption.weight(.semibold))
-                    Text("켜면 이후 새 작업과 새 컨텍스트를 Codex 앱에 보존하고 각 Agent의 Codex 대화를 열 수 있습니다. 기존 임시 작업에는 소급 적용되지 않습니다.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Button("새 작업부터 켜기") {
-                        model.enableCodexThreadPersistence()
-                    }
-                    .buttonStyle(.link)
-                    .disabled(model.generalSettingsSaveState.isActive)
-                }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
-            }
         }
         if dashboard.counts.runtimeUnknownAgents > 0,
            !model.dashboardEnrichmentPending || model.dashboardEnrichmentFailed {
             Label(
-                "런타임 또는 프로세스 상태를 확인하지 못한 Agent가 \(dashboard.counts.runtimeUnknownAgents)개 있습니다.",
+                BridgeAppLocalization.format(
+                    "macos.runtimeorprocessstatuscouldnotbeconfirmed",
+                    locale: model.interfaceLocale,
+                    dashboard.counts.runtimeUnknownAgents
+                ),
                 systemImage: "questionmark.circle"
             )
             .font(.caption)
@@ -401,7 +455,11 @@ struct DashboardPopoverView: View {
         }
         if dashboard.counts.runtimeProbeSkippedAgents > 0 {
             Label(
-                "프로세스 상태를 아직 확인하지 않은 Agent가 \(dashboard.counts.runtimeProbeSkippedAgents)개 있습니다.",
+                BridgeAppLocalization.format(
+                    "macos.processstatushasnotyetbeencheckedfor",
+                    locale: model.interfaceLocale,
+                    dashboard.counts.runtimeProbeSkippedAgents
+                ),
                 systemImage: "ellipsis.circle"
             )
             .font(.caption)
@@ -411,33 +469,48 @@ struct DashboardPopoverView: View {
             if let problems = dashboard.problems {
                 DashboardProblemsSection(problems: problems)
             } else {
-                let rows = panel.rows(in: dashboard)
-                DashboardSection(title: "문제", emptyText: "처리할 문제가 없습니다.",
+                let rows = panel.rows(in: dashboard, now: model.dashboardHistoryNow())
+                DashboardSection(title: "dashboard.problems", emptyText: "problem.empty",
                     rows: rows,
                     total: rows.count,
                     groupsByActivity: true)
             }
         } else {
-            let rows = panel.rows(in: dashboard)
+            let rows = panel.rows(in: dashboard, now: model.dashboardHistoryNow())
             let currentRows = panel == .history
                 ? dashboard.activeRows
                 : rows.filter { $0.bucket == "active" }
             let recentRows = panel == .history
-                ? dashboard.terminalRows
+                ? (dashboard.historyModeApplied == "jobs" ? rows : dashboard.terminalRows)
                 : rows.filter { $0.bucket != "active" }
+            if panel != .history || dashboard.historyModeApplied != "jobs" {
             DashboardSection(
-                title: panel == .history ? "현재 작업" : panel.title,
-                emptyText: "표시할 현재 작업이 없습니다.",
+                title: panel == .history ? "dashboard.active" : panel.title,
+                emptyText: "dashboard.noActive",
                 rows: currentRows,
                 total: currentRows.count,
                 groupsByActivity: true
             )
-            if panel == .history, dashboard.pagination.active.hasNext {
-                Label("활성 항목 중 \(dashboard.pagination.active.returned)개만 표시됩니다.", systemImage: "ellipsis.circle")
+            }
+            if panel == .background, dashboard.backgroundPagination?.hasNext == true {
+                Button("macos.showmore") { Task { await model.loadMoreBackground() } }
+                    .disabled(model.loadingMoreBackground)
+            }
+            if panel == .running, dashboard.hasMoreRunning {
+                Button("macos.showmore") { Task { await model.loadMoreRunning() } }
+                    .buttonStyle(.link)
+                    .disabled(model.loadingMoreRunning || model.isBusy)
+            }
+            if panel == .history, dashboard.historyModeApplied != "jobs", dashboard.pagination.active.hasNext {
+                Label(BridgeAppLocalization.format(
+                    "macos.onlyactiveitemsareshown",
+                    locale: model.interfaceLocale,
+                    dashboard.pagination.active.returned
+                ), systemImage: "ellipsis.circle")
                     .font(.caption).foregroundStyle(.orange)
             }
             if panel == .history || !recentRows.isEmpty {
-                DashboardSection(title: "실행 기록", emptyText: "보존된 최근 실행이 없습니다.",
+                DashboardSection(title: "dashboard.recent", emptyText: "macos.therearenoretainedrecentruns",
                     rows: recentRows,
                     total: panel == .history ? dashboard.pagination.terminal.total : recentRows.count,
                     groupsByActivity: true, hasMore: panel == .history && dashboard.pagination.terminal.hasNext,
@@ -449,19 +522,29 @@ struct DashboardPopoverView: View {
 
     @ViewBuilder
     private func dashboardBackgroundStatus(_ dashboard: DashboardSnapshot) -> some View {
-        if dashboard.counts.backgroundProcesses > 0 {
+        let unknown = (dashboard.counts.backgroundProcessUnknownAgents ?? dashboard.counts.runtimeUnknownAgents) > 0 ||
+            dashboard.counts.runtimeProbeSkippedAgents > 0 ||
+            dashboard.enrichment?.backgroundInventoryUnavailable == true ||
+            dashboard.counts.backgroundProcessUnknownAgents == nil &&
+            ((dashboard.enrichment?.timeouts ?? 0) > 0 || (dashboard.enrichment?.runtimeUnavailable ?? 0) > 0)
+        if dashboard.counts.backgroundProcesses > 0 || !unknown {
             Button {
                 Task { await model.toggleDashboardPanel(.background) }
             } label: {
-                Label("백그라운드 프로세스 \(dashboard.counts.backgroundProcesses)", systemImage: "terminal.fill")
+                Label(BridgeAppLocalization.format(
+                    "macos.dashboard.backgroundProcessCount",
+                    locale: model.interfaceLocale,
+                    dashboard.counts.backgroundProcesses
+                ), systemImage: "terminal.fill")
             }
             .buttonStyle(.link)
+            .disabled(dashboard.counts.backgroundProcesses == 0)
             .font(.caption)
             .foregroundStyle(model.dashboardPanel == .background ? Color.accentColor : Color.primary)
             .accessibilityAddTraits(model.dashboardPanel == .background ? [.isSelected] : [])
             .accessibilityIdentifier("dashboard-background")
-        } else if dashboard.counts.runtimeUnknownAgents > 0 || dashboard.counts.runtimeProbeSkippedAgents > 0 {
-            Label("백그라운드 프로세스 상태 확인 필요", systemImage: "questionmark.circle")
+        } else if unknown {
+            Label("dashboard.backgroundUnknown", systemImage: "questionmark.circle")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -470,80 +553,93 @@ struct DashboardPopoverView: View {
     @ViewBuilder
     private func dashboardFreshness(_ dashboard: DashboardSnapshot) -> some View {
         HStack {
-            Text("마지막 확인")
+            Text("macos.lastchecked")
             Spacer()
+            if let error = model.dashboardErrorMessage {
+                Image(systemName: "clock.badge.exclamationmark")
+                    .foregroundStyle(.orange)
+                    .help(BridgeAppLocalization.format(
+                        "macos.couldnotrefreshthelateststatus", locale: model.interfaceLocale, error
+                    ))
+                    .accessibilityLabel(BridgeAppLocalization.format(
+                        "macos.couldnotrefreshthelateststatus", locale: model.interfaceLocale, error
+                    ))
+            } else if model.dashboardEnrichmentFailed || dashboard.enrichment?.hasFailures == true {
+                Image(systemName: "clock.badge.exclamationmark")
+                    .foregroundStyle(.orange)
+                    .help(Text("common.detailsRefreshFailed"))
+                    .accessibilityLabel(Text("common.detailsRefreshFailed"))
+            } else if model.dashboardEnrichmentPending || dashboard.enrichment?.isUpdating == true {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .help(Text("macos.updatingadditionaldetailsconfirmedinformationisshownas"))
+                    .accessibilityLabel(Text("macos.updatingadditionaldetailsconfirmedinformationisshownas"))
+            }
             Text(DisplayFormat.dateTime(dashboard.generatedAt, locale: model.interfaceLocale))
         }
         .font(.caption2)
         .foregroundStyle(.secondary)
-
-        if model.dashboardEnrichmentFailed || dashboard.enrichment?.hasFailures == true {
-            Label(
-                "일부 추가 정보를 갱신하지 못했습니다. 마지막 확인값이 표시될 수 있습니다.",
-                systemImage: "clock.badge.exclamationmark"
-            )
-            .font(.caption)
-            .foregroundStyle(.orange)
-        } else if model.dashboardEnrichmentPending || dashboard.enrichment?.isUpdating == true {
-            Label("추가 정보를 갱신하고 있습니다. 확인된 정보부터 표시합니다.", systemImage: "arrow.triangle.2.circlepath")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        if (model.dashboardEnrichmentFailed || model.dashboardEnrichmentPending),
-           let observed = model.dashboardObservationDate {
-            Text("추가 정보 기준: \(observed.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened).locale(model.interfaceLocale)))")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
     }
 
     private var authenticationNotice: String {
         let key: String
         if model.authErrorMessage != nil {
-            key = "Codex 로그인 상태를 확인하지 못했습니다. 연결 설정을 확인하세요."
+            key = "macos.couldnotcheckthecodexloginstatuscheck"
         } else if model.authStatus?.installed == false {
-            key = "Codex CLI를 찾을 수 없습니다. 연결 설정을 확인하세요."
+            key = "macos.codexclicouldnotbefoundcheckthe"
         } else {
-            key = "Codex 로그인이 필요합니다. 첫 작업 전에 로그인하세요."
+            key = "macos.codexloginisrequiredsigninbeforethe"
         }
         return BridgeAppLocalization.string(key, locale: model.interfaceLocale)
-    }
-
-    private var shouldOfferCodexThreadPersistence: Bool {
-        guard let settings = model.settings else { return false }
-        return !model.isRemoteClient &&
-            settings.capabilities.defaultBackend == "app-server" &&
-            !settings.settings.showBridgeThreadsInCodexApp
     }
 
     private var footer: some View {
         HStack(spacing: 10) {
             Button {
+                presentSkillsLibraryWindow()
+            } label: {
+                Label("macos.skilllibrary", systemImage: "books.vertical")
+                    .labelStyle(.iconOnly)
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.borderless)
+            .help("macos.skilllibrary")
+            .accessibilityLabel("macos.skilllibrary")
+
+            Spacer()
+
+            if !model.isRemoteClient, let runtime = model.codexRuntime, runtime.showsMenuUpdate {
+                Button {
+                    Task { await model.manageCodex(.init(action: "update")) }
+                } label: {
+                    Label("macos.updatecodex", systemImage: "arrow.down.circle")
+                        .labelStyle(.iconOnly)
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(Color.accentColor)
+                .help(
+                    Text("macos.updatecodex") +
+                    Text(verbatim: "\n\(runtime.installedVersion ?? "—") → \(runtime.updateVersion ?? "—")\n") +
+                    Text("macos.codexCliUpdate.description")
+                )
+                .accessibilityLabel("macos.updatecodex")
+                .accessibilityValue(Text(verbatim: "\(runtime.installedVersion ?? "—") → \(runtime.updateVersion ?? "—")"))
+                .accessibilityHint(Text("macos.codexCliUpdate.description"))
+                .accessibilityIdentifier("dashboard-codex-cli-update")
+                .disabled(model.needsSetup || model.isBusy)
+            }
+
+            Button {
                 presentSettingsWindow()
             } label: {
-                Label("설정", systemImage: "gearshape")
+                Label("macos.settings", systemImage: "gearshape")
                     .labelStyle(.iconOnly)
                     .frame(width: 28, height: 28)
             }
             .buttonStyle(.borderless)
             .keyboardShortcut(",")
-            .help("설정")
-            .accessibilityLabel("설정")
-
-            Button {
-                Task { await model.toggleDashboardPanel(.history) }
-            } label: {
-                Label("작업·실행 기록", systemImage: "clock.arrow.circlepath")
-                    .labelStyle(.iconOnly)
-                    .frame(width: 28, height: 28)
-            }
-            .buttonStyle(.borderless)
-            .foregroundStyle(model.dashboardPanel == .history ? Color.accentColor : Color.primary)
-            .help("작업·실행 기록")
-            .accessibilityLabel("작업·실행 기록")
-            .accessibilityAddTraits(model.dashboardPanel == .history ? [.isSelected] : [])
-            .accessibilityIdentifier("dashboard-history")
-            .disabled(model.dashboard == nil || !model.bridgeConnected || model.changingProblems)
+            .help("macos.settings")
+            .accessibilityLabel("macos.settings")
 
             if model.isRemoteClient {
                 Menu {
@@ -559,65 +655,58 @@ struct DashboardPopoverView: View {
                         }
                     }
                     Divider()
-                    Button("서버 연결 관리") { presentSettingsWindow() }
+                    Button("macos.manageserverconnections") { presentSettingsWindow() }
                 } label: {
-                    Label("서버", systemImage: "server.rack")
+                    Label("macos.server", systemImage: "server.rack")
                         .labelStyle(.iconOnly)
                         .frame(width: 28, height: 28)
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
-                .help(Text("서버") + Text(verbatim: " · \(model.connectionTargetName)"))
-                .accessibilityLabel("서버")
+                .help(Text("macos.server") + Text(verbatim: " · \(model.connectionTargetName)"))
+                .accessibilityLabel("macos.server")
                 .accessibilityValue(Text(verbatim: model.connectionTargetName))
                 .disabled(model.isBusy)
             } else {
                 Menu {
-                    Button("작업 완료 후 서버 재시작") {
+                    Button("macos.restartserveraftertasksfinish") {
                         Task { await model.restartRuntime(force: false) }
                     }
-                    Button("작업 중단 후 서버 강제 재시작", role: .destructive) {
+                    Button("macos.stoptasksandforcerestartserver", role: .destructive) {
                         Task {
                             await model.refreshRuntimeImpact()
                             showForceRestartConfirmation = true
                         }
                     }
                     Divider()
-                    Button("연결 정보 및 Codex 로그인") {
+                    Button("macos.connectioninformationandcodexsignin") {
                         presentConnectionRepairWindow()
                     }
-                    Button("Secure MCP Tunnel 프로필 복구") {
+                    Button("macos.repairsecuremcptunnelprofile") {
                         showRepairConfirmation = true
                     }
                     Divider()
-                    Button("작업 완료 후 서버 중지") {
+                    Button("macos.stopserveraftertasksfinish") {
                         Task { await model.stopRuntime(force: false) }
                     }
-                    Button("작업 중단 후 서버 강제 중지", role: .destructive) {
+                    Button("macos.stoptasksandforcestopserver", role: .destructive) {
                         Task {
                             await model.refreshRuntimeImpact()
                             showForceStopConfirmation = true
                         }
                     }
                 } label: {
-                    Label("서버", systemImage: "server.rack")
+                    Label("macos.server", systemImage: "server.rack")
                         .labelStyle(.iconOnly)
                         .frame(width: 28, height: 28)
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
-                .help("서버")
-                .accessibilityLabel("서버")
+                .help("macos.server")
+                .accessibilityLabel("macos.server")
                 .disabled(model.needsSetup || model.isBusy)
             }
 
-            if !model.isRemoteClient, model.codexRuntime?.showsMenuUpdate == true {
-                Button("코덱스 업데이트") {
-                    Task { await model.manageCodex(.init(action: "update")) }
-                }
-            }
-
-            Spacer()
             Button {
                 if model.isRemoteClient {
                     shutdownAndQuit(force: false)
@@ -635,18 +724,18 @@ struct DashboardPopoverView: View {
                     }
                 }
             } label: {
-                Label("앱 종료", systemImage: "power")
+                Label("macos.quitapp", systemImage: "power")
                     .labelStyle(.iconOnly)
                     .frame(width: 28, height: 28)
             }
             .buttonStyle(.borderless)
             .disabled(model.isBusy)
-            .help("앱 종료")
-            .accessibilityLabel("앱 종료")
+            .help("macos.quitapp")
+            .accessibilityLabel("macos.quitapp")
             .accessibilityHint(Text(verbatim: BridgeAppLocalization.string(
                 model.isRemoteClient
-                    ? "이 클라이언트 앱만 종료하며 원격 서버는 변경하지 않습니다."
-                    : "메뉴 막대 앱과 helper, 브리지 서버 및 관련 프로세스를 모두 종료합니다.",
+                    ? "macos.quitsonlythisclientappanddoesnot"
+                    : "macos.runtime.quitAllProcessesDescription",
                 locale: model.interfaceLocale
             )))
         }
@@ -679,29 +768,78 @@ struct DashboardPopoverView: View {
             model.helperStatus?.bridge.backgroundProcessUnknownAgents ?? 0
     }
 
+    private var pendingInteractionCount: Int {
+        model.runtimeImpact?.pendingInteractions ??
+            model.helperStatus?.bridge.pendingInteractions ?? 0
+    }
+
+    private var memoryOnlyThreadCount: Int {
+        if let impact = model.runtimeImpact {
+            return ApplicationQuitConfirmationPolicy.memoryOnlyThreadCount(for: impact)
+        }
+        let bridge = model.helperStatus?.bridge
+        return max(
+            bridge?.memoryOnlyThreads ?? 0,
+            (bridge?.protectedMemoryOnlyThreads ?? 0) +
+                (bridge?.discardableMemoryOnlyThreads ?? 0)
+        )
+    }
+
+    private var protectedMemoryOnlyThreadCount: Int {
+        if let impact = model.runtimeImpact {
+            return ApplicationQuitConfirmationPolicy.protectedMemoryOnlyThreadCount(for: impact)
+        }
+        return model.helperStatus?.bridge.protectedMemoryOnlyThreads ??
+            model.helperStatus?.bridge.memoryOnlyThreads ?? 0
+    }
+
+    private var applicationQuitSafeActionTitle: String {
+        let discardsOnlyCompletedContexts = memoryOnlyThreadCount > 0 &&
+            protectedMemoryOnlyThreadCount == 0 &&
+            activeJobCount == 0 &&
+            pendingInteractionCount == 0 &&
+            backgroundProcessCount == 0 &&
+            backgroundProcessUnknownAgents == 0 &&
+            model.runtimeImpact?.backgroundProcessState == "confirmed" &&
+            model.runtimeImpactErrorMessage == nil
+        return BridgeAppLocalization.string(
+            discardsOnlyCompletedContexts
+                ? "macos.quitanddiscardmemoryonlycontexts"
+                : "macos.quitafterfinishingwork",
+            locale: model.interfaceLocale
+        )
+    }
+
     private func forceImpactMessage(restarting: Bool) -> String {
         var messages = [BridgeAppLocalization.format(
-            "활성 작업 %d개와 백그라운드 프로세스 %d개가 중단될 수 있습니다. 파일 변경은 되돌아가지 않습니다.",
+            "macos.activetasksandbackgroundprocessesmaybeinterrupted",
             locale: model.interfaceLocale,
             activeJobCount,
             backgroundProcessCount
         )]
         if backgroundProcessUnknownAgents > 0 {
             messages.append(BridgeAppLocalization.format(
-                "%d개 Agent의 백그라운드 상태를 확인하지 못했습니다.",
+                "macos.thebackgroundstateofagentscouldnotbe",
                 locale: model.interfaceLocale,
                 backgroundProcessUnknownAgents
             ))
         }
+        if memoryOnlyThreadCount > 0 {
+            messages.append(BridgeAppLocalization.format(
+                "macos.memoryonlycodexcontextswillnotremainresumable",
+                locale: model.interfaceLocale,
+                memoryOnlyThreadCount
+            ))
+        }
         if model.runtimeImpactErrorMessage != nil {
             messages.append(BridgeAppLocalization.string(
-                "최신 영향 범위를 확인하지 못했으므로 강제 종료 시 표시된 수보다 더 많은 작업이 중단될 수 있습니다.",
+                "macos.thelatestimpactcouldnotbeverifiedso",
                 locale: model.interfaceLocale
             ))
         }
         if restarting {
             messages.append(BridgeAppLocalization.string(
-                "중단된 작업은 자동으로 다시 실행하지 않습니다.",
+                "macos.interruptedtaskswillnotrestartautomatically",
                 locale: model.interfaceLocale
             ))
         }
@@ -710,12 +848,12 @@ struct DashboardPopoverView: View {
 
     private var applicationQuitImpactMessage: String {
         var messages = [BridgeAppLocalization.string(
-            "메뉴 막대 앱, helper, 브리지 서버와 Tunnel을 모두 종료합니다. 앱을 다시 열거나 다음 사용자 로그인 전까지 ChatGPT의 브리지 연결을 사용할 수 없습니다.",
+            "macos.quitsthemenubarapphelperbridgeserver",
             locale: model.interfaceLocale
         )]
         if activeJobCount > 0 || backgroundProcessCount > 0 {
             messages.append(BridgeAppLocalization.format(
-                "현재 활성 작업 %d개와 백그라운드 프로세스 %d개가 있습니다. 안전 종료는 작업이 끝날 때까지 기다리며, 강제 종료는 즉시 중단합니다.",
+                "macos.thereareactivetasksandbackgroundprocessessafe",
                 locale: model.interfaceLocale,
                 activeJobCount,
                 backgroundProcessCount
@@ -723,30 +861,40 @@ struct DashboardPopoverView: View {
         }
         if backgroundProcessUnknownAgents > 0 {
             messages.append(BridgeAppLocalization.format(
-                "%d개 Agent의 백그라운드 상태를 확인하지 못했습니다.",
+                "macos.thebackgroundstateofagentscouldnotbe",
                 locale: model.interfaceLocale,
                 backgroundProcessUnknownAgents
             ))
         }
+        if memoryOnlyThreadCount > 0 {
+            messages.append(BridgeAppLocalization.format(
+                "macos.memoryonlycodexcontextswillnotremainresumable",
+                locale: model.interfaceLocale,
+                memoryOnlyThreadCount
+            ))
+        }
         if model.runtimeImpactErrorMessage != nil {
             messages.append(BridgeAppLocalization.string(
-                "최신 영향 범위를 확인하지 못했으므로 강제 종료 시 표시된 수보다 더 많은 작업이 중단될 수 있습니다.",
+                "macos.thelatestimpactcouldnotbeverifiedso",
                 locale: model.interfaceLocale
             ))
         }
         messages.append(BridgeAppLocalization.string(
-            "파일 변경은 되돌아가지 않습니다.",
+            "macos.filesystemchangesarenotrolledback",
             locale: model.interfaceLocale
         ))
         return messages.joined(separator: " ")
     }
 
     private func shutdownAndQuit(force: Bool) {
+        guard SkillsLibraryWindowController.shared.confirmDiscardBeforeApplicationShutdown() else { return }
         Task {
             guard await model.shutdownApplication(force: force) else {
+                SkillsLibraryWindowController.shared.cancelApplicationShutdownDiscard()
                 if !model.applicationShutdownReserved { presentApplicationQuitFailure() }
                 return
             }
+            SkillsLibraryWindowController.shared.completeApplicationShutdownDiscard()
             NSApp.terminate(nil)
         }
     }
@@ -756,12 +904,26 @@ struct DashboardPopoverView: View {
         SettingsWindowController.shared.show(model: model)
     }
 
+    private func presentSkillsLibraryWindow() {
+        dismissMenuBarWindow()
+        SkillsLibraryWindowController.shared.show(model: model)
+    }
+
     private func presentConnectionRepairWindow() {
         dismissMenuBarWindow()
-        ConnectionRepairWindowController.shared.show(model: model)
+        ConnectionAssistantWindowController.shared.show(model: model)
+    }
+
+    private func presentConnectionSetupWindow() {
+        dismissMenuBarWindow()
+        ConnectionAssistantWindowController.shared.show(model: model, presentation: .setup)
     }
 
     private func dismissMenuBarWindow() {
+        if let onRequestClose {
+            onRequestClose()
+            return
+        }
         let menuBarWindow = NSApp.keyWindow
         dismiss()
         menuBarWindow?.orderOut(nil)
@@ -772,15 +934,15 @@ struct DashboardPopoverView: View {
         let alert = NSAlert()
         alert.alertStyle = .warning
         let title = model.generalSettingsSaveState == .failed
-            ? "설정 변경사항을 저장하지 못했습니다"
-            : "앱을 종료하지 못했습니다"
+            ? "macos.couldnotsavesettings"
+            : "macos.couldnotquittheapp"
         alert.messageText = BridgeAppLocalization.string(title, locale: model.interfaceLocale)
         alert.informativeText = model.runtimeErrorMessage ?? BridgeAppLocalization.string(
-            "앱을 종료하지 않았습니다. 현황을 확인한 뒤 다시 시도해 주세요.",
+            "macos.theappwasnotquitreviewthestatus",
             locale: model.interfaceLocale
         )
         alert.addButton(withTitle: BridgeAppLocalization.string(
-            "확인",
+            "macos.ok",
             locale: model.interfaceLocale
         ))
         alert.runModal()
@@ -799,17 +961,29 @@ private struct WeeklyUsageView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("주간 사용량").font(.subheadline.weight(.semibold))
+                Text("macos.weeklyusage").font(.subheadline.weight(.semibold))
                 Spacer()
-                Text("\(Int(remainingPercent.rounded()))% 남음")
+                Text(BridgeAppLocalization.format(
+                    "macos.remaining",
+                    locale: locale,
+                    Int(remainingPercent.rounded())
+                ))
                     .font(.caption.monospacedDigit())
             }
             ProgressView(value: remainingPercent, total: 100)
-            Text("사용량 확인: \(DisplayFormat.dateTime(usage.observedAt, locale: locale))")
+            Text(BridgeAppLocalization.format(
+                "macos.usagelastchecked",
+                locale: locale,
+                DisplayFormat.dateTime(usage.observedAt, locale: locale)
+            ))
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if let resetsAt = usage.resetsAt {
-                Text("초기화: \(DisplayFormat.dateTime(resetsAt, locale: locale))")
+                Text(BridgeAppLocalization.format(
+                    "macos.accountUsage.resetsAt",
+                    locale: locale,
+                    DisplayFormat.dateTime(resetsAt, locale: locale)
+                ))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -826,22 +1000,21 @@ private struct CodexMenuAccountView: View {
     let fallbackWeekly: WeeklyUsage?
 
     var body: some View {
-        if account.authMode == "chatgpt", let weekly = account.weeklyUsage ?? fallbackWeekly {
+        if account.authMode == "chatgpt",
+           let weekly = account.weeklyUsage ?? (account.usageStatus == "none" ? nil : fallbackWeekly) {
             WeeklyUsageView(usage: weekly, account: account)
-        } else {
+        } else if account.authMode == "api-key" || account.menuCreditBalance != nil {
             VStack(alignment: .leading, spacing: 6) {
                 if account.authMode == "api-key" {
-                    Text("API 사용 중").font(.subheadline.weight(.semibold))
-                    if let costs = account.billing?.actualCosts, costs.configured {
-                        if costs.status == "available", let usd = costs.usd {
-                            LabeledContent(costs.projectId == nil ? "이번 달 조직 비용 (UTC)" : "이번 달 프로젝트 비용 (UTC)",
-                                value: usd.formatted(.currency(code: "USD")))
-                        } else { Text("비용 정보를 확인할 수 없습니다.") }
+                    Text("macos.usingapi").font(.subheadline.weight(.semibold))
+                    if let costs = account.billing?.actualCosts, costs.configured,
+                       costs.status == "available", let usd = costs.usd {
+                        LabeledContent(costs.projectId == nil ? "macos.organizationcostthismonthutc" : "macos.projectcostthismonthutc",
+                            value: usd.formatted(.currency(code: "USD")))
                     }
                 } else if account.authMode == "chatgpt" {
-                    Text("사용량 정보를 확인할 수 없습니다.")
                     CodexMenuPlanDetails(account: account)
-                } else { Text("로그인이 필요합니다") }
+                }
             }
             .font(.caption)
             .padding(10)
@@ -854,34 +1027,17 @@ private struct CodexMenuAccountView: View {
 private struct CodexMenuPlanDetails: View {
     let account: CodexAccountUsage
     var body: some View {
-        if !account.menuSparkWindows.isEmpty {
-            Divider().padding(.vertical, 3)
-            Text(verbatim: "GPT-5.3-Codex-Spark").font(.caption.weight(.semibold))
-            ForEach(account.menuSparkWindows) { window in
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        if window.windowDurationMins == 10080 { Text("주간 사용량") }
-                        else { Text(Duration.seconds(Int64(window.windowDurationMins * 60)).formatted(.units(allowed: [.days, .hours, .minutes], width: .abbreviated))) }
-                        Spacer()
-                        Text(min(99.9, floor(max(0, window.remainingPercent) * 10) / 10) / 100,
-                            format: .percent.precision(.fractionLength(0...1))).monospacedDigit()
-                        Text("남음")
-                    }.font(.caption)
-                    ProgressView(value: max(0, min(100, window.remainingPercent)), total: 100)
-                }
-            }
-        }
         if let balance = account.menuCreditBalance {
             HStack {
-                Text("추가 크레딧")
-                Text("잔액")
+                Text("macos.additionalcredits")
+                Text("macos.balance")
                 Spacer()
                 Text(verbatim: balance).monospacedDigit()
             }.font(.caption)
         }
         if (account.weeklyUsage?.remainingPercent ?? 0) > 0,
            account.windows.contains(where: { $0.limitId == "codex" && $0.windowDurationMins != 10080 && $0.remainingPercent <= 0 }) {
-            Label("단기 사용 한도에 도달했습니다.", systemImage: "exclamationmark.triangle")
+            Label("macos.theshorttermusagelimithasbeenreached", systemImage: "exclamationmark.triangle")
                 .font(.caption).foregroundStyle(.orange)
         }
     }
@@ -894,9 +1050,9 @@ private struct DashboardSummary: View {
 
     var body: some View {
         LazyVGrid(columns: columns, spacing: 8) {
-            summaryButton("실행 중", value: counts.running, symbol: "play.fill", panel: .running)
-            summaryButton("응답 필요", value: counts.responseRequiredCount, symbol: "text.bubble.fill", panel: .responseRequired)
-            summaryButton("문제", value: counts.problemCount, symbol: "exclamationmark.triangle.fill", panel: .problems)
+            summaryButton("macos.running", value: counts.progressJobCount ?? (counts.running + counts.inputRequired + counts.approvalRequired + counts.terminating), symbol: "play.fill", panel: .running)
+            summaryButton("macos.workrunhistory", value: model.dashboard?.historyModeApplied == "jobs" ? counts.executionCount ?? model.dashboard?.pagination.terminal.total ?? 0 : model.dashboard?.pagination.terminal.total ?? 0, symbol: "clock", panel: .history)
+            summaryButton("dashboard.problems", value: model.dashboard?.problems?.affectedExecutionCount ?? counts.problemCount, symbol: "exclamationmark.triangle.fill", panel: .problems)
         }
         .disabled(model.changingProblems)
     }
@@ -917,6 +1073,7 @@ private struct DashboardSummary: View {
                 .minimumScaleFactor(0.8)
                 Text(value, format: .number)
                     .font(.title3.bold().monospacedDigit())
+
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 8)
@@ -929,7 +1086,7 @@ private struct DashboardSummary: View {
     }
 }
 
-private struct DashboardSection: View {
+struct DashboardSection: View {
     @Environment(\.locale) private var locale
     @EnvironmentObject private var model: AppModel
     let title: String
@@ -970,7 +1127,7 @@ private struct DashboardSection: View {
                     }
                 }
                 if hasMore {
-                    Button("더 보기", action: { loadMore?() })
+                    Button("macos.showmore", action: { loadMore?() })
                         .buttonStyle(.link)
                         .disabled(model.isBusy)
                 }
@@ -999,7 +1156,7 @@ private struct DashboardSection: View {
             }
             .buttonStyle(.plain)
             .accessibilityValue(BridgeAppLocalization.string(
-                disclosureExpanded.wrappedValue ? "펼침" : "접힘",
+                disclosureExpanded.wrappedValue ? "macos.expanded" : "macos.collapsed",
                 locale: locale
             ))
         } else {
@@ -1011,7 +1168,7 @@ private struct DashboardSection: View {
         HStack(spacing: 6) {
             Text(BridgeAppLocalization.string(title, locale: locale)).font(.headline)
             if let total {
-                Text("\(total)")
+                Text(BridgeAppLocalization.format("macos.format.integer", locale: locale, total))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
@@ -1051,16 +1208,11 @@ private struct DashboardActivityGroupView: View {
             VStack(alignment: .leading, spacing: 7) {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 2) {
-                        if marksRecentActivity {
-                            Text("최근 Activity")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
                         Text(activityTitle)
                             .font(.subheadline.weight(.semibold))
                             .lineLimit(2)
                         Text(first.projectName ?? BridgeAppLocalization.string(
-                            "프로젝트 없음",
+                            "macos.noproject",
                             locale: locale
                         ))
                             .font(.caption)
@@ -1068,27 +1220,42 @@ private struct DashboardActivityGroupView: View {
                     }
                     Spacer()
                     if let url = DashboardLink.conversation(first.conversationUrl) {
-                        Link("대화", destination: url)
+                        Link("macos.conversations", destination: url)
                     }
                 }
-                Text("Agent \(group.rows.count)명")
+                Text(BridgeAppLocalization.format(
+                    "macos.agents",
+                    locale: locale,
+                    agentGroups.count
+                ))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                if let cancellation = activityCancellation {
-                    CancellationDisclosure(cancellation: cancellation)
+                if !group.rows.allSatisfy({ $0.jobId != nil }), let cancellation = activityCancellation {
+                    CancellationReason(cancellation: cancellation)
                 }
-                ForEach(group.rows) { row in
-                    DashboardRowView(
-                        row: row,
-                        presentation: marksRecentActivity ? .nestedIdleAgent : .nestedAgent,
-                        enclosingActivityTitle: activityTitle
-                    )
+                ForEach(agentGroups) { agent in
+                    if agent.rows.allSatisfy({ $0.jobId != nil }) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(agent.rows[0].agentName)
+                                .font(.subheadline.weight(.semibold))
+                            ForEach(agent.rows) { row in
+                                DashboardRowView(row: row, presentation: .nestedJob, enclosingActivityTitle: activityTitle)
+                            }
+                        }
+                    } else {
+                        ForEach(agent.rows) { row in
+                            DashboardRowView(row: row, presentation: marksRecentActivity ? .nestedIdleAgent : .nestedAgent,
+                                enclosingActivityTitle: activityTitle)
+                        }
+                    }
                 }
             }
             .padding(10)
             .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 11))
         }
     }
+
+    private var agentGroups: [DashboardAgentGroup] { DashboardAgentGroup.group(group.rows) }
 
     private var activityCancellation: CancellationDisplay? {
         group.rows.compactMap(\.latestTurn?.cancellation).first {
@@ -1105,20 +1272,36 @@ private struct DashboardActivityGroupView: View {
             }
         }
         return BridgeAppLocalization.string(
-            marksRecentActivity ? "최근 Activity 없음" : "제목 없는 Activity",
+            marksRecentActivity ? "macos.norecentactivity" : "macos.untitledactivity",
             locale: locale
         )
     }
 }
 
+struct DashboardAgentGroup: Identifiable {
+    let id: String
+    var rows: [DashboardRow]
+
+    static func group(_ rows: [DashboardRow]) -> [DashboardAgentGroup] {
+        var groups: [DashboardAgentGroup] = [], positions: [String: Int] = [:]
+        for row in rows {
+            let key = row.conversationKey + ":" + (row.agentId ?? row.rowKey)
+            if let position = positions[key] { groups[position].rows.append(row) }
+            else { positions[key] = groups.count; groups.append(DashboardAgentGroup(id: key, rows: [row])) }
+        }
+        return groups
+    }
+}
+
 enum DashboardRowPresentation {
     case nestedAgent
+    case nestedJob
     case nestedIdleAgent
     case idle
 
     var suppressesRedundantIdleStatus: Bool {
         switch self {
-        case .nestedAgent:
+        case .nestedAgent, .nestedJob:
             return false
         case .nestedIdleAgent, .idle:
             return true
@@ -1126,42 +1309,41 @@ enum DashboardRowPresentation {
     }
 }
 
-private struct CancellationDisclosure: View {
+private struct CancellationReason: View {
     @Environment(\.locale) private var locale
     let cancellation: CancellationDisplay
-    @State private var isExpanded = false
 
     var body: some View {
-        FullRowDisclosure("취소 사유", isExpanded: $isExpanded) {
+        if !cancellation.reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             VStack(alignment: .leading, spacing: 3) {
-                Text(cancellation.reason).textSelection(.enabled)
-                Text("\(cancellationTargetLabel(cancellation.targetKind, locale: locale)) · \(cancellationStatusLabel(cancellation.status, locale: locale)) · \(DisplayFormat.dateTime(cancellation.requestedAt, locale: locale))")
+                Text("macos.cancellationreason")
+                    .font(.caption.weight(.semibold))
+                Text(cancellation.reason)
+                    .textSelection(.enabled)
+                Text(BridgeAppLocalization.format(
+                    "macos.format.dotSeparatedTriple",
+                    locale: locale,
+                    CancellationPresentation.targetLabel(cancellation.targetKind, locale: locale),
+                    CancellationPresentation.statusLabel(cancellation.status, locale: locale),
+                    DisplayFormat.dateTime(cancellation.requestedAt, locale: locale)
+                ))
                     .foregroundStyle(.secondary)
             }
             .font(.caption)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .font(.caption)
     }
 }
 
 private struct DashboardExecutionLabel: View {
     let text: String
     let execution: DashboardExecution?
+    @Environment(\.locale) private var locale
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(text)
-                .lineLimit(2)
-            if DashboardExecutionPresentation.usesFastProcessing(execution) {
-                Label("빠른 처리", systemImage: "bolt.fill")
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.primary)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 5))
-                    .fixedSize()
-            }
-        }
+        Text(text)
+            .lineLimit(2)
+            .help(DashboardExecutionPresentation.speedBadgeHelp(execution, locale: locale))
         .accessibilityElement(children: .combine)
     }
 }
@@ -1172,54 +1354,57 @@ struct DashboardRowView: View {
     let presentation: DashboardRowPresentation
     let enclosingActivityTitle: String?
     @State private var historyExpanded = false
-    @State private var changingHistory = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
-                Image(systemName: StatusPresentation.symbol(row.status))
-                    .foregroundStyle(StatusPresentation.color(row.status))
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(row.agentName)
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(2)
-                    if let secondaryTitle {
-                        Text(secondaryTitle)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+            if presentation == .nestedJob {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    currentExecutionLabel
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(spacing: 4) {
+                        Image(systemName: StatusPresentation.symbol(row.status))
+                            .foregroundStyle(StatusPresentation.color(row.status))
+                            .accessibilityHidden(true)
+                        Text(StatusPresentation.label(row.status, locale: model.interfaceLocale))
+                    }
+                    .font(.caption2.weight(.medium))
+                    .fixedSize()
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(.quaternary, in: Capsule())
+                }
+            } else {
+                HStack(alignment: .firstTextBaseline) {
+                    Image(systemName: StatusPresentation.symbol(row.status))
+                        .foregroundStyle(StatusPresentation.color(row.status))
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(row.agentName)
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(2)
+                        if let secondaryTitle {
+                            Text(secondaryTitle)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    Spacer()
+                    if row.status != "idle" || !presentation.suppressesRedundantIdleStatus {
+                        Text(StatusPresentation.label(row.status, locale: model.interfaceLocale))
+                            .font(.caption2.weight(.medium))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(.quaternary, in: Capsule())
                     }
                 }
-                Spacer()
-                if row.status != "idle" || !presentation.suppressesRedundantIdleStatus {
-                    Text(StatusPresentation.label(row.status, locale: model.interfaceLocale))
-                        .font(.caption2.weight(.medium))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(.quaternary, in: Capsule())
+                if row.latestTurn != nil {
+                    currentExecutionLabel
                 }
-            }
-            if row.latestTurn != nil {
-                DashboardExecutionLabel(text: BridgeAppLocalization.format(
-                    "%@: %@",
-                    locale: model.interfaceLocale,
-                    BridgeAppLocalization.string(
-                        row.bucket == "idle" ? "최근 실행" : "실행",
-                        locale: model.interfaceLocale
-                    ),
-                    DashboardExecutionPresentation.turnText(
-                        row.latestTurn?.execution,
-                        locale: model.interfaceLocale
-                    )
-                ), execution: row.latestTurn?.execution)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
             }
             if let next = nextExecution {
                 DashboardExecutionLabel(text: BridgeAppLocalization.format(
-                    "다음 실행 설정: %@",
+                    "macos.nextrunsettings",
                     locale: model.interfaceLocale,
                     executionText(next)
                 ), execution: next)
@@ -1228,16 +1413,26 @@ struct DashboardRowView: View {
                     .lineLimit(2)
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text(rowTimeText)
-                    .lineLimit(2)
+                DashboardTimeView(
+                    turn: row.latestTurn,
+                    fallbackUpdatedAt: row.updatedAt,
+                    fallbackStatus: row.status,
+                    fallbackDurationMs: row.elapsedMs,
+                    locale: model.interfaceLocale
+                )
+                .lineLimit(2)
                 HStack(spacing: 10) {
                     if row.backgroundProcessCount > 0 {
-                        Label("\(row.backgroundProcessCount)", systemImage: "terminal")
+                        Label(BridgeAppLocalization.format(
+                            "macos.format.integer",
+                            locale: model.interfaceLocale,
+                            row.backgroundProcessCount
+                        ), systemImage: "terminal")
                     }
                     Spacer()
                     if presentation == .idle {
                         if let url = DashboardLink.conversation(row.conversationUrl) {
-                            Link("대화", destination: url)
+                            Link("macos.conversations", destination: url)
                         }
                     }
                     if !model.isRemoteClient,
@@ -1245,13 +1440,13 @@ struct DashboardRowView: View {
                         Button {
                             model.continueInCodex(row)
                         } label: {
-                            Label("Codex 앱에서 이어가기", systemImage: "arrow.up.forward.app")
+                            Label("macos.continueincodex", systemImage: "arrow.up.forward.app")
                         }
                         .buttonStyle(.link)
-                        .help("진행 중인 작업이 끝나고 연결 해제를 확인하면 Codex 앱을 엽니다.")
+                        .help("macos.openscodexafteractiveworkfinishesandthe")
                         if let handoff = model.threadHandoffs[row.rowKey] ?? row.handoff,
                            handoff.requested && !handoff.canOpen {
-                            Button("인계 취소") { model.cancelThreadHandoff(row) }
+                            Button("macos.cancelhandoff") { model.cancelThreadHandoff(row) }
                                 .buttonStyle(.link)
                         }
                     }
@@ -1259,38 +1454,41 @@ struct DashboardRowView: View {
             }
             .font(.caption2)
             .foregroundStyle(.secondary)
-            if let controls = row.historyControls {
-                HStack {
-                    if controls.canAcknowledge { acknowledgeHistoryButton("확인함") }
-                    if changingHistory { ProgressView().controlSize(.mini) }
-                }
-                .font(.caption2)
-                .disabled(changingHistory)
-            }
             if !model.isRemoteClient,
                let handoff = model.threadHandoffs[row.rowKey] ?? row.handoff,
                handoff.requested && !handoff.canOpen {
                 Group {
                     switch handoff.reason {
-                    case "active-work": Text("진행 중인 작업이 끝나기를 기다리고 있습니다.")
-                    case "ephemeral", "persistence-unknown": Text("대화 저장을 확인할 수 없어 연결을 유지합니다.")
-                    case "background-work", "background-unknown": Text("백그라운드 작업 종료를 확인한 뒤 인계합니다.")
-                    case "shared-worker-protected", "upstream-unload-grace": Text("다른 대화와 Codex의 연결 해제를 기다리고 있습니다.")
-                    case "unsupported", "ownership-unconfirmed": Text("연결 해제를 확인하지 못했습니다. 다시 시도해 주세요.")
-                    default: Text("연결 해제를 확인하고 있습니다. 확인되면 Codex 앱을 엽니다.")
+                    case "active-work": Text("macos.waitingforactiveworktofinish")
+                    case "ephemeral", "persistence-unknown": Text("macos.keepingtheconnectionbecauseconversationstoragecouldnot")
+                    case "background-work", "background-unknown": Text("macos.handoffwillproceedafterbackgroundworkisconfirmed")
+                    case "shared-worker-protected", "upstream-unload-grace": Text("macos.waitingforotherconversationsandcodextorelease")
+                    case "unsupported", "ownership-unconfirmed": Text("macos.couldnotconfirmconnectionreleasepleasetryagain")
+                    default: Text("macos.checkingthattheconnectionisreleasedcodexwill")
                     }
                 }
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             }
             if let cancellation = row.latestTurn?.cancellation,
-               presentation == .idle || cancellation.targetKind != "activity" {
-                CancellationDisclosure(cancellation: cancellation)
+               presentation != .nestedJob || row.status == "cancelled",
+               presentation == .idle || presentation == .nestedJob || cancellation.targetKind != "activity" {
+                CancellationReason(cancellation: cancellation)
             }
-            if let history = row.history, !history.isEmpty {
+            if ["failed", "interrupted", "termination-failed"].contains(row.status),
+               let error = [row.latestTurn?.error, row.error].compactMap({ $0 }).first(where: {
+                   !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+               }) {
+                Text(error).font(.caption).textSelection(.enabled)
+            }
+            if historyTotal > 0 {
                 Button {
+                    let shouldLoad = !historyExpanded && displayedHistory.isEmpty
                     withAnimation(.easeInOut(duration: 0.15)) {
                         historyExpanded.toggle()
+                    }
+                    if shouldLoad {
+                        Task { await model.loadDashboardHistory(row) }
                     }
                 } label: {
                     HStack(spacing: 6) {
@@ -1298,7 +1496,11 @@ struct DashboardRowView: View {
                             .font(.caption2.weight(.semibold))
                             .rotationEffect(.degrees(historyExpanded ? 90 : 0))
                             .accessibilityHidden(true)
-                        Text("최근 실행 기록 \(row.historyCount ?? history.count)")
+                        Text(BridgeAppLocalization.format(
+                            "macos.recentruns",
+                            locale: model.interfaceLocale,
+                            historyTotal
+                        ))
                         Spacer(minLength: 0)
                     }
                     .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
@@ -1307,48 +1509,77 @@ struct DashboardRowView: View {
                 .buttonStyle(.plain)
                 .font(.caption)
                 .accessibilityValue(BridgeAppLocalization.string(
-                    historyExpanded ? "펼침" : "접힘",
+                    historyExpanded ? "macos.expanded" : "macos.collapsed",
                     locale: model.interfaceLocale
                 ))
 
                 if historyExpanded {
                     VStack(alignment: .leading, spacing: 6) {
-                        ForEach(Array(historyItems.enumerated()), id: \.offset) { _, item in
-                            HStack(alignment: .top, spacing: 7) {
-                                Image(systemName: StatusPresentation.symbol(item.turn.status))
-                                    .foregroundStyle(StatusPresentation.color(item.turn.status))
-                                    .accessibilityHidden(true)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    switch item.heading {
-                                    case .none:
-                                        EmptyView()
-                                    case .boundary:
-                                        Text("이전 Activity")
-                                            .font(.caption2.weight(.medium))
-                                            .foregroundStyle(.secondary)
-                                    case .title(let title):
-                                        Text(title)
-                                            .fontWeight(.semibold)
-                                    }
-                                    Text(turnTimeText(item.turn))
-                                        .foregroundStyle(.secondary)
-                                    DashboardExecutionLabel(text: DashboardExecutionPresentation.turnText(
-                                        item.turn.execution,
-                                        locale: model.interfaceLocale
-                                    ), execution: item.turn.execution)
-                                        .font(.caption2.monospaced())
-                                        .foregroundStyle(.secondary)
-                                    if let cancellation = item.turn.cancellation {
-                                        Text(cancellation.reason)
-                                            .foregroundStyle(.secondary)
-                                        Text("\(cancellationTargetLabel(cancellation.targetKind, locale: model.interfaceLocale)) · \(cancellationStatusLabel(cancellation.status, locale: model.interfaceLocale))")
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                    }
+                        if displayedHistory.count < historyTotal {
+                            Button("macos.showmore") { Task { await model.loadDashboardHistory(row, more: true) } }
+                                .disabled(model.dashboardHistoryLoading.contains(row.rowKey))
+                        }
+                        if displayedHistory.isEmpty {
+                            if let error = model.dashboardHistoryError(for: row) {
+                                Text(error)
+                                    .foregroundStyle(.secondary)
+                                Button("macos.common.refreshAction") {
+                                    Task { await model.loadDashboardHistory(row) }
                                 }
-                                Spacer(minLength: 0)
+                                .buttonStyle(.link)
+                            } else if model.dashboardHistory(for: row) != nil {
+                                Text("macos.therearenoretainedrecentruns")
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                HStack(spacing: 6) {
+                                    ProgressView()
+                                        .controlSize(.mini)
+                                    Text("macos.loadingoverview")
+                                }
+                                .foregroundStyle(.secondary)
+                                .task(id: row.rowKey) {
+                                    await model.loadDashboardHistory(row)
+                                }
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            ForEach(Array(historyItems.enumerated()), id: \.offset) { _, item in
+                                HStack(alignment: .top, spacing: 7) {
+                                    Image(systemName: StatusPresentation.symbol(item.turn.status))
+                                        .foregroundStyle(StatusPresentation.color(item.turn.status))
+                                        .accessibilityHidden(true)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        switch item.heading {
+                                        case .none:
+                                            EmptyView()
+                                        case .boundary:
+                                            Text("dashboard.history.activityBoundary")
+                                                .font(.caption2.weight(.medium))
+                                                .foregroundStyle(.secondary)
+                                        case .title(let title):
+                                            Text(title)
+                                                .fontWeight(.semibold)
+                                        }
+                                        DashboardTimeView(
+                                            turn: item.turn,
+                                            fallbackUpdatedAt: item.turn.updatedAt,
+                                            statusLabel: StatusPresentation.label(item.turn.status, locale: model.interfaceLocale),
+                                            locale: model.interfaceLocale
+                                        )
+                                            .foregroundStyle(.secondary)
+                                        DashboardExecutionLabel(text: DashboardExecutionPresentation.turnText(
+                                            item.turn.execution,
+                                            locale: model.interfaceLocale
+                                        ), execution: item.turn.execution)
+                                            .font(.caption2.monospaced())
+                                            .foregroundStyle(.secondary)
+                                        if let cancellation = item.turn.cancellation {
+                                            CancellationReason(cancellation: cancellation)
+                                        }
+                                    }
+                                    Spacer(minLength: 0)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                         }
                     }
                     .font(.caption)
@@ -1366,17 +1597,45 @@ struct DashboardRowView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(
-            "\(row.agentName), \(row.activityTitle ?? "Activity"), \(StatusPresentation.label(row.status, locale: model.interfaceLocale))"
+            BridgeAppLocalization.format(
+                "macos.format.commaSeparatedTriple",
+                locale: model.interfaceLocale,
+                row.agentName,
+                row.activityTitle ?? "Activity",
+                StatusPresentation.label(row.status, locale: model.interfaceLocale)
+            )
         )
+    }
+
+    private var currentExecutionLabel: some View {
+        DashboardExecutionLabel(text: BridgeAppLocalization.format(
+            "macos.format.labelValue",
+            locale: model.interfaceLocale,
+            BridgeAppLocalization.string(
+                row.bucket == "idle" ? "macos.latestrun" : "macos.run",
+                locale: model.interfaceLocale
+            ),
+            DashboardExecutionPresentation.turnText(
+                row.latestTurn?.execution,
+                locale: model.interfaceLocale
+            )
+        ), execution: row.latestTurn?.execution)
+            .font(.caption.monospaced())
+            .foregroundStyle(.secondary)
     }
 
     private var secondaryTitle: String? {
         if presentation == .idle {
             let activity = row.latestTurn?.activityTitle ?? row.activityTitle ??
-                BridgeAppLocalization.string("최근 Activity 없음", locale: model.interfaceLocale)
+                BridgeAppLocalization.string("macos.norecentactivity", locale: model.interfaceLocale)
             let project = row.projectName ??
-                BridgeAppLocalization.string("프로젝트 없음", locale: model.interfaceLocale)
-            return "\(activity) · \(project)"
+                BridgeAppLocalization.string("macos.noproject", locale: model.interfaceLocale)
+            return BridgeAppLocalization.format(
+                "macos.format.dotSeparatedPair",
+                locale: model.interfaceLocale,
+                activity,
+                project
+            )
         }
         return nil
     }
@@ -1388,9 +1647,21 @@ struct DashboardRowView: View {
         )
     }
 
+    private var displayedHistory: [DashboardTurn] {
+        if let detail = model.dashboardHistory(for: row) { return detail.history }
+        return model.dashboardEmbeddedHistory(for: row)
+    }
+
+    private var historyTotal: Int {
+        max(
+            row.historyCount ?? 0,
+            max(displayedHistory.count, model.dashboardHistory(for: row)?.historyCount ?? 0)
+        )
+    }
+
     private var historyItems: [DashboardHistoryItem] {
         DashboardHistoryPresentation.items(
-            history: row.history ?? [],
+            history: displayedHistory,
             latestTurn: row.latestTurn,
             enclosingActivityKey: row.activityKey,
             enclosingActivityTitle: enclosingActivityTitle ?? row.activityTitle
@@ -1401,441 +1672,25 @@ struct DashboardRowView: View {
         DashboardExecutionPresentation.text(execution, locale: model.interfaceLocale)
     }
 
-    private var rowTimeText: String {
-        DashboardTimePresentation.text(turn: row.latestTurn, fallbackUpdatedAt: row.updatedAt, locale: model.interfaceLocale)
-    }
-
-    private func turnTimeText(_ turn: DashboardTurn) -> String {
-        StatusPresentation.label(turn.status, locale: model.interfaceLocale) + " · " +
-            DashboardTimePresentation.text(turn: turn, fallbackUpdatedAt: turn.updatedAt, locale: model.interfaceLocale)
-    }
-
-    private func acknowledgeHistoryButton(_ title: LocalizedStringKey) -> some View {
-        Button(title) {
-            changingHistory = true
-            Task {
-                await model.acknowledgeHistory(row)
-                changingHistory = false
-            }
-        }
-        .buttonStyle(.link)
-    }
-}
-
-struct ConnectionRepairView: View {
-    @EnvironmentObject private var model: AppModel
-    @State private var apiKey = ""
-    @State private var tunnelId = ""
-    @State private var pasteMessage: String?
-    @State private var discoveredSettingsExpanded = false
-    @State private var diagnosticLogsExpanded = false
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 10) {
-                    BridgeBrandStatusIcon(health: model.health, size: 34)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Codex MCP Bridge for ChatGPT")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text("최초 연결 또는 복구")
-                            .font(.title3.bold())
-                    }
-                }
-                Text("기존 private .env가 유효하면 그대로 사용합니다. Keychain은 사용하지 않습니다.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-
-                GroupBox("연결 상태") {
-                    VStack(alignment: .leading, spacing: 7) {
-                        LabeledContent(
-                            "Bridge",
-                            value: BridgeAppLocalization.string(
-                                model.helperStatus?.bridge.connected == true ? "준비됨" :
-                                    model.isBridgeConnectionChecking ? "Codex 브리지 상태 확인 중" : "연결 안 됨",
-                                locale: model.interfaceLocale
-                            )
-                        )
-                        LabeledContent(
-                            "Secure MCP Tunnel",
-                            value: BridgeAppLocalization.string(
-                                model.helperStatus?.tunnel.connected == true ? "연결됨" :
-                                    model.isTunnelConnectionChecking ? "Secure MCP Tunnel 연결을 확인하고 있습니다." : "연결 안 됨",
-                                locale: model.interfaceLocale
-                            )
-                        )
-                        if let profile = model.helperStatus?.tunnel.profile {
-                            LabeledContent("프로필", value: profile)
-                        }
-                        if model.isTunnelConnectionChecking {
-                            Label(
-                                "Secure MCP Tunnel 연결을 확인하고 있습니다.",
-                                systemImage: "arrow.triangle.2.circlepath"
-                            )
-                                .font(.caption)
-                                .foregroundStyle(.blue)
-                        } else if let error = model.tunnelStatusErrorMessage {
-                            Label(error, systemImage: "exclamationmark.triangle")
-                                .font(.caption)
-                                .foregroundStyle(.orange)
-                                .textSelection(.enabled)
-                        }
-                    }
-                    .padding(.top, 4)
-                }
-
-                GroupBox("Secure MCP Tunnel") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Runtime API 키와 Tunnel을 OpenAI Platform에서 만든 뒤 연결합니다.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        VStack(alignment: .leading, spacing: 7) {
-                            HStack(spacing: 12) {
-                                Link(
-                                    "Runtime API 키 만들기",
-                                    destination: URL(
-                                        string: "https://platform.openai.com/settings/organization/api-keys"
-                                    )!
-                                )
-                                Link(
-                                    "Tunnel 만들기",
-                                    destination: URL(
-                                        string: "https://platform.openai.com/settings/organization/tunnels"
-                                    )!
-                                )
-                                Spacer()
-                            }
-                            Button("기존 설정 다시 찾기") {
-                                Task { await model.refreshSetupDiscovery() }
-                            }
-                            .disabled(model.isBusy)
-                        }
-
-                        if let candidates = model.setupDiscovery?.candidates,
-                           !candidates.isEmpty {
-                            FullRowDisclosure(
-                                "기존 설정 가져오기",
-                                isExpanded: $discoveredSettingsExpanded
-                            ) {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    ForEach(candidates) { candidate in
-                                        HStack(alignment: .center, spacing: 10) {
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text(candidateSourceLabel(candidate))
-                                                    .font(.caption.weight(.semibold))
-                                                Text(candidate.tunnelId)
-                                                    .font(.caption2.monospaced())
-                                                    .textSelection(.enabled)
-                                                Text(
-                                                    candidate.hasApiKey
-                                                        ? "Runtime API 키 사용 가능"
-                                                        : "Tunnel ID만 발견"
-                                                )
-                                                .font(.caption2)
-                                                .foregroundStyle(.secondary)
-                                            }
-                                            Spacer()
-                                            Button(
-                                                candidateCanConnect(candidate)
-                                                    ? "가져와 연결"
-                                                    : "Tunnel ID 사용"
-                                            ) {
-                                                useDiscoveredCandidate(candidate)
-                                            }
-                                            .disabled(model.isBusy)
-                                        }
-                                        .padding(8)
-                                        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
-                                    }
-                                }
-                                .padding(.top, 6)
-                            }
-                        }
-                        if let discoveryError = model.setupDiscoveryErrorMessage {
-                            Text(discoveryError)
-                                .font(.caption2)
-                                .foregroundStyle(.orange)
-                                .textSelection(.enabled)
-                        }
-
-                        if let currentTunnelID = model.helperStatus?.configuration.tunnelId {
-                            LabeledContent("현재 Tunnel ID") {
-                                HStack(spacing: 8) {
-                                    Text(currentTunnelID)
-                                        .font(.caption.monospaced())
-                                        .textSelection(.enabled)
-                                    Button {
-                                        NSPasteboard.general.clearContents()
-                                        NSPasteboard.general.setString(currentTunnelID, forType: .string)
-                                    } label: {
-                                        Image(systemName: "doc.on.doc")
-                                    }
-                                    .buttonStyle(.borderless)
-                                    .help("Tunnel ID 복사")
-                                    .accessibilityLabel("Tunnel ID 복사")
-                                }
-                            }
-                        }
-                        SecureField(
-                            BridgeAppLocalization.string(
-                                model.helperStatus?.configuration.hasApiKey == true
-                                    ? "새 키를 입력할 때만 교체"
-                                    : "Runtime API key",
-                                locale: model.interfaceLocale
-                            ),
-                            text: $apiKey
-                        )
-                        TextField("tunnel_…", text: $tunnelId)
-                        Button("클립보드에서 두 값 가져오기") {
-                            importSetupFromPasteboard()
-                        }
-                        .disabled(model.isBusy)
-                        if let pasteMessage {
-                            Text(pasteMessage)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                        Text("Tunnel ID는 tunnel_ 다음에 영문 소문자 또는 숫자 32자로 입력합니다.")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                        Text("저장 위치: \(model.helperStatus?.configuration.path ?? "~/.config/codex-mcp-bridge/.env")")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                        if let issue = model.runtimeConfigurationIssueMessage {
-                            Label(
-                                issue,
-                                systemImage: "exclamationmark.triangle"
-                            )
-                                .font(.caption)
-                                .foregroundStyle(.orange)
-                            if model.helperStatus?.configuration.issueProblem?.code ==
-                                "runtime-env-permissions-too-broad" ||
-                                model.helperStatus?.configuration.issue?.contains(
-                                    "permissions are too broad"
-                                ) == true {
-                                Button("앱 전용 권한으로 복구") {
-                                    Task { await model.repairConfigurationPermissions() }
-                                }
-                                .disabled(model.isBusy)
-                            }
-                        }
-                        Button("안전하게 저장하고 연결") {
-                            Task {
-                                if await model.saveSetup(apiKey: apiKey, tunnelId: tunnelId) {
-                                    apiKey = ""
-                                    tunnelId = ""
-                                }
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(
-                            model.isBusy ||
-                            (!(model.helperStatus?.configuration.hasApiKey ?? false) && apiKey.isEmpty) ||
-                            !tunnelIDInputIsValid
-                        )
-                    }
-                    .padding(.top, 4)
-                }
-
-                GroupBox("Codex 로그인") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label(
-                            codexLoginStatusText,
-                            systemImage: model.authStatus?.authenticated == true
-                                ? "checkmark.circle.fill"
-                                : "person.crop.circle.badge.exclamationmark"
-                        )
-                        .font(.caption)
-                        HStack {
-                            Button("Codex 브라우저 로그인 시작") {
-                                Task { await model.launchCodexLogin() }
-                            }
-                            .disabled(
-                                model.isBusy ||
-                                model.loginInProgress ||
-                                model.authStatus?.authenticated == true ||
-                                (model.authStatus == nil && model.authErrorMessage == nil)
-                            )
-                            Button("상태 새로고침") {
-                                Task { await model.refreshAuthStatus() }
-                            }
-                            .disabled(model.isBusy)
-                        }
-                        if let error = model.authErrorMessage {
-                            Text(error)
-                                .font(.caption)
-                                .foregroundStyle(.red)
-                                .textSelection(.enabled)
-                        }
-                    }
-                }
-
-                GroupBox("연결 후 다음 단계") {
-                    VStack(alignment: .leading, spacing: 7) {
-                        Label("앱이 Tunnel 프로필을 확인하고 Bridge 서버를 시작합니다.", systemImage: "1.circle")
-                        Label("ChatGPT Developer mode에서 이 Tunnel을 No Auth로 연결합니다.", systemImage: "2.circle")
-                        Label("설정 창의 프로젝트 탭에서 첫 작업 폴더를 등록합니다.", systemImage: "3.circle")
-                    }
-                    .font(.caption)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.top, 3)
-                }
-
-                FullRowDisclosure(
-                    "진단 로그 (민감정보 가림)",
-                    isExpanded: $diagnosticLogsExpanded
-                ) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Button("로그 새로고침") { Task { await model.refreshLogs() } }
-                            Spacer()
-                        }
-                        if model.logs.isEmpty {
-                            Text("표시할 helper 또는 runtime 로그가 없습니다.")
-                                .foregroundStyle(.secondary)
-                        } else {
-                            ForEach(model.logs) { entry in
-                                Text("\(DisplayFormat.dateTime(entry.at, locale: model.interfaceLocale)) · \(entry.source): \(entry.message)")
-                                    .textSelection(.enabled)
-                            }
-                        }
-                        if let error = model.logsErrorMessage {
-                            Text(error).foregroundStyle(.red).textSelection(.enabled)
-                        }
-                    }
-                    .font(.caption2.monospaced())
-                    .padding(.top, 4)
-                }
-
-                if let error = model.runtimeErrorMessage ?? model.startupErrorMessage ?? model.statusErrorMessage {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .textSelection(.enabled)
-                }
-            }
-            .padding(18)
-        }
-        .environment(\.locale, model.interfaceLocale)
-        .task {
-            await model.refreshAuthStatus()
-            await model.refreshSetupDiscovery()
-        }
-    }
-
-    private var codexLoginStatusText: String {
-        let key: String
-        if model.loginInProgress {
-            key = "브라우저 로그인을 기다리고 있습니다."
-        } else if model.authErrorMessage != nil {
-            key = "Codex 로그인 상태를 확인하지 못했습니다. 연결 설정을 확인하세요."
-        } else if let status = model.authStatus {
-            if !status.installed {
-                key = "Codex CLI를 찾을 수 없습니다. 연결 설정을 확인하세요."
-            } else if status.authenticated {
-                key = "Codex에 로그인되어 있습니다."
-            } else {
-                key = "Codex 로그인이 필요합니다. 첫 작업 전에 로그인하세요."
-            }
-        } else {
-            key = "로그인 상태를 확인하고 있습니다."
-        }
-        return BridgeAppLocalization.string(key, locale: model.interfaceLocale)
-    }
-
-    private func candidateCanConnect(_ candidate: TunnelSetupCandidate) -> Bool {
-        candidate.hasApiKey || (model.helperStatus?.configuration.hasApiKey ?? false)
-    }
-
-    private func candidateSourceLabel(_ candidate: TunnelSetupCandidate) -> String {
-        switch candidate.source {
-        case "runtime-config":
-            return BridgeAppLocalization.string(
-                "기존 Bridge 연결 파일",
-                locale: model.interfaceLocale
-            )
-        case "environment":
-            return BridgeAppLocalization.string(
-                "환경 변수",
-                locale: model.interfaceLocale
-            )
-        default:
-            return BridgeAppLocalization.format(
-                "tunnel-client 프로필 · %@",
-                locale: model.interfaceLocale,
-                candidate.profileName ?? "tunnel-client"
-            )
-        }
-    }
-
-    private func useDiscoveredCandidate(_ candidate: TunnelSetupCandidate) {
-        guard candidateCanConnect(candidate) else {
-            tunnelId = candidate.tunnelId
-            pasteMessage = BridgeAppLocalization.string(
-                "Tunnel ID를 입력했습니다. Runtime API 키를 추가해 주세요.",
-                locale: model.interfaceLocale
-            )
-            return
-        }
-        Task {
-            if await model.importDiscoveredSetup(candidateId: candidate.id) {
-                apiKey = ""
-                tunnelId = ""
-                pasteMessage = nil
-            }
-        }
-    }
-
-    private func importSetupFromPasteboard() {
-        guard let contents = NSPasteboard.general.string(forType: .string) else {
-            pasteMessage = BridgeAppLocalization.string(
-                "클립보드에서 연결 정보를 찾지 못했습니다.",
-                locale: model.interfaceLocale
-            )
-            return
-        }
-        let parsed = TunnelSetupInputParser.parse(contents)
-        if let discoveredAPIKey = parsed.apiKey { apiKey = discoveredAPIKey }
-        if let discoveredTunnelID = parsed.tunnelId { tunnelId = discoveredTunnelID }
-        pasteMessage = BridgeAppLocalization.string(
-            parsed.isEmpty
-                ? "클립보드에서 연결 정보를 찾지 못했습니다."
-                : "찾은 연결 정보를 입력했습니다.",
-            locale: model.interfaceLocale
-        )
-    }
-
-    private var tunnelIDInputIsValid: Bool {
-        let candidate = tunnelId.trimmingCharacters(in: .whitespacesAndNewlines)
-        if candidate.isEmpty {
-            return model.helperStatus?.configuration.hasTunnelId ?? false
-        }
-        return candidate.range(
-            of: #"^tunnel_[a-z0-9]{32}$"#,
-            options: .regularExpression
-        ) != nil
-    }
 }
 
 private enum StatusPresentation {
     static func label(_ status: String, locale: Locale) -> String {
         let key: String
         switch status {
-        case "running": key = "실행 중"
-        case "background-process-running": key = "백그라운드 실행"
-        case "input-required": key = "입력 필요"
-        case "approval-required": key = "승인 필요"
-        case "terminating": key = "종료 중"
-        case "termination-failed": key = "종료 실패"
-        case "liveness-unknown": key = "상태 확인 불가"
-        case "completed": key = "완료"
-        case "failed": key = "실패"
-        case "interrupted": key = "중단"
-        case "cancelled": key = "취소"
-        case "idle": key = "유휴"
-        case "orphaned": key = "연결 끊김"
+        case "running": key = "macos.running"
+        case "background-process-running": key = "macos.backgroundprocessrunning"
+        case "input-required": key = "macos.inputrequired"
+        case "approval-required": key = "macos.approvalrequired"
+        case "terminating": key = "macos.terminating"
+        case "termination-failed": key = "macos.terminationfailed"
+        case "liveness-unknown": key = "problem.kind.unknown"
+        case "completed": key = "dashboard.status.completed"
+        case "failed": key = "macos.failed"
+        case "interrupted": key = "macos.interrupted"
+        case "cancelled": key = "common.cancel"
+        case "idle": key = "macos.idle"
+        case "orphaned": key = "macos.disconnected"
         default: return status
         }
         return BridgeAppLocalization.string(key, locale: locale)
@@ -1848,6 +1703,7 @@ private enum StatusPresentation {
         case "approval-required": return "checkmark.shield.fill"
         case "completed": return "checkmark.circle.fill"
         case "idle": return "pause.circle"
+        case "cancelled": return "stop.circle"
         case "terminating": return "stop.circle"
         default: return "exclamationmark.circle.fill"
         }
@@ -1857,7 +1713,7 @@ private enum StatusPresentation {
         switch status {
         case "running", "background-process-running": return .blue
         case "completed": return .green
-        case "idle": return .secondary
+        case "idle", "cancelled": return .secondary
         case "input-required", "approval-required", "terminating": return .orange
         default: return .red
         }
@@ -2010,11 +1866,29 @@ enum DashboardExecutionPresentation {
             normalized(left.reasoningEffort) == normalized(right.reasoningEffort) &&
             !normalized(left.reasoningEffort).isEmpty &&
             normalizedServiceTier(left.serviceTier) == normalizedServiceTier(right.serviceTier) &&
+            (left.serviceTierScope ?? "conversation") == (right.serviceTierScope ?? "conversation") &&
             normalized(left.reroutedModel ?? "") == normalized(right.reroutedModel ?? "")
     }
 
     static func usesFastProcessing(_ execution: DashboardExecution?) -> Bool {
         normalizedServiceTier(execution?.serviceTier) == "fast"
+    }
+
+    static func speedBadge(_ execution: DashboardExecution?, includeLabel: Bool = false) -> String {
+        guard let execution else { return "" }
+        let mode = normalized(execution.processingSpeed ?? "")
+        guard mode.isEmpty || ["legacy", "fast", "ultrafast"].contains(mode) else { return "" }
+        let tier = normalized(execution.serviceTier ?? "")
+        if tier == "ultrafast" || mode == "ultrafast" { return "🚀" + (includeLabel ? " Ultrafast" : "") }
+        if ["fast", "priority"].contains(tier) || mode == "fast" { return "⚡" + (includeLabel ? " Fast" : "") }
+        return ""
+    }
+
+    static func speedBadgeHelp(_ execution: DashboardExecution?, locale: Locale) -> String {
+        let speed = speedBadge(execution, includeLabel: true)
+        return speed.isEmpty ? "" : BridgeAppLocalization.string(
+            "dashboard.execution.speedBadgeHint", locale: locale)
+            .replacingOccurrences(of: "{speed}", with: speed)
     }
 
     private static func normalizedServiceTier(_ value: String?) -> String {
@@ -2032,9 +1906,9 @@ enum DashboardExecutionPresentation {
             execution.reasoningEffort,
             locale: locale
         )
-        let actualModel = (execution.reroutedModelDisplayName ?? execution.reroutedModel)
-            .map { "\(model) → \($0)" } ?? model
-        return "\(actualModel) · \(effort)"
+        let speed = speedBadge(execution)
+        let routed = (execution.reroutedModelDisplayName ?? execution.reroutedModel).map { " → " + $0 } ?? ""
+        return model + (speed.isEmpty ? "" : " " + speed) + routed + " · " + effort
     }
 
     static func turnText(
@@ -2042,7 +1916,7 @@ enum DashboardExecutionPresentation {
         locale: Locale = Locale(identifier: "ko")
     ) -> String {
         execution.map { text($0, locale: locale) } ?? BridgeAppLocalization.string(
-            "모델 · 추론 확인 불가",
+            "macos.modelreasoningunavailable",
             locale: locale
         )
     }
@@ -2052,23 +1926,25 @@ enum DashboardExecutionPresentation {
     }
 }
 
-private func cancellationTargetLabel(_ value: String, locale: Locale) -> String {
-    let key: String
-    switch value {
-    case "activity": key = "Activity"
-    case "job": key = "작업"
-    default: return value
+enum CancellationPresentation {
+    static func targetLabel(_ value: String, locale: Locale) -> String {
+        let key: String
+        switch value {
+        case "activity": key = "cancellation.target.activity"
+        case "job": key = "cancellation.target.job"
+        default: key = "macos.localization.unavailable"
+        }
+        return BridgeAppLocalization.string(key, locale: locale)
     }
-    return BridgeAppLocalization.string(key, locale: locale)
-}
 
-private func cancellationStatusLabel(_ value: String, locale: Locale) -> String {
-    let key: String
-    switch value {
-    case "requested": key = "요청됨"
-    case "succeeded": key = "처리됨"
-    case "failed": key = "실패"
-    default: return value
+    static func statusLabel(_ value: String, locale: Locale) -> String {
+        let key: String
+        switch value {
+        case "requested": key = "macos.requested"
+        case "succeeded": key = "macos.processed"
+        case "failed": key = "macos.failed"
+        default: key = "macos.localization.unavailable"
+        }
+        return BridgeAppLocalization.string(key, locale: locale)
     }
-    return BridgeAppLocalization.string(key, locale: locale)
 }

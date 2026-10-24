@@ -1,0 +1,66 @@
+{
+  "beforeHead": "f710974b33fc40432653c815d175058cba1adaee",
+  "afterCodeHead": "fa0cc254596621da00370d8e1459bbf2f539e362",
+  "cases": {
+    "empty20": {
+      "before": {
+        "methodCounts": {
+          "claim": 20
+        },
+        "SELECT": 20,
+        "writeSQL": 0,
+        "BEGIN": 20,
+        "COMMIT": 20,
+        "changedRows": 0
+      },
+      "after": {
+        "methodCounts": {
+          "claim": 20
+        },
+        "SELECT": 20,
+        "writeSQL": 0,
+        "BEGIN": 0,
+        "COMMIT": 0,
+        "changedRows": 0
+      }
+    },
+    "releaseReclaim10": {
+      "before": {
+        "methodCounts": {
+          "release": 10,
+          "claim": 10
+        },
+        "SELECT": 30,
+        "writeSQL": 20,
+        "BEGIN": 20,
+        "COMMIT": 20,
+        "changedRows": 20
+      },
+      "after": {
+        "methodCounts": {
+          "claim": 10,
+          "release": 1
+        },
+        "SELECT": 11,
+        "writeSQL": 1,
+        "BEGIN": 1,
+        "COMMIT": 1,
+        "changedRows": 1
+      }
+    }
+  },
+  "progress400": {
+    "completionClaims": 0,
+    "BEGIN": 0,
+    "changedRows": 0
+  },
+  "backlog25": {
+    "batches": [
+      10,
+      10,
+      5
+    ],
+    "BEGIN": 6,
+    "changedRows": 50
+  }
+}

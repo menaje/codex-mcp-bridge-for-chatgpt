@@ -6,19 +6,38 @@ Persistent conversation connections now have an independent six-hour idle grace 
 
 ## Choose an installation
 
-Open **Settings → Codex** in the macOS app. App-bundled Codex, terminal installations and bridge-managed installations are listed together.
+Open **Settings → Codex Account & Installation** in the macOS app. App-bundled Codex, terminal installations and bridge-managed installations are listed together. Choose an authentication connection separately; see [account setup](setup.md#4-choose-your-codex-installation-and-account).
 
 | Situation | Initial behavior |
 | --- | --- |
 | Saved selection or explicit `CODEX_MCP_BRIDGE_CODEX` path | Preserve it; an explicit environment setting takes precedence. |
-| One independent external installation | Select and save it automatically. |
-| Several independent external installations | Ask the user to select once. |
-| Only a managed installation exists | Select the managed installation. |
+| External installations, without a saved choice | Recommend a managed CLI; offer explicit installation or external selection. Never choose an external binary automatically. |
+| An active managed installation exists, without a saved choice | Select the verified active managed installation, even if external candidates exist. |
 | No installation | Offer installation without starting it automatically. |
 
 Symlinks and official npm launchers resolving to the same native executable count as one installation. Independent copies remain distinct. Installing another CLI does not replace the saved choice. A missing selection requires repair or an explicit new choice; there is no automatic fallback.
 
 Terminal-managed servers can set an explicit executable path in their private runtime environment file. Remove that override and restart the helper before changing the saved selection in the app. Authentication, model discovery and execution use the same selected installation.
+
+The helper and launcher read Codex child settings from the same private file. For the executable override, precedence is: exported `CODEX_MCP_BRIDGE_CODEX`, exported legacy `CODEX_GPT_BRIDGE_CODEX`, private-file current name, private-file legacy name, saved selection, then an already installed active managed CLI. For `CODEX_HOME`, `CODEX_SQLITE_HOME`, `CODEX_MCP_BRIDGE_RUNTIME_HOME`, proxy and certificate settings, an exported value wins over the private-file value of the same name. The runtime home is resolved to one physical directory even when a parent path is a symlink. Changing it does not migrate or merge another directory's selection.
+
+The launcher records a fingerprint and the allowlisted Codex environment it applied in a current-user-only internal status file. Raw values are not returned through the Helper or MCP status APIs. If the private file changes while that runtime is running, Settings shows the current applied and running environment alongside the requested environment waiting for a safe restart. Existing workers retain their acquired command and lease. Account, usage, update checks, preferences and the billing connection continue to use the applied environment; login and actions that change the CLI wait for the restart. A new worker checks the executable's current protocol, including a changed npm native binary. A missing or damaged selected CLI produces an explicit error. No other executable on `PATH` takes its place.
+
+Only the allowlisted Codex child settings are copied into helper login and account processes: Codex home, SQLite location, runtime home, executable override, XDG and locale settings, proxies and certificate paths. Tunnel credentials and billing credentials stay in their separate paths. App-managed Codex children do not inherit an API key from the launcher. Management probes use a stable home directory; task turns retain the validated project or thread directory.
+
+The isolated execution process receives the chosen executable through its private parent envelope. It strips Bridge-only configuration variables, including runtime home and executable override, before starting a CLI worker. The worker still receives the Codex home, SQLite location and allowed proxy/certificate settings; it does not need access to Bridge state files.
+
+Thread creation, fork and resume have a separate initialization deadline of at
+least sixty seconds, allowing Codex's shell snapshot setup to finish or reach
+its own deadline. Ordinary control requests retain their thirty-second deadline.
+An initialization timeout does not retry the request or start a turn from a late
+response; the existing late-response journal records the returned identifiers.
+
+When Codex adds project trust records to its configuration, the bridge keeps the
+current model choices valid. Authentication policy, credentials, provider
+configuration and observed account changes still invalidate those choices.
+Account refresh and execution admission continue to observe the complete
+configuration file.
 
 ## Central execution policy
 
@@ -69,6 +88,8 @@ These settings govern Codex launched through the bridge. They do not rewrite
 
 Updates are manual. A version check or notification never downloads or activates a release. Pins, skipped releases and notification preferences survive restart. External app/terminal files can change independently of the saved path.
 
+When an update is available for the selected Bridge-managed CLI and update notifications are enabled, the local macOS menu-bar popover shows a download-circle icon beside Settings. Its tooltip and accessibility information say **Update Codex CLI**, show the installed and available versions, and identify the Bridge-managed CLI as the update target. Clicking it updates that CLI; Bridge application updates have their own release lifecycle. The same **Update Codex CLI** wording is used in Settings.
+
 A new managed installation resolves the latest stable release unless the user specifies or pins a version. Reinstall preserves the selected version. Failed registry lookup offers retry; it does not silently install the CI baseline. Previously installed versions remain available for explicit recovery.
 
 Managed files live under `~/.codex-mcp-bridge/runtimes` or `CODEX_MCP_BRIDGE_RUNTIME_HOME`. Each installation gets a separate version directory. HTTPS downloads, publisher integrity checks, safe archive extraction and recorded executable hashes protect installation integrity. The bridge does not alter external app bundles or global package-manager installations.
@@ -91,7 +112,7 @@ Managed installation performs an offline initialization in a temporary Codex hom
 
 Internal `codex mcp-server` and Codex SDK execution have been retired. OpenAI deprecated the former on [2026-08-24](https://learn.chatgpt.com/docs/changelog#codex-2026-08-24); the SDK removal decision is recorded in [#29](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/29#issuecomment-5565001692).
 
-Earlier backend settings resolve to App Server for new work and produce a startup notice. Historical backend identities remain readable, but cannot launch a retired worker or silently resume under another account or storage location. Start a fresh context with an explicit `handoffSummary` to carry a concise summary forward. This copies neither hidden context nor approvals and does not replay the original request. Existing transcripts and authentication profiles remain untouched. Old SDK-managed directories are not loaded or automatically deleted by the application.
+Earlier backend settings resolve to App Server for new work and produce a startup notice. Historical backend identities remain readable. They cannot launch a retired worker; continuation separately verifies the original storage and the selected runtime. Start a fresh context with an explicit `handoffSummary` to carry a concise summary forward. This copies neither hidden context nor approvals and does not replay the original request. Existing transcripts and authentication profiles remain untouched. Old SDK-managed directories are not loaded or automatically deleted by the application.
 
 Before replacing a running bridge or app, use graceful shutdown and finish or explicitly cancel active turns, pending approvals, user-input requests and background processes. If force-stop is necessary, use the existing explicit stop action and retain its cancellation record. After an unexpected restart, unfinished saved jobs are marked interrupted with a bridge-restart origin; they are not resumed or submitted again. Old approval and input requests belong to the retired process and cannot authorize a new App Server turn. Use the summary handoff after shutdown to continue the task.
 
@@ -99,9 +120,25 @@ The external ChatGPT MCP connection and Codex's own connected MCP tools remain s
 
 ## Authentication, storage and account usage
 
-Authentication uses the selected CLI's existing configuration. ChatGPT login and API-key authentication remain distinct; the bridge does not switch a failed ChatGPT login to API billing. A changed account identity invalidates account/model caches and prevents an existing worker from admitting another turn until restart. Same-account token refresh does not trigger that boundary.
+Authentication uses the selected CLI with the explicitly selected connection:
+its existing login, a separate persistent ChatGPT profile, or a separate API-key
+profile. The Bridge does not switch a failed ChatGPT login to API billing.
+Verification and safe application are described in [authentication connections](codex-auth-connections.md).
+A changed authentication context invalidates account/model caches. New turns
+revalidate current native authentication and managed restrictions, including the
+workspace when required. Account changes do not hide Bridge work or permanently
+bind an Agent to its creation account. Original storage and runtime support
+separately determine thread continuation.
 
-**Show bridge threads in Codex app** controls new and forked threads. New installations enable it by default for resumable context; existing saved preferences are preserved. Enabled threads are persisted in the selected Codex home; disabled threads are memory-only and cannot resume after the worker stops. This does not change older threads or guarantee immediate refresh of the app's list.
+Model catalog results are checked against the context acquired for the CLI call before they update memory or the private disk cache. A result that finishes after its selection, configuration or account context changes is discarded; a later read can still use a valid cache from its own context.
+
+**Conversation storage** controls persistent versus memory-only storage for new
+and forked conversations. **Show bridge threads in Codex app** is a separate
+visibility choice. Persistence allows later native resume when the original
+store and runtime remain available; visibility also requires compatible app
+storage and writer handoff. A private Bridge store does not automatically appear
+in the app. Existing settings preserve their migrated behavior, and neither
+choice rewrites older threads. See [storage and app handoff](thread-lifecycle.md).
 
 `CodexService` owns CLI selection, account projection, cache context and the optional billing connection. Account usage belongs to the account, not to an individual executable. Missing limits, credit balances or reset counts are unavailable, not zero. API mode does not imply unlimited requests or display a ChatGPT weekly quota. Reset credits are never redeemed automatically.
 
@@ -109,7 +146,7 @@ Codex settings show installation and account information. Status refresh runs ev
 
 Observed cumulative token counts are not added repeatedly and are not treated as a complete task invoice. Cost estimation requires explicit dated prices and attributable token data.
 
-**Optional API cost connection:** Supply a separate OpenAI Admin API key, organization ID and optional project ID under **API 비용 연결**. The key is stored with current-user permissions in `runtimes/billing/connection.json`, outside registered projects, and is never used for Codex execution or returned through MCP/status. Disconnect removes only this billing connection.
+**Optional API cost connection:** Supply a separate OpenAI Admin API key, organization ID and optional project ID under **API cost connection**. The key is stored with current-user permissions in `runtimes/billing/connection.json`, outside registered projects, and is never used for Codex execution or returned through MCP/status. Disconnect removes only this billing connection.
 
 Cost information covers the current UTC month and the configured organization/project, potentially including work outside this bridge. It is not attributed to an inference key or presented as an individual Agent's cost. Failed or unauthorized reads are unavailable; verified zero remains zero. Tests use mock billing responses.
 

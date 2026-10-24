@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -7,6 +7,7 @@ import {
   defaultStateProfile,
   enforceSandbox,
   findSensitiveFiles,
+  formatSensitiveFileFindings,
   isPathWithinRoot,
   loadConfig,
   requireAllowedCwd
@@ -19,9 +20,7 @@ describe("config policy", () => {
     });
 
     expect(config.allowedRoots).toEqual([]);
-    expect(config.mcpTransportMode).toBe("stateless");
-    expect(config.mcpSessionIdleTtlMs).toBe(30 * 60 * 1000);
-    expect(config.maxMcpSessions).toBe(64);
+    expect(config.allowedOrigins).toBeUndefined();
     expect(config.defaultSandbox).toBe("read-only");
     expect(config.defaultAccessStrategy).toBe("adaptive");
     expect(config.allowWorkspaceWrite).toBe(false);
@@ -41,6 +40,10 @@ describe("config policy", () => {
         ? /\.codex-mcp-bridge\/state\.sqlite$/
         : new RegExp(`\\.codex-mcp-bridge/profiles/${defaultStateProfile()}/state\\.sqlite$`)
     );
+    expect(config.telemetryDatabaseFile).toBe(
+      path.join(path.dirname(config.stateDatabaseFile), "telemetry.sqlite")
+    );
+    expect(config.bridgeSkillsDirectory).toBe(path.join(path.dirname(config.stateDatabaseFile), "skills"));
     expect(config).not.toHaveProperty("settingsStateFile");
     expect(config).not.toHaveProperty("sessionStateFile");
     expect(config).not.toHaveProperty("jobStateFile");
@@ -55,30 +58,22 @@ describe("config policy", () => {
     expect(config.startupWarnings).toEqual([]);
   });
 
-  it("loads and validates bounded stateful MCP transport settings", () => {
+  it("uses the single current MCP request transport and warns about retired session settings", () => {
     const config = loadConfig({
       CODEX_MCP_BRIDGE_NO_AUTH: "1",
       CODEX_MCP_BRIDGE_MCP_TRANSPORT_MODE: "stateful",
       CODEX_MCP_BRIDGE_MCP_SESSION_IDLE_TTL_MS: "120000",
-      CODEX_MCP_BRIDGE_MAX_MCP_SESSIONS: "12"
+      CODEX_MCP_BRIDGE_MAX_MCP_SESSIONS: "12",
+      CODEX_MCP_BRIDGE_ALLOWED_ORIGINS: "chatgpt.com,example.test"
     });
 
-    expect(config.mcpTransportMode).toBe("stateful");
-    expect(config.mcpSessionIdleTtlMs).toBe(120000);
-    expect(config.maxMcpSessions).toBe(12);
-
-    expect(() => loadConfig({
-      CODEX_MCP_BRIDGE_NO_AUTH: "1",
-      CODEX_MCP_BRIDGE_MCP_TRANSPORT_MODE: "persistent"
-    })).toThrow(/MCP transport mode/);
-    expect(() => loadConfig({
-      CODEX_MCP_BRIDGE_NO_AUTH: "1",
-      CODEX_MCP_BRIDGE_MCP_SESSION_IDLE_TTL_MS: "0"
-    })).toThrow(/positive integer/);
-    expect(() => loadConfig({
-      CODEX_MCP_BRIDGE_NO_AUTH: "1",
-      CODEX_MCP_BRIDGE_MAX_MCP_SESSIONS: "0"
-    })).toThrow(/positive integer/);
+    expect(config.allowedOrigins).toEqual(["chatgpt.com", "example.test"]);
+    expect(config).not.toHaveProperty("mcpTransportMode");
+    expect(config).not.toHaveProperty("mcpSessionIdleTtlMs");
+    expect(config).not.toHaveProperty("maxMcpSessions");
+    expect(config.startupWarnings).toHaveLength(1);
+    expect(config.startupWarnings[0]).toContain("MCP_TRANSPORT_MODE");
+    expect(config.startupWarnings[0]).toContain("retired and ignored");
   });
 
   it("ignores retired automatic-policy model and effort seeds", () => {
@@ -113,6 +108,7 @@ describe("config policy", () => {
     expect(config.modelCatalogTimeoutMs).toBe(15000);
     expect(config.modelCatalogStateFile).toBe("/tmp/codex-mcp-bridge-test-models.json");
     expect(config.stateDatabaseFile).toBe("/tmp/codex-mcp-bridge-test-state.sqlite");
+    expect(config.telemetryDatabaseFile).toBe("/tmp/telemetry.sqlite");
     expect(config.stateProfile).toBe("explicit");
     expect(config.defaultAccessStrategy).toBe("read-only");
     expect(config).not.toHaveProperty("defaultSessionMode");
@@ -153,6 +149,10 @@ describe("config policy", () => {
       CODEX_MCP_BRIDGE_NO_AUTH: "1",
       CODEX_MCP_BRIDGE_MODEL_SELECTION_CEILING: '[{"model":"gpt-5.6-sol"}]'
     })).toThrow(/reasoning effort/i);
+    expect(() => loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_MODEL_SELECTION_CEILING: '["\\ud800"]'
+    })).toThrow(/JSON array/);
   });
 
   it("requires an absolute SQLite state database file", () => {
@@ -162,6 +162,46 @@ describe("config policy", () => {
         CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: "relative/state.sqlite"
       })
     ).toThrow(/absolute path/);
+  });
+
+  it("keeps diagnostic telemetry in a distinct absolute database", () => {
+    expect(() => loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_TELEMETRY_DATABASE_FILE: "relative/telemetry.sqlite"
+    })).toThrow(/telemetry database file.*absolute path/);
+    expect(() => loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: "/tmp/shared.sqlite",
+      CODEX_MCP_BRIDGE_TELEMETRY_DATABASE_FILE: "/tmp/shared.sqlite"
+    })).toThrow(/different database files/);
+
+    const root = mkdtempSync(path.join(tmpdir(), "bridge-db-alias-"));
+    const actual = path.join(root, "actual");
+    const alias = path.join(root, "alias");
+    mkdirSync(actual);
+    symlinkSync(actual, alias, "dir");
+    try {
+      expect(() => loadConfig({
+        CODEX_MCP_BRIDGE_NO_AUTH: "1",
+        CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: path.join(actual, "shared.sqlite"),
+        CODEX_MCP_BRIDGE_TELEMETRY_DATABASE_FILE: path.join(alias, "shared.sqlite")
+      })).toThrow(/different database files/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps bridge-owned skills in an explicit private directory when configured", () => {
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: "/tmp/codex-mcp-bridge-test-state.sqlite",
+      CODEX_MCP_BRIDGE_SKILLS_DIRECTORY: "/tmp/codex-mcp-bridge-test-skills"
+    });
+    expect(config.bridgeSkillsDirectory).toBe("/tmp/codex-mcp-bridge-test-skills");
+    expect(() => loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_SKILLS_DIRECTORY: "relative/skills"
+    })).toThrow(/bridge skills directory.*absolute path/);
   });
 
   it("selects the build-stage profile by default and keeps explicit profiles isolated", () => {
@@ -188,7 +228,8 @@ describe("config policy", () => {
     });
     expect(stable.stateProfile).toBe("stable");
     expect(stable.stateDatabaseFile).toMatch(/\.codex-mcp-bridge\/state\.sqlite$/);
-    expect(stable.startupWarnings).toEqual(
+    expect(stable.startupWarnings).toEqual([]);
+    expect(stable.developerStartupWarnings).toEqual(
       defaultStateProfile() === "stable"
         ? []
         : [expect.stringContaining("explicitly targets the stable state profile")]
@@ -389,6 +430,42 @@ describe("config policy", () => {
     expect(await findSensitiveFiles(root)).toEqual([]);
   });
 
+  it("allows only the narrowly benign npm settings bundled with generated VS Code runtimes", async () => {
+    const benignRoot = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
+    writeFileSync(
+      path.join(benignRoot, ".npmrc"),
+      'legacy-peer-deps="true"\ntimeout=180000\n'
+    );
+    expect(await findSensitiveFiles(benignRoot)).toEqual([]);
+
+    const credentialRoot = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
+    writeFileSync(path.join(credentialRoot, ".npmrc"), "//registry.example/:_authToken=secret\n");
+    expect(await findSensitiveFiles(credentialRoot)).toEqual([
+      path.join(credentialRoot, ".npmrc")
+    ]);
+
+    const unknownRoot = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
+    writeFileSync(path.join(unknownRoot, ".npmrc"), "registry=https://registry.npmjs.org\n");
+    expect(await findSensitiveFiles(unknownRoot)).toEqual([
+      path.join(unknownRoot, ".npmrc")
+    ]);
+  });
+
+  it("formats bounded project-relative sensitive-file diagnostics", () => {
+    const root = path.join(path.sep, "private", "project");
+    const findings = [
+      path.join(root, "config", ".env"),
+      path.join(root, "certs", "server.pem"),
+      path.join(root, "third.key")
+    ];
+
+    expect(formatSensitiveFileFindings(root, findings, 2)).toBe(
+      '"config/.env", "certs/server.pem" (+1 more)'
+    );
+    expect(formatSensitiveFileFindings(root, [path.join(path.sep, "outside", "secret.key")]))
+      .toBe('"secret.key"');
+  });
+
   it("fails closed when the working directory itself cannot be scanned", async () => {
     const rootFile = path.join(mkdtempSync(path.join(tmpdir(), "bridge-root-")), "not-a-directory");
     writeFileSync(rootFile, "plain file\n");
@@ -418,5 +495,14 @@ describe("config policy", () => {
     symlinkSync(target, path.join(root, ".env"));
 
     expect(await findSensitiveFiles(root)).toEqual([path.join(root, ".env")]);
+  });
+
+  it("does not apply the benign npm exception to symlinks", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
+    const target = path.join(root, "generated-npm-settings");
+    writeFileSync(target, 'legacy-peer-deps="true"\ntimeout=180000\n');
+    symlinkSync(target, path.join(root, ".npmrc"));
+
+    expect(await findSensitiveFiles(root)).toEqual([path.join(root, ".npmrc")]);
   });
 });

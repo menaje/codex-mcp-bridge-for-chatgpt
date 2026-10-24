@@ -1,0 +1,15 @@
+{
+  "passed": 9,
+  "artifacts": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-postmerge-evidence-20261008/card-summary",
+  "checks": [
+    "three counts",
+    "four filters",
+    "scope totals",
+    "refresh",
+    "history pagination",
+    "stale enrichment",
+    "empty",
+    "terminating",
+    "unknown background"
+  ]
+}

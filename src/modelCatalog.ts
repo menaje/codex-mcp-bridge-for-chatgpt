@@ -13,6 +13,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import * as z from "zod/v4";
 import type { CodexBackendKind } from "./config.js";
+import { decodeUtf8Strict, parseJsonTextStrict, parseJsonUtf8Strict } from "./textIntegrity.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -80,8 +81,18 @@ export type CodexModelCatalogProvider = {
 };
 
 type CatalogData = Omit<CodexModelCatalogSnapshot, "cached" | "stale" | "validation" | "warning">;
-type CatalogCommand = (command: string, args: string[], timeoutMs: number) => Promise<string>;
-type PersistedCatalog = { version: 1; fetchedAt: string; raw: string };
+type AcquiredCatalogTarget = {
+  command: string;
+  environment?: NodeJS.ProcessEnv;
+  cwd?: string;
+  cacheContext?: string;
+  isContextCurrent?: () => boolean;
+  release: () => Promise<void>;
+};
+type CatalogCommand = (command: string, args: string[], timeoutMs: number, target?: AcquiredCatalogTarget) => Promise<string>;
+type CatalogTarget = string | (() => Promise<string | AcquiredCatalogTarget>);
+type PersistedCatalog = { version: 1; fetchedAt: string; raw: string } |
+  { version: 2; context: string; fetchedAt: string; raw: string };
 
 const rawEffortSchema = z
   .object({
@@ -170,14 +181,15 @@ export class CodexCliModelCatalog implements CodexModelCatalogProvider {
   private readonly listeners = new Set<ModelCatalogListener>();
 
   constructor(
-    private readonly codexCommand: string | (() => Promise<string>),
+    private readonly codexCommand: CatalogTarget,
     private readonly cacheTtlMs = 10 * 60 * 1000,
     private readonly timeoutMs = 30 * 1000,
     private readonly runCatalogCommand: CatalogCommand = runCodexCatalogCommand,
     private readonly now: () => number = Date.now,
-    private readonly stateFile?: string
+    private readonly stateFile?: string,
+    private readonly cacheContext?: string
   ) {
-    if (typeof this.codexCommand === "string") this.loadPersistedCache();
+    if (typeof this.codexCommand === "string" || this.cacheContext) this.loadPersistedCache();
   }
 
   async getCatalog(options: ModelCatalogOptions = {}): Promise<CodexModelCatalogSnapshot> {
@@ -200,6 +212,7 @@ export class CodexCliModelCatalog implements CodexModelCatalogProvider {
         validation: "valid"
       };
     } catch (error) {
+      if (error instanceof Error && error.message.startsWith("CODEX_ACCOUNT_CHANGED:")) throw error;
       if (this.cached) {
         return {
           ...this.cached.data,
@@ -244,44 +257,65 @@ export class CodexCliModelCatalog implements CodexModelCatalogProvider {
   }
 
   private async fetchCatalog(): Promise<CatalogData> {
-    const command = typeof this.codexCommand === "string" ? this.codexCommand : await this.codexCommand();
-    const stdout = await this.runCatalogCommand(command, ["debug", "models"], this.timeoutMs);
-    const models = parseCodexModelCatalog(stdout);
-    const fetchedAtMs = this.now();
-    const data: CatalogData = {
-      source: "codex-cli",
-      fetchedAt: new Date(fetchedAtMs).toISOString(),
-      validatedAt: new Date(fetchedAtMs).toISOString(),
-      fingerprint: modelCatalogFingerprint(models),
-      models
-    };
-    const previousFingerprint = this.cached?.data.fingerprint;
-    this.cached = {
-      data,
-      expiresAt: fetchedAtMs + this.cacheTtlMs
-    };
-    this.persistCache({ version: 1, fetchedAt: data.fetchedAt, raw: stdout });
-    if (previousFingerprint !== data.fingerprint) {
-      emitCatalogChanged(this.listeners, {
-        backendKind: "app-server",
-        ...(previousFingerprint ? { previousFingerprint } : {}),
-        snapshot: {
-          ...data,
-          cached: false,
-          stale: false,
-          validation: "valid"
-        }
-      });
+    const target = typeof this.codexCommand === "string" ? this.codexCommand : await this.codexCommand();
+    const command = typeof target === "string" ? target : target.command;
+    try {
+      this.assertCacheContext(target);
+      const stdout = await this.runCatalogCommand(command, ["debug", "models"], this.timeoutMs,
+        typeof target === "string" ? undefined : target);
+      const models = parseCodexModelCatalog(stdout);
+      const fetchedAtMs = this.now();
+      const data: CatalogData = {
+        source: "codex-cli",
+        fetchedAt: new Date(fetchedAtMs).toISOString(),
+        validatedAt: new Date(fetchedAtMs).toISOString(),
+        fingerprint: modelCatalogFingerprint(models),
+        models
+      };
+      // Keep the selection lease until both cache writes finish. There is no
+      // await between validation and publication of the result.
+      this.assertCacheContext(target);
+      const previousFingerprint = this.cached?.data.fingerprint;
+      this.cached = {
+        data,
+        expiresAt: fetchedAtMs + this.cacheTtlMs
+      };
+      this.persistCache(this.cacheContext
+        ? { version: 2, context: this.cacheContext, fetchedAt: data.fetchedAt, raw: stdout }
+        : { version: 1, fetchedAt: data.fetchedAt, raw: stdout });
+      if (previousFingerprint !== data.fingerprint) {
+        emitCatalogChanged(this.listeners, {
+          backendKind: "app-server",
+          ...(previousFingerprint ? { previousFingerprint } : {}),
+          snapshot: {
+            ...data,
+            cached: false,
+            stale: false,
+            validation: "valid"
+          }
+        });
+      }
+      return data;
+    } finally {
+      if (typeof target !== "string") await target.release();
     }
-    return data;
+  }
+
+  private assertCacheContext(target: string | AcquiredCatalogTarget): void {
+    if (!this.cacheContext) return;
+    if (typeof target === "string" || target.cacheContext !== this.cacheContext ||
+        target.isContextCurrent?.() !== true) {
+      throw new Error("CODEX_ACCOUNT_CHANGED: Refresh the model choices for the current account.");
+    }
   }
 
   private loadPersistedCache(): void {
     if (!this.stateFile || !existsSync(this.stateFile)) return;
     try {
       if (statSync(this.stateFile).size > 5 * 1024 * 1024) return;
-      const parsed = JSON.parse(readFileSync(this.stateFile, "utf8")) as unknown;
+      const parsed = parseJsonUtf8Strict(readFileSync(this.stateFile), "Model catalog cache") as unknown;
       if (!isPersistedCatalog(parsed)) return;
+      if (this.cacheContext ? parsed.version !== 2 || parsed.context !== this.cacheContext : parsed.version !== 1) return;
       const fetchedAtMs = Date.parse(parsed.fetchedAt);
       if (!Number.isFinite(fetchedAtMs)) return;
       const models = parseCodexModelCatalog(parsed.raw);
@@ -318,7 +352,7 @@ export class CodexCliModelCatalog implements CodexModelCatalogProvider {
 export function parseCodexModelCatalog(raw: string): CodexModelDescriptor[] {
   let json: unknown;
   try {
-    json = JSON.parse(raw);
+    json = parseJsonTextStrict(raw, "Codex model catalog");
   } catch {
     throw new Error("Codex returned invalid JSON for its model catalog.");
   }
@@ -422,7 +456,8 @@ export class BackendAwareModelCatalog implements CodexModelCatalogProvider {
     private readonly cliCatalog: CodexModelCatalogProvider,
     private readonly loadAppServerCatalog: AppServerCatalogLoader,
     private readonly cacheTtlMs = 10 * 60 * 1000,
-    private readonly now: () => number = Date.now
+    private readonly now: () => number = Date.now,
+    private readonly isContextCurrent?: () => boolean
   ) {
 
   }
@@ -454,11 +489,15 @@ export class BackendAwareModelCatalog implements CodexModelCatalogProvider {
         validation: "valid",
         models
       };
+      if (this.isContextCurrent?.() === false) {
+        throw new Error("CODEX_ACCOUNT_CHANGED: Refresh the model choices for the current account.");
+      }
       this.appCached = { snapshot, expiresAt: now + this.cacheTtlMs };
       this.appFallbackWarning = undefined;
       this.noteLastKnownGood("app-server", snapshot);
       return snapshot;
     } catch (error) {
+      if (error instanceof Error && error.message.startsWith("CODEX_ACCOUNT_CHANGED:")) throw error;
       if (this.appCached) {
         this.appFallbackWarning =
           `Could not refresh the App Server model catalog; using the last successful result. ${errorMessage(error)}`;
@@ -471,6 +510,9 @@ export class BackendAwareModelCatalog implements CodexModelCatalogProvider {
         };
       }
       const fallback = await this.cliCatalog.getCatalog({ ...options, backendKind: "app-server" });
+      if (this.isContextCurrent?.() === false) {
+        throw new Error("CODEX_ACCOUNT_CHANGED: Refresh the model choices for the current account.");
+      }
       this.appFallbackWarning =
         `Could not load the App Server model catalog; the Codex CLI fallback is unverified for policy activation. ${errorMessage(error)}`;
       return {
@@ -618,11 +660,11 @@ function emitCatalogChanged(
 
 async function runCodexCatalogCommand(command: string, args: string[], timeoutMs: number): Promise<string> {
   const { stdout } = await execFileAsync(command, args, {
-    encoding: "utf8",
+    encoding: "buffer",
     timeout: timeoutMs,
     maxBuffer: 5 * 1024 * 1024
   });
-  return stdout;
+  return decodeUtf8Strict(stdout as Buffer, "Codex model catalog");
 }
 
 function errorMessage(error: unknown): string {
@@ -634,7 +676,7 @@ function isPersistedCatalog(value: unknown): value is PersistedCatalog {
     typeof value === "object" &&
     value !== null &&
     "version" in value &&
-    value.version === 1 &&
+    (value.version === 1 || (value.version === 2 && "context" in value && typeof value.context === "string")) &&
     "fetchedAt" in value &&
     typeof value.fetchedAt === "string" &&
     "raw" in value &&

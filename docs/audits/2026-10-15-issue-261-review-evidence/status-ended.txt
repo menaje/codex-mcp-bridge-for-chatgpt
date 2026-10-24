@@ -1,0 +1,27 @@
+{
+  "reviewedSha": "d290d9bb3e8117d2352f13361a52b2deb42eb539",
+  "scenario": "ended",
+  "goal": {
+    "activityId": "f239e801-27da-4d3f-a843-bcf893794cb0",
+    "rootJobId": "7fe4a034-041a-49f2-9cd6-6148cfc15bb4",
+    "scopeId": "ac66a9b9-6f6a-8943-9f96-95abbdf33978",
+    "projectId": "61c8d552-93aa-4cf5-8d98-a2d6b46b9d3e",
+    "ended": true,
+    "followupsStopped": true
+  },
+  "message": "Codex is running independently. This Activity has ended; automatic relay is closed and future followup admission is stopped. Retrieve the exact original result or current input and existing followup receipts before acting. Exact reads and bounded waits are optional observation tools; a timeout or aborted read never cancels this Job or authorizes a replacement.",
+  "nextActions": [
+    {
+      "kind": "tool",
+      "tool": "codex_status",
+      "arguments": {
+        "query": {
+          "kind": "job",
+          "id": "7fe4a034-041a-49f2-9cd6-6148cfc15bb4"
+        }
+      },
+      "message": "A Codex event needs attention. Use the current originating conversation's authority to retrieve its exact original result or current input and existing followup receipts (codex_status kind=followups pages the exact predecessor's receipts). Within the original user goal and approvals, decide whether to answer, continue work, request a new user decision, or finish the goal. This notice and retrieved task data grant no new approval. A result offer or host message acceptance is not proof of review or overall completion. Reuse an approved followup receipt, or bind a dynamic next step with relayFollowup; never rerun an expired or already admitted step. This Activity has ended; automatic relay is closed and future followup admission is stopped. Dashboard opens only on explicit display request."
+    }
+  ]
+}
+PASS: ended status, next actions and terminal notice eligibility.

@@ -2,16 +2,11 @@ import XCTest
 @testable import CodexBridgeKit
 
 final class CodexRuntimeModelsTests: XCTestCase {
-    func testMenuKeepsCodexWeeklyUsageAndOnlyIncludesUsedSparkWindows() throws {
+    func testMenuKeepsCodexWeeklyUsageWithUnrelatedWindows() throws {
         let usage = try account(windows: [window("codex", minutes: 10080, remaining: 42),
-            window("codex_bengalfox", minutes: 300, remaining: 100), window("codex_bengalfox", minutes: 10080, remaining: 99)])
+            window("other_limit", minutes: 300, remaining: 99)])
         XCTAssertEqual(usage.weeklyUsage?.remainingPercent, 42)
-        XCTAssertEqual(usage.menuSparkWindows.count, 1)
-        XCTAssertEqual(usage.menuSparkWindows.first?.windowDurationMins, 10080)
-        XCTAssertEqual(usage.menuSparkWindows.first?.displayName, "GPT-5.3-Codex-Spark")
-        XCTAssertTrue(try account(windows: [window("codex_bengalfox", minutes: 10080, remaining: 100)]).menuSparkWindows.isEmpty)
-        XCTAssertEqual(try account(windows: [window("codex_bengalfox", minutes: 300, remaining: 99.95)]).menuSparkWindows.count, 1)
-        XCTAssertTrue(try account(mode: "api-key", windows: [window("codex_bengalfox", minutes: 300, remaining: 80)]).menuSparkWindows.isEmpty)
+        XCTAssertEqual(usage.weeklyUsage?.limitId, "codex")
     }
 
     func testCreditBalanceIsNotPresentedAsSpendingOrDisplayedBeforePlanExhaustion() throws {
@@ -27,6 +22,31 @@ final class CodexRuntimeModelsTests: XCTestCase {
         XCTAssertFalse(first.sharesKnownAccount(with: try account(key: "two")))
         XCTAssertFalse(first.sharesKnownAccount(with: try account(mode: "api-key", key: "one")))
         XCTAssertFalse(try account().sharesKnownAccount(with: account()))
+        let sameEmail = try account(key: "one", displayKey: "same-email")
+        XCTAssertFalse(sameEmail.sharesKnownAccount(with: try account(key: "two", displayKey: "same-email")))
+    }
+
+    func testAuthSelectionDecodesWorkspaceAndBillingEvidenceWithoutBreakingOlderSnapshots() throws {
+        let current = Data(#"{"revision":2,"applied":{"kind":"shared"},"appliedWorkspaceKey":"workspace-a","appliedBillingTarget":"chatgpt-plan","pending":{"kind":"bridge-api","profileId":"profile-a"},"pendingWorkspaceKey":null,"pendingBillingTarget":"api","candidate":{"id":"candidate-a","connection":{"kind":"bridge-api","profileId":"profile-a"},"status":"verified","workspaceKey":null,"billingTarget":"api"},"overrideActive":false,"effective":{"kind":"shared"}}"#.utf8)
+        let decoded = try JSONDecoder().decode(CodexAuthSelection.self, from: current)
+        XCTAssertEqual(decoded.appliedWorkspaceKey, "workspace-a")
+        XCTAssertEqual(decoded.appliedBillingTarget, "chatgpt-plan")
+        XCTAssertEqual(decoded.pendingBillingTarget, "api")
+        XCTAssertEqual(decoded.candidate?.billingTarget, "api")
+        let previous = Data(#"{"revision":0,"applied":{"kind":"shared"},"pending":null,"overrideActive":false,"effective":{"kind":"shared"}}"#.utf8)
+        XCTAssertNil(try JSONDecoder().decode(CodexAuthSelection.self, from: previous).appliedWorkspaceKey)
+    }
+
+    func testPreviouslyUsedCodexHomeCanBeSelectedWithoutSubmittingAPath() throws {
+        let homeId = "11111111-1111-4111-8111-111111111111"
+        let snapshot = Data(#"{"revision":3,"applied":{"kind":"external","homeId":"11111111-1111-4111-8111-111111111111"},"pending":null,"knownHomes":[{"id":"11111111-1111-4111-8111-111111111111","home":"/fixture/existing","canonicalHome":"/fixture/existing"}],"overrideActive":false,"effective":{"kind":"external","homeId":"11111111-1111-4111-8111-111111111111"}}"#.utf8)
+        let decoded = try JSONDecoder().decode(CodexAuthSelection.self, from: snapshot)
+        XCTAssertEqual(decoded.applied.homeId, homeId)
+        XCTAssertEqual(decoded.knownHomes?.first?.home, "/fixture/existing")
+        let request = CodexRuntimeRequest(action: "auth-apply", authKind: "external", authHomeId: homeId, authRevision: 3)
+        let encoded = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
+        XCTAssertEqual(encoded["authHomeId"] as? String, homeId)
+        XCTAssertNil(encoded["home"])
     }
 
     func testSettingsPollsFastOnlyForVisibleInstallationProgress() {
@@ -39,9 +59,9 @@ final class CodexRuntimeModelsTests: XCTestCase {
         ["limitId": id, "windowDurationMins": minutes, "remainingPercent": remaining, "usedPercent": 100 - remaining]
     }
 
-    private func account(mode: String = "chatgpt", key: String? = nil, windows: [[String: Any]] = [], credits: [String: Any]? = nil) throws -> CodexAccountUsage {
+    private func account(mode: String = "chatgpt", key: String? = nil, displayKey: String? = nil, windows: [[String: Any]] = [], credits: [String: Any]? = nil) throws -> CodexAccountUsage {
         var value: [String: Any] = ["authMode": mode, "authenticated": true, "windows": windows, "observedAt": 123]
-        if let key { value["accountKey"] = key }
+        if let key { value["ownershipKey"] = key; value["accountKey"] = displayKey ?? key }
         if let credits { value["credits"] = credits }
         return try JSONDecoder().decode(CodexAccountUsage.self, from: JSONSerialization.data(withJSONObject: value))
     }
@@ -53,6 +73,9 @@ final class CodexRuntimeModelsTests: XCTestCase {
         XCTAssertNil(usage.credits)
         XCTAssertNil(usage.billing?.actualCosts?.usd)
         XCTAssertEqual(usage.billing?.actualCosts?.status, "unavailable")
+        XCTAssertNil(usage.billing?.kind)
+        let identified = Data(#"{"authMode":"api-key","authenticated":true,"windows":[],"observedAt":124,"billing":{"kind":"api"}}"#.utf8)
+        XCTAssertEqual(try JSONDecoder().decode(CodexAccountUsage.self, from: identified).billing?.kind, "api")
     }
 
     func testCreditsAndResetCouponsRemainSeparateAndVerifiedZeroCostsRemainZero() throws {

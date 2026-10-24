@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
+import { parseJsonTextStrict } from "./textIntegrity.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { MODEL_POLICY_SCHEMA_VERSION } from "./modelPolicy.js";
 import { PRODUCT_INFO } from "./productInfo.js";
@@ -342,7 +343,7 @@ function readRuntimeIdentity(file: string): StateMigrationBackupMetadata["source
             | undefined;
           if (!row) return null;
           try {
-            const value = JSON.parse(row.payload) as { schemaVersion?: unknown };
+            const value = parseJsonTextStrict(row.payload, "Stored user settings") as { schemaVersion?: unknown };
             return Number.isSafeInteger(value.schemaVersion) ? Number(value.schemaVersion) : null;
           } catch {
             return null;

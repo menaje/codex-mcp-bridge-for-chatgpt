@@ -1,0 +1,49 @@
+Building for debugging...
+[0/5] Write sources
+[1/5] Write swift-version--58304C5D6DBC2206.txt
+[3/5] Compiling CodexBridgeKitTests AppPresentationTests.swift
+[4/5] Emitting module CodexBridgeKitTests
+[4/6] Write Objects.LinkFileList
+[5/6] Linking CodexBridgeMacPackageTests
+Build complete! (27.60s)
+Test Suite 'Selected tests' started at 2026-10-07 19:41:26.181.
+Test Suite 'CodexBridgeMacPackageTests.xctest' started at 2026-10-07 19:41:26.192.
+Test Suite 'AppPresentationTests' started at 2026-10-07 19:41:26.192.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testIssue242HelperRPCFailureLosesRetainedObservationAfterGrace]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testIssue242HelperRPCFailureLosesRetainedObservationAfterGrace]' passed (0.051 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testIssue242RepeatedDashboardAndHelperMethodCounts]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testIssue242RepeatedDashboardAndHelperMethodCounts]' passed (0.034 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testTimedOutBridgeObservationRetainsLastDashboardAsUnconfirmed]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testTimedOutBridgeObservationRetainsLastDashboardAsUnconfirmed]' passed (0.026 seconds).
+Test Suite 'AppPresentationTests' passed at 2026-10-07 19:41:26.306.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.112 (0.113) seconds
+Test Suite 'CompletionNotificationsTests' started at 2026-10-07 19:41:26.306.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testFailedDeliveryReleasesTheClaimForRetry]' started.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testFailedDeliveryReleasesTheClaimForRetry]' passed (0.007 seconds).
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testIssue242RepeatedEmptyClaimsAndPermissionGate]' started.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testIssue242RepeatedEmptyClaimsAndPermissionGate]' passed (0.015 seconds).
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testSuccessfulDeliveryClaimsAndAcknowledgesOpaqueEvents]' started.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testSuccessfulDeliveryClaimsAndAcknowledgesOpaqueEvents]' passed (0.004 seconds).
+Test Suite 'CompletionNotificationsTests' passed at 2026-10-07 19:41:26.332.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.025 (0.026) seconds
+Test Suite 'ConnectionRecoveryWindowTests' started at 2026-10-07 19:41:26.332.
+Test Case '-[CodexBridgeKitTests.ConnectionRecoveryWindowTests testConfirmedProcessExitDoesNotWaitForRecoveryGrace]' started.
+Test Case '-[CodexBridgeKitTests.ConnectionRecoveryWindowTests testConfirmedProcessExitDoesNotWaitForRecoveryGrace]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.ConnectionRecoveryWindowTests testOldExpiryCannotEndANewRecoveryWindow]' started.
+Test Case '-[CodexBridgeKitTests.ConnectionRecoveryWindowTests testOldExpiryCannotEndANewRecoveryWindow]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.ConnectionRecoveryWindowTests testRepeatedOrCachedFailuresCannotExtendRecoveryIndefinitely]' started.
+Test Case '-[CodexBridgeKitTests.ConnectionRecoveryWindowTests testRepeatedOrCachedFailuresCannotExtendRecoveryIndefinitely]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.ConnectionRecoveryWindowTests testTransientFailureRecoversWithoutDeclaringAnOutage]' started.
+Test Case '-[CodexBridgeKitTests.ConnectionRecoveryWindowTests testTransientFailureRecoversWithoutDeclaringAnOutage]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.ConnectionRecoveryWindowTests testWakeAndClockChangesStartAFreshBoundedWindow]' started.
+Test Case '-[CodexBridgeKitTests.ConnectionRecoveryWindowTests testWakeAndClockChangesStartAFreshBoundedWindow]' passed (0.001 seconds).
+Test Suite 'ConnectionRecoveryWindowTests' passed at 2026-10-07 19:41:26.336.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.003 (0.004) seconds
+Test Suite 'CodexBridgeMacPackageTests.xctest' passed at 2026-10-07 19:41:26.337.
+	 Executed 11 tests, with 0 failures (0 unexpected) in 0.140 (0.144) seconds
+Test Suite 'Selected tests' passed at 2026-10-07 19:41:26.337.
+	 Executed 11 tests, with 0 failures (0 unexpected) in 0.140 (0.156) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.

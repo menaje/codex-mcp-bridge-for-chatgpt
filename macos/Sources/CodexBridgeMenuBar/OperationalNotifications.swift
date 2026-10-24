@@ -6,25 +6,28 @@ import UserNotifications
 
 /// Deliberately accepts operational state only. Codex task/Activity events are not inputs.
 enum OperationalProblem: String, Codable, CaseIterable, Sendable {
-    case runtime, tunnel, configuration, authentication, installation, remoteConnection, remoteSecurity, compatibility
+    case runtime, responseUnconfirmed, stateStorage, tunnel, configuration, authentication, authenticationStatus, installation, remoteConnection, remoteSecurity, compatibility
 
     var isSecurity: Bool { self == .remoteSecurity }
     var settingsTab: String {
         switch self {
-        case .authentication, .installation: return "codex"
+        case .authentication, .authenticationStatus, .installation: return "codex"
         default: return "connection"
         }
     }
     var messageKey: String {
         switch self {
-        case .runtime: return "브리지를 사용할 수 없습니다. 연결 설정에서 상태와 복구 방법을 확인해 주세요."
-        case .tunnel: return "ChatGPT 연결을 복구하지 못했습니다. 연결 설정에서 터널을 확인해 주세요."
-        case .configuration: return "브리지 설정을 확인해야 합니다. 연결 설정을 열어 필수 항목을 확인해 주세요."
-        case .authentication: return "Codex 인증을 확인해야 합니다. Codex 설정에서 로그인 상태를 확인해 주세요."
-        case .installation: return "사용할 Codex를 찾지 못했습니다. Codex 설정에서 설치 또는 선택해 주세요."
-        case .remoteConnection: return "원격 서버에 연결하지 못했습니다. 연결 설정에서 서버 상태를 확인해 주세요."
-        case .remoteSecurity: return "원격 연결의 보안 확인이 필요합니다. 연결 설정에서 서버와 기기 등록을 확인해 주세요."
-        case .compatibility: return "구성 요소가 호환되지 않습니다. 연결 설정에서 업데이트 또는 복구 방법을 확인해 주세요."
+        case .runtime: return "macos.thebridgeisunavailableopenconnectionsettingsto"
+        case .responseUnconfirmed: return "macos.thebridgeserverdidnotrespondpleasetry"
+        case .stateStorage: return "macos.bridgestoragecannotacceptupdatesexistingworkispreserved"
+        case .tunnel: return "macos.thechatgptconnectioncouldnotberestoredcheck"
+        case .configuration: return "macos.bridgeconfigurationneedsattentionopenconnectionsettingsto"
+        case .authentication: return "macos.codexauthenticationneedsattentioncheckyoursignin"
+        case .authenticationStatus: return "macos.couldnotcheckthecodexloginstatuscheck"
+        case .installation: return "macos.nousablecodexwasfoundinstallorselect"
+        case .remoteConnection: return "macos.theremoteservercouldnotbereachedcheck"
+        case .remoteSecurity: return "macos.theremoteconnectionneedsasecuritycheckreview"
+        case .compatibility: return "macos.componentsareincompatiblecheckconnectionsettingsforupdate"
         }
     }
 
@@ -114,6 +117,14 @@ protocol OperationalNotificationDelivering: AnyObject {
     func deliver(identifier: String, problem: OperationalProblem, scope: String, locale: Locale) async throws
 }
 
+/// Shares the one system notification-center delegate with operational alerts.
+/// Completion notifications intentionally carry no task, project, or result text.
+@MainActor
+protocol CompletionNotificationDelivering: AnyObject {
+    func isAuthorized() async -> Bool
+    func deliverCompletion(identifier: String, locale: Locale) async throws
+}
+
 @MainActor
 extension OperationalNotificationDelivering {
     func permission() async -> OperationalNotificationPermission {
@@ -122,9 +133,10 @@ extension OperationalNotificationDelivering {
 }
 
 @MainActor
-final class SystemOperationalNotificationDelivery: NSObject, OperationalNotificationDelivering, UNUserNotificationCenterDelegate {
+final class SystemOperationalNotificationDelivery: NSObject, OperationalNotificationDelivering, CompletionNotificationDelivering, UNUserNotificationCenterDelegate {
     private let center = UNUserNotificationCenter.current()
     var onOpen: (@MainActor (OperationalProblem, String) -> Void)?
+    var onCompletionOpen: (@MainActor () -> Void)?
 
     override init() {
         super.init()
@@ -172,14 +184,40 @@ final class SystemOperationalNotificationDelivery: NSObject, OperationalNotifica
         }
     }
 
+    func deliverCompletion(identifier: String, locale: Locale) async throws {
+        let request = UNNotificationRequest(
+            identifier: identifier,
+            content: Self.completionContent(locale: locale),
+            trigger: nil
+        )
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            center.add(request) { error in
+                if let error { continuation.resume(throwing: error) }
+                else { continuation.resume() }
+            }
+        }
+    }
+
     static func content(problem: OperationalProblem, scope: String, locale: Locale) -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
-        content.title = "Codex MCP Bridge for ChatGPT"
+        content.title = "macos.codexmcpbridgeforchatgpt"
         content.body = BridgeAppLocalization.string(problem.messageKey, locale: locale)
         content.userInfo = ["problem": problem.rawValue, "scope": scope]
         content.threadIdentifier = "bridge-operations"
         content.sound = .default
         // Ordinary notifications respect the user's macOS notification settings and Focus.
+        return content
+    }
+
+    static func completionContent(locale: Locale) -> UNMutableNotificationContent {
+        let content = UNMutableNotificationContent()
+        content.title = BridgeAppLocalization.string("macos.codexworkiscomplete", locale: locale)
+        content.body = BridgeAppLocalization.string("macos.checkstatusandresultsinthemenubar", locale: locale)
+        // Keep the system notification free of task prompts, paths, result
+        // text, activity IDs, and ChatGPT conversation identifiers.
+        content.userInfo = ["notificationKind": "completion"]
+        content.threadIdentifier = "bridge-completions"
+        content.sound = .default
         return content
     }
 
@@ -191,6 +229,11 @@ final class SystemOperationalNotificationDelivery: NSObject, OperationalNotifica
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
         let info = response.notification.request.content.userInfo
+        if info["notificationKind"] as? String == "completion" {
+            Task { @MainActor [weak self] in self?.onCompletionOpen?() }
+            completionHandler()
+            return
+        }
         if let raw = info["problem"] as? String, let problem = OperationalProblem(rawValue: raw),
            let scope = info["scope"] as? String {
             Task { @MainActor [weak self] in self?.onOpen?(problem, scope) }
@@ -214,7 +257,10 @@ final class OperationalNotifications {
     init(defaults: UserDefaults, delivery: any OperationalNotificationDelivering) {
         self.defaults = defaults
         self.delivery = delivery
-        policy = defaults.data(forKey: stateKey).flatMap { try? JSONDecoder().decode(OperationalNotificationPolicy.self, from: $0) }
+        policy = defaults.data(forKey: stateKey).flatMap {
+            guard (try? BridgeTextIntegrity.validateJSONUTF8($0)) != nil else { return nil }
+            return try? JSONDecoder().decode(OperationalNotificationPolicy.self, from: $0)
+        }
             ?? OperationalNotificationPolicy()
     }
 

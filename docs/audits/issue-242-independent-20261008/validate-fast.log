@@ -1,0 +1,20 @@
+
+> codex-mcp-bridge-for-chatgpt@0.4.1 validate:fast
+> npm run release:check && npm run app-server:compat:check
+
+
+> codex-mcp-bridge-for-chatgpt@0.4.1 release:check
+> npm run localization:check && node scripts/release-manifest.mjs check && node scripts/release-policy.mjs check
+
+
+> codex-mcp-bridge-for-chatgpt@0.4.1 localization:check
+> tsx scripts/localization.mts check
+
+Localization catalog and generated files are synchronized.
+Release manifest is synchronized for v0.4.1.
+Release policy is valid for development stage with 78 active fragment(s).
+
+> codex-mcp-bridge-for-chatgpt@0.4.1 app-server:compat:check
+> tsx scripts/app-server-schema.ts check
+
+Codex App Server schemas match CLI 0.153.3 (416 JSON, 827 TypeScript files).

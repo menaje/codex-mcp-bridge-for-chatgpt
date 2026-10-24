@@ -26,6 +26,7 @@ const INTERNAL_BACKEND_ARGUMENT = "_bridgeBackendKind";
 /** Routes App Server execution while preserving retired backend identities in history. */
 export class CodexBackendRouter implements CodexUpstream {
   accountRevision?: () => string;
+  executionHealth?: () => import("./executionServiceProcess.js").CodexExecutionServiceHealth;
   private readonly threadBackends = new Map<string, CodexBackendKind>();
   private readonly workerBackends = new Map<string, CodexBackendKind>();
   private readonly backends: ReadonlyMap<CodexBackendKind, CodexUpstream>;
@@ -42,6 +43,26 @@ export class CodexBackendRouter implements CodexUpstream {
     }
     if (!this.backends.has(defaultBackend)) throw new Error(`Codex backend ${defaultBackend} is not installed or enabled.`);
   }
+
+  supportsExecutionRecovery?: () => boolean;
+  async recoverExecution(jobId: string, onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void): Promise<ToolResult> {
+    const backend = this.backend(this.defaultBackend);
+    if (!backend.recoverExecution) throw new Error("EXECUTION_RECOVERY_UNSUPPORTED");
+    return backend.recoverExecution(jobId, onProgress, assignment => {
+      if (assignment.threadId) this.bindThread(assignment.threadId, this.defaultBackend);
+      this.workerBackends.set(assignment.workerId, this.defaultBackend);
+      onAssigned?.(assignment);
+    });
+  }
+  async acknowledgeExecution(jobId: string): Promise<void> { await this.backend(this.defaultBackend).acknowledgeExecution?.(jobId); }
+  ownsActiveExecution(jobId: string, assignment: UpstreamWorkerAssignment): boolean {
+    return this.backend(assignment.backendKind).ownsActiveExecution?.(jobId, assignment) === true;
+  }
+  ownsRetainedResult(jobId: string, assignment: UpstreamWorkerAssignment): boolean {
+    return this.backend(assignment.backendKind).ownsRetainedResult?.(jobId, assignment) === true;
+  }
+  async detachExecution(): Promise<void> { await this.backend(this.defaultBackend).detachExecution?.(); }
 
   bindThread(threadId: string, backendKind: CodexBackendKind): void {
     this.threadBackends.set(threadId, backendKind);
@@ -92,6 +113,7 @@ export class CodexBackendRouter implements CodexUpstream {
       "codex",
       {
         prompt: input.prompt,
+        ...(input.executionContext ? { executionContext: input.executionContext } : {}),
         ...executionAccessArguments(input),
         ...(backendSupports(input.backendKind, "supportsEphemeralThreads")
           ? { ephemeral: input.ephemeral === true }
@@ -114,6 +136,7 @@ export class CodexBackendRouter implements CodexUpstream {
       {
         threadId: input.threadId,
         prompt: input.prompt,
+        ...(input.executionContext ? { executionContext: input.executionContext } : {}),
         ...executionAccessArguments(input),
         ...(input.selection ? selectionArguments(input.selection, input.backendKind) : {}),
         ...backendRoutingArgument(input.backendKind)
@@ -188,6 +211,10 @@ export class CodexBackendRouter implements CodexUpstream {
     return backend.listBackgroundTerminals
       ? backend.listBackgroundTerminals(threadId, kind)
       : [];
+  }
+
+  async listLoadedThreadIds(): Promise<string[] | null> {
+    return this.backend(this.defaultBackend).listLoadedThreadIds?.() ?? null;
   }
 
   async listLoadedBackgroundTerminals(
@@ -284,7 +311,7 @@ export class CodexBackendRouter implements CodexUpstream {
     assignment: UpstreamWorkerAssignment,
     correlation: WorkerTerminationCorrelation,
     graceMs?: number,
-    options?: { interruptOnly: true }
+    options?: { interruptOnly?: true; retirementThreadIds?: readonly string[] }
   ): Promise<JsonRpcTerminationResult> {
     const backend = this.backend(assignment.backendKind);
     if (!backend.forceTerminateWorker) {
@@ -374,7 +401,8 @@ function selectionArguments(
   return {
     model: selection.model,
     config: { model_reasoning_effort: selection.reasoningEffort },
-    ...(selection.serviceTier ? { serviceTier: selection.serviceTier } : {})
+    ...(selection.serviceTier ? { serviceTier: selection.serviceTier } : {}),
+    ...(selection.serviceTierScope ? { serviceTierScope: selection.serviceTierScope } : {})
   };
 }
 

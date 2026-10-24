@@ -1,0 +1,26 @@
+Independent read-only review report retained from the completed first review
+
+Reviewed SHA: 56e850bc25034c7fd138336797164f446ac9b417
+Baseline SHA: ba6d8a669674114773280cf109a85fc710e8b68d
+Worktree: /Volumes/Data/Dev/codex-mcp-bridge-issue-261-review-fix
+
+Actionable finding:
+P2, src/tools.ts:11101-11102 (and nextActions at :10987): Running exact status claims automatic relay after an explicit successful relay stop. A disposable HTTP MCP fixture confirmed monitoringStopped=true while message still said automatic relay was running and nextActions said the relay remains connected. Completion correctly produced no pending notification. The immutable admission policy is insufficient to describe current relay availability.
+
+The original P1 delivery-history reset did not reproduce. Source inspection and functional checks supported preservation across pause/resume, actual resolution/replacement/reactivation, restart, late ACK, and cleanup.
+
+Reviewer-run verification at this SHA:
+- node_modules/.bin/vitest run test/relayDelivery.test.ts test/relayAdmission.test.ts test/relayCard.test.ts --maxWorkers=2 : 3 files, 42 tests passed.
+- node_modules/.bin/tsx /tmp/issue261-independent-review.mts : 15 disposable functional scenarios passed, including history restart/reactivation, additional non-connected tracking states, ownership denial, archive/restore rollback, stop preservation, and indexed recovery boundaries with no unchanged-read transactions.
+- node_modules/.bin/tsx /tmp/issue261-independent-status.mts : disposable HTTP MCP reproduction of the P2 above.
+- node_modules/.bin/tsc --noEmit -p tsconfig.json : passed.
+- git diff --check ba6d8a669674114773280cf109a85fc710e8b68d 56e850bc25034c7fd138336797164f446ac9b417 : passed.
+- Worktree was clean and HEAD remained the reviewed SHA.
+
+Evidence scripts:
+/tmp/issue261-independent-review.mts
+/tmp/issue261-independent-status.mts
+These scripts import source through the explicit review-worktree absolute path. Reproduce this first review with that checkout at the reviewed SHA. This file is a retained summary of the completed report, not a captured raw test log.
+
+Limitations:
+No repository edits, commits, integration, pushes, production state, runtime deployment, real Codex/GPT execution, real-host Relay E2E, duration/soak, accelerated-lifetime tests, GPT autoresumption, or real A->review->B. Node vm HTML checks and controlled HTTP upstream fixtures do not establish host-wide delivery guarantees.

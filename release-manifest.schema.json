@@ -135,7 +135,6 @@
       "required": [
         "strategy",
         "hashAlgorithm",
-        "hashLength",
         "minimumContractGeneration",
         "resources",
         "activeResources",
@@ -144,31 +143,28 @@
         "releaseCatalogSha256"
       ],
       "properties": {
-        "strategy": { "const": "content-hash" },
+        "strategy": { "const": "versioned-uri" },
         "hashAlgorithm": { "const": "sha256" },
-        "hashLength": { "type": "integer", "minimum": 12, "maximum": 64 },
         "minimumContractGeneration": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["settings", "activity", "dashboard", "question"],
+          "required": ["settings", "dashboard", "relay"],
           "properties": {
             "settings": { "type": "integer", "minimum": 1 },
-            "activity": { "type": "integer", "minimum": 1 },
             "dashboard": { "type": "integer", "minimum": 1 },
-            "question": { "type": "integer", "minimum": 1 }
+            "relay": { "type": "integer", "minimum": 1 }
           }
         },
         "resources": {
           "type": "array",
-          "minItems": 4,
-          "maxItems": 4,
+          "minItems": 3,
+          "maxItems": 3,
           "uniqueItems": true,
-          "items": { "enum": ["settings", "activity", "dashboard", "question"] },
+          "items": { "enum": ["settings", "dashboard", "relay"] },
           "allOf": [
             { "contains": { "const": "settings" } },
-            { "contains": { "const": "activity" } },
             { "contains": { "const": "dashboard" } },
-            { "contains": { "const": "question" } }
+            { "contains": { "const": "relay" } }
           ]
         },
         "activeResources": {
@@ -178,15 +174,13 @@
           "prefixItems": [
             { "const": "settings" },
             { "const": "dashboard" },
-            { "const": "question" }
+            { "const": "relay" }
           ],
           "items": false
         },
         "compatibilityResources": {
           "type": "array",
-          "minItems": 1,
-          "maxItems": 1,
-          "prefixItems": [{ "const": "activity" }],
+          "maxItems": 0,
           "items": false
         },
         "releaseCatalog": { "const": "ui-release-catalog.json" },
@@ -210,17 +204,20 @@
         "recoveryContract"
       ],
       "properties": {
-        "currentSchema": { "const": 19 },
+        "currentSchema": { "const": 32 },
         "supportedSourceSchemas": {
           "type": "array",
-          "minItems": 16,
-          "maxItems": 16,
+          "minItems": 24,
+          "maxItems": 24,
           "uniqueItems": true,
           "prefixItems": [
             { "const": 3 }, { "const": 4 }, { "const": 5 }, { "const": 6 },
             { "const": 7 }, { "const": 8 }, { "const": 9 }, { "const": 10 },
             { "const": 11 }, { "const": 12 }, { "const": 13 }, { "const": 14 },
-            { "const": 15 }, { "const": 16 }, { "const": 17 }, { "const": 18 }
+            { "const": 15 }, { "const": 16 }, { "const": 17 }, { "const": 18 },
+            { "const": 19 }, { "const": 20 }, { "const": 21 },
+            { "const": 22 }, { "const": 23 }, { "const": 24 },
+            { "const": 25 }, { "const": 26 }
           ],
           "items": false
         },
@@ -257,11 +254,11 @@
             "remoteCompanionProtocol"
           ],
           "properties": {
-            "userSettingsSchema": { "const": 4 },
-            "taskInputContract": { "const": 2 },
+            "userSettingsSchema": { "const": 7 },
+            "taskInputContract": { "const": 6 },
             "macosHelperProtocol": { "const": 2 },
-            "localCompanionProtocol": { "const": 2 },
-            "remoteCompanionProtocol": { "const": 1 }
+            "localCompanionProtocol": { "const": 12 },
+            "remoteCompanionProtocol": { "const": 10 }
           }
         },
         "contractSources": {

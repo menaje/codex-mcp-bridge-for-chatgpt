@@ -1,0 +1,27 @@
+{
+  "recordedAt": "2026-10-03T00:27:42.298Z",
+  "siteId": "appgprj_6abf89d2d04c8191a617d5193ef5471a",
+  "evidenceLayer": "parent-observed actual, reported to this agent in user instruction",
+  "source": "Parent ChatGPT actually called the connected #222 무해한 Receiver 시험.read_fixture and succeeded; installation/OAuth connection was user-confirmed.",
+  "observedAt": null,
+  "agentDirectInvocation": false,
+  "reportedCallCount": 1,
+  "response": {
+    "key": "issue-222-independent-20261003",
+    "count": 1,
+    "fixture": {
+      "probe": "issue-222",
+      "phase": "A",
+      "value": 222
+    },
+    "payloadSha256": "41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf",
+    "createdAt": "2026-10-02T23:38:53.750Z",
+    "persisted": true,
+    "storage": "D1",
+    "localChannel": false,
+    "workerVersion": "2"
+  },
+  "readOnly": true,
+  "gptResume": "user-confirmed actual completed; no retest",
+  "modelUsageAttribution": "not inferred from Codex counters"
+}

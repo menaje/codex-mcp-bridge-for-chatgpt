@@ -1,0 +1,59 @@
+
+ RUN  v4.1.11 /private/tmp/cb242-r502-control-8izpwb3c
+
+ ❯ test/issue242R502.test.ts (15 tests | 1 failed) 6117ms
+     ✓ preserves queued response framing after late-error follows upstream end 81ms
+     ✓ preserves queued response framing after late-response-error follows upstream end 69ms
+     ✓ preserves queued response framing after late-timeout follows upstream end 69ms
+     ✓ returns structured unavailable before headers, then recovers 47ms
+     ✓ leaves partial responses incomplete, then recovers 70ms
+     ✓ expires an upstream that never responds before headers exactly once 270ms
+     ✓ preserves a complete application-owned timeout response before headers 77ms
+     ✓ releases a caller disconnected during its incomplete body 142ms
+     ✓ detaches a complete-body caller while its application action continues once 140ms
+     ✓ preserves a completed response through normal socket close and connection reuse 184ms
+     ✓ returns capacity exactly once after an idle expiry delayed by a high event-loop stall  371ms
+     ✓ correlates admitted/queued/dispatch and strips a caller-supplied trace id 24ms
+     × joins public ingress with the real supervised child and application response 46ms
+     ✓ returns structured unavailable for a real child response exceeding the idle budget before headers  599ms
+     ✓ observes the real child's later response after its complete-body caller disconnects  605ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/issue242R502.test.ts > R502 deterministic lifecycle races > joins public ingress with the real supervised child and application response
+AssertionError: expected [ Array(9) ] to deeply equal ArrayContaining{…}
+
+- Expected
++ Received
+
+- ArrayContaining [
++ [
+    "admitted",
+    "request-finished",
+    "application-dispatch",
++   "state-start",
++   "state-yield",
+    "application-response",
++   "response-header-start",
+    "response-headers",
+-   "response-complete",
+    "cleanup",
+  ]
+
+ ❯ test/issue242R502.test.ts:326:80
+    324|     const phases = phasesFor(start);
+    325|     expect(new Set(phases.map(row => row.requestId)).size).toBe(1);
+    326|     expect(phases.filter(row => row.source === "child").map(row => row…
+       |                                                                                ^
+    327|       "admitted", "request-finished", "application-dispatch", "applica…
+    328|     expect(JSON.stringify(phases)).not.toContain("private-id");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 14 passed (15)
+   Start at  03:55:58
+   Duration  7.07s (transform 656ms, setup 0ms, import 882ms, tests 6.12s, environment 0ms)
+
+JSON report written to /Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/r502-authoritative-full-control.json

@@ -1,0 +1,165 @@
+{
+  "schemaVersion": 1,
+  "recordedDate": "2026-10-03",
+  "integrationTarget": "dev",
+  "scope": "Implementation and evidence recording; installed runtime unchanged",
+  "implementedCommits": {
+    "workContinuity": "f6da4704b0ffc7966303d9577d8f267b7e833f5c",
+    "independentStorage": "8eda683660e848bfb7dab80b8904894cf0ab219b"
+  },
+  "pullRequests": {
+    "workContinuity": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt/pull/226",
+    "independentStorage": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt/pull/227"
+  },
+  "mergeCommits": {
+    "workContinuity": "d7eb60799a4ef3ad7e911e7a82cc7a5666fbce2d",
+    "independentStorage": "148e55acafdf6ea93e245b82efeee522e7ad0ca7"
+  },
+  "sourceSha256": {
+    "scripts/execution-storage.mjs": "fc0120a18d1f960e93d14d20879358ab2fd1851684b594e695595ba9f5f7685a",
+    "scripts/auth-selection.mjs": "95ca6f8def57915cb6adbbbc4ac82fef76aa69bbcf93d725bc88afce0c7f433d",
+    "scripts/runtime-env.mjs": "b4fad45cf03ca791ff2ddc0db7bd3091530de96bc30b75ca5cb3953c41759a2f",
+    "src/codexAuthSelection.ts": "918d2c49bb463ecd0282282f672dda19bcf2076e4a22b34df7660aa8a2c9f46f",
+    "src/codexService.ts": "658e7f3722ad0e7089dd99d3f7283da42af4a2a6477ab0c8563a7ccc66cf11a7",
+    "src/codexRuntime.ts": "d0f303ed245077262d1a79a961280ec33d5d89475f52467a79eda6a6e2d57bae",
+    "src/tools.ts": "420f4199b72a0cc09d4469189245d156e212714b8143f71eda6dffbccb72b5e1",
+    "src/userSettings.ts": "c20391bfce76a351b97798bdece7a6e1a1eeb6caac2efbc72de160a9b52460a1",
+    "src/appServerUpstream.ts": "32d08bd0418cd9d40132bf24f947408593ce19c0879a30554f7328d824749df5"
+  },
+  "automatedValidation": {
+    "node": {
+      "passed": 1320,
+      "files": 121
+    },
+    "swift": {
+      "executed": 218,
+      "skipped": 2,
+      "failures": 0
+    },
+    "nativeSchema": {
+      "cliVersion": "0.153.3",
+      "jsonFiles": 416,
+      "typeScriptFiles": 827
+    },
+    "logSha256": "4021aa42b612d8d18d02a4b5232b5d05a4d5576700f220f64f723306c495e54d",
+    "directWait": {
+      "status": "pass-in-full-validation",
+      "tests": [
+        "test/issue221Delivery.test.ts",
+        "test/issue221Profiles.test.ts",
+        "test/issue221Summary.test.ts",
+        "test/stdioServer.test.ts",
+        "test/tools.test.ts"
+      ],
+      "contract": "Direct results and canonical Job replay; status cards are not a result relay or follow-up executor"
+    },
+    "packagedStorageModules": "pass: archive contents checked and unpacked runtime-env.mjs imported"
+  },
+  "nativeStorage": {
+    "platform": "macOS arm64",
+    "profileCreation": "CodexAuthSelectionManager.prepare",
+    "environmentProjection": [
+      "authProfileEnvironment",
+      "codexProcessEnvironment"
+    ],
+    "provider": "deterministic loopback Responses fixture",
+    "realNativeBinaries": true,
+    "operatingCredentialsUsed": false,
+    "billedModelRequests": 0,
+    "runs": [
+      {
+        "cliVersion": "0.153.3",
+        "binarySha256": "0e1f892695844ad0798dab8895955846450a9e7663476ebf24615814dd377216",
+        "logSha256": "1b004ce6277a18d8dccf892aabbecd4979f893c8a8e74fb1f1cb934d71a15921",
+        "status": "pass",
+        "nativeThreadId": "01a10075-fea7-7031-8fcb-e2633601f4b7",
+        "forkThreadId": "01a10076-0023-7ea2-b5e3-ef5d8b6dbbe7",
+        "observations": {
+          "completedTurns": 1,
+          "readThreadIdMatches": true,
+          "readTurns": 1,
+          "resumeThreadIdMatches": true,
+          "resumeTurns": 1,
+          "restartBetweenProfiles": true,
+          "originalAndForkRolloutsInOwnedStore": true,
+          "distinctPersistentFork": true,
+          "sharedArchiveDirectory": true,
+          "nativeAuthFiles": 0
+        },
+        "rpcSequence": [
+          "initialize",
+          "thread/start(ephemeral=false)",
+          "turn/start",
+          "turn/completed",
+          "thread/read(includeTurns=true)",
+          "stop original App Server",
+          "start App Server with second prepared profile",
+          "thread/read(includeTurns=true)",
+          "thread/resume(threadId)",
+          "thread/fork(ephemeral=false)"
+        ]
+      },
+      {
+        "cliVersion": "0.160.0",
+        "binarySha256": "112fae7a5a1223e673c8a1791d32338f37df8b527ff1159bb8adac6c4dbf1b4b",
+        "logSha256": "deab110dba80dd013b38604f6373cd39abc1f0368171670b279d20839a282369",
+        "status": "pass",
+        "nativeThreadId": "01a10077-1554-7072-8822-520c1ea77eae",
+        "forkThreadId": "01a10077-16fd-7d50-9d90-9f9aeccded72",
+        "observations": {
+          "completedTurns": 1,
+          "readThreadIdMatches": true,
+          "readTurns": 1,
+          "resumeThreadIdMatches": true,
+          "resumeTurns": 1,
+          "restartBetweenProfiles": true,
+          "originalAndForkRolloutsInOwnedStore": true,
+          "distinctPersistentFork": true,
+          "sharedArchiveDirectory": true,
+          "nativeAuthFiles": 0
+        },
+        "rpcSequence": [
+          "initialize",
+          "thread/start(ephemeral=false)",
+          "turn/start",
+          "turn/completed",
+          "thread/read(includeTurns=true)",
+          "stop original App Server",
+          "start App Server with second prepared profile",
+          "thread/read(includeTurns=true)",
+          "thread/resume(threadId)",
+          "thread/fork(ephemeral=false)"
+        ]
+      }
+    ]
+  },
+  "existingConcurrency": {
+    "status": "user-reported-pass",
+    "evidenceSource": "Human clarification in this task on 2026-10-03",
+    "scope": "Existing installed managed CLI 0.160.0 and separate Bridge login with Dot",
+    "installedSourceCommit": "a16cc51f20af396ba05d83b8d165240b52d528b5",
+    "repeatedByAgent": false,
+    "startOrderEvidence": "not specified",
+    "earlierReportedDisconnectSide": "Dot",
+    "rootCauseEstablished": false
+  },
+  "unperformed": [
+    {
+      "case": "real account A -> B -> A with newly shared storage",
+      "status": "not-run"
+    },
+    {
+      "case": "operating login refresh/failure/cancellation",
+      "status": "not-run"
+    },
+    {
+      "case": "installed app update during simultaneous work",
+      "status": "not-run"
+    },
+    {
+      "case": "private Bridge storage discovered/opened by desktop app",
+      "status": "unverified"
+    }
+  ],
+  "deferredIssue": 214
+}

@@ -68,6 +68,23 @@ final class MenuBarAcceptance: ObservableObject {
             }
             result = dashboard
             delay = state["delay"] as? Double ?? 0
+        case "dashboard.history-detail":
+            let rowKey = params["rowKey"] as? String ?? ""
+            result = [
+                "kind": "dashboard-history", "rowKey": rowKey, "historyCount": 1,
+                "historyRevision": String(repeating: "a", count: 64),
+                "history": [[
+                    "activityKey": "fixture-prior-run", "activityTitle": "이전 실행 기록",
+                    "status": "cancelled", "startedAt": "2026-09-10T00:00:00Z",
+                    "updatedAt": "2026-09-10T00:01:00Z", "endedAt": "2026-09-10T00:01:00Z",
+                    "durationMs": 60_000,
+                    "cancellation": [
+                        "targetKind": "job", "status": "requested",
+                        "reason": "합성 취소 사유를 바로 표시합니다.",
+                        "requestedAt": "2026-09-10T00:01:00Z"
+                    ]
+                ]]
+            ]
         case "dashboard.problem": result = ["ok": true, "changed": 1]
         default: return NativeFixtureReply(body: #"{"error":{"code":-32601,"message":"Synthetic fixture method unavailable"}}"#)
         }
@@ -75,11 +92,29 @@ final class MenuBarAcceptance: ObservableObject {
     }
 }
 
+@MainActor
+final class NativeMenuBarAcceptanceDelegate: NSObject, NSApplicationDelegate {
+    static var model: AppModel?
+    private let menuBarController = BridgeMenuBarController()
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        if let model = Self.model { menuBarController.install(model: model) }
+    }
+}
+
 @main
 struct NativeMenuBarAcceptanceApp: App {
-    @StateObject private var acceptance = MenuBarAcceptance()
+    @NSApplicationDelegateAdaptor(NativeMenuBarAcceptanceDelegate.self) private var appDelegate
+    @StateObject private var acceptance: MenuBarAcceptance
     @State private var visible = true
     @State private var dark = false
+
+    init() {
+        let acceptance = MenuBarAcceptance()
+        _acceptance = StateObject(wrappedValue: acceptance)
+        NativeMenuBarAcceptanceDelegate.model = acceptance.model
+    }
+
     var body: some Scene {
         WindowGroup("메뉴바 보기 검증") {
             VStack(spacing: 0) {
@@ -88,17 +123,11 @@ struct NativeMenuBarAcceptanceApp: App {
                     Toggle("다크 모드", isOn: $dark)
                 }.padding(8)
                 if visible {
-                    DashboardPopoverView(fitsMenuBarWindow: true).environmentObject(acceptance.model)
+                    DashboardPopoverView().environmentObject(acceptance.model)
                 }
             }
             .preferredColorScheme(dark ? .dark : .light)
             .fixedSize()
         }
-        MenuBarExtra {
-            DashboardPopoverView(fitsMenuBarWindow: true).environmentObject(acceptance.model)
-        } label: {
-            Text("89").accessibilityLabel("Bridge Menu Acceptance")
-        }
-        .menuBarExtraStyle(.window)
     }
 }

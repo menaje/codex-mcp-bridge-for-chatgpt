@@ -1,0 +1,1257 @@
+{
+  "schemaVersion": 1,
+  "issue": 221,
+  "capturedAt": "2026-10-03T05:03:12.929Z",
+  "integrationTarget": "dev",
+  "baselineCommit": "6ef2abe3c80043b1ed3c197fbc0b6106328ef14c",
+  "previousDeployedProducer": "1d9ea4a51615bbe60d73339116296e84be888725",
+  "productCodeCommit": "a16cc51f20af396ba05d83b8d165240b52d528b5",
+  "auditCommitRelationship": "Docs-only descendant. The installed producer and producer-bound validation metadata are not rewritten to the audit commit.",
+  "release": {
+    "version": "0.4.1",
+    "stage": "development",
+    "publicReleaseCreated": false
+  },
+  "implementation": {
+    "defect": "Retained structured errors were replaced by string/state fallback in status summaries.",
+    "introducedRegression": false,
+    "rule": "Exact and summary Job reads share normalizeJobError; retained structured public fields have priority, with state/message fallback only when absent.",
+    "publicFields": [
+      "code",
+      "message",
+      "retryable",
+      "missingFields",
+      "contextContinuity"
+    ],
+    "readSurfaces": [
+      "exact",
+      "overview",
+      "jobs",
+      "activity",
+      "thread"
+    ],
+    "summaryResultBodiesIncluded": false,
+    "followupBehaviorChanged": false
+  },
+  "verification": {
+    "red": {
+      "baselineCommit": "6ef2abe3c80043b1ed3c197fbc0b6106328ef14c",
+      "failed": 3,
+      "skipped": 17,
+      "fixtureOnly": true,
+      "artifact": "structured-errors-red.log",
+      "provenance": {
+        "baselineCommit": "6ef2abe3c80043b1ed3c197fbc0b6106328ef14c",
+        "originalDeployedProducer": "1d9ea4a51615bbe60d73339116296e84be888725",
+        "retainedCodeSourceHash": "b1705b4fc77657e72b017831619ee61f0be1d23d36136ff0a01e27a52705cd8d",
+        "mechanism": "Three new SDK HTTP regression cases were run against unchanged baseline src/tools.ts before the normalization fix. This is a disposable fixture, not a deliberately failed operational Job.",
+        "testsFailed": 3,
+        "testsSkipped": 17,
+        "artifact": "structured-errors-red.log",
+        "lineageLimitation": "This red log predates the committed fix and does not itself embed a producer SHA; baseline and sequence are recorded here. Subsequent full checks embed the clean producer and sourceHash."
+      }
+    },
+    "focused": {
+      "filesPassed": 2,
+      "testsPassed": 36,
+      "artifact": "focused-green.log",
+      "producerBinding": "Precommit focused check; the same tests also pass in the clean producer-bound full Node run."
+    },
+    "fast": {
+      "producerCommit": "a16cc51f20af396ba05d83b8d165240b52d528b5",
+      "sourceHash": "5975f3bd727fc98ec78f2aa9f0bbdad8f8caab9f6c0b0858006b6e2aee284dc0",
+      "dirty": false,
+      "node": "v24.11.1",
+      "command": [
+        "npx",
+        "--yes",
+        "npm@10.9.3",
+        "run",
+        "validate:fast"
+      ],
+      "startedAt": "2026-10-03T04:52:32.437Z",
+      "completedAt": "2026-10-03T04:52:34.387Z",
+      "exitCode": 0,
+      "signal": null,
+      "logSha256": "f1eabb77465425b181709be60590d1d6bd925341fc55afbb6b45d88fb844a553",
+      "logBytes": 1006
+    },
+    "node": {
+      "producerCommit": "a16cc51f20af396ba05d83b8d165240b52d528b5",
+      "sourceHash": "5975f3bd727fc98ec78f2aa9f0bbdad8f8caab9f6c0b0858006b6e2aee284dc0",
+      "dirty": false,
+      "node": "v24.11.1",
+      "command": [
+        "npx",
+        "--yes",
+        "npm@10.9.3",
+        "run",
+        "check"
+      ],
+      "startedAt": "2026-10-03T04:52:40.585Z",
+      "completedAt": "2026-10-03T04:55:56.821Z",
+      "exitCode": 0,
+      "signal": null,
+      "logSha256": "b78e1b565ccf7378fb0530bef2845169da8af456d3d9002604a0f086c004ade1",
+      "logBytes": 3043,
+      "filesPassed": 120,
+      "testsPassed": 1307,
+      "testsFailed": 0
+    },
+    "swift": {
+      "producerCommit": "a16cc51f20af396ba05d83b8d165240b52d528b5",
+      "sourceHash": "5975f3bd727fc98ec78f2aa9f0bbdad8f8caab9f6c0b0858006b6e2aee284dc0",
+      "dirty": false,
+      "node": "v24.11.1",
+      "command": [
+        "npx",
+        "--yes",
+        "npm@10.9.3",
+        "run",
+        "macos:check"
+      ],
+      "startedAt": "2026-10-03T04:53:00.357Z",
+      "completedAt": "2026-10-03T04:55:01.899Z",
+      "exitCode": 0,
+      "signal": null,
+      "logSha256": "4f4a83a0e04ccf1043f3b2c336be9beb24cec04ba82068de74a487d358c3324c",
+      "logBytes": 71789,
+      "executed": 218,
+      "skipped": 2,
+      "failed": 0
+    },
+    "appBuild": {
+      "producerCommit": "a16cc51f20af396ba05d83b8d165240b52d528b5",
+      "sourceHash": "5975f3bd727fc98ec78f2aa9f0bbdad8f8caab9f6c0b0858006b6e2aee284dc0",
+      "dirty": false,
+      "node": "v24.11.1",
+      "command": [
+        "npx",
+        "--yes",
+        "npm@10.9.3",
+        "run",
+        "macos:bundle"
+      ],
+      "startedAt": "2026-10-03T04:56:14.338Z",
+      "completedAt": "2026-10-03T04:58:38.662Z",
+      "exitCode": 0,
+      "signal": null,
+      "logSha256": "2dcb40f03e8a30c03e062306c3dadf9d0d4223f2a7688b9d357f633f45fb6c1e",
+      "logBytes": 71078,
+      "swiftExecuted": 218,
+      "swiftSkipped": 2,
+      "swiftFailed": 0,
+      "signedAppVerified": true
+    },
+    "installedNativeCompanion": {
+      "producerCommit": "a16cc51f20af396ba05d83b8d165240b52d528b5",
+      "sourceHash": "5975f3bd727fc98ec78f2aa9f0bbdad8f8caab9f6c0b0858006b6e2aee284dc0",
+      "dirty": false,
+      "node": "v24.11.1",
+      "command": [
+        "swift",
+        "test",
+        "--package-path",
+        "macos",
+        "--filter",
+        "LiveCompanionTests"
+      ],
+      "startedAt": "2026-10-03T05:00:23.299Z",
+      "completedAt": "2026-10-03T05:00:42.327Z",
+      "exitCode": 0,
+      "signal": null,
+      "logSha256": "9db87b5b081309d5dac4cf5c549f34a1879cba16d9b69777e2d7e9b315f40e31",
+      "logBytes": 5410,
+      "testsPassed": 1,
+      "failed": 0,
+      "installedServiceModified": false
+    },
+    "installedStructuredErrors": {
+      "producerCommit": "a16cc51f20af396ba05d83b8d165240b52d528b5",
+      "sourceHash": "5975f3bd727fc98ec78f2aa9f0bbdad8f8caab9f6c0b0858006b6e2aee284dc0",
+      "dirty": false,
+      "node": "v24.11.1",
+      "command": [
+        "node",
+        "output/issue-221-p2/installed-error-fixture.mjs",
+        "/Applications/Codex MCP Bridge for ChatGPT.app/Contents/Resources/Runtime",
+        "a16cc51f20af396ba05d83b8d165240b52d528b5"
+      ],
+      "startedAt": "2026-10-03T05:00:44.894Z",
+      "completedAt": "2026-10-03T05:00:46.422Z",
+      "exitCode": 0,
+      "signal": null,
+      "logSha256": "01bb2a65e9a3997ca50d3d59b8969277ce52aa7bfe4e7180196d0de49e2b9b56",
+      "logBytes": 483,
+      "verificationKind": "installed-artifact integration fixture",
+      "runtime": "/Applications/Codex MCP Bridge for ChatGPT.app/Contents/Resources/Runtime",
+      "serverModulesFromInstalledRuntime": true,
+      "testClient": "Workspace devDependency @modelcontextprotocol/client; server, config, state, settings and tools modules all from selected Runtime",
+      "toolsJsSha256": "0e35e94a3b398b70dff16bfb1e7084d98789f686094698dde410a670ae2e0955",
+      "cases": 3,
+      "surfaces": 5,
+      "phases": [
+        "live",
+        "restart"
+      ],
+      "checksPassed": 30,
+      "upstreamExecutions": 3,
+      "isolation": "Disposable SQLite, synthetic upstream and loopback HTTP; no operational Job or database mutation",
+      "observations": [
+        {
+          "phase": "live",
+          "surface": "exact",
+          "jobId": "99cc8377-52d0-48b7-bd2c-f01e81788032",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "CONTEXT_WINDOW_EXCEEDED",
+            "message": "An actionable structured failure.",
+            "retryable": true
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "live",
+          "surface": "overview",
+          "jobId": "99cc8377-52d0-48b7-bd2c-f01e81788032",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "CONTEXT_WINDOW_EXCEEDED",
+            "message": "An actionable structured failure.",
+            "retryable": true
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "live",
+          "surface": "jobs",
+          "jobId": "99cc8377-52d0-48b7-bd2c-f01e81788032",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "CONTEXT_WINDOW_EXCEEDED",
+            "message": "An actionable structured failure.",
+            "retryable": true
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "live",
+          "surface": "activity",
+          "jobId": "99cc8377-52d0-48b7-bd2c-f01e81788032",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "CONTEXT_WINDOW_EXCEEDED",
+            "message": "An actionable structured failure.",
+            "retryable": true
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "live",
+          "surface": "thread",
+          "jobId": "99cc8377-52d0-48b7-bd2c-f01e81788032",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "CONTEXT_WINDOW_EXCEEDED",
+            "message": "An actionable structured failure.",
+            "retryable": true
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "live",
+          "surface": "exact",
+          "jobId": "ec1fcf20-d1c5-4557-92f0-fa9340ccc3e5",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "UPSTREAM_TURN_FAILED",
+            "message": "An actionable structured failure.",
+            "retryable": false,
+            "missingFields": [
+              "handoffSummary"
+            ],
+            "contextContinuity": "not-migrated"
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "live",
+          "surface": "overview",
+          "jobId": "ec1fcf20-d1c5-4557-92f0-fa9340ccc3e5",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "UPSTREAM_TURN_FAILED",
+            "message": "An actionable structured failure.",
+            "retryable": false,
+            "missingFields": [
+              "handoffSummary"
+            ],
+            "contextContinuity": "not-migrated"
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "live",
+          "surface": "jobs",
+          "jobId": "ec1fcf20-d1c5-4557-92f0-fa9340ccc3e5",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "UPSTREAM_TURN_FAILED",
+            "message": "An actionable structured failure.",
+            "retryable": false,
+            "missingFields": [
+              "handoffSummary"
+            ],
+            "contextContinuity": "not-migrated"
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "live",
+          "surface": "activity",
+          "jobId": "ec1fcf20-d1c5-4557-92f0-fa9340ccc3e5",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "UPSTREAM_TURN_FAILED",
+            "message": "An actionable structured failure.",
+            "retryable": false,
+            "missingFields": [
+              "handoffSummary"
+            ],
+            "contextContinuity": "not-migrated"
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "live",
+          "surface": "thread",
+          "jobId": "ec1fcf20-d1c5-4557-92f0-fa9340ccc3e5",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "UPSTREAM_TURN_FAILED",
+            "message": "An actionable structured failure.",
+            "retryable": false,
+            "missingFields": [
+              "handoffSummary"
+            ],
+            "contextContinuity": "not-migrated"
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "live",
+          "surface": "exact",
+          "jobId": "5e280d7d-dcb6-4db0-82be-3f4e0b64bd09",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "UPSTREAM_TURN_FAILED",
+            "message": "An actionable structured failure."
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "live",
+          "surface": "overview",
+          "jobId": "5e280d7d-dcb6-4db0-82be-3f4e0b64bd09",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "UPSTREAM_TURN_FAILED",
+            "message": "An actionable structured failure."
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "live",
+          "surface": "jobs",
+          "jobId": "5e280d7d-dcb6-4db0-82be-3f4e0b64bd09",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "UPSTREAM_TURN_FAILED",
+            "message": "An actionable structured failure."
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "live",
+          "surface": "activity",
+          "jobId": "5e280d7d-dcb6-4db0-82be-3f4e0b64bd09",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "UPSTREAM_TURN_FAILED",
+            "message": "An actionable structured failure."
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "live",
+          "surface": "thread",
+          "jobId": "5e280d7d-dcb6-4db0-82be-3f4e0b64bd09",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "UPSTREAM_TURN_FAILED",
+            "message": "An actionable structured failure."
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "restart",
+          "surface": "exact",
+          "jobId": "99cc8377-52d0-48b7-bd2c-f01e81788032",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "CONTEXT_WINDOW_EXCEEDED",
+            "message": "An actionable structured failure.",
+            "retryable": true
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "restart",
+          "surface": "overview",
+          "jobId": "99cc8377-52d0-48b7-bd2c-f01e81788032",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "CONTEXT_WINDOW_EXCEEDED",
+            "message": "An actionable structured failure.",
+            "retryable": true
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "restart",
+          "surface": "jobs",
+          "jobId": "99cc8377-52d0-48b7-bd2c-f01e81788032",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "CONTEXT_WINDOW_EXCEEDED",
+            "message": "An actionable structured failure.",
+            "retryable": true
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "restart",
+          "surface": "activity",
+          "jobId": "99cc8377-52d0-48b7-bd2c-f01e81788032",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "CONTEXT_WINDOW_EXCEEDED",
+            "message": "An actionable structured failure.",
+            "retryable": true
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "restart",
+          "surface": "thread",
+          "jobId": "99cc8377-52d0-48b7-bd2c-f01e81788032",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "CONTEXT_WINDOW_EXCEEDED",
+            "message": "An actionable structured failure.",
+            "retryable": true
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "restart",
+          "surface": "exact",
+          "jobId": "ec1fcf20-d1c5-4557-92f0-fa9340ccc3e5",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "UPSTREAM_TURN_FAILED",
+            "message": "An actionable structured failure.",
+            "retryable": false,
+            "missingFields": [
+              "handoffSummary"
+            ],
+            "contextContinuity": "not-migrated"
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "restart",
+          "surface": "overview",
+          "jobId": "ec1fcf20-d1c5-4557-92f0-fa9340ccc3e5",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "UPSTREAM_TURN_FAILED",
+            "message": "An actionable structured failure.",
+            "retryable": false,
+            "missingFields": [
+              "handoffSummary"
+            ],
+            "contextContinuity": "not-migrated"
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "restart",
+          "surface": "jobs",
+          "jobId": "ec1fcf20-d1c5-4557-92f0-fa9340ccc3e5",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "UPSTREAM_TURN_FAILED",
+            "message": "An actionable structured failure.",
+            "retryable": false,
+            "missingFields": [
+              "handoffSummary"
+            ],
+            "contextContinuity": "not-migrated"
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "restart",
+          "surface": "activity",
+          "jobId": "ec1fcf20-d1c5-4557-92f0-fa9340ccc3e5",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "UPSTREAM_TURN_FAILED",
+            "message": "An actionable structured failure.",
+            "retryable": false,
+            "missingFields": [
+              "handoffSummary"
+            ],
+            "contextContinuity": "not-migrated"
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "restart",
+          "surface": "thread",
+          "jobId": "ec1fcf20-d1c5-4557-92f0-fa9340ccc3e5",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "UPSTREAM_TURN_FAILED",
+            "message": "An actionable structured failure.",
+            "retryable": false,
+            "missingFields": [
+              "handoffSummary"
+            ],
+            "contextContinuity": "not-migrated"
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "restart",
+          "surface": "exact",
+          "jobId": "5e280d7d-dcb6-4db0-82be-3f4e0b64bd09",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "UPSTREAM_TURN_FAILED",
+            "message": "An actionable structured failure."
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "restart",
+          "surface": "overview",
+          "jobId": "5e280d7d-dcb6-4db0-82be-3f4e0b64bd09",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "UPSTREAM_TURN_FAILED",
+            "message": "An actionable structured failure."
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "restart",
+          "surface": "jobs",
+          "jobId": "5e280d7d-dcb6-4db0-82be-3f4e0b64bd09",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "UPSTREAM_TURN_FAILED",
+            "message": "An actionable structured failure."
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "restart",
+          "surface": "activity",
+          "jobId": "5e280d7d-dcb6-4db0-82be-3f4e0b64bd09",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "UPSTREAM_TURN_FAILED",
+            "message": "An actionable structured failure."
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        },
+        {
+          "phase": "restart",
+          "surface": "thread",
+          "jobId": "5e280d7d-dcb6-4db0-82be-3f4e0b64bd09",
+          "state": "failed",
+          "result": {
+            "availability": "unavailable",
+            "omitted": false
+          },
+          "error": {
+            "code": "UPSTREAM_TURN_FAILED",
+            "message": "An actionable structured failure."
+          },
+          "answerAbsent": true,
+          "internalDetailsAbsent": true
+        }
+      ]
+    },
+    "actualConnector": {
+      "before": {
+        "capturedAt": "2026-10-03T04:56:29.946Z",
+        "phase": "before-update",
+        "verificationKind": "actual installed Bridge connector read",
+        "scope": {
+          "mode": "scoped",
+          "source": "host-metadata"
+        },
+        "counts": {
+          "sessions": 0,
+          "jobs": 0,
+          "runningJobs": 0,
+          "activities": 0,
+          "agents": 0,
+          "orphanedAgents": 0
+        },
+        "page": {
+          "collection": "jobs",
+          "offset": 0,
+          "limit": 100,
+          "returned": 0,
+          "total": 0,
+          "hasMore": false
+        },
+        "summaryContainsAnswers": false,
+        "structuredFailureCasesAvailable": 0,
+        "note": "Current authorized conversation contains no Job; do not switch to another conversation scope to manufacture deployment evidence."
+      },
+      "after": {
+        "capturedAt": "2026-10-03T05:00:56.458Z",
+        "phase": "after-update",
+        "verificationKind": "actual installed Bridge connector read",
+        "scope": {
+          "mode": "scoped",
+          "source": "host-metadata"
+        },
+        "counts": {
+          "sessions": 0,
+          "jobs": 0,
+          "runningJobs": 0,
+          "activities": 0,
+          "agents": 0,
+          "orphanedAgents": 0
+        },
+        "page": {
+          "collection": "jobs",
+          "offset": 0,
+          "limit": 100,
+          "returned": 0,
+          "total": 0,
+          "hasMore": false
+        },
+        "isError": false,
+        "summaryContainsAnswers": false,
+        "structuredFailureCasesAvailable": 0,
+        "note": "Only the original current conversation scope was read; it contains no historical structured-failure Job. Structured-failure equality is verified with the installed-artifact integration fixture, not claimed as an actual failed operational Job."
+      },
+      "actualStructuredFailureCompared": false
+    },
+    "independentCi": {
+      "producer": "a16cc51f20af396ba05d83b8d165240b52d528b5",
+      "githubActionsRuns": 0,
+      "passedClaimed": false,
+      "artifact": "independent-ci.json"
+    },
+    "historicalEvidence": {
+      "files": 118,
+      "hashAndSizeMatches": 118,
+      "artifact": "historical-evidence-preserved.json"
+    },
+    "initialFailures": [
+      {
+        "classification": "validation environment setup",
+        "artifact": "affected.json",
+        "failed": 4,
+        "passed": 1303,
+        "resolution": {
+          "producerCommit": "a16cc51f20af396ba05d83b8d165240b52d528b5",
+          "commandArtifact": "affected.json",
+          "classification": "validation environment setup error",
+          "cause": "CODEX_MCP_BRIDGE_CODEX was set for the entire affected command. The inherited explicit CLI overrode fake CLI selection in dotenv/runtime-home tests.",
+          "affectedFiles": [
+            "test/macosHelperServer.test.ts",
+            "test/issue162Context.test.ts"
+          ],
+          "resolution": "Scope the pinned CLI environment to validate:fast only; run Node tests and app bundle without the override.",
+          "productChangesForResolution": false
+        }
+      },
+      {
+        "classification": "installed verification harness dependency resolution",
+        "artifact": "installed-fixture-client-resolution-failure.json",
+        "cause": "Test-only SDK client is a devDependency excluded from the installed app. The harness initially attempted to resolve it there.",
+        "resolution": "Load the SDK client from the workspace devDependency while retaining all tested server/config/state/settings/tools imports from the installed Runtime.",
+        "productDependencyChanged": false
+      },
+      {
+        "classification": "normal startup intermediate phase",
+        "artifact": "initial-starting.log",
+        "resolution": "Waited for running and Bridge/Tunnel connected; readiness.json records the transition."
+      }
+    ]
+  },
+  "deployed": {
+    "capturedAt": "2026-10-03T05:01:29.171Z",
+    "producerCommit": "a16cc51f20af396ba05d83b8d165240b52d528b5",
+    "sourceHash": "5975f3bd727fc98ec78f2aa9f0bbdad8f8caab9f6c0b0858006b6e2aee284dc0",
+    "app": {
+      "version": "0.4.1",
+      "commit": "a16cc51f20af396ba05d83b8d165240b52d528b5",
+      "dirty": false,
+      "sourceHash": "5975f3bd727fc98ec78f2aa9f0bbdad8f8caab9f6c0b0858006b6e2aee284dc0",
+      "builtAt": "2026-10-03T04:56:19.944Z",
+      "id": "a16cc51f20af:5975f3bd727f"
+    },
+    "cfBundleVersion": "2026100303",
+    "helper": {
+      "buildId": "a16cc51f20af:5975f3bd727f",
+      "phase": "running",
+      "bridgeConnected": true,
+      "tunnelConnected": true
+    },
+    "bridge": {
+      "name": "codex-mcp-bridge",
+      "title": "Codex MCP Bridge for ChatGPT",
+      "version": "0.4.1",
+      "buildId": "a16cc51f20af:5975f3bd727f"
+    },
+    "allBuildIdsMatch": true,
+    "ready": true,
+    "snapshot": {
+      "authConnection": {
+        "source": "bridge-chatgpt",
+        "mode": "unknown",
+        "observedAt": null
+      },
+      "acceptingNewJobs": true,
+      "activeJobs": 0,
+      "pendingAdmissions": 0,
+      "pendingInteractions": 0,
+      "memoryOnlyThreads": 0,
+      "protectedMemoryOnlyThreads": 0,
+      "discardableMemoryOnlyThreads": 0,
+      "backgroundProcessState": "confirmed",
+      "backgroundProcesses": 0,
+      "backgroundProcessAgents": 0,
+      "backgroundProcessUnknownAgents": 0
+    },
+    "preservation": {
+      "previousJobs": 1054,
+      "afterJobs": 1054,
+      "jobsPayloadUnchanged": true,
+      "newOperationalJobs": 0,
+      "previousReceipts": 3,
+      "receiptsUnchanged": true,
+      "settingsUnchanged": true,
+      "projectsUnchanged": true,
+      "integrity": true,
+      "foreignKeys": true,
+      "envUnchanged": true
+    },
+    "compiledModules": {
+      "tools.js": {
+        "installedSha256": "0e35e94a3b398b70dff16bfb1e7084d98789f686094698dde410a670ae2e0955",
+        "candidateSha256": "0e35e94a3b398b70dff16bfb1e7084d98789f686094698dde410a670ae2e0955",
+        "priorSha256": "c091a50fd9c16c08a6411ebffa73700b2735f423d010f180d3e388d1c3cf5892",
+        "changed": true
+      },
+      "dashboardCard.js": {
+        "installedSha256": "e5b3403f155e83b7c535e5ee6e64b86703dec6d70be86a463ef10ea9e075b0f5",
+        "candidateSha256": "e5b3403f155e83b7c535e5ee6e64b86703dec6d70be86a463ef10ea9e075b0f5",
+        "priorSha256": "e5b3403f155e83b7c535e5ee6e64b86703dec6d70be86a463ef10ea9e075b0f5",
+        "changed": false
+      },
+      "settingsCard.js": {
+        "installedSha256": "c112e1ca8e2de5794a15ff4d6f477bb753719e107f841859d23d84e0cfaa0dde",
+        "candidateSha256": "c112e1ca8e2de5794a15ff4d6f477bb753719e107f841859d23d84e0cfaa0dde",
+        "priorSha256": "c112e1ca8e2de5794a15ff4d6f477bb753719e107f841859d23d84e0cfaa0dde",
+        "changed": false
+      }
+    },
+    "backupVerified": true,
+    "backupDirectoryMode": "700",
+    "backupDatabaseMode": "600",
+    "backupEnvMode": "600"
+  },
+  "reviewCorrections": {
+    "admittedReplay": "First B admission validates current reviewedVersion and approval. Already-admitted B replay validates identity, authorization, prompt and context, then returns that B without rechecking reviewedVersion equality or modifying its receipt. Regression rejects the stale version before admission and accepts it after admission without another execution.",
+    "historicalMcp": {
+      "passed": 29,
+      "skipped": 1,
+      "failed": 0,
+      "warnings": 0,
+      "rerunThisSupplement": false
+    },
+    "actualQuestionApprovalBoundary": "Not triggered in actual ChatGPT. Local integration/fixture evidence only.",
+    "originalAuditProducerUnchanged": true
+  },
+  "reusedEvidence": {
+    "actualChatGptAcceptance": "Historical A-to-B/replay/cancellation/explicit-card no-send observations retain their original producers and scope; not rerun or counted as this producer actual acceptance.",
+    "oldIframeLimit": "Already-result-bearing v3 iframe can initiate one host message despite retired server APIs. Fresh conversation for new tasks; recover history with original-conversation authority. No authority migration is claimed.",
+    "longWait": "Original 30/60 minute evidence reused. Diff changes only error normalization, not wait lifetime, transport or retention.",
+    "cards": "Dashboard and Settings compiled modules match the previously deployed bytes; no new card UI or sender code change."
+  },
+  "integration": {
+    "productCommitIntegrated": true,
+    "productCommitPushed": true,
+    "method": "fast-forward and non-force push",
+    "target": "dev",
+    "remoteProductHeadAtCapture": "a16cc51f20af396ba05d83b8d165240b52d528b5",
+    "finalAuditIntegration": "required before final completion"
+  },
+  "evidenceInventory": {
+    "root": "output/issue-221-p2",
+    "rawFilesPublished": false,
+    "snapshotCapturedAt": "2026-10-03T05:03:12.930Z",
+    "files": [
+      {
+        "path": "actual-connector-after.json",
+        "bytes": 830,
+        "sha256": "c9aa6aedef0f9de7cab96457c239829deb55da1af200f7a51256ebd7b8bcc1f0",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "actual-connector-before.json",
+        "bytes": 697,
+        "sha256": "ddc9351787bf2f233b1a8e42ad3a41489db89f436df77b913b0ffa5668952355",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "affected.json",
+        "bytes": 586,
+        "sha256": "a7cfbab50a1ead2e85c5e616455287fef505e48a7257a821b668c0142db91bb2",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "affected.log",
+        "bytes": 8253,
+        "sha256": "40bf7b99e83d1103fac93f89bda5e8d8a18d9bf4222dc28ac667d901a8b42d83",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "app-build.json",
+        "bytes": 510,
+        "sha256": "eacdce0a7657570b0fc0a98fe7ec59a5369ea49768db06f7ed56b2c252c71b4e",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "app-build.log",
+        "bytes": 71078,
+        "sha256": "2dcb40f03e8a30c03e062306c3dadf9d0d4223f2a7688b9d357f633f45fb6c1e",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "candidate-error-fixture.json",
+        "bytes": 15120,
+        "sha256": "c23043d3bda0fe6bbedc024e1c16c75432548d586c3f5c7e120855954dba258e",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "candidate-error-fixture.log",
+        "bytes": 82,
+        "sha256": "5cbc9d488d7c6269f710f445cdb55dae7895f8bfc143bd25a10bed94c77b366f",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "deploy-p2.mjs",
+        "bytes": 5141,
+        "sha256": "f5abe8c6c4751c6344e66c7f14ccdb92455e00ad1d37d6a9ba9ac52bfb58a3ec",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "deployed-identity-before-read-checks.json",
+        "bytes": 2818,
+        "sha256": "3e7bdfc9304580decf43988cc4ef5eb1280f935058aca568909ab80d22376e76",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "deployed-identity.json",
+        "bytes": 2818,
+        "sha256": "a878bca42db19fabc7d921b1007dfab771285195608e3bc0e2ecd2294743d73e",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "deployed-identity.log",
+        "bytes": 2355,
+        "sha256": "667f4c9fa8c3729211d74114e9264ad4d1482a468dcc398cd9fdfbd4573ef2e3",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "deployment-progress.json",
+        "bytes": 931,
+        "sha256": "b3ea01a70ff1f4faa1af1b3cf71049f7c96bc082026283a199a4f6230e46f41c",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "deployment.log",
+        "bytes": 782,
+        "sha256": "ad00245c2e4c8d141526ea88d0922a59584519a841dce8ce9f4e5adf720cfe79",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "fast.json",
+        "bytes": 510,
+        "sha256": "da4bb22bc7d6aa7199058602dd3b9832bfd3f792c43cc3bf2acfe0597e1306ab",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "fast.log",
+        "bytes": 1006,
+        "sha256": "f1eabb77465425b181709be60590d1d6bd925341fc55afbb6b45d88fb844a553",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "focused-green.log",
+        "bytes": 239,
+        "sha256": "869a2531015bc2ab2a38da4527221b646de1a09dff9558f543a4ad72699bd905",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "historical-evidence-preserved.json",
+        "bytes": 13303,
+        "sha256": "5e3bd6e02322121f3a73a2d6280895c420be3859cb28ec2c8f48d4d68e971b62",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "independent-ci.json",
+        "bytes": 3,
+        "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "initial-runtime-preflight.json",
+        "bytes": 1146,
+        "sha256": "e67362b3e84513c9a9da850daadea71155f3c658e892ee0cd772cb2a3ba0c5b6",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "initial-starting.log",
+        "bytes": 546,
+        "sha256": "9049a2f95328f610abcc761cb4cfdc86d8515460559352c8e2a568338a4d559d",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "installed-error-fixture.json",
+        "bytes": 15292,
+        "sha256": "b0f369c824150954f2af7390f1dd215bcca5635503333ad4fe05283141c09992",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "installed-error-fixture.mjs",
+        "bytes": 7975,
+        "sha256": "a07486c5d3a2c4329d145b396683dc59dc210b1662e9c82797202d5fb6d5b4cb",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "installed-fixture-client-resolution-failure.json",
+        "bytes": 632,
+        "sha256": "d6fd9e67c94346b5fb2b1685e197582b306a6f71bbff80d1e006576c56e50e30",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "installed-fixture-client-resolution-failure.log",
+        "bytes": 1071,
+        "sha256": "30f177036b4faa0c3b16a2692bbfada5f1f50af4092c7ef0f35974d9c04bd1c2",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "installed-fixture.json",
+        "bytes": 631,
+        "sha256": "6d24285041cb91b2466b68909a03455fe6528552dcda7c62709153b92651d9e7",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "installed-fixture.log",
+        "bytes": 483,
+        "sha256": "01bb2a65e9a3997ca50d3d59b8969277ce52aa7bfe4e7180196d0de49e2b9b56",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "issue-before.json",
+        "bytes": 19631,
+        "sha256": "f8171051dcaf91b23a5e49b74d54afe2a2d429b165980efe12ae6ec53d687f55",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "issue-current-body.json",
+        "bytes": 19421,
+        "sha256": "1e0d880eb7b35bd978494906ec3203e9d1ac68cd3d75110f232f997ad0e023de",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "issue-open-body.md",
+        "bytes": 20304,
+        "sha256": "9b00049aba8f068eaf224ce85001ce5a3f32386d3b8f5da125a4f13236c9b41f",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "narrow-diff.patch",
+        "bytes": 2933,
+        "sha256": "6e3a8c4f0308abb2c0f4d3e88bb3f820cf9dd50419d132ef0f30552b7c68e195",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "native-live.json",
+        "bytes": 538,
+        "sha256": "67fbcbf2c30b55bc202c4bcfcc9426dd3c5cb5e0620321b60ee7f6f1fe331346",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "native-live.log",
+        "bytes": 5410,
+        "sha256": "9db87b5b081309d5dac4cf5c549f34a1879cba16d9b69777e2d7e9b315f40e31",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "node.json",
+        "bytes": 502,
+        "sha256": "04ea6c16f6c24c79ae8cf51d2661b9857e4b198212ac44fe1e49273668f9313b",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "node.log",
+        "bytes": 3043,
+        "sha256": "b78e1b565ccf7378fb0530bef2845169da8af456d3d9002604a0f086c004ade1",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "npm-ci.log",
+        "bytes": 141,
+        "sha256": "477022eba94c1d2a921501454c7678e13fb0a4eecf5d3e7b4d7745e538e67fe4",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "post-check-preservation.log",
+        "bytes": 2355,
+        "sha256": "f64296c2a0ba31635ac3fdb182bf2af3902517a5d027fed70d5f81cea5464d2a",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "readiness.json",
+        "bytes": 1548,
+        "sha256": "41b1f4c67eb4cd80555c8a5c0f74a2ffc9031eabdcd334a487e08c23c851617e",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "readiness.log",
+        "bytes": 290,
+        "sha256": "0384fbc4499adf0f849f9b42b2f0f102ae998d61b9f89b84fedab131dfe8e0a0",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "red-provenance.json",
+        "bytes": 741,
+        "sha256": "25854ec54ce0150779663e0740cc9822da59a498fe06bdc420bfe2c8293100f0",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "run-bound.mjs",
+        "bytes": 1360,
+        "sha256": "bf06e450cb35af38781879b2844914abef9b1159138aad987bb5494d1951b253",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "runtime-rpc.mjs",
+        "bytes": 753,
+        "sha256": "2f2bd10a8d0e7a470022830ab3f0b56422e4c5cc829b98f7001139a48174db48",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "structured-errors-red.log",
+        "bytes": 3940,
+        "sha256": "07bf36195f07ce95ac441c6cf94f3449d15511c31d777b2d41f68232a216ee4c",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "swift.json",
+        "bytes": 509,
+        "sha256": "12888f612ed042069ab83d5b5c562008d82751afe1540b883867eebfd6507374",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "swift.log",
+        "bytes": 71789,
+        "sha256": "4f4a83a0e04ccf1043f3b2c336be9beb24cec04ba82068de74a487d358c3324c",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "validation-environment-failure.json",
+        "bytes": 592,
+        "sha256": "a36e07a2e3231728e790191661ad750b5bf45fb44f42db88a22b80ef85e06228",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "verify-deployment.mjs",
+        "bytes": 5129,
+        "sha256": "4fcfdb2975e26edcc6189dca0f29ebfa7e7f03ff203a99766c230e83d2109e80",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "wait-ready.mjs",
+        "bytes": 1113,
+        "sha256": "8e5384eb95489883ae873321a49d7d9a4ec8da0628525f80c651aa12c218e00b",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "write-audit.mjs",
+        "bytes": 14030,
+        "sha256": "5b4291c4828402b2f6971510eefa115d34bf289d6e3dda84c91f07ef8d541ef0",
+        "availability": "retained-local-ignored-output"
+      }
+    ]
+  }
+}

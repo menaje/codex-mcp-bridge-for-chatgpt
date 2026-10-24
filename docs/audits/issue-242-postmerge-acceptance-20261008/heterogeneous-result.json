@@ -1,0 +1,14 @@
+{
+  "args": [
+    "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-postmerge-acceptance-20261008/node_modules/.bin/tsx",
+    "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-postmerge-evidence-20261008/heterogeneous-characterization.mts",
+    "1200"
+  ],
+  "exit": 0,
+  "seconds": 5.135846138000488,
+  "scope": "deterministic synthetic payload mix, 120 agents x 10 history records; no operational data, no real executions; not matched to observed production distribution",
+  "sourceVariants": {
+    "heterogeneous-fixture.mts": "de4427d24b1a6f510adb91d8a9a470101441d0617e71bef2aac0380097a19d01",
+    "heterogeneous-characterization.mts": "88916b9af44d4f2d269192f9c7446f47a4eaca736592987d5f8ccdad4f67be75"
+  }
+}

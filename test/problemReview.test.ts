@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProblemReviewProofs, problemOperationDigest, problemOperationSchema } from "../src/problemReview.js";
 import { BridgeStateStore } from "../src/stateStore.js";
 
@@ -6,6 +6,9 @@ const widget="11111111-1111-4111-8111-111111111111",host="22222222-2222-4222-822
 const target={problemKey:"a".repeat(32),expectedRevision:"b".repeat(64)};
 
 describe("problem review authority",()=>{
+  beforeEach(()=>vi.spyOn(Date,"now").mockReturnValue(2_000_000));
+  afterEach(()=>vi.restoreAllMocks());
+
   it("binds a short-lived proof to the complete action, widget and host",()=>{
     let now=1000;const proofs=new ProblemReviewProofs(()=>now);
     const operation=problemOperationSchema.parse({action:"retry-stop",targets:[target],acknowledgeAffectedJobIds:["job-a","job-b"]});

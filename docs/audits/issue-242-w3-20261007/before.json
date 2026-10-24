@@ -1,0 +1,32 @@
+{
+  "sourceHead": "f710974b33fc40432653c815d175058cba1adaee",
+  "sourceStatus": "",
+  "empty20": {
+    "wallMs": 17.74541700000009,
+    "sql": {
+      "BEGIN": 20,
+      "SELECT": 20,
+      "COMMIT": 20
+    },
+    "changedRows": 0,
+    "walFileBytesDelta": 0,
+    "methods": {
+      "claim": 20
+    }
+  },
+  "releaseReclaim10": {
+    "wallMs": 22.14562500000102,
+    "sql": {
+      "BEGIN": 20,
+      "SELECT": 30,
+      "UPDATE": 20,
+      "COMMIT": 20
+    },
+    "changedRows": 20,
+    "walFileBytesDelta": 123600,
+    "methods": {
+      "release": 10,
+      "claim": 10
+    }
+  }
+}

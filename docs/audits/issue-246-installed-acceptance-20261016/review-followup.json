@@ -1,0 +1,163 @@
+{
+  "issue": 246,
+  "reviewedPullRequest": 271,
+  "reviewedCommit": "372bebe5f8fb6380e7b6351972b11edfca6bf4a4",
+  "baseCommit": "21423f05627f7807f7e657edfc8d36b2d4714043",
+  "integrationTarget": "dev",
+  "productionStartupCodeChanged": false,
+  "findings": [
+    {
+      "thread": "PRRT_kwDOT-Rf-86tFrns",
+      "comment": 4291582309,
+      "priority": "P2",
+      "correction": "Override current and legacy inherited database paths in native spawn and temporary supervisor test environment.",
+      "url": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt/pull/271#discussion_r4291582309"
+    },
+    {
+      "thread": "PRRT_kwDOT-Rf-86tFrny",
+      "comment": 4291582319,
+      "priority": "P1",
+      "correction": "Require the original exact 300000ms startup budget, including when readiness precedes a shorter deadline.",
+      "url": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt/pull/271#discussion_r4291582319"
+    },
+    {
+      "thread": "PRRT_kwDOT-Rf-86tFrn2",
+      "comment": 4291582324,
+      "priority": "P2",
+      "correction": "Hash the full installed Runtime payload before and after observation; reject symlink roots as well as external/directory payload links.",
+      "url": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt/pull/271#discussion_r4291582324"
+    },
+    {
+      "thread": "PRRT_kwDOT-Rf-86tFrn8",
+      "comment": 4291582331,
+      "priority": "P2",
+      "correction": "Correlate the exact health request with its persisted boot-session UUID; classify success and terminal outcomes by boot identity, independent of prior clock skew.",
+      "url": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt/pull/271#discussion_r4291582331"
+    }
+  ],
+  "beforeFix": {
+    "reviewedCommit": "372bebe5f8fb6380e7b6351972b11edfca6bf4a4",
+    "observer": {
+      "methods": 12,
+      "failedAssertions": 9,
+      "reproducedCategories": [
+        "shortened 30000ms budget accepted",
+        "runtime replacement with unchanged metadata ignored",
+        "prior boot failed/cancelled records terminate new observation"
+      ]
+    },
+    "supervisor": {
+      "selectedCases": 2,
+      "failed": 2,
+      "skipped": 24,
+      "cause": "SqliteError: file is not a database for inherited current and legacy state paths"
+    }
+  },
+  "validation": {
+    "build": {
+      "command": "npm run build",
+      "exitCode": 0
+    },
+    "observer": {
+      "command": "python3 -B docs/audits/issue-246-installed-acceptance-20261016/test-observer.py",
+      "passed": 18,
+      "failed": 0,
+      "scope": "Validator fixtures; not OS reboot acceptance."
+    },
+    "supervisorAndRecovery": {
+      "command": "env -u CODEX_HOME node_modules/.bin/vitest run test/issue246StartupSupervisor.test.ts test/runtimeLifecycleRecovery.test.ts --maxWorkers=1",
+      "passed": 36,
+      "failed": 0
+    },
+    "nativeColdStart": {
+      "command": "CODEX_MCP_BRIDGE_TEST_COLD_HELPER=1 env -u CODEX_HOME node_modules/.bin/tsx scripts/native-startup-acceptance.ts",
+      "inheritedCurrentAndLegacyExternalCanaries": true,
+      "externalCanariesUnchangedWithNoSidecars": true,
+      "passed": true,
+      "helperDelaySeconds": 90,
+      "initialReadinessElapsedMs": 94330,
+      "scope": "real native application and helper; synthetic launcher/Tunnel/workload and CLI; no menu interaction",
+      "existingLifecycleChecksPassed": [
+        "duplicate launch",
+        "shutdown/relaunch",
+        "manual stop remains stopped",
+        "shutdown handoff receipts"
+      ]
+    },
+    "installedArtifactReadOnlyDigest": {
+      "readOnly": true,
+      "deterministic": true,
+      "elapsedSeconds": 1.97,
+      "artifact": {
+        "version": "0.4.1",
+        "bundleBuild": "17",
+        "buildId": "0d26c7f14353:41d00390ea3a",
+        "sourceHash": "41d00390ea3aa34cfd9005c14102c8cde2f51ffec32544f33e84ad859d8fc6da",
+        "commit": "0d26c7f14353243aa7db221e025095b9a7a60026",
+        "nativeSha256": "0ff0ca1dc32a6f5fcde7ec8af1ccc8f43852d1084861dfc92c0d91588d6c6c97",
+        "runtimeSha256": "ad0049033e529f3356584790f3f74c395945ae9d6b93531210080977e7bb643f"
+      }
+    },
+    "bootIdentityCorrelation": {
+      "readOnly": true,
+      "helperReachable": true,
+      "phase": "running",
+      "lifecycleKind": "restart",
+      "lifecyclePhase": "completed",
+      "startupBootIdentityAvailable": false,
+      "automaticReady": false,
+      "persistedStartupRequestsChecked": 13,
+      "exactRequestBootIdentityMatches": 13,
+      "observerArmedOrRegistered": false
+    }
+  },
+  "priorFullNodeGate": {
+    "status": "failed",
+    "rerun": false,
+    "scope": "The earlier 2020 passing / 34 failing / 1 skipped run is not relabeled by targeted checks."
+  },
+  "actualInstalledReboot": {
+    "status": "deferred-by-user",
+    "observerRegistered": false,
+    "manifestArmed": false,
+    "issueState": "OPEN"
+  },
+  "privateEvidenceDigests": {
+    "before-fix-reproduction.json": "e9cb1d37153bf16e1eed93d8bf9d6331b1c4082d50754ac15cfb0b07c4990f97",
+    "supervisor-recovery.json": "b887537aa8a48c463394af7f8c378bc043c7bc41db6d9d7b460152150179fc16",
+    "native-cold-inherited-state.json": "6750e54f6d46c873124bb513eabdfa38f1e12dcf23656a160d0681bc98c5a07d",
+    "native-cold-inherited-state.log": "470113054044da7daf2e40eb3643c702491c4e4f6eaa54dabf6a0780fd35a947",
+    "installed-runtime-identity.json": "f5383f6b20ee0bb917d4bfbb8b82f7f8eab33316c20742413df37cfed56673b3",
+    "boot-identity-correlation.json": "c5dde4069cba5da594c86394d65c2e9b9e216b552a04f582b3b9526524fd0243",
+    "second-review-before-fix.json": "9e4983eec8eb4bb90059f57054dff37be2091599e70bab693951a8ae9b99faf2"
+  },
+  "secondReview": {
+    "pullRequest": 272,
+    "reviewedCommit": "6d93862ef4b0bbe3f6d33df862d0a13b045a1273",
+    "beforeFix": {
+      "reviewedCommit": "6d93862ef4b0bbe3f6d33df862d0a13b045a1273",
+      "selectedMethods": 2,
+      "failedAssertions": 3,
+      "causes": [
+        "Runtime root symlink was accepted with identical contents",
+        "Prior-boot failed/cancelled records with an advanced clock ended new observation"
+      ]
+    },
+    "findings": [
+      {
+        "thread": "PRRT_kwDOT-Rf-86tF_-N",
+        "comment": 4291714858,
+        "priority": "P2",
+        "url": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt/pull/272#discussion_r4291714858",
+        "correction": "Reject the Runtime root symlink before resolving its destination."
+      },
+      {
+        "thread": "PRRT_kwDOT-Rf-86tF_-S",
+        "comment": 4291714865,
+        "priority": "P2",
+        "url": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt/pull/272#discussion_r4291714865",
+        "correction": "Read only the matched startup boot UUID from the local lifecycle journal and compare UUIDs for both readiness and terminal classification; never emit other journal fields."
+      }
+    ]
+  }
+}

@@ -8,7 +8,8 @@ The native macOS app has two roles:
   stop, repair, or inspect any of those local services.
 
 Remote mode retains multiple paired server profiles for convenient switching,
-but exactly one server is active. The Dashboard polls only that active server.
+but exactly one server is active. Explicit Dashboard reads target only that server;
+leaving the popover open does not poll display data.
 Switching profiles first finishes any pending Settings save, clears the old
 snapshot, and binds subsequent reads and writes to the new server. Responses
 that complete late from the prior profile are discarded.
@@ -22,11 +23,11 @@ An absolute project path entered by a remote client is a path on that server;
 the server performs its normal validation and never treats it as a client-Mac
 path.
 
-The local runtime Server tab is hidden in client mode because backend selection,
+The local runtime Server destination is hidden in client mode because installation selection,
 maximum local access, Bridge replacement, Tunnel repair, and Codex login belong
 to the Mac that owns the process tree. The **open the menu-bar app at login**
 preference remains visible and affects only the client Mac. Quitting a remote
-client cancels its polling and closes its windows; it never stops the selected
+client cancels its requests and closes its windows; it never stops the selected
 server.
 
 ## Pair a client

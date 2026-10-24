@@ -1,0 +1,35 @@
+import CodexBridgeKit
+import Foundation
+
+@main struct InstalledReadProbe {
+ static func main() async throws {
+  let root=FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/codex-mcp-bridge/run")
+  let bridge=BridgeCompanionClient(socketPath:root.appendingPathComponent("bridge.sock").path)
+  let helper=MacOSHelperClient(socketPath:root.appendingPathComponent("helper.sock").path)
+  var selected:DashboardRow?
+  func elapsed(_ at:ContinuousClock.Instant)->Double { let d=at.duration(to:ContinuousClock.now);return Double(d.components.seconds)*1000+Double(d.components.attoseconds)/1e15 }
+  func emit(_ row:[String:Any]) { if let d=try? JSONSerialization.data(withJSONObject:row,options:[.sortedKeys]),let s=String(data:d,encoding:.utf8){ print(s);fflush(stdout) } }
+  for include in [false,true] {
+   for index in 0..<10 {
+    let at=ContinuousClock.now
+    do {
+     let view=try await bridge.dashboardJobs(limit:12,terminalOffset:0,statusOffset:nil,enrich:false,statusFilter:.all,problems:ProblemQuery(),includeHistory:include)
+     if include, let row=view.terminalRows.first {selected=row}
+     emit(["method":include ? "history":"summary","index":index,"ms":elapsed(at),"ok":true,"retainedJobs":view.counts.retainedJobs,"activeRows":view.activeRows.count,"historyRows":view.terminalRows.count])
+    }catch {emit(["method":include ? "history":"summary","index":index,"ms":elapsed(at),"ok":false,"error":String(describing:type(of:error))])}
+   }
+  }
+  if let row=selected,let scope=row.scopeId,let job=row.jobId {
+   for index in 0..<10 {
+    let at=ContinuousClock.now
+    do {let detail=try await bridge.dashboardExecutionDetail(.init(scopeId:scope,jobId:job,expectedExecutionRevision:row.executionRevision,expectedPolicyRevision:row.policyRevision));emit(["method":"detail","index":index,"ms":elapsed(at),"ok":detail.jobId==job && detail.scopeId==scope && detail.executionRevision==row.executionRevision])}
+    catch {emit(["method":"detail","index":index,"ms":elapsed(at),"ok":false,"error":String(describing:type(of:error))])}
+   }
+  }
+  for index in 0..<10 {
+   let at=ContinuousClock.now
+   do {let h=try await helper.health();emit(["method":"helper.health","index":index,"ms":elapsed(at),"ok":true,"phase":h.phase,"connected":h.bridge.connected,"observation":h.bridge.observation ?? "none"])}
+   catch {emit(["method":"helper.health","index":index,"ms":elapsed(at),"ok":false,"error":String(describing:type(of:error))])}
+  }
+ }
+}

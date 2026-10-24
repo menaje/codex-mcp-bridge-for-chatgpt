@@ -3,7 +3,8 @@ import Foundation
 import Security
 
 public let remoteCompanionProtocolName = "codex-mcp-bridge-remote-companion"
-public let remoteCompanionProtocolVersion = 1
+public let remoteCompanionProtocolVersion = 10
+let remoteCompanionMaximumResponseBytes = bridgeSkillTransportEnvelopeMaxBytes
 
 public enum RemoteCompanionError: LocalizedError, Sendable {
     case invalidInvitation
@@ -132,9 +133,12 @@ public struct RemoteClientPairingInvitation: Codable, Sendable, Equatable {
     public let expiresAt: String
 
     public static func decode(_ invitation: String) throws -> Self {
-        let compact = invitation.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !compact.isEmpty,
-              let data = Data(base64URLEncoded: compact),
+        let exactInvitation = try BridgeTextIntegrity.verbatimText(
+            invitation,
+            options: .init(maxCharacters: 16_384, rejectControlCharacters: false)
+        )
+        guard let data = Data(base64URLEncoded: exactInvitation),
+              (try? BridgeTextIntegrity.validateJSONUTF8(data)) != nil,
               let decoded = try? JSONDecoder().decode(Self.self, from: data),
               decoded.version == 1,
               decoded.protocol == remoteCompanionProtocolName,
@@ -181,6 +185,16 @@ public struct RemoteCompanionClient: RemoteBridgeApplicationClient, Sendable {
         profileName: String? = nil
     ) async throws -> RemotePairingResult {
         let invitation = try RemoteClientPairingInvitation.decode(invitationText)
+        let canonicalDeviceName = try BridgeTextIntegrity.canonicalHumanText(
+            deviceName,
+            options: .init(maxCharacters: 120, trim: true)
+        )
+        let chosenName = try profileName.map {
+            try BridgeTextIntegrity.canonicalHumanText(
+                $0,
+                options: .init(allowEmpty: true, maxCharacters: 120, trim: true)
+            )
+        }.flatMap { $0.isEmpty ? nil : $0 }
         let transport = try RemoteHTTPTransport(
             endpoint: invitation.endpoint,
             certificateSha256: invitation.certificateSha256
@@ -191,7 +205,7 @@ public struct RemoteCompanionClient: RemoteBridgeApplicationClient, Sendable {
             body: PairingRequest(
                 serverId: invitation.serverId,
                 code: invitation.code,
-                deviceName: deviceName
+                deviceName: canonicalDeviceName
             ),
             headers: [:],
             timeout: 20
@@ -200,13 +214,16 @@ public struct RemoteCompanionClient: RemoteBridgeApplicationClient, Sendable {
             serverId: invitation.serverId,
             certificateSha256: invitation.certificateSha256
         )
-        let chosenName = profileName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let serverDisplayName = try BridgeTextIntegrity.canonicalHumanText(
+            response.hello.server.displayName,
+            options: .init(maxCharacters: 120, trim: true)
+        )
         let profile = RemoteServerProfile(
             serverId: invitation.serverId,
-            name: chosenName?.isEmpty == false ? chosenName! : response.hello.server.displayName,
+            name: chosenName ?? serverDisplayName,
             endpoint: invitation.endpoint,
             certificateSha256: invitation.certificateSha256.lowercased(),
-            serverDisplayName: response.hello.server.displayName,
+            serverDisplayName: serverDisplayName,
             bridgeVersion: response.hello.bridge.version,
             bridgeBuildId: response.hello.bridge.buildId,
             capabilities: response.hello.capabilities,
@@ -267,8 +284,174 @@ public struct RemoteCompanionClient: RemoteBridgeApplicationClient, Sendable {
         try await call("settings.update", params: mutation, timeout: 30)
     }
 
+    public func modelDescriptionHistory(modelID: String, beforeVersion: Int? = nil) async throws -> ModelDescriptionHistoryPage {
+        try await call("settings.model-description-history",
+                       params: ModelDescriptionHistoryParameters(modelId: modelID, beforeVersion: beforeVersion),
+                       timeout: 20)
+    }
+
+    public func skillLibrary() async throws -> BridgeSkillLibrarySnapshot {
+        try await call("skills.snapshot", params: EmptyParameters(), timeout: 20)
+    }
+
+    public func readBridgeSkill(
+        _ reference: BridgeSkillReference
+    ) async throws -> BridgeSkill {
+        try await call("skills.read", params: reference, timeout: 20)
+    }
+
+    public func readBridgeSkillFile(
+        _ reference: BridgeSkillReference,
+        path: String
+    ) async throws -> BridgeSkillFile {
+        try await call("skills.read-file", params: BridgeSkillFileReadRequest(reference: reference, path: path), timeout: 20)
+    }
+
+    public func bridgeSkillVersions(skillId: String) async throws -> BridgeSkillVersionList {
+        try await call("skills.versions", params: BridgeSkillVersionsParameters(skillId: skillId), timeout: 20)
+    }
+
+    public func createBridgeSkill(
+        _ request: BridgeSkillCreateRequest
+    ) async throws -> BridgeSkillSummary {
+        try await call("skills.create", params: request, timeout: 30)
+    }
+
+    public func updateBridgeSkill(
+        _ request: BridgeSkillUpdateRequest
+    ) async throws -> BridgeSkillSummary {
+        try await call("skills.update", params: request, timeout: 30)
+    }
+
+    public func restoreBridgeSkill(
+        _ request: BridgeSkillRestoreRequest
+    ) async throws -> BridgeSkillSummary {
+        try await call("skills.restore", params: request, timeout: 30)
+    }
+
+    public func setBridgeSkillEnabled(
+        _ request: BridgeSkillSetEnabledRequest
+    ) async throws -> BridgeSkillSummary {
+        try await call("skills.set-enabled", params: request, timeout: 30)
+    }
+
+    public func deleteBridgeSkill(
+        _ request: BridgeSkillDeleteRequest
+    ) async throws -> BridgeSkillDeletion {
+        try await call("skills.delete", params: request, timeout: 30)
+    }
+
+    public func uploadBridgeSkillPackage(_ archive: Data) async throws -> BridgeSkillPackageInspection {
+        guard !archive.isEmpty else { throw NSError(domain: "SKILL_PACKAGE_EMPTY", code: 1) }
+        guard archive.count <= bridgeSkillPackageCompressedMaxBytes else {
+            throw NSError(domain: "SKILL_PACKAGE_COMPRESSED_TOO_LARGE", code: 1)
+        }
+        let started: BridgeSkillPackageUploadStarted = try await call(
+            "skills.package-upload.begin", params: EmptyParameters(), timeout: 20
+        )
+        var offset = 0
+        var chunkIndex = 0
+        while offset < archive.count {
+            let end = min(offset + started.chunkMaxBytes, archive.count)
+            let data = archive.subdata(in: offset..<end).base64EncodedString()
+            let _: BridgeSkillPackageUploadProgress = try await call(
+                "skills.package-upload.chunk",
+                params: BridgeSkillPackageUploadChunk(uploadId: started.uploadId, chunkIndex: chunkIndex, data: data),
+                timeout: 30
+            )
+            offset = end
+            chunkIndex += 1
+        }
+        return try await call(
+            "skills.package-upload.inspect",
+            params: BridgeSkillPackageUploadReference(uploadId: started.uploadId), timeout: 30
+        )
+    }
+
+    public func uploadBridgeSkillPackage(at archiveURL: URL) async throws -> BridgeSkillPackageInspection {
+        let values = try archiveURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+        guard values.isRegularFile == true, let size = values.fileSize, size > 0 else {
+            throw NSError(domain: "SKILL_PACKAGE_EMPTY", code: 1)
+        }
+        guard size <= bridgeSkillPackageCompressedMaxBytes else {
+            throw NSError(domain: "SKILL_PACKAGE_COMPRESSED_TOO_LARGE", code: 1)
+        }
+        let started: BridgeSkillPackageUploadStarted = try await call(
+            "skills.package-upload.begin", params: EmptyParameters(), timeout: 20
+        )
+        let handle = try FileHandle(forReadingFrom: archiveURL)
+        defer { try? handle.close() }
+        var chunkIndex = 0
+        while let chunk = try handle.read(upToCount: started.chunkMaxBytes), !chunk.isEmpty {
+            let _: BridgeSkillPackageUploadProgress = try await call(
+                "skills.package-upload.chunk",
+                params: BridgeSkillPackageUploadChunk(
+                    uploadId: started.uploadId,
+                    chunkIndex: chunkIndex,
+                    data: chunk.base64EncodedString()
+                ),
+                timeout: 30
+            )
+            chunkIndex += 1
+        }
+        return try await call(
+            "skills.package-upload.inspect",
+            params: BridgeSkillPackageUploadReference(uploadId: started.uploadId),
+            timeout: 30
+        )
+    }
+
+    public func createBridgeSkillPackage(_ request: BridgeSkillPackageCreateRequest) async throws -> BridgeSkillSummary {
+        try await call("skills.package.create", params: request, timeout: 30)
+    }
+
+    public func updateBridgeSkillPackage(_ request: BridgeSkillPackageUpdateRequest) async throws -> BridgeSkillSummary {
+        try await call("skills.package.update", params: request, timeout: 30)
+    }
+
+    public func exportBridgeSkillPackage(_ reference: BridgeSkillReference) async throws -> BridgeSkillPackageExport {
+        try await call("skills.package.export", params: reference, timeout: 30)
+    }
+
     public func historyAction(_ action: HistoryAction) async throws -> HistoryActionResult {
         try await call("dashboard.history", params: action, timeout: 15)
+    }
+
+    public func dashboardJobs(limit: Int, terminalOffset: Int, statusOffset: Int?, enrich: Bool, statusFilter: DashboardStatusFilter, problems: ProblemQuery, includeHistory: Bool) async throws -> DashboardSnapshot {
+        var params = DashboardParameters(limit: limit, terminalOffset: terminalOffset, enrich: enrich, statusFilter: statusFilter, includeHistory: includeHistory, problems: problems)
+        params.historyMode = "jobs"; params.statusOffset = statusOffset
+        do { return try await call("dashboard.snapshot", params: params, timeout: enrich ? 10 : 3) }
+        catch RemoteCompanionError.server(let code, let message) where code == -32602 && message.contains("historyMode") {
+            params.historyMode = nil
+            return try await call("dashboard.snapshot", params: params, timeout: enrich ? 10 : 3)
+        }
+    }
+    public func dashboardExecutionDetail(_ target: DashboardExecutionDetailParameters) async throws -> DashboardExecutionDetail {
+        try await call("dashboard.execution-detail", params: target, timeout: 5)
+    }
+
+    public func dashboardBackgroundPage(limit: Int, offset: Int) async throws -> DashboardSnapshot {
+        var params = DashboardParameters(limit: limit, enrich: true, statusFilter: .all, includeHistory: false)
+        params.historyMode = "jobs"; params.backgroundOffset = offset
+        return try await call("dashboard.snapshot", params: params, timeout: 10)
+    }
+
+    public func dashboardStatusPage(limit: Int, offset: Int) async throws -> DashboardSnapshot {
+        var params = DashboardParameters(limit: limit, statusFilter: .running, includeHistory: false)
+        params.statusOffset = offset
+        return try await call("dashboard.snapshot", params: params, timeout: 5)
+    }
+
+    public func dashboardHistoryDetail(rowKey: String) async throws -> DashboardHistoryDetail {
+        try await dashboardHistoryDetail(rowKey: rowKey, historyCursor: nil)
+    }
+
+    public func dashboardHistoryDetail(rowKey: String, historyCursor: String?) async throws -> DashboardHistoryDetail {
+        try await call(
+            "dashboard.history-detail",
+            params: DashboardHistoryDetailParameters(rowKey: rowKey, historyCursor: historyCursor),
+            timeout: 5
+        )
     }
 
     public func dashboardWithProblems(limit: Int, terminalOffset: Int, idleOffset: Int, enrich: Bool,
@@ -418,7 +601,7 @@ private final class RemoteHTTPTransport: Sendable {
     private let endpoint: URL
     private let session: URLSession
     private let trustDelegate: PinnedServerTrustDelegate
-    private let maximumResponseBytes = 2 * 1_024 * 1_024
+    private let maximumResponseBytes = remoteCompanionMaximumResponseBytes
 
     init(endpoint: String, certificateSha256: String) throws {
         self.endpoint = try Self.normalizedEndpoint(endpoint)
@@ -472,10 +655,12 @@ private final class RemoteHTTPTransport: Sendable {
         headers: [String: String],
         timeout: TimeInterval
     ) async throws -> Result {
-        try await request(
+        let encoded = try JSONEncoder().encode(body)
+        try BridgeTextIntegrity.validateJSONUTF8(encoded)
+        return try await request(
             path: path,
             method: "POST",
-            body: try JSONEncoder().encode(body),
+            body: encoded,
             headers: headers,
             timeout: timeout
         )
@@ -541,11 +726,13 @@ private final class RemoteHTTPTransport: Sendable {
         if http.statusCode == 403 { throw RemoteCompanionError.forbidden }
         if http.statusCode == 409 { throw RemoteCompanionError.serverIdentityMismatch }
         guard (200..<300).contains(http.statusCode) else {
+            try BridgeTextIntegrity.validateJSONUTF8(data)
             let message = (try? JSONDecoder().decode(RemoteHTTPError.self, from: data).message) ??
                 HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
             throw RemoteCompanionError.server(status: http.statusCode, message: message)
         }
         do {
+            try BridgeTextIntegrity.validateJSONUTF8(data)
             return try JSONDecoder().decode(Result.self, from: data)
         } catch {
             throw RemoteCompanionError.invalidResponse(error.localizedDescription)

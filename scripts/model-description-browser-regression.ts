@@ -5,16 +5,15 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { loadConfig } from "../src/config.js";
 import { BackendAwareModelCatalog } from "../src/modelCatalog.js";
-import { MODEL_DESCRIPTION_TRANSLATIONS } from "../src/modelDescriptionI18n.js";
+import { UI_TRANSLATIONS } from "../src/uiI18n.js";
 import { createBridgeMcpServer } from "../src/server.js";
 import { SETTINGS_CARD_HTML } from "../src/settingsCard.js";
 import { BridgeStateStore } from "../src/stateStore.js";
 import { UserSettingsStore } from "../src/userSettings.js";
 import { cardPrelude } from "./card-browser-fixtures.js";
+import { connectCurrentMcpServer } from "./current-mcp-test-harness.js";
 
 // The browser talks to the real settings store and MCP tools. Only Codex's
 // upstream catalog is simulated; no authenticated model turn or live setting is used.
@@ -42,9 +41,8 @@ const bridge = createBridgeMcpServer(config, {
   async callTool() { throw new Error("Model execution is outside this regression"); },
   async close() {}
 }, undefined, undefined, catalog, settings);
-const client = new Client({ name: "model-description-browser", version: "1" });
-const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-await Promise.all([bridge.connect(serverTransport), client.connect(clientTransport)]);
+const connection = await connectCurrentMcpServer(bridge, { name: "model-description-browser", version: "1" });
+const { client } = connection;
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url || "/", "http://127.0.0.1");
@@ -121,9 +119,13 @@ try {
     await row.locator('textarea').fill(custom);
     await action('save').click();
     await row.locator('[data-description-source="user"]').waitFor();
+    await action('history').click();
+    await row.locator('.model-description-history-version').first().waitFor();
+    check((await row.locator('.model-description-history-version').first().textContent()).includes(custom),'Version history loads only when opened');
+    await action('history').click();
     check(await page.locator('#concurrency').inputValue()==='7','Description save must preserve unrelated unsaved fields');
     check(await page.evaluate(()=>window.__descriptionInjected===undefined),'User text must not execute');
-    let listed=(await tool('codex_models',{contractVersion:'2'})).structuredContent;
+    let listed=(await tool('codex_models')).structuredContent;
     check(listed.models.find(x=>x.id==='gpt-6-astra').description===custom,'Real MCP result uses custom text');
     check(listed.models.find(x=>x.id==='gpt-6-astra').descriptionSource==='user','Mark user source');
     const stored=(await tool('codex_ui_read',{view:'settings'})).structuredContent;
@@ -133,8 +135,14 @@ try {
     check(stored.catalog.models.find(x=>x.id==='gpt-6-astra').description===official,'Catalog still contains official text');
     await row.locator('summary').click();
     check((await row.locator('details p').textContent())===official,'Compare official text');
+    await action('history').click();
+    await row.locator('.model-description-history-version').first().waitFor();
+    const historyReadsBeforeGeneralSave=await page.evaluate(()=>window.__descriptionCalls.filter(x=>x.name==='codex_ui_read'&&x.args.view==='model-description-history').length);
     await page.locator('#save').click();
     await page.waitForFunction(()=>!document.querySelector('#save').disabled);
+    await page.waitForFunction(before=>window.__descriptionCalls.filter(x=>x.name==='codex_ui_read'&&x.args.view==='model-description-history').length>before,historyReadsBeforeGeneralSave);
+    check((await row.locator('.model-description-history-version').first().textContent()).includes(custom),'Expanded history remains visible after general settings change');
+    await action('history').click();
     check((await tool('codex_ui_read',{view:'settings'})).structuredContent.settings.maxConcurrentJobs===7,'General save after description save uses current revision');
     check((await tool('codex_ui_read',{view:'settings'})).structuredContent.settings.historyRetentionDays===90,'Real settings mutation saves retention');
     check((await page.locator('#history-settings-policy').innerText()).includes('90일'),'Saved policy updates notice');
@@ -176,7 +184,7 @@ try {
     await page.locator('#model-policy-mode').selectOption('fixed');
     await page.locator('#save').click();
     await page.waitForFunction(()=>!document.querySelector('#save').disabled);
-    listed=(await tool('codex_models',{contractVersion:'2'})).structuredContent;
+    listed=(await tool('codex_models')).structuredContent;
     const fixed=listed.models.find(x=>x.id==='gpt-6-astra');
     if(fixed)check(!fixed.descriptionSource&&fixed.description==='Updated official Astra description.','Fixed mode uses official text');
     await page.locator('#model-policy-mode').selectOption('automatic');
@@ -185,6 +193,7 @@ try {
     check((await tool('codex_models')).structuredContent.models.find(x=>x.id==='gpt-6-astra').description==='Keep this draft after a conflict.','Returning to automatic restores override');
     await scenario({hideAstra:true,advanceMs:600001});
     await page.reload();
+    await page.locator('#show-all-model-descriptions').check();
     await row.locator('[data-description-source="user"]').waitFor();
     check(!(await tool('codex_models')).structuredContent.models.some(x=>x.id==='gpt-6-astra'),'Description must not make an unavailable model executable');
     check((await tool('codex_ui_read',{view:'settings'})).structuredContent.settings.modelDescriptionOverrides['gpt-6-astra'],'Keep description while model is absent');
@@ -200,7 +209,45 @@ try {
     await row.locator('textarea').fill('여러 구성요소의 설계 판단이 필요한 작업에 사용합니다. 단순 조회나 정해진 수정은 다른 모델을 먼저 검토합니다.');
     await action('save').click();
     await row.locator('[data-description-source="user"]').waitFor();
-    const bundles=${JSON.stringify(MODEL_DESCRIPTION_TRANSLATIONS)},locales=[];
+    const previousDescription='여러 구성요소의 설계 판단이 필요한 작업에 사용합니다. 단순 조회나 정해진 수정은 다른 모델을 먼저 검토합니다.';
+    await action('edit').click();
+    await row.locator('textarea').fill('Alternate guidance for a version rollback.');
+    await action('save').click();
+    await action('history').click();
+    const earlier=row.locator('.model-description-history-version').nth(1);
+    await earlier.locator('summary').click();
+    const comparison=await earlier.locator('.model-description-history-content').textContent();
+    check(comparison.includes(previousDescription)&&comparison.includes('Alternate guidance for a version rollback.')&&comparison.includes('Updated official Astra description.'),'Previous version can be compared with current and official descriptions');
+    await row.screenshot({path:${JSON.stringify(path.join(output, "settings-model-description-history-ko.png"))}});
+    await earlier.locator('[data-description-action="history-apply"]').click();
+    await page.waitForFunction(text=>document.querySelector('.model-description-row[data-model="gpt-6-astra"] .model-description-text')?.textContent===text,previousDescription);
+    check((await tool('codex_models')).structuredContent.models.find(x=>x.id==='gpt-6-astra').description===previousDescription,'Restored version is the only text sent to GPT');
+    const history=(await tool('codex_ui_read',{view:'model-description-history',modelId:'gpt-6-astra'})).structuredContent;
+    check(history.versions[0].description===previousDescription&&history.versions[1].description==='Alternate guidance for a version rollback.','Rollback is a new undoable version');
+    await action('restore').click();
+    await row.locator('[data-description-source="catalog"]').waitFor();
+    await scenario({hideAstra:true,advanceMs:600001});
+    await page.reload();
+    await page.locator('#show-all-model-descriptions').check();
+    await row.locator('[data-description-source="catalog"]').waitFor();
+    const historyOnly=(await tool('codex_ui_read',{view:'settings'})).structuredContent;
+    check(!historyOnly.settings.modelDescriptionOverrides['gpt-6-astra']&&historyOnly.modelDescriptionHistoryModelIds.includes('gpt-6-astra'),'A removed model with history only remains in Settings');
+    check(!(await tool('codex_models')).structuredContent.models.some(x=>x.id==='gpt-6-astra'),'A historical model is not executable');
+    await action('history').click();
+    const retained=row.locator('.model-description-history-version').nth(1);
+    await retained.locator('summary').click();
+    await retained.locator('[data-description-action="history-apply"]').click();
+    await row.locator('[data-description-source="user"]').waitFor();
+    check(!(await tool('codex_models')).structuredContent.models.some(x=>x.id==='gpt-6-astra'),'Restoring a historical description does not make a removed model executable');
+    await page.locator('#reset').click();
+    await row.locator('[data-description-source="catalog"]').waitFor();
+    const afterReset=(await tool('codex_ui_read',{view:'settings'})).structuredContent;
+    check(!afterReset.settings.modelDescriptionOverrides['gpt-6-astra']&&afterReset.modelDescriptionHistoryModelIds.includes('gpt-6-astra'),'General reset clears the active text but keeps version history');
+    await action('history').click();
+    await row.locator('.model-description-history-version').first().waitFor();
+    check((await tool('codex_ui_read',{view:'model-description-history',modelId:'gpt-6-astra'})).structuredContent.versions[0].description===null,'General reset records an official-selection version');
+    await action('history').click();
+    const bundles=${JSON.stringify(UI_TRANSLATIONS)},locales=[];
     for(const [locale,copy] of Object.entries(bundles)){
       await page.locator('#ui-language').selectOption(locale);
       check(await page.locator('#model-descriptions-title').textContent()===copy['settings.modelDescriptions.title'],'Translated title: '+locale);
@@ -215,7 +262,7 @@ try {
     check(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),'No mobile overflow');
     await page.locator('.model-descriptions-panel').screenshot({path:${JSON.stringify(path.join(output, "settings-model-descriptions-mobile-ko.png"))}});
     check((await page.evaluate(()=>window.__cardErrors)).length===0,'No page errors');
-    return {realMcp:true,canonicalEfforts:true,officialAndCustom:true,unchangedNoOverride:true,cancel:true,restore:true,blank:true,cacheExpiryUnchanged:true,conflictRetainsDraft:true,modeSwitch:true,unavailableModelRetained:true,plainText:true,locales};
+    return {realMcp:true,canonicalEfforts:true,officialAndCustom:true,unchangedNoOverride:true,cancel:true,restore:true,blank:true,cacheExpiryUnchanged:true,conflictRetainsDraft:true,modeSwitch:true,unavailableModelRetained:true,historyOnlyModelRetained:true,resetRetainsHistory:true,expandedHistoryRefresh:true,plainText:true,versionHistory:true,versionRollback:true,locales};
   }`);
   writeFileSync(path.join(output, "report.txt"), result);
   console.log(result);
@@ -226,7 +273,7 @@ try {
 } finally {
   await cli("close").catch(() => undefined);
   await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
-  await client.close();
+  await connection.close();
   await bridge.close();
   state.close();
   rmSync(temporary, { recursive: true, force: true });

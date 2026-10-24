@@ -1,6 +1,8 @@
 import path from "node:path";
+import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ACCOUNT_RATE_LIMITS_CACHE_TTL_MS,
   APP_SERVER_CLIENT_INFO,
@@ -11,7 +13,8 @@ import {
 } from "../src/appServerUpstream.js";
 import { CODEX_CLI_TEST_VERSION } from "../src/appServerCompatibility.js";
 import { BRIDGE_BUILD_INFO } from "../src/buildInfo.js";
-import type { JsonRpcProcessIdentity } from "../src/jsonRpcProcess.js";
+import { stableCodexWorkingDirectory } from "../src/codexService.js";
+import { JsonRpcProcess, type JsonRpcProcessIdentity } from "../src/jsonRpcProcess.js";
 import { PRODUCT_INFO } from "../src/productInfo.js";
 import type {
   CodexPendingInteraction,
@@ -32,6 +35,64 @@ const protocolFixture = (name: string): string => path.join(
 );
 
 describe("CodexAppServerUpstreamPool", () => {
+  it("resumes and forks long histories without hydrating them or replacing the execution worker", async () => {
+    const request = vi.spyOn(JsonRpcProcess.prototype, "request");
+    const assignments: UpstreamWorkerAssignment[] = [];
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, {
+      environment: { ...process.env, CODEX_TEST_LARGE_THREAD_HISTORY: "1", CODEX_TEST_UNSUBSCRIBE_UNLOAD: "1" }
+    });
+    const input = { backendKind: "app-server" as const, prompt: "report selection", cwd: process.cwd(),
+      sandbox: "read-only" as const, approvalPolicy: "on-request" as const,
+      selection: { model: "gpt-5.6-sol", reasoningEffort: "medium" } };
+    try {
+      const started = await pool.startThread({ ...input, executionContext: "binding:start" }, undefined, assignment => assignments.push(assignment));
+      const threadId = started.structuredContent!.threadId as string;
+      expect(await pool.releaseThreadConnection(threadId, { canRelease: async () => true })).toMatchObject({ phase: "released" });
+      const continued = await pool.continueThread({ ...input, threadId, executionContext: "binding:continue" }, undefined, assignment => assignments.push(assignment));
+      expect(continued.structuredContent).toMatchObject({ threadId, turnStatus: "completed" });
+      const forked = await pool.forkThread({ ...input, threadId, executionContext: "binding:fork" }, undefined, assignment => assignments.push(assignment));
+      expect(forked.structuredContent!.threadId).not.toBe(threadId);
+      expect(forked.structuredContent).toMatchObject({ turnStatus: "completed", forkedFromThreadId: threadId });
+      expect(new Set(assignments.map(assignment => `${assignment.workerId}:${assignment.workerGeneration}`)).size).toBe(1);
+      expect(assignments.filter(assignment => assignment.upstreamRequestId)).toHaveLength(3);
+      const turns = request.mock.calls.filter(([method]) => method === "turn/start");
+      expect(turns.map(([, params]) => (params as { input: unknown }).input)).toEqual([
+        "binding:start", "binding:continue", "binding:fork"
+      ].map(text => [{ type: "text", text: input.prompt, text_elements: [] }, { type: "text", text, text_elements: [] }]));
+      for (const method of ["thread/resume", "thread/fork"]) {
+        expect(request.mock.calls.find(([name]) => name === method)?.[1]).toMatchObject({ excludeTurns: true });
+      }
+    } finally {
+      await pool.close();
+      request.mockRestore();
+    }
+  }, 15_000);
+
+  it.each(["fast", "unset"])("retains legacy scope and distinguishes per-turn Standard/inheritance with CLI default %s", async defaultTier => {
+    const root = await mkdtemp(path.join(tmpdir(), "bridge-215-wire-")), log = path.join(root, "speed.jsonl");
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, { environment: { ...process.env, CODEX_TEST_SPEED_LOG: log,
+      ...(defaultTier === "fast" ? { CODEX_TEST_DEFAULT_TIER: "fast" } : {}) } });
+    const events: CodexPublicEvent[] = [];
+    const base = { backendKind: "app-server" as const, prompt: "report selection", cwd: root, sandbox: "read-only" as const,
+      approvalPolicy: "on-request" as const, selection: { model: "gpt-5.6-sol", reasoningEffort: "max" } };
+    try {
+      const newInherited = await pool.startThread({ ...base, selection: { ...base.selection, serviceTierScope: "turn" } }, p => { if (p.event) events.push(p.event); });
+      const threadId = newInherited.structuredContent!.threadId as string;
+      await pool.continueThread({ ...base, threadId, selection: { ...base.selection, serviceTier: "priority" } });
+      await pool.continueThread({ ...base, threadId, selection: { ...base.selection, serviceTier: "default", serviceTierScope: "turn" } });
+      await pool.continueThread({ ...base, threadId, selection: { ...base.selection, serviceTierScope: "turn" } });
+      await pool.continueThread({ ...base, threadId });
+      await pool.startThread(base);
+      const rows = (await readFile(log, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+      expect(rows.map(row => [row.persistentTier, row.processingTier])).toEqual([[defaultTier === "fast" ? "fast" : null, defaultTier === "fast" ? "fast" : null],
+        ["priority", "priority"], ["priority", null], ["priority", "priority"], [null, null], [null, null]]);
+      expect(rows.every(row => row.model === base.selection.model && row.effort === base.selection.reasoningEffort)).toBe(true);
+      expect(rows[2]).not.toHaveProperty("serviceTier");
+      expect(rows[2]).toHaveProperty("serviceTierForTurn", "default");
+      expect(rows[4]).toHaveProperty("serviceTier", null);
+      expect(events.find(event => event.details?.evidence === "turn/start-accepted")?.details).toMatchObject({ evidenceVersion: 1, sent: { serviceTierForTurn: null }, serviceTierScope: "turn" });
+    } finally { await pool.close(); await rm(root, { recursive: true, force: true }); }
+  }, 15_000);
   it("uses stable release client identity for every App Server handshake", () => {
     expect(APP_SERVER_CLIENT_INFO).toEqual({
       name: PRODUCT_INFO.runtimeName,
@@ -39,6 +100,44 @@ describe("CodexAppServerUpstreamPool", () => {
       version: BRIDGE_BUILD_INFO.version
     });
     expect(Object.isFrozen(APP_SERVER_CLIENT_INFO)).toBe(true);
+  });
+
+  it("starts App Server workers in a stable home directory", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "codex-app-server-cwd-"));
+    const observation = path.join(home, "worker-cwd.txt");
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, {
+      environment: {
+        ...process.env,
+        HOME: home,
+        CODEX_TEST_APP_SERVER_CWD_OBSERVATION: observation
+      }
+    });
+    try {
+      await pool.listModels();
+      expect(await readFile(observation, "utf8")).toBe(await realpath(home));
+    } finally {
+      await pool.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("reads account metadata without assigning workspace routing as a login owner", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "codex-app-server-account-"));
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, { environment: {
+      ...process.env, HOME: home, CODEX_HOME: path.join(home, ".codex"),
+      CODEX_TEST_ACCOUNT_ID: "workspace-w"
+    } });
+    try {
+      const details = await pool.readAccountDetails();
+      const account = details.snapshot;
+      expect(account?.ownershipKey).toBeNull();
+      expect(account?.workspaceKey).toMatch(/^[a-f0-9]{64}$/);
+      expect(details).toMatchObject({ email: "private-fixture@example.com", workspaceName: null });
+      expect(JSON.stringify(account)).not.toContain("private-fixture@example.com");
+    } finally {
+      await pool.close();
+      await rm(home, { recursive: true, force: true });
+    }
   });
 
   it("selects, caches, and invalidates the account-wide seven-day Codex limit", async () => {
@@ -74,8 +173,8 @@ describe("CodexAppServerUpstreamPool", () => {
           limitId: "codex",
           primary: { usedPercent: 12, windowDurationMins: 300, resetsAt: 123 }
         },
-        codex_spark: {
-          limitId: "codex_spark",
+        other_limit: {
+          limitId: "other_limit",
           primary: { usedPercent: 34, windowDurationMins: 10_080, resetsAt: 456 }
         }
       }
@@ -132,6 +231,7 @@ describe("CodexAppServerUpstreamPool", () => {
   it("does not start or assign a worker for a loaded-only historical thread lookup", async () => {
     const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
     try {
+      await expect(pool.listLoadedThreadIds()).resolves.toEqual([]);
       await expect(
         pool.listLoadedBackgroundTerminals!("historical-thread", "app-server")
       ).resolves.toBeNull();
@@ -316,10 +416,66 @@ describe("CodexAppServerUpstreamPool", () => {
     }
   });
 
+  it.each([undefined, 1_000])("waits for delayed thread initialization with deadline %s while keeping controls bounded", async threadInitializationTimeoutMs => {
+    const request = vi.spyOn(JsonRpcProcess.prototype, "request");
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, {
+      environment: { ...process.env, CODEX_TEST_THREAD_INITIALIZATION_DELAY_MS: "300", CODEX_TEST_UNSUBSCRIBE_UNLOAD: "1" },
+      requestTimeoutMs: 100,
+      initializeTimeoutMs: 2_000,
+      ...(threadInitializationTimeoutMs === undefined ? {} : { threadInitializationTimeoutMs })
+    });
+    const input = { backendKind: "app-server" as const, prompt: "report selection", cwd: process.cwd(),
+      sandbox: "read-only" as const, approvalPolicy: "on-request" as const };
+    try {
+      const started = await pool.startThread(input);
+      const threadId = started.structuredContent!.threadId as string;
+      await pool.forkThread({ ...input, threadId });
+      expect(await pool.releaseThreadConnection(threadId, { canRelease: async () => true }))
+        .toMatchObject({ phase: "released" });
+      await pool.continueThread({ ...input, threadId });
+      const threadCalls = request.mock.calls.filter(([method]) => ["thread/start", "thread/fork", "thread/resume"].includes(method));
+      expect(threadCalls.map(([method]) => method)).toEqual(["thread/start", "thread/fork", "thread/resume"]);
+      expect(threadCalls.every(([, , options]) => options?.timeoutMs === (threadInitializationTimeoutMs ?? 60_000))).toBe(true);
+      const turnCalls = request.mock.calls.filter(([method]) => method === "turn/start");
+      expect(turnCalls).toHaveLength(3);
+      expect(turnCalls.every(([, , options]) => options?.timeoutMs === 100)).toBe(true);
+    } finally {
+      await pool.close();
+      request.mockRestore();
+    }
+  });
+
+  it("bounds thread initialization and records its late response without starting a turn", async () => {
+    const lateResponses: CodexAppServerLateResponse[] = [];
+    const request = vi.spyOn(JsonRpcProcess.prototype, "request");
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, {
+      environment: { ...process.env, CODEX_TEST_THREAD_INITIALIZATION_DELAY_MS: "300" },
+      requestTimeoutMs: 100,
+      initializeTimeoutMs: 2_000,
+      threadInitializationTimeoutMs: 150,
+      onLateResponse: response => lateResponses.push(response)
+    });
+    try {
+      await expect(pool.startThread({ backendKind: "app-server", prompt: "report selection", cwd: process.cwd(),
+        sandbox: "read-only", approvalPolicy: "on-request" })).rejects.toMatchObject({
+        method: "thread/start", timeoutMs: 150
+      });
+      await eventually(() => lateResponses.some(response => response.method === "thread/start"));
+      expect(request.mock.calls.filter(([method]) => method === "thread/start")).toHaveLength(1);
+      expect(request.mock.calls.some(([method]) => method === "turn/start")).toBe(false);
+    } finally {
+      await pool.close();
+      request.mockRestore();
+    }
+  });
+
   it("rejects invalid protocol timeouts before starting a worker", () => {
     expect(
       () => new CodexAppServerUpstreamPool(FIXTURE, 1, { requestTimeoutMs: 0 })
     ).toThrow("requestTimeoutMs must be an integer between 1");
+    expect(
+      () => new CodexAppServerUpstreamPool(FIXTURE, 1, { threadInitializationTimeoutMs: 0 })
+    ).toThrow("threadInitializationTimeoutMs must be an integer between 1");
   });
 
   it("exposes the backend model catalog and applies exact turn-level continuation overrides", async () => {
@@ -366,6 +522,24 @@ describe("CodexAppServerUpstreamPool", () => {
       await pool.close();
     }
   }, 15_000);
+
+  it.each(["thread/archive", "thread/unarchive"])("keeps execution available without optional %s", async method => {
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, { environment: {
+      ...process.env, CODEX_TEST_MISSING_METHOD: method
+    } });
+    try {
+      await pool.listModels();
+      const tools = await pool.listTools() as { tools: Array<{ name: string }> };
+      expect(tools.tools.some(tool => tool.name === method)).toBe(false);
+      const management = method === "thread/archive" ? pool.archiveThread("fixture") : pool.restoreThread("fixture");
+      await expect(management).rejects.toThrow("CODEX_FEATURE_UNSUPPORTED");
+      const result = await pool.startThread({ backendKind: "app-server", prompt: "report selection",
+        cwd: process.cwd(), sandbox: "read-only", approvalPolicy: "on-request",
+        selection: { model: "gpt-5.6-sol", reasoningEffort: "max" } });
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toHaveProperty("threadId");
+    } finally { await pool.close(); }
+  });
 
   it("creates hidden App Server starts and forks as ephemeral threads", async () => {
     const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
@@ -569,12 +743,12 @@ describe("CodexAppServerUpstreamPool", () => {
     const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
     try {
       await expect(pool.probeThread("missing-thread")).resolves.toEqual({
-        state: "orphaned",
-        reason: "missing",
+        state: "unknown",
+        reason: "storage-unavailable",
         threadId: "missing-thread",
-        retryable: false
+        retryable: true
       });
-      expect(pool.canResumeThread("missing-thread")).toBe(false);
+      expect(pool.canResumeThread("missing-thread")).not.toBe(false);
 
       const started = await pool.callTool("codex", task("probe idle"));
       const threadId = (started.structuredContent as { threadId: string }).threadId;
@@ -645,6 +819,7 @@ describe("CodexAppServerUpstreamPool", () => {
         selection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
       });
       const threadId = (result.structuredContent as { threadId: string }).threadId;
+      await expect(pool.listLoadedThreadIds()).resolves.toContain(threadId);
       await expect(
         pool.listLoadedBackgroundTerminals!(threadId, "app-server")
       ).resolves.toEqual([
@@ -664,6 +839,8 @@ describe("CodexAppServerUpstreamPool", () => {
       await expect(
         pool.terminateBackgroundTerminal!(threadId, "background-process-1", "app-server")
       ).resolves.toEqual({ terminated: false });
+      await pool.archiveThread(threadId);
+      await expect(pool.listLoadedThreadIds()).resolves.not.toContain(threadId);
     } finally {
       await pool.close();
     }
@@ -871,6 +1048,7 @@ describe("CodexAppServerUpstreamPool", () => {
   it("round-trips command, file, input, and permission requests by exact request ID", async () => {
     const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
     const interactions: CodexPendingInteraction[] = [];
+    const workerCwdLabel = path.basename(stableCodexWorkingDirectory());
     try {
       const running = pool.callTool("codex", task("interactions"), (progress) => {
         const interaction = progress.event?.details?.interaction;
@@ -881,7 +1059,7 @@ describe("CodexAppServerUpstreamPool", () => {
       expect(command.interactionId).toContain("request-command-17");
       expect(command).toMatchObject({
         reason: "Fixture network approval",
-        cwdLabel: path.basename(process.cwd()),
+        cwdLabel: workerCwdLabel,
         networkContext: { host: "example.test", protocol: "https" },
         availableDecisions: ["accept", "acceptForSession", "decline", "cancel"],
         commandActions: [{ type: "read", pathLabel: "fixture.txt" }],
@@ -894,7 +1072,7 @@ describe("CodexAppServerUpstreamPool", () => {
 
       const file = await nextInteraction(interactions, "file-approval");
       expect(file.interactionId).toContain("902");
-      expect(file.grantRootLabel).toBe(path.basename(process.cwd()));
+      expect(file.grantRootLabel).toBe(workerCwdLabel);
       await pool.respondToInteraction(file.interactionId, { decision: "decline" });
 
       const input = await nextInteraction(interactions, "user-input");
@@ -907,8 +1085,8 @@ describe("CodexAppServerUpstreamPool", () => {
       expect(permission.summary).toContain("Need fixture access");
       expect(permission.requestedPermissions).toMatchObject({
         networkEnabled: true,
-        filesystemRead: [path.basename(process.cwd())],
-        filesystemWrite: [path.basename(process.cwd())]
+        filesystemRead: [workerCwdLabel],
+        filesystemWrite: [workerCwdLabel]
       });
       await pool.respondToInteraction(permission.interactionId, { decision: "acceptForSession" });
 
@@ -948,10 +1126,10 @@ describe("CodexAppServerUpstreamPool", () => {
         expect.objectContaining({
           type: "input-required",
           phase: "completed",
-          details: {
+          details: expect.objectContaining({
             resolvedInteractionId: input.interactionId,
             resolution: "server-resolved"
-          }
+          })
         })
       ]));
       await expect(
@@ -1032,6 +1210,7 @@ describe("CodexAppServerUpstreamPool", () => {
       expect(first?.workerPid).toBe(second?.workerPid);
       const correlation={kind:"cancellation-intent" as const,intentId:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",requestId:"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",source:"operator" as const,reasonCode:"prior-stop-intent-retry"};
       await expect(pool.forceTerminateWorker(first!,correlation,10,{interruptOnly:true})).rejects.toThrow(/PRECISE_INTERRUPTION_UNCONFIRMED/);
+      await expect(pool.forceTerminateWorker(first!,correlation,10,{retirementThreadIds:[first!.threadId!]})).rejects.toThrow(/PROJECT_ARCHIVE_SHARED_WORKER/);
       await expect(pool.probeThread(second!.threadId!)).resolves.toMatchObject({state:"busy"});
       await expect(pool.probeThread(first!.threadId!)).resolves.toMatchObject({state:"busy"});
       await expect(pool.forceTerminateWorker({...first!,upstreamRequestId:"obsolete-turn"},correlation,10,{interruptOnly:true})).rejects.toThrow(/PRECISE_INTERRUPTION_UNCONFIRMED/);
@@ -1039,6 +1218,18 @@ describe("CodexAppServerUpstreamPool", () => {
       await expect(pool.probeThread(first!.threadId!)).resolves.toMatchObject({state:"busy"});
       await other;
     } finally {await pool.close();await running;await other;}
+  },15_000);
+
+  it("permits archive worker fallback only when every loaded turn belongs to the retirement set", async () => {
+    const pool=new CodexAppServerUpstreamPool(FIXTURE,1,{interruptTimeoutMs:40});
+    let assignment:UpstreamWorkerAssignment|undefined;
+    const running=pool.callTool("codex",task("hold and ignore interrupt"),undefined,value=>{assignment=value;}).catch(error=>error);
+    try {
+      await eventually(()=>Boolean(assignment?.upstreamRequestId));
+      const correlation={kind:"cancellation-intent" as const,intentId:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",requestId:"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",source:"operator" as const,reasonCode:"project-archive"};
+      await expect(pool.forceTerminateWorker(assignment!,correlation,10,{retirementThreadIds:[assignment!.threadId!]})).resolves.toMatchObject({workerExited:true});
+      await running;
+    } finally {await pool.close();await running;}
   },15_000);
 
   it("confirms exact turn interruption before falling back to process termination", async () => {

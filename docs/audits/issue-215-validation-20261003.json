@@ -1,0 +1,675 @@
+{
+  "schemaVersion": 1,
+  "checkedAt": "2026-10-03T10:10:37.935313+00:00",
+  "issue": 215,
+  "acceptanceScope": "development; no candidate, installed product or real-account acceptance",
+  "source": {
+    "commit": "1abf569fa0cc3ce4ca1e7a8e3f5ee42a41324aa0",
+    "trackedAndUntrackedCleanAtBuild": true,
+    "gitObjects": {
+      "src": "7ec62041cdaf98b70a01a03475d758a2fa386083",
+      "test": "57081db6aaeb3f351e6a36eba918f884fafbb0cc",
+      "scripts": "b004ead8963da794b6f49377572c0d55099844db",
+      "macos": "1219de86b6d94645ef1b281363c4a9c9432aa45c",
+      "locales": "727d621f2b54eab7697aa34cd66bf8bbde97ee00",
+      "ui-resources": "cabccd695369552d8f986059608874ef1a1082fc",
+      "package.json": "1c8ed057d7fc59d27c9d5e464d95f7e06baf0b0a",
+      "package-lock.json": "627d3e413eaed7cab632b94196117c821f97fa01"
+    }
+  },
+  "environment": {
+    "node": "v22.20.0",
+    "nodeAbi": "127",
+    "vitest": "4.1.11",
+    "platform": "darwin",
+    "arch": "arm64"
+  },
+  "build": {
+    "command": "npm run build",
+    "status": "passed",
+    "info": {
+      "version": "0.4.1",
+      "commit": "1abf569fa0cc3ce4ca1e7a8e3f5ee42a41324aa0",
+      "dirty": false,
+      "sourceHash": "3086b1864baf9411d44cc07d57af856fc55652597597deb45feae074976b51d9",
+      "builtAt": "2026-10-03T10:03:13.270Z",
+      "id": "1abf569fa0cc:3086b1864baf"
+    },
+    "compiledTreeSha256": "2300f3a90db414eac0b9cb22e03aba273ede005007cdd3cba1c92c481d334541",
+    "compiledFiles": [
+      {
+        "path": "dist/activity.js",
+        "sha256": "1c8e4b95de73ab2ed5a133b6c2ff4f4eab9952dec322736243d5749a6af4da7b"
+      },
+      {
+        "path": "dist/agent.js",
+        "sha256": "c19a3b162e9e0797513a16453d9ba93389c3261e6ea38758ab2e350eaf3194bb"
+      },
+      {
+        "path": "dist/appServerCompatibility.js",
+        "sha256": "2316e874032f9b4d22656fab49d7866fd90fee378b5a76abafb2f069d26bfa6c"
+      },
+      {
+        "path": "dist/appServerLateResponses.js",
+        "sha256": "7a290aa9b2e814d667025542c617269c91807b60100065b87f5bbaf8816b324b"
+      },
+      {
+        "path": "dist/appServerUpstream.js",
+        "sha256": "0476358eac52542bc7bc24c8c30edad476c04eb1d722a744a6514468970be493"
+      },
+      {
+        "path": "dist/automaticRecovery.js",
+        "sha256": "66704510266f653c0ae52bef2a359abb384f3a1ac82f2b64cf484cf830a58591"
+      },
+      {
+        "path": "dist/backgroundWorkBudget.js",
+        "sha256": "fbb80436de083175a9da57f8c97951d9d446ab65854538524e703c26957c0bae"
+      },
+      {
+        "path": "dist/build-info.json",
+        "sha256": "b08fc93a30dc044fb72db67737cdbf876c60572fbe80919778e3c92fe0bbd3e3"
+      },
+      {
+        "path": "dist/buildInfo.js",
+        "sha256": "52504db835cc8a1d2c2d788403b0f64f5da387c4f491a221ec4cb2bf92165129"
+      },
+      {
+        "path": "dist/cancellation.js",
+        "sha256": "b22a76d682e5647cdbc560b50867c603c68f23bc74179eaa2ae0374f1a8764e7"
+      },
+      {
+        "path": "dist/cardForms.js",
+        "sha256": "6eee11e69ec6ce6d081254040371683f9b02f638f4d823a8594337cc46ab29e0"
+      },
+      {
+        "path": "dist/changeSignal.js",
+        "sha256": "95046f4061f8acb2f344268b0e9e0f137320ef517fefc2a7f74040bce397390b"
+      },
+      {
+        "path": "dist/cli.js",
+        "sha256": "4ec6b2547902c6cffcbb6b38ea16150b3d4f6807324dc50566d998fbaa5f3bbc"
+      },
+      {
+        "path": "dist/cliProtocol.js",
+        "sha256": "982aef03d50a68dca342516811d88c3ef047d71a6e7fcba7275e4dc7a1b8e860"
+      },
+      {
+        "path": "dist/codexAccount.js",
+        "sha256": "2e078012844332b350136be302bf5cb40a4c6a00c0f08d4dabd01e8c70c2e4c2"
+      },
+      {
+        "path": "dist/codexAuthPolicy.js",
+        "sha256": "87729a04c908d43ee584b684585f8161dc1d7a74be36eeb105977449bd2bdf9a"
+      },
+      {
+        "path": "dist/codexAuthSelection.js",
+        "sha256": "75b9f57ecfcd79882a10dc53ad068c7eb50b10ab6f3b14d8cb37eab890f651d5"
+      },
+      {
+        "path": "dist/codexBilling.js",
+        "sha256": "3e4732332a2a7aa07cf59d212adcbe5ca16cda47a13a8c25779d6a73ca9b60cf"
+      },
+      {
+        "path": "dist/codexInputs.js",
+        "sha256": "28ccca8e1515c9eaf41f7c2bbdf93e251a3b4662ea29e8b8aa99ccc273404a48"
+      },
+      {
+        "path": "dist/codexRuntime.js",
+        "sha256": "a961c77d46bd1523e8f41a3eaadec35f7a3d67e0ab9e3029cd16dbbda506fb36"
+      },
+      {
+        "path": "dist/codexService.js",
+        "sha256": "2c8fa577e9f0b6ba35146ef867e938494356649f6a25cf552e69bd6206e30a05"
+      },
+      {
+        "path": "dist/companionServer.js",
+        "sha256": "475b7bde01c0e1523d66cc3274095749b6ae25d5af6e55a861347b7fbba30ef8"
+      },
+      {
+        "path": "dist/completionDelivery.js",
+        "sha256": "289acb8ccc3edd540d7295a2ea4f4925005f911e132785d3d1ccdde1baba3f1e"
+      },
+      {
+        "path": "dist/config.js",
+        "sha256": "08c6603317d0cde834528e535d349b96c37e51342e403279c190433402bf8440"
+      },
+      {
+        "path": "dist/contextualModelCatalog.js",
+        "sha256": "88e491f00c40b01c2b9d0a55035cf34f24f8e92963006e9811fbf467f9e8cbc9"
+      },
+      {
+        "path": "dist/dashboardCard.js",
+        "sha256": "324f547b9637ba78ab4651b52486c65f5f2bc47f7eecb5c48e3432a0d67acc6d"
+      },
+      {
+        "path": "dist/dashboardControls.js",
+        "sha256": "361bc758879f8d67037c0d74c5b0b4102ace9e0b228334f61e3c16c9794fb763"
+      },
+      {
+        "path": "dist/dashboardPresentation.js",
+        "sha256": "bf74378b8b6a4f4151c2c46c402175b2051aed665d40c5a5badb537cc9e8a53c"
+      },
+      {
+        "path": "dist/decisionCardStore.js",
+        "sha256": "e050e30e0d3f13e9df3b08db9994d76ee83d0e51d7b49c8733246605b75a8f57"
+      },
+      {
+        "path": "dist/diagnosticLog.js",
+        "sha256": "2563c740c3967eab94f11ec8005cab327a539f06d8f5994d42d37d0db27415f4"
+      },
+      {
+        "path": "dist/displayReadPool.js",
+        "sha256": "6bf6dc23ee0128d6e008b412f56f8ea49be47d9cb9dca87282f024675ed63803"
+      },
+      {
+        "path": "dist/eventRetention.js",
+        "sha256": "301c0153397528724fae76be8f502425d76aa6855633baf8df9771ce89d86acf"
+      },
+      {
+        "path": "dist/executionAccess.js",
+        "sha256": "d98130e8efda6d1c95154d1c0cfa9e98b502a375e95fb1597a75f7c80c2b155e"
+      },
+      {
+        "path": "dist/executionAudit.js",
+        "sha256": "a5110167faa3477639d0b7a2d5a55e582dc44b7157bb0faa1f0f025f53b5ad22"
+      },
+      {
+        "path": "dist/executionIdentity.js",
+        "sha256": "0c98763f715e57724f2ea9ace6d70ebd753d75ab51ef61257eb928bd7e2e3140"
+      },
+      {
+        "path": "dist/executionJournal.js",
+        "sha256": "8835b9076bee3e5ed534a2558f0036370b111f2959dc4138ef22d5fc3e769454"
+      },
+      {
+        "path": "dist/executionPolicy.js",
+        "sha256": "b992ead727423826f5a448a93ba50c3c6fe5723fd170b5615be4fd005175d694"
+      },
+      {
+        "path": "dist/executionPresentation.js",
+        "sha256": "21bdafc2af00f97c63db84ab80dcd44a50c044573dd5a9049d4d96ae02f294b5"
+      },
+      {
+        "path": "dist/executionRuntime.js",
+        "sha256": "c98edf1ae5d89d25f22ec1aa2a58d6b52f453927377bb46e3f0cdd2d490286f2"
+      },
+      {
+        "path": "dist/executionServiceProcess.js",
+        "sha256": "b90dbc910be9ad1f21e969755ea7c3d799860a8097f3cca09a65b1437114fa28"
+      },
+      {
+        "path": "dist/executionTransport.js",
+        "sha256": "ddb83168361d8ce681fe5ebf427d5fd8ce75a803dfcaa37787377505e0a2a5c6"
+      },
+      {
+        "path": "dist/generated/localization.js",
+        "sha256": "851f65ffdc7b81a5a301879dc42d921906b7b0e94e3665a99e31fdaa5445da14"
+      },
+      {
+        "path": "dist/interactionDispatch.js",
+        "sha256": "d32166dca236a369267ed1b852e98d4e58ea54aec3cbd7c68d01c90de1834396"
+      },
+      {
+        "path": "dist/jsonRpcProcess.js",
+        "sha256": "baf440363b52c6e1cb7d4e9798945ddecb849b3bf85657432546fe9835fcc97c"
+      },
+      {
+        "path": "dist/lazyUpstream.js",
+        "sha256": "c420f4e9c9acfff139fc746874e7ba9c7b87779ddde51d5fb71222e71f0336b3"
+      },
+      {
+        "path": "dist/macosHelper.js",
+        "sha256": "268a7037b8a1f53b3739a056eb7cfd44195eef6189337afea5ff8530acdea45a"
+      },
+      {
+        "path": "dist/macosHelperServer.js",
+        "sha256": "e41ea38b76bb1f7afc4f33d249b6a56cf2221029a7678e3da75917e244d90792"
+      },
+      {
+        "path": "dist/maintenanceScheduler.js",
+        "sha256": "43aca80917a63180ccc7c969472159825a3f46aa4c9687099e375f9449addafc"
+      },
+      {
+        "path": "dist/mcpAuthCli.js",
+        "sha256": "f7b152350ca41bc8131a439c62617db53ebe96381efdbd668d1287bc50999ba4"
+      },
+      {
+        "path": "dist/mcpElicitation.js",
+        "sha256": "90c637b8e19b09d94858a695355833ea56df59ea462083424dcb07d0b999a955"
+      },
+      {
+        "path": "dist/mcpEventAccess.js",
+        "sha256": "343e6a3ce3bd5f4a50031532813e338ca5495eb5b5508fa7192b5349a20112d3"
+      },
+      {
+        "path": "dist/mcpEventStore.js",
+        "sha256": "bdc3a1944aa73d195ec5be3fd09feca6c1a775d60489150fa057ca50742790ca"
+      },
+      {
+        "path": "dist/mcpEvents.js",
+        "sha256": "96342e741113f938eeb1710309850cdb73f0eae77b6be80e08b261bd760b12f4"
+      },
+      {
+        "path": "dist/mcpOAuth.js",
+        "sha256": "cb096d3c1d8b04fb6f4b6e1bff461fbf81d6d90281e505fd13869b285a82bba7"
+      },
+      {
+        "path": "dist/mcpPrincipal.js",
+        "sha256": "e532ea5e962362a66c865b709ba7c1c33740ad77d447e7b6baccd9b413402f5d"
+      },
+      {
+        "path": "dist/mcpWebhook.js",
+        "sha256": "ede42aec2f5431ba781e4f59d32da43385a5a40272f9881d2014f069010cefe3"
+      },
+      {
+        "path": "dist/modelCatalog.js",
+        "sha256": "37a1b79b1349dee6571e72b5f14ab71ce5c12719f5b8c1736839f391b2112fba"
+      },
+      {
+        "path": "dist/modelDescriptionCard.js",
+        "sha256": "222987e29b6773c53909ff9b5abc81f3373ed1f4048fbd13836cea7e2f10d1b1"
+      },
+      {
+        "path": "dist/modelDescriptions.js",
+        "sha256": "210064b0a9835dd8eed0549e3469690ef3f2e1816c20f63faad41d65ebe5b6d1"
+      },
+      {
+        "path": "dist/modelPolicy.js",
+        "sha256": "cf6f8cd4de057c08205e05e90e347c0db443c4484e910c54c323425a81b8a354"
+      },
+      {
+        "path": "dist/nextActions.js",
+        "sha256": "582362bfc7348b991991c82fb4001e225be7c9688251d0fb56922f6b0550a4ac"
+      },
+      {
+        "path": "dist/openaiMcpAuthorization.js",
+        "sha256": "87d35717115170284c8fc88a6345458a2fa8ff0a941aeee947fc6a263d066ad4"
+      },
+      {
+        "path": "dist/operationalCommandReceipt.js",
+        "sha256": "0545acfa1c225b80388edaaba0ad51e6af5bd41d0bbe18bcdff9fe502c9e419c"
+      },
+      {
+        "path": "dist/problemReview.js",
+        "sha256": "236a78af5b1f1fef02f2acb585e16acb98ff851804fd3d2de3baba13cd75766e"
+      },
+      {
+        "path": "dist/problemReviewCard.js",
+        "sha256": "702b563efad51a766652f7f7f87f301adc4e30da3b582eb5c8ca710e043bbc17"
+      },
+      {
+        "path": "dist/processTreeSupervisor.js",
+        "sha256": "ebe946853a0ddef7b3790b14789d9eed790ee7591a974336e66bc8ed969eec15"
+      },
+      {
+        "path": "dist/processingSpeed.js",
+        "sha256": "384ad6960cb309632d69f75e8c14f855b191580d8f6458bef5a6fdb98aea16af"
+      },
+      {
+        "path": "dist/productInfo.js",
+        "sha256": "cd35272ec87493734ad9dc5602f63872222efae4acb46d8fcf44605a9b62d5a8"
+      },
+      {
+        "path": "dist/projectGuidance.js",
+        "sha256": "009fdc68bb0b7de0ff5c54fc799b0b6d8c1f5ddb1afdb02b0e96fb86c8bbd685"
+      },
+      {
+        "path": "dist/projectRegistry.js",
+        "sha256": "5437d10fbb7800aaa3cf9912dd4846aec1d7e436cbde007cccfedac304d13d11"
+      },
+      {
+        "path": "dist/questionDraft.js",
+        "sha256": "1c41669e41c03e43fb76d27b7faff1a1975354cb7d0ac4ad5f2e0a49fdf6baf7"
+      },
+      {
+        "path": "dist/questionRouting.js",
+        "sha256": "d85a1effb0cc3ff4006789c9d602ffe4e1cee16bf9bfc773279d3c096b61f11d"
+      },
+      {
+        "path": "dist/questionStore.js",
+        "sha256": "f0042de99786a4f3aee53805c2fe960355bdebe26cad509cb7e3d27e48f66c07"
+      },
+      {
+        "path": "dist/questionTools.js",
+        "sha256": "c26f7a268a44bfccdd162eda671ee161834ef4ca66a596357e31489923da1373"
+      },
+      {
+        "path": "dist/remoteCompanionServer.js",
+        "sha256": "39264cce68225c693e872ba520e49a433e577ce548c0b32642926c1b0ea97d7d"
+      },
+      {
+        "path": "dist/runtimeAdmission.js",
+        "sha256": "03d869177a9742474789d26101fda6cb0e828cc19e004c837942622808afe4d2"
+      },
+      {
+        "path": "dist/runtimeCompanions.js",
+        "sha256": "9bdf13356621d145f11d4c65536006b51f87a9508e602d78172b0deaeaf6b891"
+      },
+      {
+        "path": "dist/runtimeCompatibility.js",
+        "sha256": "905ac34c2752b74ab2216e7041838d3da90d6f819bf11cbb85e7623d11334bb8"
+      },
+      {
+        "path": "dist/runtimeDownloads.js",
+        "sha256": "13b235eb1cf29cf217fe93fd152fc8f706b18d6447c79f6f733d1ba19828ba99"
+      },
+      {
+        "path": "dist/runtimeEnvProjectGuard.js",
+        "sha256": "3a708986ec549df96e801cde0bb4d73363dbc6b72992a819259c1792123ebf75"
+      },
+      {
+        "path": "dist/runtimeLifecycle.js",
+        "sha256": "f8c1f430a3cf92d4b68c2cb39b39107c695d6a4be8bce0e9e19bb4d1e7442a0a"
+      },
+      {
+        "path": "dist/runtimeProcess.js",
+        "sha256": "f2a0c7e17267f2e2d6389f68425f76848a508d17506a2fa2f32a3ae9755a3b70"
+      },
+      {
+        "path": "dist/scopeFairQueue.js",
+        "sha256": "c50ce387cbd0bd6824b7e7de0fcef5969c286f3b38e7682f5751fb3b0b5c6c2c"
+      },
+      {
+        "path": "dist/scopeResolver.js",
+        "sha256": "465dc030ca521407af5bdef9c69a6bea902a6d7c780eb0bd4e88cc2844a09d27"
+      },
+      {
+        "path": "dist/server.js",
+        "sha256": "5835fabe523d1a579f3c81c237b987133aead1367e616de511fa5393440e5340"
+      },
+      {
+        "path": "dist/sessionRegistry.js",
+        "sha256": "fbb74cb9fbf8c581304e8bbfb50d5fe16c3345e34f226b986b1cfc75acd34c67"
+      },
+      {
+        "path": "dist/settingsCard.js",
+        "sha256": "86cae7c52b5118ca714a367e204592911f62b37e07f3ae49d5bbab728ca1e4c7"
+      },
+      {
+        "path": "dist/settingsLocalization.js",
+        "sha256": "099951cca93c873dee426bda8e02312dc422680803590f0e1f13f8c843a041b8"
+      },
+      {
+        "path": "dist/skillLibrary.js",
+        "sha256": "d42ddc1fea1275b9ffda9c899bc6cdcd5fd04d40a6cf629fa164a378c3f1b892"
+      },
+      {
+        "path": "dist/skillPackage.js",
+        "sha256": "aaa3207215934783b2a3cf489657163ebb40c4dffdc10a8fd8f351149fea12fe"
+      },
+      {
+        "path": "dist/stateBackup.js",
+        "sha256": "1663b75ac0c067d3b8668ef1bd0ed66d217d3f2d89c15364042693cbc78662d0"
+      },
+      {
+        "path": "dist/stateCompatibility.js",
+        "sha256": "3eda725470dbbbf5795232411d4f8720d61e82b894b4041e0795ba82ebe53b5f"
+      },
+      {
+        "path": "dist/stateDatabaseLifecycle.js",
+        "sha256": "b207c1e58d02cc7347f46b7c04af34f4ea1692af7d7c2d518d9261e76e523e22"
+      },
+      {
+        "path": "dist/stateProjectInspection.js",
+        "sha256": "b79045f6c9f2d0b93954bbc07fd69ee22c403ba3d5a7064788d9096eabeb97ef"
+      },
+      {
+        "path": "dist/stateReadModels.js",
+        "sha256": "22dc130f06253e52735cf2c5026489dbbfbe28f83c9cd605ba0b4b4b4c4d5699"
+      },
+      {
+        "path": "dist/stateReadProcess.js",
+        "sha256": "e035288ad9c889d38042a4a2788957a83ae3105393bef825aae96abc58650bdd"
+      },
+      {
+        "path": "dist/stateRecovery.js",
+        "sha256": "cb11a1fdf6ed7be6d8deffc218516158fb20ceb1a9e49fef17071c3921f66800"
+      },
+      {
+        "path": "dist/stateSchema.js",
+        "sha256": "4367d23e9f877036b069f6501eb3a5fa91bfc218783976e1881ea91fd335a59c"
+      },
+      {
+        "path": "dist/stateService.js",
+        "sha256": "b23e4f27d959dd98d3a240332e9f59211d5bf787baeb597c3cac9f0227a47108"
+      },
+      {
+        "path": "dist/stateServiceProcess.js",
+        "sha256": "5e504679e37f2a46c07747bba75dbfe93c63704295192ecc79788165833fba39"
+      },
+      {
+        "path": "dist/stateStore.js",
+        "sha256": "865645f1384924b062dca0f6f717a13b0c8925034e365e56473796ee8acf70b9"
+      },
+      {
+        "path": "dist/stdio.js",
+        "sha256": "187777230bd6de308ba42b0cbda2c6fd712708e6dbfcee1405b280da52c07eea"
+      },
+      {
+        "path": "dist/stdioServer.js",
+        "sha256": "4381a6c547e035d68c62f0c39395d3d2df1d26ac5e066429ae53f5d2893d0aef"
+      },
+      {
+        "path": "dist/taskFollowups.js",
+        "sha256": "6d4875089100bb9d770a40b84dc3abf887da75d9ac338cbf095da227f92c1c89"
+      },
+      {
+        "path": "dist/telemetryService.js",
+        "sha256": "e649d6aed0b5a94abd8d5c876fbd59f1c1917fb71b3178d993d380b3a9d5abea"
+      },
+      {
+        "path": "dist/textIntegrity.js",
+        "sha256": "eb9411478eb717b567abf83d143cf7254ff89c3c97e4f34ec4e9a2360037f059"
+      },
+      {
+        "path": "dist/threadConnections.js",
+        "sha256": "9087344fd7bc0cdc2daf692cf0d6d26d849b83d8373fb549b8b8269c37837086"
+      },
+      {
+        "path": "dist/tokenUsage.js",
+        "sha256": "67631dddfeb9553ee75b8160e1ebb2458572e9ebf66b719ed1edf8e597325b8e"
+      },
+      {
+        "path": "dist/toolGuidance.js",
+        "sha256": "0505f1729f6242a877427eefcae90ca7d3e754b7fc0723633e532867cf63d178"
+      },
+      {
+        "path": "dist/toolResultContracts.js",
+        "sha256": "cbf7c4a727240f5045d02dcebba71e8026ea078e55c42955f9dc56043b4129aa"
+      },
+      {
+        "path": "dist/tools.js",
+        "sha256": "daf4141bbfaa2c04394ea94f88dd0ff63ac65da2d1fe8b7489303088e6a4f759"
+      },
+      {
+        "path": "dist/tunnelSetupDiscovery.js",
+        "sha256": "18ea6dbf632e0da1e214fae436fe9442544d14f9cab6296be45496954c529802"
+      },
+      {
+        "path": "dist/ui/dashboard.html",
+        "sha256": "dfdb0b0605d9f3a843cf956473a30205f3bc724846e33f1c9a5292bb6049ec33"
+      },
+      {
+        "path": "dist/ui/settings.html",
+        "sha256": "d6c4fb8b41783da07ceb0ee86420f7a85ab19b2ea96dc3061a06b216dac92a1a"
+      },
+      {
+        "path": "dist/ui-manifest.json",
+        "sha256": "6a8040e67c3a4676e8ba31dc198bd6096085a9c96dbae77462e88b07c4e448f1"
+      },
+      {
+        "path": "dist/uiControlProofs.js",
+        "sha256": "7de83c4ecd0189697e18f250f1846983a767fa00fda668a1a2e46b38ff64cd62"
+      },
+      {
+        "path": "dist/uiFunctionSerialization.js",
+        "sha256": "46743703c37aa117cdc908273630d0eb20e8b804999419583d67bb5c66940aa4"
+      },
+      {
+        "path": "dist/uiHostToolResult.js",
+        "sha256": "d2aa4b4e9715c1a716ed2e6c3a686781483cc8cfc688b47d7f93ff976f04b0ec"
+      },
+      {
+        "path": "dist/uiI18n.js",
+        "sha256": "bcd09d9cb9cff32e2f9781ccf504b040d67d925d4c394a3c16ae49f8dcf014cc"
+      },
+      {
+        "path": "dist/uiManifest.generated.js",
+        "sha256": "be17e746ee8c6d55fb7260bcf5d496f8b8e456a1f190fe28b845a9c63bb754cd"
+      },
+      {
+        "path": "dist/uiResources.js",
+        "sha256": "c176176ab48a29a1bc9d568d6413b42b4d296c81def0cf916306e84b0d888729"
+      },
+      {
+        "path": "dist/uiToolCallFallback.js",
+        "sha256": "a023a315e9c96ece5ab3e27d385b2d12f5624ce1eed251f8e6dd90c4430eae9e"
+      },
+      {
+        "path": "dist/upstream.js",
+        "sha256": "6eac209ab80e7f8799f569a6d62d6ad1a41185d6f595d768b608f75d6c25c4a0"
+      },
+      {
+        "path": "dist/upstreamRouter.js",
+        "sha256": "1728f8f4413d5160bd2a76fd129c34e94ffdd61f7e1c42820004d824c0c3f654"
+      },
+      {
+        "path": "dist/userSettings.js",
+        "sha256": "ef1699267e8dda95084417afaae83155d9ddd543a2822f93cf95a9459aada883"
+      },
+      {
+        "path": "dist/workHistory.js",
+        "sha256": "8304e5fcd6fe578477721f147320271bab1f5de04d159c42686bb687a496ca50"
+      }
+    ]
+  },
+  "fullNode": {
+    "command": "npx vitest run --maxWorkers=2",
+    "sourceCommit": "1abf569fa0cc3ce4ca1e7a8e3f5ee42a41324aa0",
+    "filesPassed": 123,
+    "testsPassed": 1362,
+    "failed": 0,
+    "durationSeconds": 380.32,
+    "singleCleanFullRun": true
+  },
+  "baselineSchema": {
+    "command": "npm run app-server:compat:check",
+    "status": "passed",
+    "cli": "0.153.3",
+    "jsonFiles": 416,
+    "typeScriptFiles": 827,
+    "ambientRuntimeOverride": "not-set"
+  },
+  "native": {
+    "command": "npm run macos:check",
+    "gitTree": "1219de86b6d94645ef1b281363c4a9c9432aa45c",
+    "executed": 222,
+    "skipped": 2,
+    "failed": 0,
+    "durationSeconds": 55.253,
+    "strictConcurrency": "complete; warnings as errors"
+  },
+  "cliLifecycle": {
+    "report": "issue-215-cli-lifecycle-20261003.json",
+    "sha256": "cb62366b87a9bbe584379a9b9cc62af9d945c715cc952909c7ed4feb6d735c3a",
+    "sourceCommit": "6c7fbe2904c8734695e0fb3f7a196334cad7dbf0",
+    "sourceHash": "3086b1864baf9411d44cc07d57af856fc55652597597deb45feae074976b51d9",
+    "acceptedRespondedCompletedTurns": 32,
+    "blockedExternalAttempts": 0,
+    "provider": "synthetic-loopback-responses",
+    "commercialInference": "not-run",
+    "entitlement": "not-queried",
+    "appliedProcessingGrades": "unconfirmed"
+  },
+  "browser": {
+    "settingsChecks": 7,
+    "dashboardChecks": 2,
+    "reportSha256": "5f412e56a35d581c2cdaaab1ffe3470e68e99457eae7354e7a9a2a7af3d93358",
+    "existingUsageRegression": "passed",
+    "inferenceExecuted": false,
+    "installedSettingsChanged": false
+  },
+  "earlierFocusedChecks": {
+    "modelUsage": {
+      "files": 5,
+      "testsPassed": 78
+    },
+    "historicalLabels": {
+      "files": 3,
+      "testsPassed": 36
+    },
+    "correlatedActivity": {
+      "files": 1,
+      "testsPassed": 11
+    },
+    "interpretation": "Earlier targeted passes are supplemental; final acceptance uses the single clean full run."
+  },
+  "sourceReuse": {
+    "cliAndNativeRuntimeObjectsUnchangedThroughFinalTestCommit": true,
+    "fields": [
+      "src",
+      "scripts",
+      "macos",
+      "locales",
+      "ui-resources",
+      "package.json",
+      "package-lock.json"
+    ],
+    "reason": "The later commit changes only an obsolete activity-history test expectation. Runtime fingerprints and native sources are identical."
+  },
+  "notRun": [
+    "real-account GPT-6.1 acceptance",
+    "real-account Ultrafast entitlement or processing grade",
+    "real provider tool/permission/control combination matrix",
+    "candidate npm or DMG validation",
+    "physical installed-product acceptance",
+    "new real login, natural auth refresh or A-to-B-to-A switch"
+  ],
+  "existingBoundaries": {
+    "issue214SIWC": "deferred; not introduced",
+    "issue218Observation": "PAUSED; not resumed",
+    "issue215RealEnvironmentConditions": "remain open"
+  },
+  "logs": [
+    {
+      "name": "issue-215-pr3-build-final.log",
+      "sha256": "247ab52f58f69ba9da7b7ac07b604a953610f0d7d457394462195ca23fe98cba"
+    },
+    {
+      "name": "issue-215-pr3-clean-node.log",
+      "sha256": "9afafd22a5530fff79a163cd7b3379db643247e999730b6b5e01c792186a5cc5"
+    },
+    {
+      "name": "issue-215-pr3-schema-final.log",
+      "sha256": "af546c604aca6dd50373fdae8546e010b0259588c77170793ee6acc824764c1a"
+    },
+    {
+      "name": "issue-215-pr3-swift.log",
+      "sha256": "12bb7626651cc45c7137b4431ea890ba21856e7b738e6273367f24d6f76e8fe2"
+    },
+    {
+      "name": "issue-215-pr3-cli-final.log",
+      "sha256": "b31981d14a1f392662f18904dffcf9a752bef551b218ae5a71321cf41e8433d9"
+    },
+    {
+      "name": "issue-215-pr3-usage.log",
+      "sha256": "861deaa5a6fb7c9bb62e9bf750449e41ad67a1e88e3ebab3809ad60215b5294d"
+    },
+    {
+      "name": "issue-215-pr3-usage-browser.log",
+      "sha256": "ecbeced8ea762d16c35ac18ce88c928d7b98557196cdefd30cef2b9349fec732"
+    },
+    {
+      "name": "issue-215-pr3-history-label.log",
+      "sha256": "4928397f7ec6df87ca7730f1e2cf6dae31369ace1a8e6bedc9814229306cfa25"
+    },
+    {
+      "name": "issue-215-pr3-speed-browser-final.log",
+      "sha256": "f8920a4abe7a6e9329d27c113cc2b496c786dcfe8bfdcd01ce08152ade1db254"
+    },
+    {
+      "name": "issue-215-pr3-activity-final.log",
+      "sha256": "5ea81fec610a58fd43a89d09d90e572db6f46cbe5ebf7edf25acf00329939fee"
+    }
+  ]
+}

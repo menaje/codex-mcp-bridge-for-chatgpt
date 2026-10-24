@@ -46,6 +46,10 @@ final class AppPresentationTests: XCTestCase {
         func impact(
             activeJobs: Int = 0,
             pendingAdmissions: Int = 0,
+            pendingInteractions: Int = 0,
+            memoryOnlyThreads: Int = 0,
+            protectedMemoryOnlyThreads: Int? = nil,
+            discardableMemoryOnlyThreads: Int? = nil,
             backgroundProcessState: String = "confirmed",
             backgroundProcesses: Int = 0,
             backgroundProcessUnknownAgents: Int = 0
@@ -54,6 +58,10 @@ final class AppPresentationTests: XCTestCase {
                 acceptingNewJobs: true,
                 activeJobs: activeJobs,
                 pendingAdmissions: pendingAdmissions,
+                pendingInteractions: pendingInteractions,
+                memoryOnlyThreads: memoryOnlyThreads,
+                protectedMemoryOnlyThreads: protectedMemoryOnlyThreads,
+                discardableMemoryOnlyThreads: discardableMemoryOnlyThreads,
                 backgroundProcessState: backgroundProcessState,
                 backgroundProcesses: backgroundProcesses,
                 backgroundProcessAgents: backgroundProcesses > 0 ? 1 : 0,
@@ -73,6 +81,29 @@ final class AppPresentationTests: XCTestCase {
             for: impact(pendingAdmissions: 1),
             refreshFailed: false
         ))
+        XCTAssertTrue(ApplicationQuitConfirmationPolicy.requiresConfirmation(
+            for: impact(pendingInteractions: 1),
+            refreshFailed: false
+        ))
+        XCTAssertTrue(ApplicationQuitConfirmationPolicy.requiresConfirmation(
+            for: impact(memoryOnlyThreads: 1),
+            refreshFailed: false
+        ))
+        let completedMemoryOnly = impact(
+            memoryOnlyThreads: 2,
+            protectedMemoryOnlyThreads: 0,
+            discardableMemoryOnlyThreads: 2
+        )
+        XCTAssertTrue(ApplicationQuitConfirmationPolicy.requiresConfirmation(
+            for: completedMemoryOnly,
+            refreshFailed: false
+        ))
+        XCTAssertEqual(
+            ApplicationQuitConfirmationPolicy.protectedMemoryOnlyThreadCount(
+                for: completedMemoryOnly
+            ),
+            0
+        )
         XCTAssertTrue(ApplicationQuitConfirmationPolicy.requiresConfirmation(
             for: impact(backgroundProcesses: 1),
             refreshFailed: false
@@ -118,6 +149,47 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertEqual(BridgeAppLocalization.languageCode(for: "unknown"), "en")
     }
 
+    func testNativeSemanticKeyFallsBackToEnglishInsteadOfDisplayingItsIdentifier() {
+        let value = BridgeAppLocalization.string(
+            "settings.codexAppThreads",
+            locale: Locale(identifier: "unsupported")
+        )
+        XCTAssertEqual(value, "Show bridge threads in the Codex app")
+        XCTAssertNotEqual(value, "settings.codexAppThreads")
+    }
+
+    func testMissingNativeLocalizationUsesTheSelectedLanguageWithoutBundleResources() {
+        let expected = [
+            "en": "Unavailable", "ko": "표시할 수 없음", "ja": "表示できません",
+            "zh-Hans": "无法显示", "zh-Hant": "無法顯示", "es": "No disponible",
+            "fr": "Indisponible", "de": "Nicht verfügbar", "pt": "Indisponível"
+        ]
+        XCTAssertEqual(Set(expected.keys), Set(BridgeAppLocalization.supportedLanguageCodes))
+        for (language, fallback) in expected {
+            let value = BridgeAppLocalization.string("missing.translation.key", locale: Locale(identifier: language))
+            XCTAssertEqual(value, fallback)
+            XCTAssertFalse(value.contains("missing.translation.key"))
+            XCTAssertFalse(value.contains("Localized text"))
+        }
+        XCTAssertEqual(
+            BridgeAppLocalization.string("Activity", locale: Locale(identifier: "ko-KR")),
+            "표시할 수 없음"
+        )
+    }
+
+    func testCancellationTargetsUseTheSharedActivityAndJobNames() {
+        for language in BridgeAppLocalization.supportedLanguageCodes {
+            let locale = Locale(identifier: language)
+            XCTAssertEqual(CancellationPresentation.targetLabel("activity", locale: locale), "Activity")
+            XCTAssertEqual(CancellationPresentation.targetLabel("job", locale: locale), "Job")
+            for (status, label) in [("requested", "Requested"), ("succeeded", "Processed"), ("failed", "Failed")] {
+                XCTAssertEqual(CancellationPresentation.statusLabel(status, locale: locale), label)
+            }
+            XCTAssertEqual(CancellationPresentation.targetLabel("internal-target", locale: locale), "Unavailable")
+            XCTAssertEqual(CancellationPresentation.statusLabel("internal-status", locale: locale), "Unavailable")
+        }
+    }
+
     func testReasoningEffortLabelsUseCanonicalLowercaseValuesInEveryLocale() {
         for language in BridgeAppLocalization.supportedLanguageCodes {
             let locale = BridgeAppLocalization.locale(for: language)
@@ -139,6 +211,9 @@ final class AppPresentationTests: XCTestCase {
             "ja-JP": "ja",
             "zh-CN": "zh-Hans",
             "zh-SG": "zh-Hans",
+            "zh-Hans-CN": "zh-Hans",
+            "zh-Hant-TW": "zh-Hant",
+            "zh-Hant-HK": "zh-Hant",
             "zh-TW": "zh-Hant",
             "zh-HK": "zh-Hant",
             "es-MX": "es",
@@ -173,30 +248,137 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertEqual(
             BridgeAppLocalization.statusProblemDescription(
                 problem: BridgeStatusProblem(code: "tunnel-process-not-running"),
-                diagnosticMessage: "The tunnel-client process is not running.",
-                context: .tunnel,
-                locale: Locale(identifier: "ko")
+            diagnosticMessage: "The tunnel-client process is not running.",
+            context: .tunnel,
+            locale: Locale(identifier: "ko")
             ),
-            "Secure MCP Tunnel 프로세스가 실행 중이지 않습니다."
+            "The Secure MCP Tunnel process is not running."
         )
         XCTAssertEqual(
             BridgeAppLocalization.statusProblemDescription(
                 problem: nil,
-                diagnosticMessage: "Unexpected English helper diagnostic.",
-                context: .helper,
-                locale: Locale(identifier: "ko")
+            diagnosticMessage: "Unexpected English helper diagnostic.",
+            context: .helper,
+            locale: Locale(identifier: "ko")
             ),
-            "요청을 처리하지 못했습니다. 진단 로그에서 자세한 내용을 확인해 주세요."
+            "The request could not be completed. Check the diagnostic logs for details."
         )
         XCTAssertEqual(
             BridgeAppLocalization.statusProblemDescription(
                 problem: BridgeStatusProblem(code: "runtime-env-owner-mismatch"),
+            diagnosticMessage: nil,
+            context: .runtimeConfiguration,
+            locale: Locale(identifier: "ko")
+            ),
+            "The connection file or folder is not owned by the current user."
+        )
+        XCTAssertEqual(
+            BridgeAppLocalization.statusProblemDescription(
+                problem: BridgeStatusProblem(code: "codex-requested-state-invalid"),
                 diagnosticMessage: nil,
                 context: .runtimeConfiguration,
                 locale: Locale(identifier: "ko")
             ),
-            "연결 정보 파일 또는 폴더를 현재 사용자가 소유하지 않습니다."
+            "Settings could not be loaded."
         )
+    }
+
+    func testNativeProjectConflictsExplainRecoveryWithoutExposingDiagnostics() {
+        let locale = Locale(identifier: "ko")
+        let messages = [
+            ("PROJECT_CWD_CONFLICT", "settings.projectDuplicatePath"),
+            ("PROJECT_CWD_STILL_PINNED", "settings.projectCwdStillPinned"),
+            ("PROJECT_DELETE_STILL_PINNED", "settings.projectDeleteStillPinned")
+        ].map { code, key in
+            let message = BridgeAppLocalization.errorDescription(
+                LocalRPCError.remote(code: -32000, message: "\(code): /private/project diagnostics"),
+                locale: locale
+            )
+            XCTAssertEqual(message, BridgeAppLocalization.string(key, locale: locale))
+            XCTAssertFalse(message.contains(code))
+            XCTAssertFalse(message.contains("/private/project"))
+            return message
+        }
+        XCTAssertEqual(Set(messages).count, 3)
+    }
+
+    func testNativeLocalizationDoesNotExposeBridgeSkillDiagnostics() {
+        let locale = Locale(identifier: "ko")
+        XCTAssertEqual(
+            BridgeAppLocalization.errorDescription(
+                LocalRPCError.remote(
+                    code: -32000,
+                    message: "SKILL_VERSION_CHANGED: Read the current bridge skill and retry."
+                ),
+                locale: locale
+            ),
+            "The skill was changed elsewhere. Load the latest version and try again."
+        )
+        XCTAssertEqual(
+            BridgeAppLocalization.errorDescription(
+                LocalRPCError.remote(
+                    code: -32000,
+                    message: "SKILL_PACKAGE_ENCRYPTED: Encrypted ZIP entries are not accepted."
+                ),
+                locale: locale
+            ),
+            "Encrypted ZIP packages cannot be imported."
+        )
+        XCTAssertEqual(
+            BridgeAppLocalization.errorDescription(
+                LocalRPCError.remote(code: -32000, message: "SKILL_FUTURE_FAILURE: raw English"),
+                locale: locale
+            ),
+            "The skill request could not be completed. Check the input and connection, then try again."
+        )
+    }
+
+    func testNativeRPCDiagnosticsAreNotLocalizationKeys() {
+        for code in BridgeAppLocalization.supportedLanguageCodes {
+            let locale = Locale(identifier: code)
+            let message = BridgeAppLocalization.errorDescription(
+                LocalRPCError.remote(code: -32000, message: "UNCATALOGUED_FAILURE: private diagnostic"),
+                locale: locale
+            )
+            XCTAssertEqual(message, BridgeAppLocalization.string(
+                "macos.therequestcouldnotbecompletedcheckthe", locale: locale
+            ))
+            XCTAssertFalse(message.contains(BridgeGeneratedLocalization.unavailableFallback))
+            XCTAssertFalse(message.contains("private diagnostic"))
+
+            let key = "macos.couldnotconnecttothelocalservice"
+            let template = BridgeGeneratedLocalization.defaultStrings[key]!
+            let wrapped = BridgeAppLocalization.errorDescription(
+                LocalRPCError.remote(
+                    code: -32000,
+                    message: String(format: template, "UNCATALOGUED_FAILURE: private diagnostic")
+                ),
+                locale: locale
+            )
+            XCTAssertEqual(wrapped, BridgeAppLocalization.format(key, locale: locale, message))
+            XCTAssertFalse(wrapped.contains("private diagnostic"))
+        }
+    }
+
+    func testNativeLocalSocketFailuresExplainTheirCause() {
+        let categories: [(Int32, String)] = [
+            (EAGAIN, "macos.localService.responseTimedOut"),
+            (ETIMEDOUT, "macos.localService.responseTimedOut"),
+            (ENOENT, "macos.localService.unavailable"),
+            (ECONNREFUSED, "macos.localService.unavailable"),
+            (EACCES, "macos.localService.permissionDenied")
+        ]
+        for code in BridgeAppLocalization.supportedLanguageCodes {
+            let locale = Locale(identifier: code)
+            for (errorNumber, key) in categories {
+                let reason = String(cString: strerror(errorNumber))
+                for error in [LocalRPCError.connectionFailed(reason), .writeFailed(reason)] {
+                    let message = BridgeAppLocalization.errorDescription(error, locale: locale)
+                    XCTAssertEqual(message, BridgeAppLocalization.string(key, locale: locale))
+                    XCTAssertFalse(message.contains(BridgeGeneratedLocalization.unavailableFallback))
+                }
+            }
+        }
     }
 
     @MainActor
@@ -216,6 +398,12 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertTrue(window.collectionBehavior.contains(.participatesInCycle))
         XCTAssertFalse(window.collectionBehavior.contains(.auxiliary))
         XCTAssertFalse(window.collectionBehavior.contains(.canJoinAllApplications))
+        XCTAssertFalse(window.styleMask.contains(.fullSizeContentView))
+        XCTAssertFalse(window.titlebarAppearsTransparent)
+        XCTAssertEqual(window.titleVisibility, .visible)
+        XCTAssertEqual(window.backgroundColor, .windowBackgroundColor)
+        XCTAssertTrue(window.hasShadow)
+        XCTAssertFalse(window.isMovableByWindowBackground)
     }
 
     func testBrandMarkScalesInsideItsSquare() {
@@ -345,6 +533,440 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertEqual(model.operationalProblem, .runtime)
         await model.refreshDashboard()
         XCTAssertNil(model.dashboard)
+    }
+
+    @MainActor
+    func testTimedOutBridgeObservationRetainsLastDashboardAsUnconfirmed() async throws {
+        let model = AppModel()
+        let start = Date(timeIntervalSince1970: 100)
+        model.recordLocalConnectionStatus(try helperStatus(), at: start)
+        model.dashboard = try dashboardStatus(scope: "retained-timeout-dashboard")
+        model.settings = try settingsSnapshot(
+            policy: ["mode": "automatic", "allowedSelections": ["kind": "catalog-visible"],
+                     "constraints": ["allowDelegation": true]],
+            catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])]
+        )
+        let timedOut = try helperStatus(
+            bridgeConnected: false,
+            bridgeObservation: "timed-out",
+            bridgeLastSuccessfulAt: "2026-09-21T00:00:00.000Z"
+        )
+
+        model.recordLocalConnectionStatus(timedOut, at: start.addingTimeInterval(1))
+        XCTAssertFalse(model.bridgeConnected)
+        XCTAssertTrue(model.hasRetainedBridgeObservation)
+        XCTAssertEqual(model.health, .checking)
+
+        model.recordLocalConnectionStatus(timedOut, at: start.addingTimeInterval(9))
+        XCTAssertEqual(model.health, .attention)
+        XCTAssertEqual(model.operationalObservation, .problem(.responseUnconfirmed))
+        XCTAssertFalse(model.runtimeUnavailableExplanation.contains("중지되었습니다"))
+        await model.refreshDashboard()
+        XCTAssertEqual(model.dashboard?.scope, "retained-timeout-dashboard")
+        await model.refreshSettings()
+        XCTAssertEqual(model.settings?.settings.settingsRevision, 4)
+    }
+
+    @MainActor
+    func testIssue242RepeatedDashboardAndHelperMethodCounts() async throws {
+        let path = "/tmp/cb-242-reads-\(UUID().uuidString.prefix(8)).sock"
+        let helperBody = String(decoding: try JSONEncoder().encode(helperStatus()), as: UTF8.self)
+        let dashboardBody = String(decoding: try JSONEncoder().encode(dashboardStatus()), as: UTF8.self)
+        let server = try NativeRPCFixture(path: path) { method in
+            NativeFixtureReply(body: "{\"result\":\(method == "helper.health" ? helperBody : dashboardBody)}")
+        }
+        defer { server.stop() }
+        let rpc = UnixSocketRPCClient(socketPath: path)
+        for _ in 0..<10 {
+            let _: HelperStatus = try await rpc.call("helper.health", params: EmptyParameters())
+            let _: DashboardSnapshot = try await rpc.call("dashboard.snapshot", params: EmptyParameters())
+        }
+        XCTAssertEqual(server.count("helper.health"), 10)
+        XCTAssertEqual(server.count("dashboard.snapshot"), 10)
+        XCTAssertEqual(server.count("completion.claim"), 0)
+    }
+
+    @MainActor
+    func testW3ProgressDoesNotClaimAndReadyDrainsTwentyFiveInDebouncedBatches() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-w3-model-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.bridgeSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let outbox = W3NativeOutboxFixture()
+        let server = try NativeRPCFixture(path: paths.bridgeSocket.path, requestReply: { method, input in outbox.reply(method, input) })
+        let delivery = W3CompletionDeliveryFixture()
+        let model = AppModel(paths: paths, completionNotifications: CompletionNotifications(delivery: delivery))
+        defer { model.cancelAllPolling(); server.stop(); try? FileManager.default.removeItem(at: root) }
+        func notice(_ version: Int, ready: Bool = false) throws -> ChangeNotice {
+            let body: [String: Any] = ["revision": "epoch:\(version)",
+                "supportedTopics": ["completion-outbox-ready"],
+                "topics": ready ? ["completion-outbox-ready"] : ["dashboard", "settings"],
+                "topicRevisions": ready ? ["completion-outbox-ready": "epoch:\(version)"] : [:]]
+            return try JSONDecoder().decode(ChangeNotice.self, from: JSONSerialization.data(withJSONObject: body))
+        }
+        model.recordLocalConnectionStatus(try helperStatus())
+        model.recordCompletionChangeNotice(try notice(0))
+        for _ in 0..<200 {
+            if server.count("completion.availability") > 0 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertGreaterThan(server.count("completion.availability"), 0)
+        try await Task.sleep(for: .milliseconds(100))
+        let initialReads = server.count("completion.availability")
+        for i in 1...400 { model.recordCompletionChangeNotice(try notice(i)) }
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(server.count("completion.availability"), initialReads)
+        XCTAssertEqual(server.count("completion.claim"), 0)
+        outbox.enqueue(25)
+        model.recordCompletionChangeNotice(try notice(401, ready: true))
+        for _ in 0..<200 {
+            if delivery.ids.count == 25 && server.count("completion.delivered") == 3 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(delivery.ids.count, 25)
+        XCTAssertEqual(outbox.batchSizes, [10, 10, 5])
+        XCTAssertEqual(server.count("completion.claim"), 3)
+        XCTAssertEqual(server.count("completion.delivered"), 3)
+        for _ in 0..<20 { model.recordCompletionChangeNotice(try notice(401, ready: true)) }
+        model.recordCompletionChangeNotice(try notice(400, ready: true))
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(server.count("completion.claim"), 3)
+    }
+
+    @MainActor
+    func testIssue242HelperRPCFailureRetainsObservationAfterGrace() async throws {
+        let model = AppModel()
+        let start = Date(timeIntervalSince1970: 100)
+        model.recordLocalConnectionStatus(try helperStatus(), at: start)
+        model.dashboard = try dashboardStatus(scope: "issue-242-retained")
+        model.lastDashboardRefresh = start
+        model.recordLocalConnectionStatus(nil, at: start.addingTimeInterval(1))
+        // refreshStatusOnce's catch also sets this error, ending initial-connect checking.
+        model.statusErrorMessage = "fixture helper RPC timeout"
+        XCTAssertEqual(model.health, .checking)
+        await model.refreshDashboard()
+        XCTAssertEqual(model.dashboard?.scope, "issue-242-retained")
+        model.recordLocalConnectionStatus(nil, at: start.addingTimeInterval(9))
+        XCTAssertTrue(model.hasRetainedBridgeObservation)
+        XCTAssertFalse(model.bridgeConnected)
+        XCTAssertEqual(model.health, .attention)
+        XCTAssertEqual(model.operationalProblem, .responseUnconfirmed)
+        await model.refreshDashboard()
+        XCTAssertEqual(model.dashboard?.scope, "issue-242-retained")
+        XCTAssertEqual(model.lastDashboardRefresh, start)
+    }
+
+    @MainActor
+    func testIssue242FailureRecoveryCancellationAndActualStop() async throws {
+        let model = AppModel()
+        defer { model.cancelAllPolling() }
+        let checked = Date(timeIntervalSince1970: 100)
+        model.recordLocalConnectionStatus(try helperStatus(), at: checked)
+        model.dashboard = try dashboardStatus(scope: "confirmed")
+        model.lastDashboardRefresh = checked
+        model.recordLocalConnectionFailure(CancellationError(), at: checked.addingTimeInterval(1))
+        XCTAssertNil(model.helperObservationFailure)
+        XCTAssertTrue(model.bridgeConnected)
+        XCTAssertEqual(model.lastConfirmedHelperCheck, checked)
+        model.recordLocalConnectionFailure(LocalRPCError.transport(phase: .receive, code: EAGAIN), at: checked.addingTimeInterval(2))
+        XCTAssertEqual(model.helperObservationFailure?.kind, .timeout)
+        XCTAssertEqual(model.helperObservationFailedAt, checked.addingTimeInterval(2))
+        XCTAssertEqual(model.lastConfirmedHelperCheck, checked)
+        XCTAssertNil(model.helperStatus)
+        XCTAssertFalse(model.bridgeConnected)
+        model.recordLocalConnectionStatus(try helperStatus(), at: checked.addingTimeInterval(3))
+        XCTAssertNil(model.helperObservationFailure)
+        XCTAssertTrue(model.bridgeConnected)
+        XCTAssertEqual(model.lastConfirmedHelperCheck, checked.addingTimeInterval(3))
+        model.recordLocalConnectionFailure(LocalRPCError.emptyResponse, at: checked.addingTimeInterval(4))
+        model.recordLocalConnectionStatus(try helperStatus(phase: "stopped", bridgeConnected: false, tunnelConnected: false), at: checked.addingTimeInterval(5))
+        XCTAssertFalse(model.hasRetainedBridgeObservation)
+        XCTAssertFalse(model.bridgeResponseUnconfirmed)
+        XCTAssertFalse(model.isBridgeConnectionChecking)
+        XCTAssertNil(model.dashboard)
+        XCTAssertEqual(model.lastDashboardRefresh, checked)
+        let first = AppModel()
+        defer { first.cancelAllPolling() }
+        first.recordLocalConnectionFailure(LocalRPCError.transport(phase: .connect, code: ECONNREFUSED), at: checked)
+        first.recordLocalConnectionFailure(LocalRPCError.emptyResponse, at: checked.addingTimeInterval(9))
+        XCTAssertFalse(first.hasRetainedBridgeObservation)
+        XCTAssertNil(first.lastConfirmedHelperCheck)
+        XCTAssertEqual(first.health, .unavailable)
+    }
+
+    @MainActor
+    func testIssue242HelperRPCFailureKeepsSettingsSkillsDetailAndFencesLateReads() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-242-content-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.bridgeSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        var row = try issue242Row("a", project: "A")
+        row.policyRevision = String(repeating: "c", count: 64)
+        row.representativeExecutionKey = String(repeating: "d", count: 32)
+        let detail = "{\"kind\":\"dashboard-history\",\"rowKey\":\"\(row.rowKey)\",\"history\":[],\"historyCount\":1,\"historyRevision\":\"\(row.historyRevision!)\",\"policyRevision\":\"\(row.policyRevision!)\",\"representativeExecutionKey\":\"\(row.representativeExecutionKey!)\"}"
+        let settings = try settingsSnapshot(policy: ["mode": "automatic", "allowedSelections": ["kind": "catalog-visible"],
+            "constraints": ["allowDelegation": true]], catalogModels: [])
+        let settingsBody = String(decoding: try JSONEncoder().encode(settings), as: UTF8.self)
+        let dashboardBody = String(decoding: try JSONEncoder().encode(dashboardStatus(scope: "late")), as: UTF8.self)
+        let slow = TestDashboardReplySequence([NativeFixtureReply(body: "{\"result\":\(dashboardBody)}", delay: 0.3)])
+        let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { method in
+            switch method {
+            case "settings.snapshot": return NativeFixtureReply(body: "{\"result\":\(settingsBody)}", delay: 0.3)
+            case "skills.snapshot": return NativeFixtureReply(body: #"{"result":{"skills":[]}}"#)
+            case "dashboard.history-detail": return NativeFixtureReply(body: "{\"result\":\(detail)}")
+            default: return slow.next()
+            }
+        }
+        let helper = try NativeRPCFixture(path: paths.helperSocket.path) { _ in NativeFixtureReply(body: "") }
+        let model = AppModel(paths: paths)
+        defer { model.cancelAllPolling(); helper.stop(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+        let checked = Date()
+        model.recordLocalConnectionStatus(try helperStatus(), at: checked)
+        model.dashboard = try dashboardStatus(scope: "confirmed")
+        model.settings = settings
+        model.lastDashboardRefresh = checked
+        await model.loadDashboardHistory(row)
+        await model.refreshSkillLibrary()
+        XCTAssertNotNil(model.dashboardHistoryDetails[row.rowKey])
+        XCTAssertNotNil(model.skillLibrary)
+        let late = Task { await model.refreshDashboard(enrich: false) }
+        let lateSettings = Task { await model.refreshSettings() }
+        for _ in 0..<100 {
+            if bridge.count("dashboard.snapshot") > 0 && bridge.count("settings.snapshot") > 0 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        await model.refreshStatus()
+        XCTAssertEqual(model.helperObservationFailure?.kind, .peerClosed)
+        model.recordLocalConnectionFailure(LocalRPCError.emptyResponse, at: checked.addingTimeInterval(9))
+        await late.value; await lateSettings.value
+        await model.refreshDashboard(); await model.refreshSettings(); await model.refreshSkillLibrary()
+        XCTAssertEqual(model.dashboard?.scope, "confirmed")
+        XCTAssertEqual(model.settings?.settings.settingsRevision, 4)
+        XCTAssertNotNil(model.skillLibrary)
+        XCTAssertNotNil(model.dashboardHistoryDetails[row.rowKey])
+        XCTAssertEqual(model.lastDashboardRefresh, checked)
+        XCTAssertEqual(model.lastConfirmedHelperCheck, checked)
+        XCTAssertFalse(model.bridgeConnected)
+        XCTAssertEqual(model.health, .attention)
+        XCTAssertEqual(bridge.count("dashboard.snapshot"), 1)
+        XCTAssertEqual(bridge.count("settings.snapshot"), 1)
+        XCTAssertEqual(bridge.count("skills.snapshot"), 1)
+        model.recordLocalConnectionStatus(try helperStatus(phase: "stopped", bridgeConnected: false, tunnelConnected: false))
+        XCTAssertNil(model.skillLibrary)
+        XCTAssertNil(model.settings)
+        XCTAssertTrue(model.dashboardHistoryDetails.isEmpty)
+    }
+
+    @MainActor
+    func testIssue242LateHelperHealthCannotReplaceConfirmedStop() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-242-health-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.helperSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let healthy = String(decoding: try JSONEncoder().encode(helperStatus()), as: UTF8.self)
+        let helper = try NativeRPCFixture(path: paths.helperSocket.path) { _ in NativeFixtureReply(body: "{\"result\":\(healthy)}", delay: 0.3) }
+        let model = AppModel(paths: paths)
+        defer { model.cancelAllPolling(); helper.stop(); try? FileManager.default.removeItem(at: root) }
+        model.recordLocalConnectionStatus(try helperStatus())
+        let pending = Task { await model.refreshStatus() }
+        for _ in 0..<100 {
+            if helper.count("helper.health") > 0 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        model.recordLocalConnectionStatus(try helperStatus(phase: "stopped", bridgeConnected: false, tunnelConnected: false))
+        await pending.value
+        XCTAssertEqual(model.helperStatus?.phase, "stopped")
+        XCTAssertFalse(model.bridgeConnected)
+        XCTAssertFalse(model.hasRetainedBridgeObservation)
+    }
+
+    @MainActor
+    func testHelperReplacementClearsPreviousContentAndFencesLateDashboard() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-target-change-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.bridgeSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let previous = try dashboardStatus(scope: "previous-helper")
+        let body = String(decoding: try JSONEncoder().encode(previous), as: UTF8.self)
+        let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { _ in
+            NativeFixtureReply(body: "{\"result\":\(body)}", delay: 0.3)
+        }
+        let model = AppModel(paths: paths)
+        defer { model.cancelAllPolling(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+        model.recordLocalConnectionStatus(try helperStatus())
+        model.dashboard = previous
+        model.settings = try issue242Settings(registry: 2, id: UUID().uuidString.lowercased(), name: "Previous", cwd: root.path)
+        let pending = Task { await model.refreshDashboard(enrich: false) }
+        for _ in 0..<100 {
+            if bridge.count("dashboard.snapshot") > 0 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(bridge.count("dashboard.snapshot"), 1)
+        model.recordLocalConnectionStatus(try helperStatus(pid: 43, bridgeConnected: false, tunnelConnected: false))
+        await pending.value
+        XCTAssertEqual(model.helperStatus?.pid, 43)
+        XCTAssertNil(model.dashboard)
+        XCTAssertNil(model.settings)
+        XCTAssertNil(model.lastDashboardRefresh)
+    }
+
+    @MainActor
+    func testProjectRegistryChangeClearsSkillsAndFencesLateLibraryRead() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-skill-target-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.bridgeSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let id = UUID().uuidString.lowercased()
+        let first = try issue242Settings(registry: 2, id: id, name: "Project", cwd: root.path)
+        let archived = try issue242Settings(registry: 3, id: id, name: "Project", cwd: root.path, archived: true)
+        let settingsBody = String(decoding: try JSONEncoder().encode(archived), as: UTF8.self)
+        let libraries = TestDashboardReplySequence([
+            NativeFixtureReply(body: #"{"result":{"skills":[]}}"#),
+            NativeFixtureReply(body: #"{"result":{"skills":[]}}"#, delay: 0.3)
+        ])
+        let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { method in
+            switch method {
+            case "skills.snapshot": return libraries.next()
+            case "settings.update": return NativeFixtureReply(body: "{\"result\":\(settingsBody)}")
+            default: return NativeFixtureReply(body: "")
+            }
+        }
+        let model = AppModel(paths: paths)
+        defer { model.cancelAllPolling(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+        model.recordLocalConnectionStatus(try helperStatus())
+        model.settings = first
+        await model.refreshSkillLibrary()
+        XCTAssertNotNil(model.skillLibrary)
+        let pending = Task { await model.refreshSkillLibrary() }
+        for _ in 0..<100 {
+            if bridge.count("skills.snapshot") == 2 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(bridge.count("skills.snapshot"), 2)
+        let accepted = await model.applyProjectOperation(.archive(projectId: id))
+        XCTAssertTrue(accepted)
+        await pending.value
+        XCTAssertEqual(model.settings?.settings.registryRevision, 3)
+        XCTAssertNil(model.skillLibrary)
+        XCTAssertNil(model.selectedBridgeSkill)
+    }
+
+    @MainActor
+    func testIssue242ArchiveDeleteSameCwdRegistrationFencesLateDashboardAndDetail() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-242-projects-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.bridgeSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let aID = UUID().uuidString.lowercased(), bID = UUID().uuidString.lowercased()
+        let rowA = try issue242Row("a", project: "A"), rowB = try issue242Row("b", project: "B")
+        let snapshotA = try issue242Dashboard(rowA, scope: "A"), snapshotB = try issue242Dashboard(rowB, scope: "B")
+        let bodyA = String(decoding: try JSONEncoder().encode(snapshotA), as: UTF8.self)
+        let bodyB = String(decoding: try JSONEncoder().encode(snapshotB), as: UTF8.self)
+        let first = try issue242Settings(registry: 2, id: aID, name: "A", cwd: root.path)
+        let archive = try issue242Settings(registry: 3, id: aID, name: "A", cwd: root.path, archived: true)
+        let deleted = try issue242Settings(registry: 4, id: nil, name: "", cwd: root.path)
+        let registered = try issue242Settings(registry: 5, id: bID, name: "B", cwd: root.path)
+        let mutations = TestDashboardReplySequence(try [archive, deleted, registered].map {
+            NativeFixtureReply(body: "{\"result\":\(String(decoding: try JSONEncoder().encode($0), as: UTF8.self))}")
+        })
+        let pages = TestDashboardReplySequence([NativeFixtureReply(body: "{\"result\":\(bodyA)}", delay: 0.5),
+            NativeFixtureReply(body: "{\"result\":\(bodyB)}")])
+        let detail = "{\"result\":{\"kind\":\"dashboard-history\",\"rowKey\":\"\(rowA.rowKey)\",\"history\":[],\"historyCount\":1,\"historyRevision\":\"\(String(repeating: "a", count: 64))\"}}"
+        let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { method in
+            switch method {
+            case "settings.update": return mutations.next()
+            case "dashboard.history-detail": return NativeFixtureReply(body: detail, delay: 0.5)
+            default: return pages.next()
+            }
+        }
+        let model = AppModel(paths: paths)
+        defer { model.cancelAllPolling(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+        model.recordLocalConnectionStatus(try helperStatus())
+        model.settings = first
+        model.dashboard = snapshotA
+        let page = Task { await model.refreshDashboard(enrich: false) }
+        let history = Task { await model.loadDashboardHistory(rowA) }
+        for _ in 0..<100 {
+            if bridge.count("dashboard.snapshot") > 0 && bridge.count("dashboard.history-detail") > 0 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let archived = await model.applyProjectOperation(.archive(projectId: aID))
+        let removed = await model.applyProjectOperation(.delete(projectId: aID))
+        let added = await model.applyProjectOperation(.add(name: "B", cwd: root.path))
+        XCTAssertTrue(archived && removed && added)
+        XCTAssertEqual(model.settings?.settings.projects.first?.id, bID)
+        XCTAssertEqual(model.settings?.settings.projects.first?.cwd, root.path)
+        await page.value; await history.value
+        XCTAssertNil(model.dashboard)
+        XCTAssertTrue(model.dashboardHistoryDetails.isEmpty)
+        await model.refreshDashboard(enrich: false)
+        XCTAssertEqual(model.dashboard?.scope, "B")
+        XCTAssertEqual(model.dashboard?.terminalRows.first?.rowKey, rowB.rowKey)
+        XCTAssertNotEqual(model.dashboard?.terminalRows.first?.rowKey, rowA.rowKey)
+        XCTAssertTrue(model.dashboardHistoryDetails.isEmpty)
+    }
+
+    @MainActor
+    func testTunnelObservationFailureRetainsRuntimeAndDoesNotCountAsRecovery() throws {
+        let model = AppModel()
+        model.authStatus = try loginStatus(installed: true, authenticated: true)
+        model.dashboard = try dashboardStatus(scope: "issue-242-tunnel")
+        model.recordLocalConnectionStatus(try helperStatus(tunnelProbeFailed: true))
+        XCTAssertTrue(model.bridgeConnected)
+        XCTAssertFalse(model.bridgeResponseUnconfirmed)
+        XCTAssertTrue(model.tunnelResponseUnconfirmed)
+        XCTAssertEqual(model.health, .attention)
+        XCTAssertEqual(model.operationalObservation, .problem(.responseUnconfirmed))
+        XCTAssertEqual(model.dashboard?.scope, "issue-242-tunnel")
+
+        var policy = OperationalNotificationPolicy()
+        let scope = OperationalNotificationPolicy.scope("issue-242-fixture")
+        let now = Date(timeIntervalSince1970: 1_000)
+        _ = policy.observe(.problem(.tunnel), scope: scope, now: now)
+        policy.markDelivered(scope: scope, problem: .tunnel)
+        _ = policy.observe(.healthy, scope: scope, now: now.addingTimeInterval(10))
+        _ = policy.observe(model.operationalObservation, scope: scope, now: now.addingTimeInterval(30))
+        XCTAssertNil(policy.healthySince[scope])
+        XCTAssertEqual(policy.observe(model.operationalObservation, scope: scope, now: now.addingTimeInterval(90)), .responseUnconfirmed)
+
+        model.recordLocalConnectionStatus(try helperStatus())
+        XCTAssertFalse(model.tunnelResponseUnconfirmed)
+        XCTAssertEqual(model.operationalObservation, .healthy)
+        _ = policy.observe(model.operationalObservation, scope: scope, now: now.addingTimeInterval(100))
+        _ = policy.observe(model.operationalObservation, scope: scope, now: now.addingTimeInterval(120))
+        _ = policy.observe(model.operationalObservation, scope: scope, now: now.addingTimeInterval(140))
+        _ = policy.observe(model.operationalObservation, scope: scope, now: now.addingTimeInterval(160))
+        XCTAssertTrue(policy.entries.isEmpty)
+    }
+
+    @MainActor
+    func testReadProjectionDelayIsPartialAndDoesNotClaimRuntimeOrWritesFailed() throws {
+        let model = AppModel()
+        model.authStatus = try loginStatus(installed: true, authenticated: true)
+        model.recordLocalConnectionStatus(try helperStatus(readServiceStatus: "read-stale"))
+
+        XCTAssertTrue(model.bridgeConnected)
+        XCTAssertTrue(model.bridgeReadProjectionDelayed)
+        XCTAssertFalse(model.bridgeResponseUnconfirmed)
+        XCTAssertEqual(model.operationalObservation, .healthy)
+        XCTAssertEqual(model.health, .attention)
+
+        model.recordLocalConnectionStatus(try helperStatus(readServiceStatus: "ready"))
+        XCTAssertFalse(model.bridgeReadProjectionDelayed)
+    }
+
+    @MainActor
+    func testStateStorageFailureIsDistinctFromAnUnconfirmedResponse() throws {
+        let model = AppModel()
+        model.authStatus = try loginStatus(installed: true, authenticated: true)
+        model.recordLocalConnectionStatus(try helperStatus(stateServiceStorageError: "full"))
+
+        XCTAssertTrue(model.bridgeConnected)
+        XCTAssertEqual(model.bridgeStateStorageError, "full")
+        XCTAssertFalse(model.bridgeResponseUnconfirmed)
+        XCTAssertEqual(model.operationalObservation, .problem(.stateStorage))
+        XCTAssertEqual(model.health, .attention)
+        XCTAssertEqual(
+            model.runtimeUnavailableExplanation,
+            BridgeAppLocalization.string(
+                "macos.bridgestoragecannotacceptupdatesexistingworkispreserved",
+                locale: model.interfaceLocale
+            )
+        )
     }
 
     @MainActor
@@ -730,6 +1352,48 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertTrue(draft.modelPolicyDirty)
     }
 
+    func testSettingsDraftTracksExperimentalDirectResultDelivery() throws {
+        let enabledSnapshot = try settingsSnapshot(
+            experimentalDirectResultDelivery: true,
+            policy: [
+                "mode": "automatic",
+                "allowedSelections": ["kind": "catalog-visible"],
+                "constraints": ["allowDelegation": true]
+            ],
+            catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])]
+        )
+        let disabledSnapshot = try settingsSnapshot(
+            experimentalDirectResultDelivery: false,
+            policy: [
+                "mode": "automatic",
+                "allowedSelections": ["kind": "catalog-visible"],
+                "constraints": ["allowDelegation": true]
+            ],
+            catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])]
+        )
+        let enabled = SettingsDraft(snapshot: enabledSnapshot)
+        var edited = enabled
+        edited.experimentalDirectResultDelivery = false
+
+        XCTAssertTrue(enabled.experimentalDirectResultDelivery)
+        XCTAssertFalse(edited.hasSameEditableValues(as: enabled))
+        XCTAssertFalse(edited.rebased(on: enabledSnapshot).experimentalDirectResultDelivery)
+        XCTAssertFalse(SettingsDraft(snapshot: disabledSnapshot).experimentalDirectResultDelivery)
+    }
+
+    func testEmptyCatalogDoesNotRewriteAnExplicitPolicyForUnrelatedPreferences() throws {
+        let saved = ModelChoice(model: "temporarily-unavailable", reasoningEffort: "high")
+        let snapshot = try settingsSnapshot(policy: [
+            "mode": "automatic", "allowedSelections": ["kind": "explicit", "selections": [choiceObject(saved)]],
+            "constraints": ["allowDelegation": true]
+        ], catalogModels: [])
+        var draft = SettingsDraft(snapshot: snapshot)
+        draft.accessStrategy = "read-only"
+        XCTAssertFalse(draft.modelPolicyDirty)
+        XCTAssertEqual(draft.rebased(on: snapshot).explicitSelectionKeys, [saved.key])
+        XCTAssertFalse(draft.rebased(on: snapshot).modelPolicyDirty)
+    }
+
     func testSettingsDraftIgnoresRetiredAutomaticDefaultsWithoutDirtyingPolicy() throws {
         let snapshot = try settingsSnapshot(
             policy: [
@@ -801,24 +1465,6 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertEqual(draft.explicitSelectionKeys, [ultra.key])
     }
 
-    func testHidingActivityCardAlsoDisablesAutomaticHandoff() throws {
-        let snapshot = try settingsSnapshot(
-            policy: [
-                "mode": "automatic",
-                "allowedSelections": ["kind": "catalog-visible"],
-                "constraints": ["allowDelegation": true]
-            ],
-            catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])]
-        )
-        var draft = SettingsDraft(snapshot: snapshot)
-        draft.completionHandoff = "auto-handoff"
-
-        draft.setActivityCardVisibility("never")
-
-        XCTAssertEqual(draft.activityCardVisibility, "never")
-        XCTAssertEqual(draft.completionHandoff, "off")
-    }
-
     func testModelDescriptionEditKeepsCatalogTextLiveAndOnlySavesDeliberateChanges() {
         var edit = ModelDescriptionEdit(officialDescription: "Official v1", override: nil)
         XCTAssertEqual(edit.text, "Official v1")
@@ -833,6 +1479,61 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertTrue(edit.isTooLong)
         let custom = ModelDescriptionEdit(officialDescription: "Official", override: "User text")
         XCTAssertEqual(custom.valueToSave(officialDescription: "User text"), "User text")
+    }
+
+    func testModelDescriptionLimitCountsCanonicalUnicodeScalarsWithoutRewritingTheDraft() {
+        var edit = ModelDescriptionEdit(officialDescription: nil, override: nil)
+        edit.text = String(repeating: "한", count: 2_000)
+        XCTAssertFalse(edit.isTooLong)
+        XCTAssertEqual(edit.text.utf8.count, 18_000)
+        edit.text += "글"
+        XCTAssertTrue(edit.isTooLong)
+        edit.text = String(repeating: "😀", count: 2_000)
+        XCTAssertFalse(edit.isTooLong)
+        edit.text += "😀"
+        XCTAssertTrue(edit.isTooLong)
+    }
+
+    @MainActor
+    func testModelDescriptionHistoryDecodesAndLoadsThroughRemoteClient() async throws {
+        let policy: [String: Any] = [
+            "mode": "automatic", "allowedSelections": ["kind": "catalog-visible"],
+            "constraints": ["allowDelegation": true]
+        ]
+        let legacy = try settingsSnapshot(policy: policy, catalogModels: [])
+        XCTAssertNil(legacy.modelDescriptionHistoryModelIds)
+        let snapshot = try settingsSnapshot(
+            policy: policy,
+            modelDescriptionOverrides: [:],
+            modelDescriptionHistoryModelIds: ["missing-model"],
+            catalogModels: []
+        )
+        XCTAssertEqual(snapshot.modelDescriptionHistoryModelIds, ["missing-model"])
+        let page = try JSONDecoder().decode(ModelDescriptionHistoryPage.self, from: Data(
+            #"{"kind":"model-description-history","modelId":"missing-model","versions":[{"version":2,"description":null,"createdAt":"2026-09-23T00:00:00.000Z"},{"version":1,"description":"Earlier text","createdAt":null}],"nextBeforeVersion":null}"#.utf8
+        ))
+        XCTAssertNil(page.versions[0].description)
+        XCTAssertNil(page.versions[1].createdAt)
+        let profile = remoteProfile(id: "11111111-1111-4111-8111-111111111111", name: "Description history")
+        let client = TestRemoteClient(
+            profile: profile,
+            dashboard: try dashboardStatus(scope: "description-history"),
+            settings: snapshot,
+            modelDescriptionHistoryPage: page
+        )
+        let model = AppModel(
+            loginItemController: TestLoginItemController(status: .notRegistered),
+            connectionStore: TestConnectionStore(BridgeConnectionPreferences(mode: .remoteClient, activeServerId: profile.serverId, profiles: [profile])),
+            credentialStore: TestCredentialStore([profile.serverId: "device_abcdefghijklmnopqrstuvwxyz1234567890ABCDE"]),
+            remoteClientFactory: { _, _ in client }
+        )
+        await model.start()
+        let loaded = try await model.modelDescriptionHistory(modelID: "missing-model", beforeVersion: 3)
+        XCTAssertEqual(loaded.versions.map(\.version), [2, 1])
+        XCTAssertEqual(client.lastModelDescriptionHistoryModelID, "missing-model")
+        XCTAssertEqual(client.lastModelDescriptionHistoryBeforeVersion, 3)
+        let stopped = await model.shutdownApplication(force: false)
+        XCTAssertTrue(stopped)
     }
 
     @MainActor
@@ -855,8 +1556,10 @@ final class AppPresentationTests: XCTestCase {
                 remoteClientFactory: { _, _ in client }
             )
             await model.start()
-            let saved = await model.saveModelDescription(modelID: "gpt-current", description: restoring ? nil : "  User text  ", expectedOverride: initial["gpt-current"])
-            XCTAssertTrue(saved)
+            let result = await model.submitModelDescription(modelID: "gpt-current", description: restoring ? nil : "  User text  ", expectedOverride: initial["gpt-current"], expectedSettingsRevision: 4)
+            let receipt = try XCTUnwrap(result)
+            XCTAssertEqual(receipt.settings.settingsRevision, 5)
+            XCTAssertEqual(receipt.settings.modelDescriptionOverrides, expected)
             XCTAssertEqual(client.settingsUpdateCallCount, 1)
             let mutation = try XCTUnwrap(client.lastSettingsMutation)
             XCTAssertEqual(mutation.expectedSettingsRevision, 4)
@@ -990,6 +1693,63 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
+    func testAutosaveRejectsASelectedModelWithoutAnySupportedCommonEffort() async throws {
+        let high = ModelChoice(model: "gpt-current", reasoningEffort: "high")
+        let snapshot = try settingsSnapshot(policy: [
+            "mode": "automatic", "allowedSelections": ["kind": "explicit", "selections": [choiceObject(high)]],
+            "constraints": ["allowDelegation": true]
+        ], catalogModels: [catalogModel(id: high.model, efforts: ["high"]), catalogModel(id: "ultra-only", efforts: ["ultra"])])
+        let model = AppModel()
+        model.settings = snapshot
+        var draft = SettingsDraft(snapshot: snapshot)
+        let choices = SettingsDraft.selectableChoices(in: snapshot, allowDelegation: true)
+        draft.updateAllowlist(choices: choices) { $0.setModel("ultra-only", selected: true, choices: choices) }
+        XCTAssertTrue(draft.modelPolicyDirty)
+        XCTAssertEqual(draft.explicitSelectionKeys, [high.key])
+        model.scheduleSettingsAutosave(draft)
+        let saved = await model.flushSettingsAutosave()
+        XCTAssertFalse(saved)
+        XCTAssertTrue(model.settingsErrorMessage?.contains("ultra-only") == true)
+        XCTAssertEqual(model.settings?.settings.settingsRevision, snapshot.settings.settingsRevision)
+        model.cancelPendingSettingsAutosave()
+    }
+
+    @MainActor
+    func testLegacyModelSpecificChoicesAreAutosavedAsOneCommonEffortList() async throws {
+        let newHigh = ModelChoice(model: "new", reasoningEffort: "high")
+        let olderLow = ModelChoice(model: "older", reasoningEffort: "low")
+        let normalized = [newHigh, olderLow, ModelChoice(model: "new", reasoningEffort: "low"), ModelChoice(model: "older", reasoningEffort: "high")]
+        let catalog = [catalogModel(id: "new", efforts: ["low", "high"]), catalogModel(id: "older", efforts: ["low", "high"])]
+        func policy(_ choices: [ModelChoice]) -> [String: Any] {
+            ["mode": "automatic", "allowedSelections": ["kind": "explicit", "selections": choices.map(choiceObject)],
+             "constraints": ["allowDelegation": true]]
+        }
+        let snapshot = try settingsSnapshot(policy: policy([newHigh, olderLow]), catalogModels: catalog)
+        let updated = try settingsSnapshot(settingsRevision: 5, policy: policy(normalized), catalogModels: catalog)
+        let profile = remoteProfile(id: "11111111-1111-4111-8111-111111111111", name: "Common reasoning test")
+        let client = TestRemoteClient(profile: profile, dashboard: try dashboardStatus(scope: "common-reasoning-test"),
+            settings: snapshot, settingsAfterUpdate: updated)
+        let model = AppModel(loginItemController: TestLoginItemController(status: .notRegistered),
+            connectionStore: TestConnectionStore(BridgeConnectionPreferences(mode: .remoteClient, activeServerId: profile.serverId, profiles: [profile])),
+            credentialStore: TestCredentialStore([profile.serverId: "device_abcdefghijklmnopqrstuvwxyz1234567890ABCDE"]),
+            remoteClientFactory: { _, _ in client })
+        await model.start()
+        let draft = SettingsDraft(snapshot: snapshot)
+        XCTAssertTrue(draft.modelPolicyDirty)
+        XCTAssertEqual(draft.explicitSelectionKeys, Set(normalized.map(\.key)))
+        model.scheduleSettingsAutosave(draft)
+        let saved = await model.flushSettingsAutosave()
+        XCTAssertTrue(saved)
+        XCTAssertEqual(client.settingsUpdateCallCount, 1)
+        let mutation = try XCTUnwrap(client.lastSettingsMutation)
+        guard case .patch(let patch) = mutation.operation else { return XCTFail("Expected a policy patch") }
+        XCTAssertEqual(Set(patch.modelPolicy?.allowedSelections?.selections ?? []), Set(normalized))
+        XCTAssertFalse(SettingsDraft(snapshot: updated).modelPolicyDirty)
+        let stopped = await model.shutdownApplication(force: false)
+        XCTAssertTrue(stopped)
+    }
+
+    @MainActor
     func testUltraOffAutosavePreservesAutomaticChoicesAndRequiresFixedReplacement() async throws {
         for mode in ["automatic-mixed", "automatic-ultra-only", "fixed"] {
             let ultra = ModelChoice(model: "gpt-current", reasoningEffort: "ultra")
@@ -1055,26 +1815,6 @@ final class AppPresentationTests: XCTestCase {
             let stopped = await model.shutdownApplication(force: false)
             XCTAssertTrue(stopped)
         }
-    }
-
-    @MainActor
-    func testDashboardCanEnableCodexThreadPersistenceThroughAutosave() throws {
-        let snapshot = try settingsSnapshot(
-            showBridgeThreadsInCodexApp: false,
-            policy: [
-                "mode": "automatic",
-                "allowedSelections": ["kind": "catalog-visible"],
-                "constraints": ["allowDelegation": true]
-            ],
-            catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])]
-        )
-        let model = AppModel()
-        model.settings = snapshot
-
-        model.enableCodexThreadPersistence()
-
-        XCTAssertEqual(model.generalSettingsSaveState, .pending)
-        model.cancelPendingSettingsAutosave()
     }
 
     @MainActor
@@ -1227,6 +1967,108 @@ final class AppPresentationTests: XCTestCase {
         }
     }
 
+    func testTurnSpeedRequestsStayDistinctFromConfirmationAndConversationScope() throws {
+        let accepted = try dashboardExecution(model: "gpt-5.6-sol", displayName: "Sol", effort: "medium",
+            reroutedModel: "gpt-6-astra", isCurrent: false, serviceTier: "fast",
+            processingSpeed: "fast", serviceTierScope: "turn", requestState: "accepted")
+        let text = DashboardExecutionPresentation.text(accepted, locale: Locale(identifier: "en"))
+        XCTAssertEqual(text, "Sol ⚡ → gpt-6-astra · medium")
+        XCTAssertFalse(text.contains("requested"))
+        XCTAssertFalse(text.contains("accepted"))
+        XCTAssertFalse(text.contains("unconfirmed"))
+        XCTAssertEqual(DashboardExecutionPresentation.speedBadgeHelp(accepted, locale: Locale(identifier: "en")), "Selected processing speed: ⚡ Fast")
+        let persistent = try dashboardExecution(model: "gpt-5.6-sol", displayName: "Sol", effort: "medium",
+            reroutedModel: "gpt-6-astra", isCurrent: true, serviceTier: "fast")
+        XCTAssertFalse(DashboardExecutionPresentation.matches(accepted, persistent))
+    }
+
+    func testHistoricalSpeedBadgesUseOnlyRecognizedRecordedValues() throws {
+        for tier in ["ultrafast", "flex", "future-tier"] {
+            let historical = try dashboardExecution(model: "sol", displayName: nil, effort: "medium",
+                reroutedModel: nil, isCurrent: false, serviceTier: tier, requestState: "requested")
+            let text = DashboardExecutionPresentation.text(historical, locale: Locale(identifier: "en"))
+            XCTAssertEqual(text, tier == "ultrafast" ? "sol 🚀 · medium" : "sol · medium")
+            XCTAssertFalse(text.contains("clear conversation speed"))
+            XCTAssertFalse(text.contains("unconfirmed"))
+            XCTAssertEqual(historical.serviceTier, tier)
+            XCTAssertEqual(DashboardExecutionPresentation.speedBadgeHelp(historical, locale: Locale(identifier: "en")),
+                tier == "ultrafast" ? "Selected processing speed: 🚀 Ultrafast" : "")
+        }
+        for mode in ["standard", "inherit", "future-tier"] {
+            let execution = try dashboardExecution(model: "sol", displayName: nil, effort: "medium",
+                reroutedModel: nil, isCurrent: false, serviceTier: nil, processingSpeed: mode)
+            XCTAssertEqual(DashboardExecutionPresentation.text(execution), "sol · medium")
+        }
+    }
+
+    func testSpeedPickerKeepsCompatibilityStateOutOfItsChoices() throws {
+        for (mode, fast, expected) in [("legacy", false, "standard"), ("legacy", true, "fast"),
+                                       ("inherit", false, ""), ("future-tier", false, ""), ("ultrafast", false, "")] {
+            let snapshot = try settingsSnapshot(policy: ["mode": "automatic",
+                "allowedSelections": ["kind": "catalog-visible"], "constraints": ["allowDelegation": true]],
+                catalogModels: [], processingSpeed: mode, usePriorityServiceTier: fast,
+                availableProcessingSpeeds: ["legacy", "fast", "inherit", "standard", "future-tier", "fast"])
+            var draft = SettingsDraft(snapshot: snapshot)
+            XCTAssertEqual(SettingsDraft.processingSpeedChoices(in: snapshot), ["standard", "fast"])
+            XCTAssertEqual(draft.processingSpeedSelection(in: snapshot), expected)
+            draft.selectProcessingSpeed("inherit", in: snapshot)
+            draft.selectProcessingSpeed("ultrafast", in: snapshot)
+            XCTAssertEqual(draft.processingSpeed, mode)
+            XCTAssertEqual(draft.usePriorityServiceTier, fast)
+            XCTAssertTrue(draft.hasSameEditableValues(as: SettingsDraft(snapshot: snapshot)))
+            XCTAssertEqual(draft.rebased(on: snapshot).processingSpeed, mode)
+        }
+    }
+
+    @MainActor
+    func testSpeedPickerAutosaveOnlyChangesScopeAfterChoosingASpeed() async throws {
+        for (mode, fast) in [("legacy", false), ("legacy", true), ("inherit", false)] {
+            for changeSpeed in [false, true] {
+                let policy: [String: Any] = ["mode": "automatic", "allowedSelections": ["kind": "catalog-visible"],
+                    "constraints": ["allowDelegation": true]]
+                let catalog = [catalogModel(id: "gpt-current", efforts: ["high"])]
+                let snapshot = try settingsSnapshot(policy: policy, catalogModels: catalog, processingSpeed: mode,
+                    usePriorityServiceTier: fast, availableProcessingSpeeds: ["legacy", "inherit", "standard", "fast"])
+                let updated = try settingsSnapshot(settingsRevision: 5, accessStrategy: "read-only", policy: policy,
+                    catalogModels: catalog, processingSpeed: changeSpeed ? "standard" : mode,
+                    usePriorityServiceTier: fast, availableProcessingSpeeds: ["legacy", "inherit", "standard", "fast"])
+                let profile = remoteProfile(id: "11111111-1111-4111-8111-111111111111", name: "Speed test")
+                let client = TestRemoteClient(profile: profile, dashboard: try dashboardStatus(scope: "speed-test"),
+                    settings: snapshot, settingsAfterUpdate: updated)
+                let model = AppModel(loginItemController: TestLoginItemController(status: .notRegistered),
+                    connectionStore: TestConnectionStore(BridgeConnectionPreferences(
+                        mode: .remoteClient, activeServerId: profile.serverId, profiles: [profile])),
+                    credentialStore: TestCredentialStore([profile.serverId: "device_abcdefghijklmnopqrstuvwxyz1234567890ABCDE"]),
+                    remoteClientFactory: { _, _ in client })
+                await model.start()
+                var draft = SettingsDraft(snapshot: snapshot)
+                draft.accessStrategy = "read-only"
+                if changeSpeed { draft.selectProcessingSpeed("standard", in: snapshot) }
+                model.scheduleSettingsAutosave(draft)
+                let saved = await model.flushSettingsAutosave()
+                XCTAssertTrue(saved)
+                guard case .patch(let patch) = try XCTUnwrap(client.lastSettingsMutation).operation else {
+                    return XCTFail("Expected a settings patch")
+                }
+                XCTAssertEqual(patch.processingSpeed, changeSpeed ? "standard" : mode)
+                XCTAssertEqual(patch.usePriorityServiceTier, !changeSpeed && mode == "legacy" ? fast : nil)
+                XCTAssertNil(patch.modelPolicy)
+                let stopped = await model.shutdownApplication(force: false)
+                XCTAssertTrue(stopped)
+            }
+        }
+    }
+
+    func testSettingsDraftPreservesUnknownSpeedWhenRebased() throws {
+        let snapshot = try settingsSnapshot(policy: ["mode": "fixed", "selection": choiceObject(ModelChoice(model: "sol", reasoningEffort: "medium")),
+            "constraints": ["allowDelegation": true]], catalogModels: [], processingSpeed: "future-tier")
+        let draft = SettingsDraft(snapshot: snapshot)
+        XCTAssertEqual(draft.processingSpeed, "future-tier")
+        XCTAssertTrue(draft.hasSameEditableValues(as: SettingsDraft(snapshot: snapshot)))
+        XCTAssertEqual(draft.rebased(on: snapshot).processingSpeed, "future-tier")
+        XCTAssertTrue(processingSpeedLabel("future-tier", legacyFast: false, locale: Locale(identifier: "en")).contains("future-tier"))
+    }
+
     func testDashboardHistoryDeduplicatesOnlyActivityHeadingsAndKeepsTurnExecution() throws {
         let firstExecution = try dashboardExecution(
             model: "gpt-5.6-sol",
@@ -1290,7 +2132,7 @@ final class AppPresentationTests: XCTestCase {
         )
         XCTAssertEqual(
             DashboardExecutionPresentation.turnText(items[2].turn.execution),
-            "모델 · 추론 확인 불가"
+            "Model · Reasoning unavailable"
         )
     }
 
@@ -1369,10 +2211,12 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertEqual(client.factoryCallCount, 1)
         XCTAssertEqual(client.closeCallCount, 0)
 
+        let runtimeStatusReads = client.runtimeStatusCallCount
+        XCTAssertGreaterThan(runtimeStatusReads, 0)
         let didQuit = await model.shutdownApplication(force: false)
         XCTAssertTrue(didQuit)
         XCTAssertTrue(model.applicationShutdownCompleted)
-        XCTAssertEqual(client.runtimeStatusCallCount, 0)
+        XCTAssertEqual(client.runtimeStatusCallCount, runtimeStatusReads)
         XCTAssertEqual(client.closeCallCount, 1)
     }
 
@@ -1670,23 +2514,29 @@ private final class TestRemoteClient: RemoteBridgeApplicationClient, @unchecked 
     private let dashboardValue: DashboardSnapshot
     private let settingsValue: SettingsSnapshot
     private let settingsAfterUpdate: SettingsSnapshot?
+    private let modelDescriptionHistoryPage: ModelDescriptionHistoryPage?
     private let dashboardDelayNanoseconds: UInt64
     private let helloDelayNanoseconds: UInt64
     private let lock = NSLock()
     private var runtimeCalls = 0
     private var settingsUpdateCalls = 0
     private var latestSettingsMutation: SettingsMutation?
+    private var latestHistoryModelID: String?
+    private var latestHistoryBeforeVersion: Int?
     private var factoryCalls = 0
     private var closeCalls = 0
     private var remainingHelloFailures: Int
     private var helloCalls = 0
     private var dashboardCalls = 0
+    private var dashboardErrors: [any Error] = []
+    private var helloErrors: [any Error] = []
 
     init(
         profile: RemoteServerProfile,
         dashboard: DashboardSnapshot,
         settings: SettingsSnapshot,
         settingsAfterUpdate: SettingsSnapshot? = nil,
+        modelDescriptionHistoryPage: ModelDescriptionHistoryPage? = nil,
         dashboardDelayNanoseconds: UInt64 = 0,
         helloFailures: Int = 0,
         helloDelayNanoseconds: UInt64 = 0
@@ -1712,6 +2562,7 @@ private final class TestRemoteClient: RemoteBridgeApplicationClient, @unchecked 
         dashboardValue = dashboard
         settingsValue = settings
         self.settingsAfterUpdate = settingsAfterUpdate
+        self.modelDescriptionHistoryPage = modelDescriptionHistoryPage
         self.dashboardDelayNanoseconds = dashboardDelayNanoseconds
         self.helloDelayNanoseconds = helloDelayNanoseconds
         remainingHelloFailures = helloFailures
@@ -1722,8 +2573,13 @@ private final class TestRemoteClient: RemoteBridgeApplicationClient, @unchecked 
     var dashboardCallCount: Int { lock.withLock { dashboardCalls } }
     var settingsUpdateCallCount: Int { lock.withLock { settingsUpdateCalls } }
     var lastSettingsMutation: SettingsMutation? { lock.withLock { latestSettingsMutation } }
+    var lastModelDescriptionHistoryModelID: String? { lock.withLock { latestHistoryModelID } }
+    var lastModelDescriptionHistoryBeforeVersion: Int? { lock.withLock { latestHistoryBeforeVersion } }
     var factoryCallCount: Int { lock.withLock { factoryCalls } }
     var closeCallCount: Int { lock.withLock { closeCalls } }
+
+    func failNextDashboard(_ error: any Error) { lock.withLock { dashboardErrors.append(error) } }
+    func failNextHello(_ error: any Error) { lock.withLock { helloErrors.append(error) } }
 
     func recordFactoryCall() {
         lock.withLock { factoryCalls += 1 }
@@ -1734,6 +2590,7 @@ private final class TestRemoteClient: RemoteBridgeApplicationClient, @unchecked 
     }
 
     func hello() async throws -> RemoteCompanionHello {
+        if let error = lock.withLock({ helloErrors.isEmpty ? nil : helloErrors.removeFirst() }) { throw error }
         let shouldFail = lock.withLock {
             helloCalls += 1
             guard remainingHelloFailures > 0 else { return false }
@@ -1752,10 +2609,14 @@ private final class TestRemoteClient: RemoteBridgeApplicationClient, @unchecked 
         enrich: Bool,
         statusFilter: DashboardStatusFilter
     ) async throws -> DashboardSnapshot {
-        lock.withLock { dashboardCalls += 1 }
+        let error = lock.withLock { () -> (any Error)? in
+            dashboardCalls += 1
+            return dashboardErrors.isEmpty ? nil : dashboardErrors.removeFirst()
+        }
         if dashboardDelayNanoseconds > 0 {
             try await Task.sleep(nanoseconds: dashboardDelayNanoseconds)
         }
+        if let error { throw error }
         return dashboardValue
     }
 
@@ -1769,6 +2630,17 @@ private final class TestRemoteClient: RemoteBridgeApplicationClient, @unchecked 
             latestSettingsMutation = mutation
         }
         return settingsAfterUpdate ?? settingsValue
+    }
+
+    func modelDescriptionHistory(modelID: String, beforeVersion: Int?) async throws -> ModelDescriptionHistoryPage {
+        lock.withLock {
+            latestHistoryModelID = modelID
+            latestHistoryBeforeVersion = beforeVersion
+        }
+        guard let modelDescriptionHistoryPage else {
+            throw NSError(domain: "MODEL_DESCRIPTION_HISTORY_UNAVAILABLE", code: 1)
+        }
+        return modelDescriptionHistoryPage
     }
 
     func runtimeStatus(inspectBackgroundProcesses: Bool) async throws -> RuntimeAdmissionSnapshot {
@@ -1849,19 +2721,32 @@ private final class TestDashboardReplySequence: @unchecked Sendable {
 }
 
 private func helperStatus(
+    pid: Int = 42,
     phase: String = "running",
     bridgeConnected: Bool = true,
     tunnelConnected: Bool = true,
-    configurationValid: Bool = true
+    configurationValid: Bool = true,
+    bridgeObservation: String? = nil,
+    bridgeLastSuccessfulAt: String? = nil,
+    readServiceStatus: String? = nil,
+    stateServiceStorageError: String? = nil,
+    tunnelProbeFailed: Bool = false
 ) throws -> HelperStatus {
+    let tunnelProblemJSON = tunnelProbeFailed ? ",\"lastProblem\":{\"code\":\"tunnel-health-probe-failed\",\"arguments\":{}}" : ""
+    let bridgeObservationJSON = bridgeObservation.map { ",\"observation\":\"\($0)\"" } ?? ""
+    let bridgeLastSuccessfulAtJSON = bridgeLastSuccessfulAt.map { ",\"lastSuccessfulAt\":\"\($0)\"" } ?? ""
+    let readServiceStatusJSON = readServiceStatus.map { ",\"readServiceStatus\":\"\($0)\"" } ?? ""
+    let stateServiceStorageErrorJSON = stateServiceStorageError.map {
+        ",\"stateServiceStatus\":\"state-recovering\",\"stateServiceStorageError\":\"\($0)\""
+    } ?? ""
     let json = #"""
     {
       "kind":"helper-status","generatedAt":"2026-09-03T00:00:00.000Z",
-      "phase":"\#(phase)","pid":42,"startedAt":null,"lastExit":null,"lastError":null,
+      "phase":"\#(phase)","pid":\#(pid),"startedAt":null,"lastExit":null,"lastError":null,
       "restartAttempt":0,
       "configuration":{"path":"/private/.env","exists":true,"valid":\#(configurationValid),"hasApiKey":true,"hasTunnelId":true,"tunnelId":"tunnel_native123","issue":null},
-      "bridge":{"socketPath":"/private/bridge.sock","connected":\#(bridgeConnected),"acceptingNewJobs":true,"activeJobs":0,"pendingAdmissions":0,"backgroundProcessState":"confirmed","backgroundProcesses":0,"backgroundProcessAgents":0,"backgroundProcessUnknownAgents":0},
-      "tunnel":{"phase":"connected","profile":"managed","transport":"stdio","doctorPassed":true,"processRunning":true,"connected":\#(tunnelConnected),"lastCheckedAt":null,"lastError":null}
+      "bridge":{"socketPath":"/private/bridge.sock","connected":\#(bridgeConnected)\#(bridgeObservationJSON)\#(bridgeLastSuccessfulAtJSON)\#(readServiceStatusJSON)\#(stateServiceStorageErrorJSON),"acceptingNewJobs":true,"activeJobs":0,"pendingAdmissions":0,"backgroundProcessState":"confirmed","backgroundProcesses":0,"backgroundProcessAgents":0,"backgroundProcessUnknownAgents":0},
+      "tunnel":{"phase":"connected","profile":"managed","transport":"stdio","doctorPassed":true,"processRunning":true,"connected":\#(tunnelConnected),"lastCheckedAt":null,"lastError":null\#(tunnelProblemJSON)}
     }
     """#.data(using: .utf8)!
     return try JSONDecoder().decode(HelperStatus.self, from: json)
@@ -1874,6 +2759,34 @@ private func loginStatus(installed: Bool, authenticated: Bool) throws -> CodexLo
         "summary": authenticated ? "ready" : "login required"
     ])
     return try JSONDecoder().decode(CodexLoginStatus.self, from: data)
+}
+
+private func issue242Dashboard(_ row: DashboardRow, scope: String) throws -> DashboardSnapshot {
+    var value = try JSONSerialization.jsonObject(with: JSONEncoder().encode(dashboardStatus(scope: scope))) as! [String: Any]
+    value["terminalRows"] = [try JSONSerialization.jsonObject(with: JSONEncoder().encode(row))]
+    return try JSONDecoder().decode(DashboardSnapshot.self, from: JSONSerialization.data(withJSONObject: value))
+}
+
+private func issue242Settings(registry: Int, id: String?, name: String, cwd: String, archived: Bool = false) throws -> SettingsSnapshot {
+    let base = try settingsSnapshot(policy: ["mode": "automatic", "allowedSelections": ["kind": "catalog-visible"],
+        "constraints": ["allowDelegation": true]], catalogModels: [])
+    var value = try JSONSerialization.jsonObject(with: JSONEncoder().encode(base)) as! [String: Any]
+    var settings = value["settings"] as! [String: Any]
+    settings["registryRevision"] = registry
+    settings["projects"] = id.map { identity in [["id": identity, "projectRef": "fixture-\(identity)", "projectRevision": registry,
+        "name": name, "nameKey": name.lowercased(), "cwd": cwd, "sortOrder": 0, "createdAt": 1, "updatedAt": 2,
+        "archiveState": archived ? "complete" : "active", "archiveRevision": archived ? 1 : 0] as [String: Any]] } ?? []
+    value["settings"] = settings
+    return try JSONDecoder().decode(SettingsSnapshot.self, from: JSONSerialization.data(withJSONObject: value))
+}
+
+private func issue242Row(_ identity: String, project: String) throws -> DashboardRow {
+    let row: [String: Any] = ["rowKey": String(repeating: identity, count: 32), "activityKey": "fixture",
+        "conversationKey": "fixture", "sessionAlias": "Fixture", "bucket": "recent", "projectKey": String(repeating: identity, count: 32),
+        "projectName": project, "agentName": "Fixture", "status": "completed", "createdAt": "2026-10-07T00:00:00Z",
+        "updatedAt": "2026-10-07T00:00:01Z", "elapsedMs": 1000, "backgroundProcessCount": 0,
+        "history": [], "historyCount": 1, "historyRevision": String(repeating: "a", count: 64)]
+    return try JSONDecoder().decode(DashboardRow.self, from: JSONSerialization.data(withJSONObject: row))
 }
 
 private func dashboardStatus(
@@ -1933,11 +2846,16 @@ private func settingsSnapshot(
     settingsRevision: Int = 4,
     accessStrategy: String = "adaptive",
     showBridgeThreadsInCodexApp: Bool = true,
+    experimentalDirectResultDelivery: Bool = false,
     policy: [String: Any],
     legacyPreferredModel: String? = nil,
     modelDescriptionOverrides: [String: String]? = nil,
+    modelDescriptionHistoryModelIds: [String]? = nil,
     catalogModels: [[String: Any]],
-    operatorCeiling: [ModelChoice]? = nil
+    operatorCeiling: [ModelChoice]? = nil,
+    processingSpeed: String? = nil,
+    usePriorityServiceTier: Bool = false,
+    availableProcessingSpeeds: [String]? = nil
 ) throws -> SettingsSnapshot {
     var settings: [String: Any] = [
         "schemaVersion": 1,
@@ -1946,13 +2864,12 @@ private func settingsSnapshot(
         "revision": settingsRevision,
         "accessStrategy": accessStrategy,
         "modelPolicy": policy,
-        "usePriorityServiceTier": false,
+        "usePriorityServiceTier": usePriorityServiceTier,
         "projects": [],
         "uiLocalePreference": "auto",
         "maxConcurrentJobs": 2,
         "showBridgeThreadsInCodexApp": showBridgeThreadsInCodexApp,
-        "activityCardVisibility": "always",
-        "completionHandoff": "off"
+        "experimentalDirectResultDelivery": experimentalDirectResultDelivery
     ]
     if let legacyPreferredModel {
         settings["legacyPreferredModel"] = legacyPreferredModel
@@ -1960,22 +2877,22 @@ private func settingsSnapshot(
     if let modelDescriptionOverrides {
         settings["modelDescriptionOverrides"] = modelDescriptionOverrides
     }
+    if let processingSpeed { settings["processingSpeed"] = processingSpeed }
     var capabilities: [String: Any] = [
         "availableAccessStrategies": ["read-only", "adaptive"],
         "availableUiLocalePreferences": ["auto", "ko", "en"],
-        "availableActivityCardVisibilities": ["always", "background-only", "never"],
-        "availableCompletionHandoffs": ["off", "auto-handoff"],
         "projectAvailability": [],
         "maxConcurrentJobs": 4,
-        "defaultBackend": "mcp-server",
+        "defaultBackend": "app-server",
         "allowWorkspaceWrite": true,
         "allowDangerFullAccess": false,
         "persistent": true
     ]
+    if let availableProcessingSpeeds { capabilities["availableProcessingSpeeds"] = availableProcessingSpeeds }
     if let operatorCeiling {
         capabilities["operatorModelCeiling"] = operatorCeiling.map(choiceObject)
     }
-    let object: [String: Any] = [
+    var object: [String: Any] = [
         "settings": settings,
         "operatorDefaults": settings,
         "capabilities": capabilities,
@@ -1996,6 +2913,9 @@ private func settingsSnapshot(
             "developerModeRefreshRequired": false
         ]
     ]
+    if let modelDescriptionHistoryModelIds {
+        object["modelDescriptionHistoryModelIds"] = modelDescriptionHistoryModelIds
+    }
     let data = try JSONSerialization.data(withJSONObject: object)
     return try JSONDecoder().decode(SettingsSnapshot.self, from: data)
 }
@@ -2026,7 +2946,10 @@ private func dashboardExecution(
     effort: String,
     reroutedModel: String?,
     isCurrent: Bool,
-    serviceTier: String? = nil
+    serviceTier: String? = nil,
+    processingSpeed: String? = nil,
+    serviceTierScope: String? = nil,
+    requestState: String? = nil
 ) throws -> DashboardExecution {
     var object: [String: Any] = [
         "model": model,
@@ -2035,6 +2958,9 @@ private func dashboardExecution(
     ]
     if let displayName { object["modelDisplayName"] = displayName }
     if let serviceTier { object["serviceTier"] = serviceTier }
+    if let processingSpeed { object["processingSpeed"] = processingSpeed }
+    if let serviceTierScope { object["serviceTierScope"] = serviceTierScope }
+    if let requestState { object["requestState"] = requestState }
     if let reroutedModel { object["reroutedModel"] = reroutedModel }
     return try JSONDecoder().decode(
         DashboardExecution.self,
@@ -2684,7 +3610,7 @@ extension ConnectionObservationRecoveryTests {
 
 extension AppPresentationTests {
     @MainActor
-    func testProblemBulkReviewCollectsEveryPageBeforeWritingAndRejectsChangedLists() async throws {
+    func testLegacyProblemCapabilitiesCannotWriteOrCreateBulkProcessing() async throws {
         for (changesDuringPaging, automaticViews) in [(false, false), (true, false), (false, true), (true, true)] {
             let root = URL(fileURLWithPath: "/tmp/cb-problems-\(UUID().uuidString.prefix(8))")
             let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
@@ -2701,27 +3627,25 @@ extension AppPresentationTests {
                 await model.selectProblemQuery(view: .history)
                 XCTAssertEqual(model.dashboard?.problems?.historyCount, 112)
             }
+            // Old capabilities are deliberately present: read-only history must
+            // ignore them, without paging an obsolete processing queue or writing.
+            await model.selectProblemQuery(view: .history)
+            let problem = try XCTUnwrap(model.dashboard?.problems?.rows.first)
+            XCTAssertTrue(problem.canAcknowledge)
+            XCTAssertEqual(problem.row.status, "failed")
+            let readsBeforeActions = bridge.count("dashboard.snapshot")
             await model.acknowledgeAllFinishedProblems()
-            XCTAssertEqual(state.bulkHistoryReadCount, 0)
-            if changesDuringPaging {
-                XCTAssertEqual(state.batches, [])
-                XCTAssertNotNil(model.dashboardErrorMessage)
-            } else {
-                XCTAssertEqual(state.batches, [100, 12])
-                XCTAssertEqual(state.reviewedCount, 112)
-                XCTAssertNotNil(model.problemActionNotice)
-                if automaticViews {
-                    await model.selectProblemQuery(view: .history)
-                    XCTAssertEqual(model.dashboard?.problems?.pendingCount, 0)
-                    XCTAssertEqual(model.dashboard?.problems?.historyCount, 112)
-                } else { await model.selectProblemQuery(review: .acknowledged) }
-                XCTAssertEqual(model.dashboard?.problems?.acknowledgedCount, 112)
-                let problem = try XCTUnwrap(model.dashboard?.problems?.rows.first)
-                XCTAssertEqual(problem.row.status, "failed")
-                await model.changeProblem(problem, action: .unacknowledge)
-                XCTAssertEqual(state.reviewedCount, 111)
-                XCTAssertFalse(model.changingProblems)
+            for action in [ProblemActionKind.acknowledge, .unacknowledge, .recheck, .retryStop] {
+                await model.changeProblem(problem, action: action)
             }
+            XCTAssertEqual(state.bulkHistoryReadCount, 0)
+            XCTAssertEqual(state.batches, [])
+            XCTAssertEqual(state.reviewedCount, 0)
+            XCTAssertEqual(bridge.count("dashboard.problem"), 0)
+            XCTAssertEqual(bridge.count("dashboard.snapshot"), readsBeforeActions)
+            XCTAssertNil(model.problemActionNotice)
+            XCTAssertFalse(model.changingProblems)
+            XCTAssertEqual(model.dashboard?.problems?.historyCount, 112)
         }
     }
 }
@@ -2790,5 +3714,238 @@ private final class ProblemPagingFixture: @unchecked Sendable {
                 return NativeFixtureReply(body: #"{"error":{"code":-32603,"message":"fixture failure"}}"#)
             }
         }
+    }
+}
+
+final class DashboardReadRecoveryTests: XCTestCase {
+    @MainActor
+    func testFirstLocalListFailureReloadsOnlyTheListAndCoalescesClicks() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-264-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.helperSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let snapshot = String(decoding: try JSONEncoder().encode(dashboardStatus(scope: "recovered-list")), as: UTF8.self)
+        let replies = TestDashboardReplySequence([
+            NativeFixtureReply(body: #"{"error":{"code":-32000,"message":"STATE_READ_STALE: secret_request_payload"}}"#),
+            NativeFixtureReply(body: "{\"result\":\(snapshot)}", delay: 0.2)
+        ])
+        let helper = try NativeRPCFixture(path: paths.helperSocket.path) { _ in
+            NativeFixtureReply(body: #"{"error":{"code":-32601,"message":"unexpected helper call"}}"#)
+        }
+        let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { _ in replies.next() }
+        let bootstrap = RecoveryCountingBootstrap()
+        let model = AppModel(paths: paths, bootstrapper: bootstrap)
+        defer { model.cancelAllPolling(); helper.stop(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+        model.recordLocalConnectionStatus(try helperStatus())
+        model.authStatus = try loginStatus(installed: true, authenticated: true)
+        await model.refreshDashboard(enrich: false)
+        XCTAssertNil(model.dashboard)
+        XCTAssertEqual(model.dashboardReadFailure?.kind, .timeout)
+        XCTAssertFalse(model.dashboardErrorMessage?.contains("secret_request_payload") ?? true)
+        XCTAssertEqual(model.dashboardRecoveryAction, .reload)
+        XCTAssertEqual(model.health, .healthy, "Service health is independent of list freshness.")
+        XCTAssertNil(model.lastDashboardRefresh)
+
+        let clicks = (0..<100).map { _ in Task { await model.recoverDashboardRead() } }
+        for click in clicks { await click.value }
+        XCTAssertEqual(bridge.count("dashboard.snapshot"), 2)
+        XCTAssertEqual(helper.count("helper.health"), 0)
+        XCTAssertEqual(helper.count("auth.status"), 0)
+        XCTAssertEqual(helper.count("runtime.lifecycle"), 0)
+        XCTAssertEqual(bridge.count("settings.snapshot"), 0)
+        let bootstraps = await bootstrap.starts
+        XCTAssertEqual(bootstraps, 0)
+        XCTAssertEqual(model.dashboard?.scope, "recovered-list")
+        XCTAssertNotNil(model.lastDashboardRefresh)
+        XCTAssertNil(model.dashboardReadFailure)
+        XCTAssertNil(model.dashboardErrorMessage)
+        XCTAssertFalse(model.isDashboardRefreshing)
+    }
+
+    @MainActor
+    func testRetainedListDateAndSelectionSurviveFailureAndClearOnRecovery() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-264-retain-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.bridgeSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let snapshot = String(decoding: try JSONEncoder().encode(dashboardStatus(scope: "confirmed")), as: UTF8.self)
+        let healthy = NativeFixtureReply(body: "{\"result\":\(snapshot)}")
+        let replies = TestDashboardReplySequence([healthy,
+            NativeFixtureReply(body: #"{"error":{"code":-32000,"message":"STATE_READ_STALE: private data"}}"#), healthy])
+        let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { _ in replies.next() }
+        let model = AppModel(paths: paths)
+        defer { model.cancelAllPolling(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+        model.recordLocalConnectionStatus(try helperStatus())
+        await model.refreshDashboard(enrich: false)
+        let checked = model.lastDashboardRefresh
+        await model.toggleDashboardPanel(.history)
+        await model.refreshDashboard(enrich: false)
+        XCTAssertNotNil(model.dashboardReadFailure)
+        XCTAssertEqual(model.dashboard?.scope, "confirmed")
+        XCTAssertEqual(model.dashboardPanel, .history)
+        XCTAssertEqual(model.lastDashboardRefresh, checked)
+        await model.recoverDashboardRead()
+        XCTAssertEqual(model.dashboard?.scope, "confirmed")
+        XCTAssertEqual(model.dashboardPanel, .history)
+        XCTAssertNil(model.dashboardReadFailure)
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(model.lastDashboardRefresh), try XCTUnwrap(checked))
+    }
+
+    @MainActor
+    func testClosingMenuFencesLateLocalSuccessAndFailure() async throws {
+        for body in ["{\"result\":\(String(decoding: try JSONEncoder().encode(dashboardStatus(scope: "late")), as: UTF8.self))}",
+                     #"{"error":{"code":-32000,"message":"STATE_READ_STALE: late"}}"#] {
+            let root = URL(fileURLWithPath: "/tmp/cb-264-close-\(UUID().uuidString.prefix(8))")
+            let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+            try FileManager.default.createDirectory(at: paths.bridgeSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { _ in NativeFixtureReply(body: body, delay: 0.2) }
+            let model = AppModel(paths: paths)
+            defer { model.cancelAllPolling(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+            model.recordLocalConnectionStatus(try helperStatus())
+            let reading = Task { await model.refreshDashboard(enrich: false) }
+            for _ in 0..<50 {
+                if bridge.count("dashboard.snapshot") > 0 { break }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            XCTAssertEqual(bridge.count("dashboard.snapshot"), 1)
+            model.setDashboardVisible(false)
+            await reading.value
+            XCTAssertNil(model.dashboard)
+            XCTAssertNil(model.dashboardReadFailure)
+            XCTAssertNil(model.lastDashboardRefresh)
+            XCTAssertFalse(model.isDashboardRefreshing)
+        }
+    }
+
+    @MainActor
+    func testRemoteListFailureReloadAndTransientVersusConfirmedConnectionFailure() async throws {
+        let profile = remoteProfile(id: "44444444-4444-4444-8444-444444444444", name: "Recovery fixture")
+        let client = TestRemoteClient(profile: profile, dashboard: try dashboardStatus(scope: "remote-confirmed"),
+            settings: try settingsSnapshot(policy: ["mode": "automatic", "allowedSelections": ["kind": "catalog-visible"],
+                "constraints": ["allowDelegation": true]], catalogModels: []), dashboardDelayNanoseconds: 100_000_000)
+        let bootstrap = RecoveryCountingBootstrap()
+        let model = AppModel(bootstrapper: bootstrap,
+            loginItemController: TestLoginItemController(status: .notRegistered),
+            connectionStore: TestConnectionStore(BridgeConnectionPreferences(mode: .remoteClient, activeServerId: profile.serverId, profiles: [profile])),
+            credentialStore: TestCredentialStore([profile.serverId: "device_fixture"]), remoteClientFactory: { _, _ in client })
+        defer { model.cancelAllPolling() }
+        await model.refreshStatus()
+        client.failNextDashboard(URLError(.timedOut))
+        await model.refreshDashboard(enrich: false)
+        XCTAssertEqual(model.dashboardReadFailure?.kind, .timeout)
+        XCTAssertEqual(model.dashboardRecoveryAction, .reload)
+        XCTAssertNil(model.dashboard)
+        let helloCalls = client.helloCallCount, runtimeCalls = client.runtimeStatusCallCount
+        let clicks = (0..<20).map { _ in Task { await model.recoverDashboardRead() } }
+        for click in clicks { await click.value }
+        XCTAssertEqual(client.dashboardCallCount, 2)
+        XCTAssertEqual(client.helloCallCount, helloCalls)
+        XCTAssertEqual(client.runtimeStatusCallCount, runtimeCalls)
+        XCTAssertEqual(client.settingsUpdateCallCount, 0)
+        XCTAssertEqual(model.dashboard?.scope, "remote-confirmed")
+        let checked = model.lastDashboardRefresh
+        client.failNextDashboard(LocalRPCError.remote(code: -32000, message: "STATE_READ_STALE: private value"))
+        await model.refreshDashboard(enrich: false)
+        XCTAssertEqual(model.lastDashboardRefresh, checked)
+        XCTAssertEqual(model.dashboard?.scope, "remote-confirmed")
+        XCTAssertEqual(model.dashboardReadFailure?.kind, .timeout)
+
+        client.failNextHello(URLError(.timedOut))
+        await model.refreshStatus()
+        XCTAssertFalse(model.bridgeConnected)
+        XCTAssertTrue(model.isBridgeConnectionChecking)
+        XCTAssertTrue(model.hasRetainedBridgeObservation)
+        XCTAssertEqual(model.dashboardRecoveryAction, .checkConnection)
+        XCTAssertNotNil(model.lastConfirmedConnectionCheck)
+        XCTAssertEqual(model.health, .checking)
+        client.failNextHello(RemoteCompanionError.unauthorized)
+        await model.refreshStatus()
+        XCTAssertFalse(model.isBridgeConnectionChecking)
+        XCTAssertEqual(model.dashboardRecoveryAction, .reconnect)
+        XCTAssertEqual(model.dashboard?.scope, "remote-confirmed")
+        await model.recoverDashboardRead()
+        XCTAssertTrue(model.bridgeConnected)
+        await model.recoverDashboardRead()
+        XCTAssertNil(model.dashboardReadFailure)
+        let starts = await bootstrap.starts
+        XCTAssertEqual(starts, 0)
+    }
+
+    func testFailureClassificationUsesTransportTypesAndProtocolCodes() {
+        XCTAssertEqual(RPCObservationFailure(URLError(.timedOut)).kind, .timeout)
+        XCTAssertEqual(RPCObservationFailure(URLError(.cancelled)).kind, .cancelled)
+        XCTAssertEqual(RPCObservationFailure(URLError(.cannotConnectToHost)).kind, .refused)
+        XCTAssertEqual(RPCObservationFailure(RemoteCompanionError.unauthorized).kind, .permissionDenied)
+        XCTAssertEqual(RPCObservationFailure(RemoteCompanionError.certificateMismatch).kind, .permissionDenied)
+        XCTAssertEqual(RPCObservationFailure(RemoteCompanionError.invalidResponse("timeout refused")).kind, .contractMismatch)
+        XCTAssertEqual(RPCObservationFailure(LocalRPCError.remote(code: -32000, message: "STATE_READ_STALE: detail" )).kind, .timeout)
+        XCTAssertEqual(RPCObservationFailure(LocalRPCError.remote(code: -32000, message: "timed out 연결 실패" )).kind, .remote)
+    }
+}
+
+private actor RecoveryCountingBootstrap: HelperBootstrapping {
+    private(set) var starts = 0
+    func ensureRunning(paths: RuntimePaths) async throws { starts += 1; throw LocalRPCError.emptyResponse }
+    func shutdown(paths: RuntimePaths) async throws {}
+}
+
+extension DashboardReadRecoveryTests {
+    @MainActor
+    func testStaleHealthGetsOneBoundedStatusOnlyConfirmationWithoutRetryingList() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-264-health-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.helperSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let status = String(decoding: try JSONEncoder().encode(helperStatus()), as: UTF8.self)
+        let helper = try NativeRPCFixture(path: paths.helperSocket.path) { method in
+            NativeFixtureReply(body: method == "helper.health" ? "{\"result\":\(status)}" :
+                #"{"error":{"code":-32601,"message":"unsupported"}}"#, delay: method == "helper.health" ? 0.2 : 0)
+        }
+        let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { _ in
+            NativeFixtureReply(body: #"{"error":{"code":-32000,"message":"STATE_READ_STALE: fixture"}}"#)
+        }
+        let bootstrap = RecoveryCountingBootstrap()
+        let model = AppModel(paths: paths, bootstrapper: bootstrap)
+        defer { model.cancelAllPolling(); helper.stop(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+        model.recordLocalConnectionStatus(try helperStatus(), at: Date().addingTimeInterval(-21))
+        let reading = Task { await model.refreshDashboard(enrich: false) }
+        for _ in 0..<50 {
+            if helper.count("helper.health") > 0 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(model.dashboardRecoveryAction, .checkConnection)
+        XCTAssertTrue(model.dashboardConnectionCheckPending)
+        for _ in 0..<20 { await model.recoverDashboardRead() }
+        await reading.value
+        XCTAssertEqual(helper.count("helper.health"), 1)
+        XCTAssertEqual(bridge.count("dashboard.snapshot"), 1)
+        XCTAssertEqual(helper.count("auth.status"), 0)
+        XCTAssertEqual(bridge.count("settings.snapshot"), 0)
+        XCTAssertEqual(model.dashboardRecoveryAction, .reload)
+        XCTAssertFalse(model.dashboardConnectionCheckPending)
+        let starts = await bootstrap.starts
+        XCTAssertEqual(starts, 0)
+    }
+
+    @MainActor
+    func testClosingMenuFencesLateRemoteFailure() async throws {
+        let profile = remoteProfile(id: "55555555-5555-4555-8555-555555555555", name: "Remote close fixture")
+        let client = TestRemoteClient(profile: profile, dashboard: try dashboardStatus(scope: "late-remote"),
+            settings: try settingsSnapshot(policy: ["mode": "automatic", "allowedSelections": ["kind": "catalog-visible"],
+                "constraints": ["allowDelegation": true]], catalogModels: []), dashboardDelayNanoseconds: 200_000_000)
+        client.failNextDashboard(URLError(.timedOut))
+        let model = AppModel(loginItemController: TestLoginItemController(status: .notRegistered),
+            connectionStore: TestConnectionStore(BridgeConnectionPreferences(mode: .remoteClient, activeServerId: profile.serverId, profiles: [profile])),
+            credentialStore: TestCredentialStore([profile.serverId: "fixture"]), remoteClientFactory: { _, _ in client })
+        defer { model.cancelAllPolling() }
+        await model.refreshStatus()
+        let reading = Task { await model.refreshDashboard(enrich: false) }
+        for _ in 0..<50 {
+            if client.dashboardCallCount > 0 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        model.setDashboardVisible(false)
+        await reading.value
+        XCTAssertTrue(model.bridgeConnected)
+        XCTAssertNil(model.dashboardReadFailure)
+        XCTAssertNil(model.lastDashboardRefresh)
+        XCTAssertNil(model.dashboard)
     }
 }

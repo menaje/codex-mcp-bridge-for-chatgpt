@@ -1,0 +1,7 @@
+{
+  "at": "2026-10-07T11:52:23.645211+00:00",
+  "sourceHead": "047156605d8556fa0de1c52f375d2da4f9d39b03",
+  "otherValidationProcesses": [],
+  "hostUptimeLoad": "20:52  up 24 days, 13:38, 1 user, load averages: 2.22 3.48 3.28",
+  "conditions": "No concurrent task Node/native test/build was running. Existing user/installed processes left untouched; host load and filesystem cache uncontrolled."
+}

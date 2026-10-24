@@ -1,0 +1,11 @@
+{
+  "sourceHead": "fa0cc254596621da00370d8e1459bbf2f539e362",
+  "assertions": 7,
+  "readinessNotices": 1,
+  "claims": 1,
+  "releases": 1,
+  "retryDeferred": true,
+  "jobExecutions": 0,
+  "path": "compiled server -> state owner child -> application change IPC -> supervisor",
+  "result": "passed"
+}

@@ -2,12 +2,15 @@
 import path from "node:path";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createStartupDiagnostics } from "../scripts/runtime-status.mjs";
 import { defaultRuntimeEnvFile } from "../scripts/runtime-env.mjs";
 import {
   MacOSBridgeSupervisor,
   startMacOSHelperServer
 } from "./macosHelperServer.js";
 
+const startup = createStartupDiagnostics("helper");
+startup("imports-complete");
 if (process.platform === "darwin") {
   process.title = "Codex MCP Bridge Helper";
 }
@@ -30,10 +33,12 @@ const supervisor = new MacOSBridgeSupervisor({
   logMaxBytes: boundedNumber(args.logMaxKiB, 1_024, 16, 4_096) * 1_024,
   runtimeLockDirectory: args.runtimeLockDirectory
 });
+startup("control-listen-start");
 const server = await startMacOSHelperServer({
   socketPath: helperSocketPath,
   controller: supervisor
 });
+startup("control-ready");
 let shuttingDown = false;
 
 console.log(`Codex MCP Bridge macOS helper ready at ${server.socketPath}`);

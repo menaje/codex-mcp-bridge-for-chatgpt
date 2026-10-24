@@ -1,0 +1,334 @@
+# Issue #142 state/execution isolation acceptance
+
+## Scope and final design
+
+Issue #142 is complete only when operational state, read projection,
+diagnostics and actual Codex execution no longer share one blocking event loop,
+all production command/query entry points cross the operational owner boundary,
+and the installed application is verified against the same source revision.
+
+The final implementation uses a whole-coordinator state boundary instead of
+turning every repository call into a separate asynchronous RPC:
+
+```text
+SQLite-free ingress (HTTP / MCP / native / stdio)
+  └─ operational state owner (application coordinator + sole state.sqlite writer)
+       ├─ read projection (state.sqlite read-only)
+       ├─ telemetry owner (sole telemetry.sqlite writer)
+       └─ Codex executor (App Server pool; no Bridge DB/listener authority)
+```
+
+This preserves every existing multi-repository Unit of Work. Native calls use
+the closed `bridge-operational-state-owner` v2 command/query/control protocol;
+MCP traffic crosses the same bounded process boundary before admission. The
+executor uses `bridge-codex-execution` v3 and relays assignments, progress,
+interactions, steering, release checks, results and late responses. Account App
+Server I/O also uses the executor, while account cache/presentation policy stays
+with the state owner.
+
+The protocol-v4 maintenance writer remains a receipt and fault-test harness.
+Production never starts it beside the state owner, so it cannot become a second
+SQLite writer.
+
+## Implemented boundaries
+
+- Ingress has 128 total state-owner requests, reserves 16 slots from MCP, caps
+  one message at 8 MiB and proxied bytes at 32 MiB. Pre-forward rejection is
+  `not-observed`; response loss after forwarding is `unknown`.
+- Codex execution has 128 requests with 16 slots reserved for existing-work
+  control, a 2 MiB request cap, 32 MiB in-flight cap with 8 MiB reserved for
+  control, and an 8 MiB response cap. Ordinary admission stops at 112 slots or
+  24 MiB without blocking bounded input responses, steering, forced
+  termination, terminal cleanup or connection release. It has a generation
+  heartbeat and bounded restart. A crashed active turn becomes
+  `CODEX_WORKER_LOST` and is persisted as interrupted/worker-lost rather than
+  false success or cancellation.
+- Each App Server root is registered and acknowledged before protocol
+  initialization or user work. The executor and state owner continuously retain
+  a bounded PID/PPID/PGID tree ledger. Root exit no longer unregisters the
+  worker: it starts an acknowledged cleanup fence. Exact TERM/KILL cleanup
+  includes observed descendants that created separate groups, and neither App
+  Server nor executor replacement is admitted until every retained group is
+  verified gone.
+- Executor-to-owner IPC keeps at most 256 critical messages/32 MiB and
+  coalesces ordinary `updated` progress to 128 request entries/8 MiB. Critical
+  overflow fails the executor closed instead of growing process memory without
+  a bound; input, approval, warning, error, usage and lifecycle milestones are
+  never classified as disposable progress.
+- The executor environment excludes both Bridge DB paths, model/skills state,
+  companion socket and bearer token. A test fixture observes that exclusion in
+  the actual Codex subprocess.
+- Thread release does not serialize a state callback. The executor asks the
+  state owner again before each unsubscribe/process-close step and fails closed
+  if the check cannot be confirmed.
+- Dashboard and Settings structural reads use the independent read-only child
+  with 16-request/8 MiB bounds and stale-view semantics.
+- Telemetry uses a 4,096-record/16 MiB queue and separate SQLite process. Its
+  schema now includes metadata/source identity, transport observations,
+  duration measurements, diagnostic transitions, persistent drop counters and
+  restartable retention state plus a bounded delivery-id ledger. Initial-open
+  records are rebased above existing IDs, strict inserts remap legacy
+  collisions, ACK-loss retries resolve idempotently, and startup-period drop
+  counters are merged with persisted counts. Failed drop-counter writes use
+  bounded exponential retry rather than a failure-amplification loop.
+- Telemetry startup locks recover by restart. Corrupt, incompatible or
+  wrong-source databases are moved with WAL/SHM into a recoverable quarantine
+  directory before an empty source-bound telemetry DB is created. Operational
+  state is never rolled back because telemetry failed.
+- The existing 256-total/32-per-project progress queue, critical-event bypass,
+  bounded maintenance slices and domain idempotency journals remain intact.
+
+## Source fault/load acceptance
+
+`npm run test:issue-142-state-execution-isolation` uses only disposable DBs and
+the production startup path. On 2026-09-22 it produced:
+
+| Check | Result |
+| --- | --- |
+| topology | ingress, state owner and Codex executor were distinct PIDs; state DB UUID remained stable across replacement |
+| Dashboard reads | 12 structural readers completed concurrently in 191.876 ms; the first account-enriched read completed in 55.927 ms and started the executor |
+| execution child stall | `/readyz` reported `execution-stale`, actual `codex_task` admission returned retryable `EXECUTION_UNAVAILABLE`, and the durable Job count stayed zero |
+| 25 healthy state commands | p50 2.418 ms, p95 5.747 ms, p99/max 7.965 ms |
+| telemetry DB write lock + 25 state commands | state p50 2.106 ms, p95 2.363 ms, p99/max 2.480 ms; `/healthz` and `/readyz` stayed HTTP 200; telemetry drained after unlock |
+| operational DB lock | 253 `/healthz` samples: p50 0.816 ms, p95 1.575 ms, p99 2.204 ms, max 7.908 ms |
+| ingress event-loop lag during state lock | p50 2.602 ms, p95 3.678 ms, p99 4.254 ms, max 10.096 ms |
+| state-lock certainty | caller received unknown/unconfirmed; readiness showed `state-stale + state-write-unconfirmed`; the authoritative revision later advanced exactly once |
+| executor crash during real work | with an admitted Job and a live TERM-resistant command in a separate process group, `/healthz` returned in 0.555 ms; App Server and command PIDs both exited before replacement; the Job became `interrupted/worker-loss`; the command observation occurred once; a new Job completed after recovery; state-owner PID and DB UUID did not change |
+| state-owner crash | `/healthz` returned in 0.442 ms; one replacement owner acquired the same DB UUID and preserved the settings revision |
+
+The focused execution regression also (a) exits only the App Server while a
+TERM-resistant same-group command remains and proves readiness/replacement stay
+fenced until the command is gone, (b) kills the executor while a TERM-resistant
+detached command group remains and proves both old groups exit before executor
+replacement, and (c) blocks the state-owner event loop for 500 ms and proves
+from an executor-written timestamp that Codex completed while the owner was
+blocked; the result was delivered after the owner resumed.
+
+The wider automated evidence includes:
+
+- 100-update noisy-project progress saturation, project-fair drain and critical
+  input bypass in `test/jobRegistry.test.ts`;
+- execution crash/restart with real descendant-PID cleanup, request- and
+  byte-saturation control reserves, interaction privacy, thread release
+  rechecks and authority stripping, plus a 2,000-update flood while the owner
+  event loop is blocked, in `test/executionServiceProcess.test.ts`;
+- telemetry lock/flood/drop persistence, `SQLITE_FULL`, startup lock recovery
+  with existing-ID rebasing and additive drop-counter merge, corruption
+  quarantine and source-identity rebuild in
+  `test/telemetryService.test.ts`;
+- state/read/runtime lock, storage error, response loss, capacity, owner crash,
+  rollback compatibility and telemetry rebuild in `test/runtimeProcess.test.ts`;
+- migration checkpoint interruption, verified backup/restore and post-open
+  rollback refusal in the state lifecycle/recovery suites.
+
+The final source checkout passed the release/build checks, App Server schema
+compatibility check, 98 TypeScript test files / 873 tests, and 205 macOS tests
+with two environment-dependent live smoke tests skipped. The issue-specific
+fault/load command above also passed again after the final queue and admission
+changes.
+
+## Exact limits retained
+
+Isolation does not shorten a held SQLite lock, `fsync`, filesystem/hardware
+stall or external Tunnel/ChatGPT/Codex network delay. The one operational
+writer is intentionally serialized, and no queue preempts a synchronous write
+already inside SQLite. During that interval ingress health and the executor can
+continue, but state mutations wait or become explicitly unconfirmed.
+
+A state-owner process crash replaces its read, telemetry and execution
+generations. It does not keep an orphan Codex process running without a state
+authority; an unfinished Job is reconciled as worker-lost. This is different
+from an executor-only crash, which restarts without replacing the state owner.
+
+## Final process-tree-ledger installed acceptance
+
+The orphan-cleanup gate was reopened after review showed that the earlier
+process-group-only implementation could forget a worker when its App Server
+root exited first and could miss a descendant that created a separate process
+group. PR #155 fixed that boundary and was merged as
+`50b115c24bd4c254609ee6c6ff959a44710b9821`. The exact clean bundle installed
+on 2026-09-22 KST is `50b115c24bd4:b94c080975f3`; it passed strict deep
+code-signature verification before and after installation.
+
+The source acceptance for that merge ran on macOS with disposable state. Its
+focused regression killed only an App Server root while a TERM-resistant
+same-group command remained, and separately killed the executor while a
+TERM-resistant command remained in a distinct process group. In both cases the
+old root and command were gone before cleanup/replacement was acknowledged.
+The production-startup #142 scenario also admitted a real Job, observed a live
+detached command, killed the executor, confirmed the App Server and command
+were gone before replacement, persisted one `interrupted/worker-loss` result,
+observed no duplicate execution and completed a subsequent Job. The final
+checkout passed 98 TypeScript files / 873 tests, 205 macOS tests with two
+explicit live-environment skips, release/build checks, App Server compatibility
+and the issue-specific fault/load scenario.
+
+Immediately before the installed cutover, authoritative `runtime.snapshot`
+reported zero active Jobs, admissions, interactions, memory-only threads and
+background processes, with background inspection confirmed. The recoverable
+backup is
+`~/.codex-mcp-bridge/backups/issue-142-pre-50b115c-20260922T2056KST`.
+It contains the previous signed application, LaunchAgent and lifecycle/status
+evidence plus SQLite online backups of both databases. The state backup passed
+`quick_check` with zero foreign-key violations and SHA-256
+`d68d7dba7710e3152b7e5f079fb4d003ddbc9fb7b2837be8424217392c9bdcfd`;
+the telemetry backup passed `quick_check` and has SHA-256
+`1745f26eb593e129389f0e7c6f6bb6380f0d83ed25e0aa0e926c8b5a6abb2dbe`.
+Shutdown used non-force lifecycle reservation
+`592b40a2-5a1e-440e-a0e4-be8f4e840b89`; its external handoff receipt was
+`completed`, and every application/runtime process and both sockets were gone
+before the application path was replaced.
+
+Fresh active-free checks against that installed build produced:
+
+| Check | Installed result |
+| --- | --- |
+| App Server exits first | registered idle App Server PID/PGID `71165` under executor `67845` was killed; the root was gone at 74 ms while the retained supervisor entry remained until verified cleanup at 149 ms; the executor generation stayed `c3dae91e-0bc5-4fd5-993e-e44218ad7485`, and a subsequent enriched Dashboard request admitted and used a new registered worker |
+| executor exits with registered workers | executor `67845` was killed with independently grouped App Servers `74724` and `78336`; the old executor and both workers were gone at the first 59 ms observation, replacement executor `81955` did not appear until 757 ms and became ready at 944 ms; the state-owner PID `63801` and generation `e0e3f787-0a6d-49f8-98a7-b9b37537a6ac` were unchanged |
+| ordinary idle lifecycle | after recovery, two normal App Server workers and periodic native reads were observed for 45 seconds; execution generation `386294f8-c32a-40ef-9914-8b66b3f01e37` remained stable and ready |
+
+No user Job was created for the installed fault checks. Before and after every
+fault, active Jobs, pending admissions/interactions, memory-only threads and
+background processes were zero and background inspection was confirmed. The
+separate-group active-command condition is covered by the same merge's macOS
+disposable production-startup acceptance rather than by manufacturing a
+command inside the user's installed runtime.
+
+After all checks, state/read/telemetry/execution were ready, Tunnel was
+connected, admission was enabled and every workload counter was zero. The
+operational database retained identity
+`d710d487-807d-4813-9786-f3a262322848`, schema 25 and settings revision 168.
+Telemetry retained identity `5b6b8930-697c-4ddc-9ac0-24388b79fa53`, schema 2
+and the matching source-state identity. Both live databases passed
+`quick_check`; the state database had zero foreign-key violations.
+
+## Previous boundary-hardening installed acceptance
+
+The reopened completion gate was accepted on 2026-09-22 KST against merge
+`8fa48c28ec39acbd43fd3c5d9b98b3ec75be9003` and installed build
+`8fa48c28ec39:32d605742b8f`. The bundle passed strict deep code-signature
+verification before and after installation, and the running launcher's build
+identity matched the embedded clean source build.
+
+Immediately before replacement, authoritative `runtime.snapshot` reported
+zero active Jobs, pending admissions, pending interactions, memory-only
+threads and background processes, with background state confirmed. The
+recoverable cutover backup is
+`~/.codex-mcp-bridge/backups/issue-142-pre-8fa48c2-20260922T1924KST` and contains
+the previous signed application, the LaunchAgent definition, lifecycle/status
+evidence and SQLite online backups of both databases. The state backup passed
+`quick_check` with zero foreign-key violations; the telemetry backup passed
+`quick_check`. Their SHA-256 values are respectively
+`2737755a33e81d4dcba03f7d3a37647a1607d5ba461049dd35fa1591e0eaef42` and
+`ca8b528661be0531574096f6489cfeb009dc7b45ff3f92ec23edba70d8734bbf`.
+
+Shutdown used the non-force lifecycle reservation
+`9a176790-0349-4dd1-a454-a140aab76be6`. Its external handoff receipt was
+`completed`, and the application, helper, launcher, server, state owner, read,
+telemetry, execution and Tunnel processes plus both native sockets had exited
+before the application path was replaced. The old application was moved into
+the backup rather than deleted.
+
+The first launch migrated the existing telemetry database from schema 1 to
+schema 2. It added `telemetry_record_deliveries` while preserving telemetry DB
+identity `5b6b8930-697c-4ddc-9ac0-24388b79fa53`, source state DB identity
+`d710d487-807d-4813-9786-f3a262322848`, the bounded 5,000 measurement rows and
+the retention row. The operational DB kept the same identity and settings
+revision 168. This verifies the production migration path; startup-lock ID
+rebasing, legacy collision remapping, ACK-loss idempotency and additive
+startup-drop merging remain covered by the disposable telemetry fault tests.
+
+Fresh active-free installed fault results were:
+
+| Check | Installed result |
+| --- | --- |
+| executor stopped for 3 seconds | local ingress `/healthz` stayed HTTP 200 in 1.510 ms; `/readyz` became HTTP 503 `execution-stale` in 1.251 ms; authoritative admission became false while every workload counter stayed zero; the same executor recovered to ready after resume |
+| executor terminated | preflight workload was zero; `/healthz` stayed HTTP 200 in 2.672 ms and `/readyz` reported HTTP 503 `execution-recovering` in 1.310 ms; executor PID 47543 exited and PID 53827 became ready while server PID 47334, state-owner PID 47401 and its generation remained unchanged |
+| state owner terminated | preflight workload was zero; `/healthz` stayed HTTP 200 in 2.275 ms and `/readyz` reported HTTP 503 `state-recovering` in 1.249 ms; old owner/read/telemetry/executor PIDs 47401/47458/47414/53827 all exited; server PID 47334 remained and replacement owner PID 55096 with executor PID 55263 became ready in about 3.75 seconds |
+| installed cards | Dashboard, Settings and Decision loaded from the installed runtime, retained their last confirmed UI through dispatched-read timeouts and did not issue a second compatibility tool call |
+
+The live active-descendant crash is intentionally not repeated against user
+work. The same merge's disposable production-startup acceptance admitted an
+actual `codex_task`, observed a live App Server process and descendant command,
+killed the executor, confirmed both old PIDs exited before replacement,
+persisted the Job as `interrupted/worker-loss`, observed no duplicate command,
+and completed a new Job after recovery. The installed crash checks above prove
+that the deployed process supervisor follows the same executable path while no
+user work is at risk.
+
+After all installed faults, the running process tree again contained distinct
+server, state-owner, read, telemetry and execution processes. State, read,
+telemetry and execution health were ready; Tunnel was connected; admission was
+true; all workload counters were zero; both databases passed `quick_check` and
+the state database had no foreign-key violations. This evidence closed the
+control-reserve and telemetry-recovery gates. A later review showed that its
+process-group-only descendant check did not cover App Server-first exit or a
+descendant that created a separate group, so its orphan-cleanup approval is
+superseded by the v3 tree-ledger acceptance above and the later installed
+acceptance recorded for that revision.
+
+## Previous installed acceptance baseline
+
+The following installed evidence covers the first isolation implementation and
+remains useful as a cutover/rollback baseline. It predates the reopened
+boundary-hardening work (execution protocol v2 control reserve, telemetry
+schema v2 collision recovery and active descendant cleanup), so it does not by
+itself satisfy the current completion gate.
+
+The production cutover was completed on 2026-09-22 KST from installed build
+`90b64c35d78a:2f89aecac2b4` to the issue implementation merge
+`ab760afab04e639c43baff09d021bb2217b8ec23`, build
+`ab760afab04e:139092fee804`. The installed bundle passed strict code-signature
+verification and its embedded build identity matched the merge before the
+replacement runtime was admitted.
+
+Immediately before shutdown, authoritative `runtime.snapshot` reported zero
+active Jobs, pending admissions, pending interactions, memory-only threads and
+background processes. The application then used a non-force lifecycle
+reservation and all app, helper, launcher, server, state, read, telemetry,
+execution and Tunnel processes exited before replacement.
+
+The rollback artifact is
+`~/.codex-mcp-bridge/backups/issue-142-pre-ab760af-20260922T1715KST` and contains
+the previous signed application, its LaunchAgent definition, build metadata
+and SQLite online backups of both databases. The state backup passed
+`quick_check` and had zero foreign-key violations; the telemetry backup passed
+`quick_check`. The state and telemetry backup SHA-256 values are respectively
+`a3706d18742f144da5ea61f3583624595a31476342a3efff9ba570859da30b5d` and
+`365343df1b0f519c45008ae27d7f0c8d04a3c4d3111a3ee908a119c477af85a9`.
+Normal rollback uses the previous compatible application against the current
+authoritative state file; the pre-cutover state snapshot is disaster-recovery
+evidence and is not permission to discard post-cutover writes.
+
+The installed process tree contained distinct server, state-owner, read,
+telemetry and execution PIDs. Telemetry recorded the same source state database
+identity, `d710d487-807d-4813-9786-f3a262322848`, and exposed all six final
+schema groups: metadata, transport observations, runtime measurements,
+diagnostic events, drop counters and retention state.
+
+Installed fault and integration results were:
+
+| Check | Installed result |
+| --- | --- |
+| executor stopped for 2.7 seconds | `/healthz` stayed HTTP 200 in 24.165 ms; `/readyz` became HTTP 503 `execution-stale` in 7.528 ms; `runtime.health` and authoritative snapshot returned in 2.225/2.136 ms and both denied new admission |
+| executor terminated | `/healthz` stayed HTTP 200 in 3.995 ms; executor PID and generation changed while state-owner PID and generation did not |
+| state owner terminated | `/healthz` stayed HTTP 200 in 20.658 ms; the server PID remained, one replacement state owner acquired the same database identity, settings revision 168 remained unchanged, and read, telemetry and execution children were replaced |
+| Tunnel stopped for 6.5 seconds | local `/healthz`, state and execution stayed ready; the Tunnel probe timed out and native status became `degraded`; resuming the same Tunnel returned `ready` and `connected` without replacing the state owner |
+| native contract | the production Swift client decoded live installed Dashboard and Settings responses from the real companion socket; 1 test passed in 0.958 seconds |
+| installed cards | Dashboard, Settings and Decision cards retained the last confirmed UI through dispatched-read timeouts and did not create a second tool-call retry path |
+
+After every injected fault, authoritative admission returned to true with zero
+active Jobs, pending admissions, pending interactions, memory-only threads and
+background processes. Tunnel `/healthz` and `/readyz` returned `live` and
+`ready`. Final live state checks again returned `quick_check=ok`, zero foreign-
+key violations and `telemetry.sqlite` `quick_check=ok`; state, read, telemetry
+and execution services all reported ready.
+
+At the time it was recorded, this installed evidence used the same revision as
+the earlier source fault/load evidence. Reopening #142 superseded that approval;
+the fresh boundary-hardening acceptance above now supplies the required safe
+cutover, schema migration and active-free installed fault checks. The exact
+limits in the preceding section remain accepted behavior, not unfinished work:
+isolation does not shorten SQLite, filesystem, hardware or external-network
+latency, and it does not make the intentional single operational writer
+concurrent.

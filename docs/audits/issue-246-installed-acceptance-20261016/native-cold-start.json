@@ -1,0 +1,117 @@
+{
+  "passed": true,
+  "runtimeBuild": "60f7d774364c-dirty:4cbebe33ad2b",
+  "helperPreparationDelaySeconds": 90,
+  "initialReadinessElapsedMs": 94717,
+  "nativeEntryPoint": "CodexBridgeMenuBarApp",
+  "scope": "real native application and helper; synthetic launcher/Tunnel/workload and CLI; no menu interaction",
+  "events": [
+    {
+      "event": "app-launched",
+      "pid": 4268,
+      "at": "2026-10-16T06:18:41.369Z"
+    },
+    {
+      "event": "runtime-ready",
+      "pid": 6457,
+      "at": "2026-10-16T06:20:16.082Z",
+      "lifecycle": {
+        "requestId": "7aa1e49e-3fe9-4b05-b837-4200fd76f0e8",
+        "kind": "start",
+        "force": false,
+        "phase": "completed",
+        "createdAt": "2026-10-16T06:20:14.288Z",
+        "updatedAt": "2026-10-16T06:20:16.036Z",
+        "reasons": [],
+        "error": null,
+        "targetDescription": "Codex",
+        "cancellable": false,
+        "startup": {
+          "source": "helper-launch",
+          "startedAt": 1792131522261,
+          "deadlineAt": 1792131822261,
+          "attempts": 1,
+          "nextAttemptAt": null,
+          "stage": "ready",
+          "failureCode": null
+        }
+      }
+    },
+    {
+      "event": "app-launched",
+      "pid": 7668,
+      "at": "2026-10-16T06:20:16.087Z"
+    },
+    {
+      "event": "app-exited",
+      "pid": 7668,
+      "code": 0,
+      "signal": null
+    },
+    {
+      "event": "app-exited",
+      "pid": 4268,
+      "code": 0,
+      "signal": null
+    },
+    {
+      "event": "app-shutdown-completed",
+      "pid": 4268,
+      "at": "2026-10-16T06:20:17.821Z",
+      "receipt": {
+        "outcome": "completed",
+        "requestId": "c75e6c63-8a7c-4360-9bc8-d22ecdea9668"
+      }
+    },
+    {
+      "event": "app-launched",
+      "pid": 8723,
+      "at": "2026-10-16T06:20:17.824Z"
+    },
+    {
+      "event": "runtime-ready",
+      "pid": 9252,
+      "at": "2026-10-16T06:20:19.814Z",
+      "lifecycle": {
+        "requestId": "72AB4238-A54A-4119-AEC7-EF37461E0F11",
+        "kind": "start",
+        "force": false,
+        "phase": "completed",
+        "createdAt": "2026-10-16T06:20:19.386Z",
+        "updatedAt": "2026-10-16T06:20:19.710Z",
+        "reasons": [],
+        "error": null,
+        "targetDescription": "Codex",
+        "cancellable": false,
+        "startup": {
+          "source": "application-launch",
+          "startedAt": 1792131617870,
+          "deadlineAt": 1792131917870,
+          "attempts": 1,
+          "nextAttemptAt": null,
+          "stage": "ready",
+          "failureCode": null
+        }
+      }
+    },
+    {
+      "event": "manual-stop-stayed-stopped",
+      "at": "2026-10-16T06:20:27.446Z"
+    },
+    {
+      "event": "app-exited",
+      "pid": 8723,
+      "code": 0,
+      "signal": null
+    },
+    {
+      "event": "app-shutdown-completed",
+      "pid": 8723,
+      "at": "2026-10-16T06:20:27.991Z",
+      "receipt": {
+        "requestId": "6db71c0a-a621-49ad-9c28-0f86a9fac3b9",
+        "outcome": "completed"
+      }
+    }
+  ]
+}

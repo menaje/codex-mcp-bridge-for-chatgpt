@@ -1,0 +1,154 @@
+
+ RUN  v4.1.11 /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w4-runtime
+
+ ❯ test/launcherLifecycle.integration.test.ts (3 tests | 3 failed) 1168ms
+     × starts authenticated HTTP with https metadata and rebuilds the profile when OAuth identity changes 451ms
+     × starts authenticated HTTP with loopback metadata and rebuilds the profile when OAuth identity changes 336ms
+     × waits for tunnel readiness and shutdown, then reuses only an unchanged profile 372ms
+ ❯ test/macosHelperServer.test.ts (55 tests | 7 failed) 175040ms
+     × remembers distinct explicit Codex homes already used by the Helper without a folder picker 111ms
+     × offers an existing bridge-owned profile as a selectable candidate without starting login 86ms
+     × recovers profile A after profile B fails to launch and applies the same verified B candidate on retry 11196ms
+     × rolls back the dotenv and restores the old runtime when new startup fails 5012ms
+     × restarts the unchanged runtime when a concurrent dotenv edit prevents commit 5718ms
+     × uses Codex command and CODEX_HOME from dotenv without returning raw CLI output 8988ms
+     × does not report an account read failure as a logged-out Codex account 7514ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 10 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/launcherLifecycle.integration.test.ts > managed launcher lifecycle > starts authenticated HTTP with https metadata and rebuilds the profile when OAuth identity changes
+ FAIL  test/launcherLifecycle.integration.test.ts > managed launcher lifecycle > starts authenticated HTTP with loopback metadata and rebuilds the profile when OAuth identity changes
+Error: Launcher exited before publishing connected tunnel status.
+ ❯ waitForConnectedStatus test/launcherLifecycle.integration.test.ts:409:13
+    407|   while (Date.now() < deadline) {
+    408|     if (child.exitCode !== null || child.signalCode !== null) {
+    409|       throw new Error("Launcher exited before publishing connected tun…
+       |             ^
+    410|     }
+    411|     if (existsSync(filePath)) {
+ ❯ runLauncher test/launcherLifecycle.integration.test.ts:361:5
+ ❯ test/launcherLifecycle.integration.test.ts:68:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/10]⎯
+
+ FAIL  test/launcherLifecycle.integration.test.ts > managed launcher lifecycle > waits for tunnel readiness and shutdown, then reuses only an unchanged profile
+Error: Launcher exited before publishing connected tunnel status.
+ ❯ waitForConnectedStatus test/launcherLifecycle.integration.test.ts:409:13
+    407|   while (Date.now() < deadline) {
+    408|     if (child.exitCode !== null || child.signalCode !== null) {
+    409|       throw new Error("Launcher exited before publishing connected tun…
+       |             ^
+    410|     }
+    411|     if (existsSync(filePath)) {
+ ❯ runLauncher test/launcherLifecycle.integration.test.ts:361:5
+ ❯ test/launcherLifecycle.integration.test.ts:125:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/10]⎯
+
+ FAIL  test/macosHelperServer.test.ts > central runtime lifecycle reservations > remembers distinct explicit Codex homes already used by the Helper without a folder picker
+AssertionError: expected [ Array(1) ] to deeply equal [ Array(1) ]
+
+- Expected
++ Received
+
+  [
+-   "/var/folders/0w/xl0qvy093052t14h6gpmfr1r0000gn/T/codex-macos-supervisor-LAG84V/existing-a",
++   "/Users/seongsik/.codex-mcp-bridge/runtimes/auth-profiles/254a4a39-5164-4417-9c56-9ce48d4c5577",
+  ]
+
+ ❯ test/macosHelperServer.test.ts:52:77
+     50|       writeFileSync(f.envFile, base + `CODEX_HOME=${first}\n`, { mode:…
+     51|       const firstStatus = await f.supervisor.codexRuntime({ action: "s…
+     52|       expect(firstStatus.authSelection?.knownHomes?.map(item => item.h…
+       |                                                                             ^
+     53|       await f.supervisor.start();
+     54|       writeFileSync(f.envFile, base + `CODEX_HOME=${second}\n`, { mode…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/10]⎯
+
+ FAIL  test/macosHelperServer.test.ts > central runtime lifecycle reservations > offers an existing bridge-owned profile as a selectable candidate without starting login
+Error: CODEX_AUTH_OVERRIDE_ACTIVE: The explicit CODEX_HOME controls this runtime.
+ ❯ MacOSBridgeSupervisor.codexRuntime src/macosHelperServer.ts:963:44
+    961|           throw new Error("CODEX_AUTH_REQUEST_INVALID");
+    962|         }
+    963|         if (this.explicitAuthHome()) throw new Error("CODEX_AUTH_OVERR…
+       |                                            ^
+    964|         assertRuntimeEnvOutsideProjectRoots(path.join(authManager.root…
+    965|         await authManager.selectOwnedProfile(request.authProfileId, re…
+ ❯ test/macosHelperServer.test.ts:77:26
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/10]⎯
+
+ FAIL  test/macosHelperServer.test.ts > central runtime lifecycle reservations > recovers profile A after profile B fails to launch and applies the same verified B candidate on retry
+AssertionError: expected '/Users/seongsik/.codex-mcp-bridge/run…' to be '/private/var/folders/0w/xl0qvy093052t…' // Object.is equality
+
+Expected: "/private/var/folders/0w/xl0qvy093052t14h6gpmfr1r0000gn/T/codex-macos-supervisor-ZVKIFn/cli/auth-profiles/0be5e8ae-eaf0-44a4-9a51-b9d540d38246"
+Received: "/Users/seongsik/.codex-mcp-bridge/runtimes/auth-profiles/254a4a39-5164-4417-9c56-9ce48d4c5577"
+
+ ❯ test/macosHelperServer.test.ts:222:41
+    220|       });
+    221|       expect((await f.supervisor.codexRuntime({ action: "status", incl…
+    222|         .runningEnvironment?.codexHome).toBe(path.join(f.manager.root,…
+       |                                         ^
+    223|       writeFakeLauncher(path.join(f.root, "runtime", "launcher.mjs"), …
+    224|         { admissionFile: path.join(f.root, "admission.json"), writeRun…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/10]⎯
+
+ FAIL  test/macosHelperServer.test.ts > macOS runtime helper RPC > rolls back the dotenv and restores the old runtime when new startup fails
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/macosHelperServer.test.ts:1454:3
+    1452|   });
+    1453|
+    1454|   it("rolls back the dotenv and restores the old runtime when new star…
+       |   ^
+    1455|     const root = temporaryDirectory();
+    1456|     const bridgeRoot = path.join(root, "runtime");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/10]⎯
+
+ FAIL  test/macosHelperServer.test.ts > macOS runtime helper RPC > restarts the unchanged runtime when a concurrent dotenv edit prevents commit
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/macosHelperServer.test.ts:1497:3
+    1495|   });
+    1496|
+    1497|   it("restarts the unchanged runtime when a concurrent dotenv edit pre…
+       |   ^
+    1498|     const root = temporaryDirectory();
+    1499|     const bridgeRoot = path.join(root, "runtime");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/10]⎯
+
+ FAIL  test/macosHelperServer.test.ts > macOS runtime helper RPC > uses Codex command and CODEX_HOME from dotenv without returning raw CLI output
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/macosHelperServer.test.ts:1747:3
+    1745|   });
+    1746|
+    1747|   it("uses Codex command and CODEX_HOME from dotenv without returning …
+       |   ^
+    1748|     const root = temporaryDirectory();
+    1749|     const bridgeRoot = path.join(root, "runtime");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/10]⎯
+
+ FAIL  test/macosHelperServer.test.ts > macOS runtime helper RPC > does not report an account read failure as a logged-out Codex account
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/macosHelperServer.test.ts:1809:3
+    1807|   });
+    1808|
+    1809|   it("does not report an account read failure as a logged-out Codex ac…
+       |   ^
+    1810|     const root = temporaryDirectory();
+    1811|     const bridgeRoot = path.join(root, "runtime");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/10]⎯
+
+
+ Test Files  2 failed | 6 passed (8)
+      Tests  10 failed | 116 passed (126)
+   Start at  21:32:17
+   Duration  179.55s (transform 4.12s, setup 0ms, import 6.66s, tests 195.73s, environment 2ms)

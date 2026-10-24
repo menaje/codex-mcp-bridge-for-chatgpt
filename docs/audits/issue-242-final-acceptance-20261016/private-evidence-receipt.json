@@ -1,0 +1,160 @@
+{
+  "directoryAccessMode": "0700",
+  "files": {
+    "io-completion-end.jsonl": {
+      "bytes": 1312,
+      "sha256": "1ce8761f79d7edcf26428e2d22db1a5e964f1fc5cf1d76cd1680d1cd15551cae"
+    },
+    "io-end.jsonl": {
+      "bytes": 1312,
+      "sha256": "fbbedfa0dfeb429805e4236ec4f13ed6ce8857a4dd7d888b82828913f12e703b"
+    },
+    "io-quiet-end.jsonl": {
+      "bytes": 1312,
+      "sha256": "2596d8edb8256d929d78cd8d9da415e76d29b31b57d4777402b64a30519795cb"
+    },
+    "io-read-end.jsonl": {
+      "bytes": 1312,
+      "sha256": "f38de23e71ea5f11d0fd887089bf5f92f0279f16eb1a8b998d9a5b28c7ec5aa7"
+    },
+    "io-start.jsonl": {
+      "bytes": 1310,
+      "sha256": "2e35ba9d6308df8dc1547541b4929d38120c4e71bbe1649fb4d3786a84333d7b"
+    },
+    "issue242-before.json": {
+      "bytes": 52103,
+      "sha256": "06ec927622b8ac125552003e0d7cadbce49d5b8e00472ed870b6cb79c9543833"
+    },
+    "lock-fixture.sqlite": {
+      "bytes": 8192,
+      "sha256": "8857a47490cf220d7f178b5eb748faf3464eb7b884781864457631b09a28dcdb"
+    },
+    "lock_wait_control.mjs": {
+      "bytes": 607,
+      "sha256": "1329b5bc498cddb06bc3fad2c7963305963c07b15e4dbaf737aede1cc9dffb81"
+    },
+    "mcp-admission-private.json": {
+      "bytes": 3662,
+      "sha256": "8703df7a08dfa35e530f032920a4700310f94133cfbadfd649bc1b4f6aee2322"
+    },
+    "mcp-request-private.json": {
+      "bytes": 950,
+      "sha256": "2e1e4933164571e1f21c45e5dc02e97345fb1f831d4c51d0c9136f7dd264eb8c"
+    },
+    "mcp-result-private.json": {
+      "bytes": 3351,
+      "sha256": "950f6d7d5d7fe4d1be24b292c784c10e1c176de5ae5879b75023a1820dd6649e"
+    },
+    "native-rpc.jsonl": {
+      "bytes": 38958,
+      "sha256": "ae3e9a56e24d16bb264307e8c6303072ea4aac1316d7af4e1659d2ff191caf91"
+    },
+    "observer-ready.json": {
+      "bytes": 567,
+      "sha256": "e7484cd8f03d9457b0a1f9f5d3c0de23f4f6435783da16609a9d42b72d04da70"
+    },
+    "observer-restored.json": {
+      "bytes": 87,
+      "sha256": "58e3e745495b89e567120c89c34ad7be91d2317ef6b4b373c321282791c4e5ad"
+    },
+    "operational-sql.json": {
+      "bytes": 14557,
+      "sha256": "a0fa7f6940d07750d6c3737c588fcec8133a3b293d2664f637ac5995a96080e3"
+    },
+    "outbox-current.json": {
+      "bytes": 46,
+      "sha256": "0f45b1d9a1e9434244135d258d59480a0107b88363a99b3e6a9d6fcaba4bc5b8"
+    },
+    "outbox-start.json": {
+      "bytes": 66,
+      "sha256": "b7b78e27c79c98381a52743417f3ab02c71c58585678864ad12bcee2e0cc36ef"
+    },
+    "outbox-summary.json": {
+      "bytes": 90,
+      "sha256": "1947d6c674fc3990e08e4bb178f6bcc4eacb09be6d14738a4bb79e30d5b2abbf"
+    },
+    "phase": {
+      "bytes": 11,
+      "sha256": "faaba52033b5c3591206a73584ea8389445413aa74a160fc4d9a75a03f273784"
+    },
+    "process_io": {
+      "bytes": 33832,
+      "sha256": "a9016d588def96c04ed81ce0b7c4f6d8aeaefbe85f1e762d524ce3e8eeede2cf"
+    },
+    "process_io.c": {
+      "bytes": 767,
+      "sha256": "5860aad0e2944b98958351eb9ec85330b8049c7dbe53675ae1d47b490ffcfb09"
+    },
+    "proxy-fixture.json": {
+      "bytes": 138,
+      "sha256": "fe8c4a9177ecb5d933dfb5b87903aaf6a022bc05a394290054d74f2887e508f7"
+    },
+    "reader-active-sample.txt": {
+      "bytes": 1097670,
+      "sha256": "69ff9285345a75e42d6dd77aa1e0df8a9e76060defb39387abacb9718b8960e3"
+    },
+    "reader-sample.txt": {
+      "bytes": 74058,
+      "sha256": "627f629fb9a379f78ee91840c5d5c6f6e8aa6ab0f93b3fe97165e689b04a0872"
+    },
+    "rpc_observer.py": {
+      "bytes": 6235,
+      "sha256": "63a5b0c5152f5278e3b2897f4fd2e8ecb4161c5d31d0be1a8dee830c5ca36568"
+    },
+    "sample-active.stderr": {
+      "bytes": 230,
+      "sha256": "88ec6148fd5e8cbe6c49fc2d3db050aefaf59af73f480d7624fcc9dc8d238846"
+    },
+    "sampled-reads.jsonl": {
+      "bytes": 4122,
+      "sha256": "58ba9f6f5201d0e8db63e701e56ba71d57b2ab41c6208632d5615147f2c6e3b4"
+    },
+    "sampled-reads.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "sql_observer.mjs": {
+      "bytes": 2854,
+      "sha256": "bbe3c6e1b99b2d3f9df180486d42e7c0a1dc52073269eec84b19dd3b723676f8"
+    },
+    "stop-observer": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "stop-time.json": {
+      "bytes": 37,
+      "sha256": "65e0af6484b0c9cd0955589d7b439de41c2dc13bfb8ba4a988e171c8691465c6"
+    },
+    "wait-positive-result.json": {
+      "bytes": 44,
+      "sha256": "55c0d9c2a70a133e27aab5341d46d5f0612b287c5fd2f214ab5f0a046cc24431"
+    },
+    "wait-positive-sample.txt": {
+      "bytes": 80260,
+      "sha256": "2a03d807ce1ba767132e55bdc34ec3c7fce2fa12184e5248f6988f4f710f5b17"
+    },
+    "wait-positive.stderr": {
+      "bytes": 229,
+      "sha256": "6a678374ffc26dd83f195547e9ded89caf9127388c008b2c61a1ef12eba57dfa"
+    },
+    "waiter-ready": {
+      "bytes": 5,
+      "sha256": "b24d6d33736ecd5604a4b17bc9c6481039fac362bb7df044ef1c10a2bfd21db6"
+    },
+    "watchdog-recovery.json": {
+      "bytes": 17,
+      "sha256": "713508f9c7bf75f157a222e7a2990700def769dfce2fe33fe63fa10067f90dd8"
+    },
+    "watchdog.py": {
+      "bytes": 720,
+      "sha256": "82c2446cb45e0f1711627eac3e10b21e0d8c30683f70078f1729d2eefeba680f"
+    }
+  },
+  "publicReproductionTemplates": "Operator-specific evidence and user-home paths are parameterized. The public C probe emits only IO/page-in counters; unused raw CPU counters were omitted. Exact executed private source hashes are retained above.",
+  "retainedPrivately": [
+    "MCP exact request/admission/result identities",
+    "process IDs and original socket inode identities",
+    "full OS samples with process and library metadata",
+    "disposable lock-control database"
+  ]
+}

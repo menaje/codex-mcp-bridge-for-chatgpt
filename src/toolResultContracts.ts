@@ -1,5 +1,12 @@
-import type { CallToolResult, ContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult, ContentBlock } from "@modelcontextprotocol/server";
+import { isDeepStrictEqual } from "node:util";
 import type * as z from "zod/v4";
+import { BRIDGE_SKILL_LIMITS } from "./skillLibrary.js";
+import {
+  assertJsonTextIntegrity,
+  assertWellFormedUnicode,
+  parseJsonTextStrict
+} from "./textIntegrity.js";
 
 /**
  * The four result projections intentionally have different trust and audience
@@ -59,8 +66,14 @@ export const TOOL_CONTENT_BYTE_CAPS = Object.freeze({
   codex_dashboard: 512,
   codex_status: 1_024,
   codex_models: 512,
+  // Read/reference operations deliberately mirror their complete structured
+  // result in model-visible content. Keep the compatibility cap aligned with
+  // the structured cap so a primary payload is never silently summarized.
+  // Preserve a complete 3 MiB source even if every source byte JSON-escapes
+  // sixfold (for example C0 control characters).
+  bridge_skill: BRIDGE_SKILL_LIMITS.mutationWireMaxBytes,
+  bridge_skill_manage: 768,
   codex_settings: 768,
-  codex_activity: 1_024,
   codex_agent: 512,
   codex_cancel: 768,
   codex_activity_update: 512,
@@ -77,8 +90,9 @@ export const TOOL_STRUCTURED_BYTE_CAPS = Object.freeze({
   codex_dashboard: 16 * 1_024,
   codex_status: 512 * 1_024,
   codex_models: 256 * 1_024,
+  bridge_skill: BRIDGE_SKILL_LIMITS.mutationWireMaxBytes,
+  bridge_skill_manage: 64 * 1_024,
   codex_settings: 32 * 1_024,
-  codex_activity: 512 * 1_024,
   codex_agent: 128 * 1_024,
   codex_cancel: 128 * 1_024,
   codex_activity_update: 128 * 1_024,
@@ -128,34 +142,31 @@ export function projectToolResult<Schema extends z.ZodType, Canonical>(
   ) {
     throw new Error(`${contract.toolName} used an invalid compatibility projection channel.`);
   }
-  let structuredContent: Record<string, unknown>;
+  let structuredContent: unknown;
   try {
-    structuredContent = contract.outputSchema.parse(projection.authoritative.value) as Record<
-      string,
-      unknown
-    >;
+    structuredContent = contract.outputSchema.parse(projection.authoritative.value);
   } catch (error) {
     const detail = error instanceof Error ? error.stack || error.message : String(error);
     throw new Error(`${contract.toolName} output contract rejected its runtime projection: ${detail}`);
   }
-  const structuredBytes = Buffer.byteLength(JSON.stringify(structuredContent), "utf8");
+  const structuredJson = jsonValue(structuredContent, `${contract.toolName} structured content`);
+  const structuredBytes = Buffer.byteLength(structuredJson, "utf8");
   if (structuredBytes > contract.structured.maxBytes) {
     throw new Error(
       `${contract.toolName} structured content is ${structuredBytes} bytes, above its ${contract.structured.maxBytes}-byte contract.`
     );
   }
   const content = compatibilityContent(contract, projection.compatibility);
-  const privateMeta = projection.appHydration || projection.protocolMeta
-    ? {
-        ...(projection.protocolMeta || {}),
-        ...(projection.appHydration || {})
-      }
-    : undefined;
+  const privateMeta = mergePrivateMetadata(
+    contract.toolName,
+    projection.protocolMeta,
+    projection.appHydration
+  );
   if (privateMeta) {
     if (!contract.privateMeta) {
       throw new Error(`${contract.toolName} projected private metadata without a metadata contract.`);
     }
-    const privateMetaBytes = Buffer.byteLength(JSON.stringify(privateMeta), "utf8");
+    const privateMetaBytes = Buffer.byteLength(jsonValue(privateMeta, `${contract.toolName} private metadata`), "utf8");
     if (privateMetaBytes > contract.privateMeta.maxBytes) {
       throw new Error(
         `${contract.toolName} private metadata is ${privateMetaBytes} bytes, above its ${contract.privateMeta.maxBytes}-byte contract.`
@@ -170,7 +181,103 @@ export function projectToolResult<Schema extends z.ZodType, Canonical>(
   };
 }
 
+/**
+ * Keep MCP transport metadata separate from bridge UI hydration metadata.
+ *
+ * `io.modelcontextprotocol/*` and the W3C trace-context keys are protocol
+ * owned. An application result must not be able to replace those values by
+ * choosing the same `_meta` key. Future protocol keys remain protected by the
+ * namespace rule rather than requiring a bridge release for each addition.
+ */
+function mergePrivateMetadata(
+  toolName: string,
+  protocolMeta: Readonly<Record<string, unknown>> | undefined,
+  appHydration: Readonly<Record<string, unknown>> | undefined
+): Record<string, unknown> | undefined {
+  if (!protocolMeta && !appHydration) return undefined;
+  const protocol = protocolMeta || {};
+  const hydration = appHydration || {};
+  for (const key of Object.keys(hydration)) {
+    if (isReservedMcpMetadataKey(key)) {
+      throw new Error(
+        `${toolName} app hydration cannot define reserved MCP metadata key ${JSON.stringify(key)}.`
+      );
+    }
+    if (Object.hasOwn(protocol, key)) {
+      throw new Error(
+        `${toolName} private metadata key ${JSON.stringify(key)} is owned by both protocol metadata and app hydration.`
+      );
+    }
+  }
+  return { ...protocol, ...hydration };
+}
+
+function isReservedMcpMetadataKey(key: string): boolean {
+  return key.startsWith("io.modelcontextprotocol/") ||
+    key === "traceparent" ||
+    key === "tracestate" ||
+    key === "baggage";
+}
+
+/** MCP 2026-07-28 permits any JSON value at the structured result root. */
+function jsonValue(value: unknown, label: string): string {
+  assertJsonTextIntegrity(value, label);
+  let encoded: string | undefined;
+  try {
+    encoded = JSON.stringify(value);
+  } catch {
+    throw new Error(`${label} must be JSON-serializable.`);
+  }
+  if (encoded === undefined) {
+    throw new Error(`${label} must be JSON-serializable.`);
+  }
+  // JSON.stringify silently changes several JavaScript values (for example
+  // NaN, Date, functions, and undefined object members). A result boundary
+  // must not publish a value whose wire representation means something else.
+  const decoded = parseJsonTextStrict(encoded, label);
+  if (!isDeepStrictEqual(value, decoded)) {
+    throw new Error(
+      `${label} must be a JSON value without lossy serialization (${firstJsonDifference(value, decoded)}).`
+    );
+  }
+  return encoded;
+}
+
+function firstJsonDifference(value: unknown, decoded: unknown, path = "$"): string {
+  if (isDeepStrictEqual(value, decoded)) return path;
+  if (typeof value !== typeof decoded) {
+    return `${path}: ${typeof value} became ${typeof decoded}`;
+  }
+  if (value === null || decoded === null || typeof value !== "object") {
+    return `${path}: ${String(value)} became ${String(decoded)}`;
+  }
+  if (Array.isArray(value) || Array.isArray(decoded)) {
+    if (!Array.isArray(value) || !Array.isArray(decoded)) return `${path}: array shape changed`;
+    if (value.length !== decoded.length) return `${path}: array length changed`;
+    for (let index = 0; index < value.length; index += 1) {
+      if (!isDeepStrictEqual(value[index], decoded[index])) {
+        return firstJsonDifference(value[index], decoded[index], `${path}[${index}]`);
+      }
+    }
+    return `${path}: array representation changed`;
+  }
+  const original = value as Record<string, unknown>;
+  const roundTripped = decoded as Record<string, unknown>;
+  for (const key of Object.keys(original)) {
+    const childPath = `${path}.${key}`;
+    if (!Object.hasOwn(roundTripped, key)) return `${childPath}: property was omitted`;
+    if (!isDeepStrictEqual(original[key], roundTripped[key])) {
+      return firstJsonDifference(original[key], roundTripped[key], childPath);
+    }
+  }
+  for (const key of Object.keys(roundTripped)) {
+    if (!Object.hasOwn(original, key)) return `${path}.${key}: property was added`;
+  }
+  return `${path}: object representation changed`;
+}
+
 export function boundedUtf8Text(text: string, maxBytes: number): string {
+  assertWellFormedUnicode(text, "Bounded output text");
   if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
   const suffix = "\n… [truncated by output contract]";
   const suffixBytes = Buffer.byteLength(suffix, "utf8");
@@ -203,6 +310,7 @@ export function boundedUtf8Text(text: string, maxBytes: number): string {
  * safe guard for quotes, backslashes, or control characters.
  */
 export function boundedUtf8JsonString(text: string, maxBytes: number): string {
+  assertWellFormedUnicode(text, "Bounded JSON output text");
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) {
     throw new Error("JSON string byte cap must be a positive safe integer.");
   }

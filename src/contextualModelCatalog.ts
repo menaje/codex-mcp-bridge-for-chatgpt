@@ -6,11 +6,11 @@ export class ContextualModelCatalog implements CodexModelCatalogProvider {
   private entries = new Map<CodexBackendKind, { key: string; provider: CodexModelCatalogProvider; unsubscribe?: () => void }>();
   private listeners = new Set<ModelCatalogListener>();
   constructor(private readonly defaultBackend: CodexBackendKind, private readonly revision: () => string,
-    private readonly create: () => CodexModelCatalogProvider, private readonly beforeRead?: (kind: CodexBackendKind) => Promise<unknown>) {}
+    private readonly create: (revision: string) => CodexModelCatalogProvider, private readonly beforeRead?: (kind: CodexBackendKind) => Promise<unknown>) {}
   async getCatalog(options: ModelCatalogOptions = {}) {
     const kind = options.backendKind || this.defaultBackend;
     await this.beforeRead?.(kind);
-    const revision = this.revision(), provider = this.provider(kind);
+    const revision = this.revision(), provider = this.provider(kind, revision);
     const result = await provider.getCatalog(options);
     if (revision !== this.revision()) throw new Error("CODEX_ACCOUNT_CHANGED: Refresh the model choices for the current account.");
     return result;
@@ -21,12 +21,11 @@ export class ContextualModelCatalog implements CodexModelCatalogProvider {
     return entry.provider.getCachedCatalog?.(options);
   }
   subscribe(listener: ModelCatalogListener) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
-  private provider(kind: CodexBackendKind) {
-    const key = this.revision();
+  private provider(kind: CodexBackendKind, key: string) {
     let entry = this.entries.get(kind);
     if (!entry || entry.key !== key) {
       entry?.unsubscribe?.();
-      const provider = this.create();
+      const provider = this.create(key);
       entry = { key, provider, unsubscribe: provider.subscribe?.(async event => {
         if (key === this.revision()) await Promise.all([...this.listeners].map(listener => listener(event)));
       }) };

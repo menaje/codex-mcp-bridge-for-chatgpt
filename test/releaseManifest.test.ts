@@ -37,6 +37,10 @@ describe("release manifest", () => {
       path.join(scriptsDirectory, "ui-release-catalog.mjs")
     );
     copyFileSync(
+      path.join(REPO_ROOT, "scripts/text-integrity.mjs"),
+      path.join(scriptsDirectory, "text-integrity.mjs")
+    );
+    copyFileSync(
       path.join(REPO_ROOT, "release-manifest.json"),
       path.join(root, "release-manifest.json")
     );
@@ -86,12 +90,12 @@ describe("release manifest", () => {
     expect(() => validateReleaseManifest(manifest)).toThrow("manifestVersion must be 6");
   });
 
-  it("publishes one complete schema-3-through-19 compatibility and recovery contract", () => {
+  it("publishes one complete schema-3-through-31 compatibility and recovery contract", () => {
     const manifest = loadReleaseManifest(REPO_ROOT);
     const catalog = readJson(path.join(REPO_ROOT, "state-migrations.json"));
     expect(manifest.stateCompatibility).toMatchObject({
-      currentSchema: 19,
-      supportedSourceSchemas: Array.from({ length: 16 }, (_, index) => index + 3),
+      currentSchema: 32,
+      supportedSourceSchemas: Array.from({ length: 29 }, (_, index) => index + 3),
       unsupportedSourceSchemas: [1, 2],
       retiredLegacyImports: [
         "settings-state-json",
@@ -102,17 +106,17 @@ describe("release manifest", () => {
       stateProfilePolicy: "release-stage-isolated-v1",
       rollbackPolicy: "verified-original-before-service-open-v1",
       persistentContracts: {
-        userSettingsSchema: 4,
-        taskInputContract: 2,
+        userSettingsSchema: 8,
+        taskInputContract: 6,
         macosHelperProtocol: 2,
-        localCompanionProtocol: 2,
-        remoteCompanionProtocol: 1
+        localCompanionProtocol: 12,
+        remoteCompanionProtocol: 10
       }
     });
     expect(catalog).toMatchObject({
       catalogVersion: 1,
       immutabilityPolicy: "append-only-after-release-v1",
-      currentSchema: 19,
+      currentSchema: 32,
       supportedSourceSchemas: manifest.stateCompatibility.supportedSourceSchemas
     });
     expect(catalog.fixtures).toEqual(expect.arrayContaining([
@@ -121,9 +125,17 @@ describe("release manifest", () => {
       expect.objectContaining({ schema: 18, kind: "deployed-development" })
     ]));
     for (const source of manifest.stateCompatibility.supportedSourceSchemas) {
+      const fixture = catalog.fixtures.find((entry: any) => entry.schema === source);
+      const checkpoint = catalog.derivedCheckpoints.find((entry: any) => entry.schema === source);
+      expect(Boolean(fixture) !== Boolean(checkpoint), `schema ${source} must have exactly one audit seed`).toBe(true);
+      if (checkpoint) {
+        expect(catalog.fixtures.some((entry: any) => entry.schema === checkpoint.sourceFixtureSchema)).toBe(true);
+        expect(checkpoint.sourceFixtureSchema).toBeLessThan(source);
+        expect(catalog.migrations.find((entry: any) => entry.id === checkpoint.afterMigrationId)?.toSchema).toBe(source);
+      }
       let schema = source;
       const visited = new Set<number>();
-      while (schema !== 19) {
+      while (schema !== 32) {
         expect(visited.has(schema)).toBe(false);
         visited.add(schema);
         const migration = catalog.migrations.find((entry: any) => entry.fromSchema === schema);
@@ -242,8 +254,8 @@ describe("release manifest", () => {
     writeFileSync(
       modelPolicy,
       readFileSync(modelPolicy, "utf8").replace(
-        "MODEL_POLICY_SCHEMA_VERSION = 4",
-        "MODEL_POLICY_SCHEMA_VERSION = 5"
+        "MODEL_POLICY_SCHEMA_VERSION = 8",
+        "MODEL_POLICY_SCHEMA_VERSION = 9"
       )
     );
     expect(() => checkReleaseMetadata(root)).toThrow(
@@ -253,6 +265,22 @@ describe("release manifest", () => {
     writeFileSync(
       modelPolicy,
       readFileSync(path.join(REPO_ROOT, "src/modelPolicy.ts"), "utf8")
+    );
+    const userSettings = path.join(root, "src/userSettings.ts");
+    writeFileSync(
+      userSettings,
+      readFileSync(userSettings, "utf8").replace(
+        "taskInputContract: 6",
+        "taskInputContract: 5"
+      )
+    );
+    expect(() => checkReleaseMetadata(root)).toThrow(
+      /Task execution-envelope input contract drifted/
+    );
+
+    writeFileSync(
+      userSettings,
+      readFileSync(path.join(REPO_ROOT, "src/userSettings.ts"), "utf8")
     );
     const catalogFile = path.join(root, "state-migrations.json");
     const catalog = readJson(catalogFile);
@@ -323,77 +351,91 @@ describe("release manifest", () => {
     expect(() => setReleaseVersion("1.2.3-01", root)).toThrow(/Version must be/);
   });
 
-  it("keeps UI cache keys independent from SemVer and changes them for HTML or host metadata", () => {
+  it("keeps UI URIs stable across compatible changes and versions them explicitly for breaking changes", () => {
     const manifest = developmentManifest();
     const catalog = loadUiReleaseCatalog(REPO_ROOT);
     const initialLock = readJson(path.join(REPO_ROOT, "ui-manifest.lock.json"));
     const rendered = renderedFromLock(initialLock);
-    const initial = deriveUiResourceManifest(manifest, rendered, undefined, catalog);
+    const initial = deriveUiResourceManifest(manifest, rendered, catalog);
     const nextRelease = structuredClone(manifest);
     nextRelease.release.version = "0.3.1";
-    const semverOnly = deriveUiResourceManifest(nextRelease, rendered, initial, catalog);
+    const semverOnly = deriveUiResourceManifest(nextRelease, rendered, catalog);
 
     expect(semverOnly.resources.settings.uri).toBe(initial.resources.settings.uri);
-    expect(semverOnly.resources.activity.uri).toBe(initial.resources.activity.uri);
     expect(semverOnly.resources.dashboard.uri).toBe(initial.resources.dashboard.uri);
 
     const metadataChanged = structuredClone(rendered);
-    metadataChanged.resources.settings.metadata.content.prefersBorder = false;
-    const afterMetadata = deriveUiResourceManifest(manifest, metadataChanged, initial, catalog);
-    expect(afterMetadata.resources.settings.uri).not.toBe(initial.resources.settings.uri);
-    expect(afterMetadata.resources.settings.previous).toEqual(initial.resources.settings.previous);
-    expect(afterMetadata.resources.activity.uri).toBe(initial.resources.activity.uri);
+    metadataChanged.resources.settings.metadata.content["openai/widgetPrefersBorder"] = true;
+    const afterMetadata = deriveUiResourceManifest(manifest, metadataChanged, catalog);
+    expect(afterMetadata.resources.settings.uri).toBe(initial.resources.settings.uri);
+    expect(afterMetadata.resources.settings.digest).not.toBe(initial.resources.settings.digest);
+    expect(afterMetadata.resources.dashboard.digest).toBe(initial.resources.dashboard.digest);
 
     const htmlChanged = structuredClone(rendered);
-    htmlChanged.resources.activity.html += "<!-- changed -->";
-    expect(() => deriveUiResourceManifest(manifest, htmlChanged, initial, catalog))
-      .toThrow(/Compatibility-only activity renderer changed/);
+    htmlChanged.resources.dashboard.html += "<!-- compatible change -->";
+    const afterHtml = deriveUiResourceManifest(manifest, htmlChanged, catalog);
+    expect(afterHtml.resources.dashboard.uri).toBe(initial.resources.dashboard.uri);
+    expect(afterHtml.resources.dashboard.digest).not.toBe(initial.resources.dashboard.digest);
+
+    const breakingCatalog = structuredClone(catalog);
+    breakingCatalog.currentContracts.settings.uriVersion += 1;
+    const afterBreakingChange = deriveUiResourceManifest(
+      manifest,
+      rendered,
+      breakingCatalog
+    );
+    expect(afterBreakingChange.resources.settings.uri).not.toBe(initial.resources.settings.uri);
+    expect(afterBreakingChange.resources.settings.digest).toBe(initial.resources.settings.digest);
+    expect(afterBreakingChange.resources.dashboard.uri).toBe(initial.resources.dashboard.uri);
   });
 
-  it("selects only current, published, and deployed UI revisions without accumulating development history", () => {
+  it("selects only the current UI files without accumulating revision history", () => {
     const manifest = loadReleaseManifest(REPO_ROOT);
     const catalog = loadUiReleaseCatalog(REPO_ROOT);
     const lock = readJson(path.join(REPO_ROOT, "ui-manifest.lock.json"));
     const rendered = renderedFromLock(lock);
-    const unrelatedHistory = structuredClone(lock);
-    unrelatedHistory.resources.settings.previous.push({
-      digest: "0".repeat(64),
-      uri: "ui://codex-mcp-bridge/settings/unclassified.html",
-      metadata: lock.resources.settings.metadata
-    });
-    const selected = deriveUiResourceManifest(manifest, rendered, unrelatedHistory, catalog);
+    const selected = deriveUiResourceManifest(manifest, rendered, catalog);
     expect(selected).toEqual(lock);
-    expect(selected.releaseInventory.selected).toHaveLength(8);
-    expect(selected.resources.settings.previous.map((entry: any) => entry.uri)).toEqual([
-      "ui://codex-mcp-bridge/settings/fc59cc3d4ed0.html",
-      "ui://codex-mcp-bridge/settings-v6.html"
-    ]);
-    expect(selected.resources.activity.previous.map((entry: any) => entry.uri)).toEqual([
-      "ui://codex-mcp-bridge/activity-v1.html"
-    ]);
+    expect(selected.manifestVersion).toBe(3);
+    expect(selected.strategy).toBe("versioned-uri");
+    expect(selected.releaseInventory.selected).toHaveLength(3);
+    expect(selected.resources.settings).not.toHaveProperty("previous");
+    expect(selected.resources.dashboard).not.toHaveProperty("previous");
+    expect(selected.resources).not.toHaveProperty("decision");
     expect(selected.releaseInventory.retirement.activity).toMatchObject({
-      lifecycle: "compatibility-only",
+      lifecycle: "historical-revisions-retired",
       newPresentations: false,
-      firstStableWithReplacement: "0.4.0"
+      replacement: "dashboard",
+      firstStableWithReplacement: "0.4.1",
+      minimumSupportRule: "none"
+    });
+    expect(selected.releaseInventory.retirement.question).toMatchObject({
+      lifecycle: "historical-revisions-retired",
+      newPresentations: false,
+      replacement: "host-conversation",
+      firstStableWithReplacement: "0.4.1",
+      minimumSupportRule: "none"
     });
 
     const missingGeneration = structuredClone(rendered);
     delete missingGeneration.resources.settings.metadata.content["codex/uiContractGeneration"];
-    expect(() => deriveUiResourceManifest(manifest, missingGeneration, lock, catalog))
+    expect(() => deriveUiResourceManifest(manifest, missingGeneration, catalog))
       .toThrow(/settings is missing codex\/uiContractGeneration/);
 
-    const missingCompatibility = structuredClone(catalog);
-    missingCompatibility.publishedBaselines[0].resources = missingCompatibility.publishedBaselines[0].resources
-      .filter((entry: any) => entry.name !== "activity");
-    missingCompatibility.temporaryExceptions[0].resources = missingCompatibility.temporaryExceptions[0].resources
-      .filter((entry: any) => entry.name !== "activity");
-    expect(() => validateUiReleaseCatalog(missingCompatibility))
-      .toThrow(/compatibility resource activity has no selected/);
+    const addedCompatibility = structuredClone(catalog);
+    addedCompatibility.compatibilityResources = ["activity"];
+    expect(() => validateUiReleaseCatalog(addedCompatibility))
+      .toThrow(/compatibilityResources must be/);
 
     const changedRetirement = structuredClone(catalog);
     changedRetirement.retirement.activity.newPresentations = true;
     expect(() => validateUiReleaseCatalog(changedRetirement))
       .toThrow(/retirement\.activity\.newPresentations must be false/);
+
+    const missingUriVersion = structuredClone(catalog);
+    delete missingUriVersion.currentContracts.settings.uriVersion;
+    expect(() => validateUiReleaseCatalog(missingUriVersion))
+      .toThrow(/currentContracts\.settings keys must be exactly/);
 
     const driftedManifest = structuredClone(manifest);
     driftedManifest.uiResources.releaseCatalogSha256 = "0".repeat(64);
@@ -417,6 +459,11 @@ describe("release manifest", () => {
     manifest.package.files.push("../secret");
     writeJson(path.join(root, "release-manifest.json"), manifest);
     expect(() => loadReleaseManifest(root)).toThrow(/safe relative package path/);
+
+    manifest.package.files = manifest.package.files.filter((file: string) => file !== "../secret");
+    manifest.package.files = manifest.package.files.filter((file: string) => file !== "scripts/text-integrity.mjs");
+    writeJson(path.join(root, "release-manifest.json"), manifest);
+    expect(() => loadReleaseManifest(root)).toThrow(/package\.files must include scripts\/text-integrity\.mjs/);
   });
 
   it("fails the release check when the App Server schema lock targets another CLI", () => {
@@ -445,6 +492,8 @@ function fixtureRoot(): string {
     "state-migrations.json",
     "src/stateStore.ts",
     "src/stateSchema.ts",
+    "src/operationalCommandReceipt.ts",
+    "src/decisionCardStore.ts",
     "src/questionStore.ts",
     "src/threadConnections.ts",
     "src/eventRetention.ts",
@@ -455,6 +504,7 @@ function fixtureRoot(): string {
     "src/projectRegistry.ts",
     "src/cancellation.ts",
     "src/modelPolicy.ts",
+    "src/userSettings.ts",
     "src/tools.ts",
     "src/macosHelperServer.ts",
     "src/companionServer.ts",
@@ -499,21 +549,15 @@ function renderedFromLock(lock: any): any {
       name,
       {
         uri: value.uri,
-        html: readUiSnapshot(name, value.digest),
+        html: readCurrentUiResource(name),
         metadata: structuredClone(value.metadata)
       }
     ]))
   };
 }
 
-function readUiSnapshot(name: string, digest: string): string {
-  const plain = path.join(REPO_ROOT, "ui-resources", name, `${digest}.html`);
-  try {
-    return readFileSync(plain, "utf8");
-  } catch {
-    const encoded = readFileSync(`${plain}.base64`, "utf8");
-    return Buffer.from(encoded.trim(), "base64").toString("utf8");
-  }
+function readCurrentUiResource(name: string): string {
+  return readFileSync(path.join(REPO_ROOT, "ui-resources", `${name}.html`), "utf8");
 }
 
 function readJson(file: string): any {

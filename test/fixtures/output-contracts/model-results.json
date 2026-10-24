@@ -52,7 +52,10 @@
           "Force-stop does not roll back filesystem changes."
         ],
         "nextActions": [
-          "codex_cancel(job-running)"
+          {
+            "kind": "guidance",
+            "message": "Inspect the current target before deciding whether an explicit stop is still authorized."
+          }
         ]
       }
     }
@@ -92,6 +95,8 @@
     {
       "fixture": "current-model-catalog",
       "structuredContent": {
+        "contractVersion": "2",
+        "selectionMode": "automatic",
         "source": "codex-cli",
         "stale": false,
         "warning": null,
@@ -112,6 +117,47 @@
       }
     }
   ],
+  "bridge_skill": [
+    {
+      "fixture": "bridge-skill-search",
+      "structuredContent": {
+        "kind": "skill-search",
+        "skills": [
+          {
+            "skillId": "bridge_0123456789abcdef0123456789abcdef",
+            "source": "bridge",
+            "version": "1",
+            "name": "Evidence review",
+            "description": "Review reports with an evidence table.",
+            "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "enabled": true,
+            "availability": "available"
+          }
+        ]
+      }
+    }
+  ],
+  "bridge_skill_manage": [
+    {
+      "fixture": "bridge-skill-created",
+      "structuredContent": {
+        "kind": "skill-mutation",
+        "action": "create",
+        "requestId": "11111111-1111-4111-8111-111111111111",
+        "skill": {
+          "skillId": "bridge_0123456789abcdef0123456789abcdef",
+          "source": "bridge",
+          "version": "1",
+          "name": "Evidence review",
+          "description": "Review reports with an evidence table.",
+          "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "enabled": true,
+          "availability": "available"
+        },
+        "message": "Created bridge skill \"Evidence review\" at version 1."
+      }
+    }
+  ],
   "codex_settings": [
     {
       "fixture": "thin-settings-opener",
@@ -122,6 +168,15 @@
     }
   ],
   "codex_status": [
+    {
+      "fixture": "exact-followup-receipt-page",
+      "structuredContent": {
+        "kind": "followups",
+        "jobId": "11111111-1111-4111-8111-111111111111",
+        "receipts": [],
+        "after": null
+      }
+    },
     {
       "fixture": "overview",
       "structuredContent": {
@@ -194,7 +249,6 @@
               "activity": 1
             },
             "execution": {
-              "mode": "background",
               "backend": "mcp-server",
               "sandbox": "read-only"
             },
@@ -240,7 +294,6 @@
               "activity": 4
             },
             "execution": {
-              "mode": "background",
               "backend": "app-server",
               "sandbox": "workspace-write"
             },
@@ -286,7 +339,6 @@
               "activity": 2
             },
             "execution": {
-              "mode": "background",
               "backend": "app-server",
               "sandbox": "read-only"
             },
@@ -326,7 +378,10 @@
         "historyLimited": true,
         "hasMoreQuestions": false,
         "nextActions": [
-          "Judge the message and answer within delegation."
+          {
+            "kind": "guidance",
+            "message": "Judge the message and answer within delegation."
+          }
         ],
         "waitedMs": 0,
         "timedOut": false
@@ -376,12 +431,25 @@
           "The bridge does not claim distributed exactly-once delivery across this crash boundary."
         ],
         "nextActions": [
-          "Inspect the exact Job with codex_status and do not automatically retry this steering request."
+          {
+            "kind": "guidance",
+            "message": "Inspect the exact Job with codex_status and do not automatically retry this steering request."
+          }
         ]
       }
     }
   ],
   "codex_task": [],
+  "codex_relay_control": [
+    {
+      "fixture": "explicit-relay-stop",
+      "structuredContent": {
+        "kind": "relay-control",
+        "activityId": "11111111-1111-4111-8111-111111111111",
+        "stopped": "relay"
+      }
+    }
+  ],
   "codex_answer": [
     {
       "fixture": "gpt-question-flow",
@@ -392,47 +460,34 @@
         "delivery": "delivered",
         "answersPersisted": false,
         "nextActions": [
-          "Read Codex input or result."
-        ]
-      }
-    }
-  ],
-  "codex_ask_user": [
-    {
-      "fixture": "gpt-question-flow",
-      "structuredContent": {
-        "kind": "user-question",
-        "questionId": "fixture-question",
-        "status": "pending",
-        "expiresAt": 1780000000000,
-        "nextActions": [
-          "Read the user answer."
-        ]
-      }
-    }
-  ],
-  "codex_user_answer": [
-    {
-      "fixture": "gpt-question-flow",
-      "structuredContent": {
-        "kind": "user-answers",
-        "responses": [
           {
-            "questionId": "fixture-question",
-            "responseRef": "fixture-response",
-            "status": "answered",
-            "title": "Choice",
-            "answers": [
-              {
-                "questionId": "color",
-                "values": [
-                  "Blue"
-                ]
-              }
-            ],
-            "expiresAt": 1780000000000
+            "kind": "guidance",
+            "message": "Read Codex input or result."
           }
         ]
+      }
+    }
+  ],
+  "codex_event_access": [
+    {
+      "fixture": "issued-subscription-only",
+      "structuredContent": {
+        "jobId": "11111111-1111-4111-8111-111111111111",
+        "state": "pending",
+        "event": "codex.job.terminal",
+        "arguments": {
+          "jobId": "11111111-1111-4111-8111-111111111111",
+          "subscriptionRef": "esr_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "expiresAt": "2026-10-03T00:00:00.000Z"
+      }
+    },
+    {
+      "fixture": "revoked",
+      "structuredContent": {
+        "jobId": "11111111-1111-4111-8111-111111111111",
+        "state": "revoked",
+        "event": "codex.job.terminal"
       }
     }
   ]

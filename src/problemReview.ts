@@ -1,7 +1,8 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import * as z from "zod/v4";
+import { parseJsonUtf8Strict } from "./textIntegrity.js";
 
-export const PROBLEM_KINDS = ["all", "failed", "unknown", "termination-failed", "orphaned"] as const;
+export const PROBLEM_KINDS = ["all", "failed", "interrupted", "cancelled", "unknown", "termination-failed", "orphaned"] as const;
 export const problemQuerySchema = z.strictObject({
   view: z.enum(["actionable", "history", "automatic"]).optional(),
   review: z.enum(["pending", "acknowledged"]).default("pending"),
@@ -71,7 +72,10 @@ export class ProblemReviewProofs {
     const received = Buffer.from(signature, "base64url"), expected = this.sign(payload);
     if (received.length !== expected.length || !timingSafeEqual(received, expected)) throw fail();
     let claims: z.infer<typeof claimsSchema>;
-    try { claims = claimsSchema.parse(JSON.parse(Buffer.from(payload, "base64url").toString("utf8"))); }
+    try {
+      const parsed = parseJsonUtf8Strict(Buffer.from(payload, "base64url"), "Problem review proof");
+      claims = claimsSchema.parse(parsed);
+    }
     catch { throw fail(); }
     if (claims.expiresAt <= this.now() || claims.widgetInstanceId !== widgetInstanceId ||
       claims.hostScopeId !== (hostScopeId || null) || claims.operationDigest !== problemOperationDigest(operation)) throw fail();

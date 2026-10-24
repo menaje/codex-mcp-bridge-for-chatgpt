@@ -1,0 +1,6 @@
+{
+  "TMPDIR": "/tmp/cb242-i-63nb21zp",
+  "processPolicy": "/usr/sbin/taskpolicy -a",
+  "codex": "/tmp/codex-cli-0.153.3/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex",
+  "tunnel": "/opt/homebrew/bin/tunnel-client"
+}

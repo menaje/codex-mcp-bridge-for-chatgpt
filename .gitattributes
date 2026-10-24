@@ -1,0 +1,2 @@
+# Preserve the deployed v3 script byte-for-byte for cached sender tests.
+test/fixtures/issue221-dashboard-v3.js.txt -whitespace

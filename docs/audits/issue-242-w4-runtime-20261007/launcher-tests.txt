@@ -1,0 +1,43 @@
+
+ RUN  v4.1.11 /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w4-runtime
+
+ ❯ test/launcherLifecycle.integration.test.ts (3 tests | 3 failed) 66677ms
+     × starts authenticated HTTP with https metadata and rebuilds the profile when OAuth identity changes 10327ms
+     × starts authenticated HTTP with loopback metadata and rebuilds the profile when OAuth identity changes 11333ms
+     × waits for tunnel readiness and shutdown, then reuses only an unchanged profile 45010ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/launcherLifecycle.integration.test.ts > managed launcher lifecycle > starts authenticated HTTP with https metadata and rebuilds the profile when OAuth identity changes
+ FAIL  test/launcherLifecycle.integration.test.ts > managed launcher lifecycle > starts authenticated HTTP with loopback metadata and rebuilds the profile when OAuth identity changes
+Error: Timed out waiting for the managed tunnel status.
+ ❯ waitForConnectedStatus test/launcherLifecycle.integration.test.ts:434:9
+    432|     await new Promise((resolve) => setTimeout(resolve, 50));
+    433|   }
+    434|   throw new Error("Timed out waiting for the managed tunnel status.");
+       |         ^
+    435| }
+    436|
+ ❯ runLauncher test/launcherLifecycle.integration.test.ts:361:5
+ ❯ test/launcherLifecycle.integration.test.ts:68:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  test/launcherLifecycle.integration.test.ts > managed launcher lifecycle > waits for tunnel readiness and shutdown, then reuses only an unchanged profile
+Error: Test timed out in 45000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/launcherLifecycle.integration.test.ts:82:3
+     80|   }, 45_000);
+     81|
+     82|   it("waits for tunnel readiness and shutdown, then reuses only an unc…
+       |   ^
+     83|     const root = mkdtempSync(path.join(tmpdir(), "codex-launcher-lifec…
+     84|     const configDirectory = path.join(root, "config");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed (3)
+   Start at  21:40:19
+   Duration  67.98s (transform 196ms, setup 0ms, import 372ms, tests 66.68s, environment 4ms)

@@ -1,36 +1,67 @@
-import { dashboardHistoryActionInput, dashboardHistoryRuntimeInput, ISSUE_ATTENTION_DAYS, type HistoryRetentionDays, type DashboardHistoryActionInput } from "./workHistory.js";
+import { RELAY_GUIDANCE } from "./relayDelivery.js";
+import { RELAY_TOOL_METADATA, registerRelayCardResource } from "./relayCard.js";
+import { registerRelayTools, relayToolResult, relayControlOutputSchema, relayMutationOutputSchema, relayWaitOutputSchema } from "./relayTools.js";
+import { ProjectLifecycleController } from "./projectLifecycle.js";
+import { withExecutionIdentity } from "./executionIdentity.js";
+import { bridgeExecutionContext } from "./executionContext.js";
+import { dashboardHistoryActionInput, ISSUE_ATTENTION_DAYS, type HistoryRetentionDays, type DashboardHistoryActionInput } from "./workHistory.js";
 import { DASHBOARD_STATUS_FILTERS, dashboardSummaryCategory, type DashboardStatusFilter } from "./dashboardPresentation.js";
 import { problemActionSchema, problemActionResultSchema, problemQuerySchema, problemOperationSchema,
   problemKey, problemRevision, problemOperationDigest, problemReviewProofs,
   type ProblemQuery, type ProblemAction, type ProblemOperation, type ProblemActionResult } from "./problemReview.js";
 import { AutomaticRecoveryController, automaticRecoveryKey,
   type AutomaticRecoveryCandidate, type AutomaticRecoveryResult } from "./automaticRecovery.js";
-import { OriginWaits, originWaitTokenSchema, liveRecoverySchema,
-  type OriginWaitLease } from "./originWait.js";
 import { projectRecoveryGuidance, projectSelectorRetryAction, type RequestedProjectIdentity } from "./projectGuidance.js";
-import { modelActionGuidance, modelPolicyRecoveryActions } from "./toolGuidance.js";
-import { objectSchemaUnion } from "./objectSchemaUnion.js";
-import { DisplayReadPool, waitForDisplay } from "./displayReadPool.js";
-import { installLegacyToolCompatibility } from "./legacyToolCompatibility.js";
+import { modelPolicyRecoveryActions } from "./toolGuidance.js";
+import {
+  guidance,
+  modelNextActionOutputSchema,
+  monitoringNextActionOutputSchema,
+  nextActionSummary,
+  projectModelNextAction,
+  projectMonitoringNextAction,
+  settingsAction,
+  statusAction
+} from "./nextActions.js";
+import { DisplayReadPool, waitForDisplay, type ReadObservationContext } from "./displayReadPool.js";
+import type { CodexAccountSnapshot } from "./codexAccount.js";
 import { uiControlProofs, type UiControlClaims } from "./uiControlProofs.js";
+import {
+  nativeCompletionNotification,
+  type NativeCompletionNotification
+} from "./completionDelivery.js";
 import { createHash, randomUUID } from "node:crypto";
+import { authenticatedMcpPrincipal } from "./mcpPrincipal.js";
+import { approvedFollowupDigests, issueApprovedFollowups, readFollowupReference, FOLLOWUP_ID_PATTERN, promptDigest, type ApprovedFollowup, type FollowupReference, type DynamicFollowupReference } from "./taskFollowups.js";
 import { ThreadConnectionController, type ThreadConnectionRecord } from "./threadConnections.js";
+import { STATE_MAINTENANCE_SLICES, StateMaintenanceScheduler } from "./maintenanceScheduler.js";
+import {
+  InProcessOperationalStateService,
+  executeOperationalStateCommand,
+  type OperationalJobRetentionCommand,
+  type OperationalStateCommand,
+  type OperationalStateOperationObservation,
+  type OperationalStateResult
+} from "./stateService.js";
+import { classifyMemoryOnlyThreadImpact } from "./runtimeAdmission.js";
+import { RuntimeDrainGate, initialRuntimeDrainBinding, type RuntimeDrainTarget } from "./runtimeDrain.js";
+import type { BridgeTelemetryService } from "./telemetryService.js";
 import { codexInputCursor, codexInputSnapshot, isCodexInputEvent, ordinaryCodexQuestion } from "./codexInputs.js";
-import { registerQuestionTools, QUESTION_MODEL_OUTPUT_SCHEMAS, QUESTION_APP_OUTPUT_SCHEMAS } from "./questionTools.js";
+import { ScopeFairQueue, type ScopeFairQueueStatus } from "./scopeFairQueue.js";
+import { registerCodexInputTools, CODEX_INPUT_MODEL_OUTPUT_SCHEMAS } from "./questionTools.js";
+import { InteractionNotDispatchedError } from "./interactionDispatch.js";
 import path from "node:path";
 import * as z from "zod/v4";
-import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { Progress } from "@modelcontextprotocol/sdk/types.js";
+import { type McpServer, type Progress, type ToolCallback } from "@modelcontextprotocol/server";
 import {
   ACTIVITY_COMPLETION_TRIGGERS,
-  ACTIVITY_EXECUTION_MODES,
   ACTIVITY_HANDOFF_POLICIES,
   ACTIVITY_JOB_STATUSES,
   ACTIVITY_KINDS,
+  ACTIVITY_LIFECYCLES,
   isActiveActivityJobStatus,
   isTerminalActivityJobStatus,
   type ActivityCompletionTrigger,
-  type ActivityExecutionMode,
   type ActivityHandoffPolicy,
   type ActivityKind,
   type ActivityVerificationEvidence,
@@ -38,7 +69,7 @@ import {
 } from "./activity.js";
 import {
   AGENT_CONTEXT_MODES,
-  normalizeAgentName,
+  canonicalAgentName,
   type ActivityAgentAssignment,
   type AgentContextMode,
   type BridgeAgent,
@@ -53,8 +84,12 @@ import type {
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { resolveExecutionPolicy, resolveTaskSandbox } from "./executionPolicy.js";
 import { executionAccessArguments } from "./executionAccess.js";
+import { executionAudit, readExecutionEvidence, retainExecutionEvidence, type ExecutionEvidence } from "./executionAudit.js";
+import { PROCESSING_SPEED_MODES, isProcessingSpeedMode, resolveTurnSpeed, selectionSpeedArguments, speedTierForModel, requireProcessingSpeedAccess, ULTRAFAST_ACCESS_UNVERIFIED } from "./processingSpeed.js";
+import { UNVERIFIED_APP_SERVER_CAPABILITIES } from "./cliProtocol.js";
 import {
   HARD_MAX_CONCURRENT_JOBS,
+  formatSensitiveFileFindings,
   isCodexBackendKind,
   findSensitiveFiles,
   isPathWithinRoot,
@@ -88,11 +123,6 @@ import {
   type ModelPolicy,
   type ModelSelection
 } from "./modelPolicy.js";
-import {
-  SdkToolDescriptorCoordinator,
-  type SdkToolDescriptorProjectionStatus,
-  type SdkToolDescriptorSnapshotInput
-} from "./modelPolicyTransport.js";
 import type { TrackedCodexSession } from "./sessionRegistry.js";
 import {
   extractThreadId,
@@ -108,17 +138,6 @@ import {
   SETTINGS_CARD_URI
 } from "./settingsCard.js";
 import {
-  ACTIVITY_BOOTSTRAP_METADATA_KEY,
-  ACTIVITY_CARD_CONTRACT_GENERATION,
-  ACTIVITY_PRIVATE_METADATA_CONTRACT_VERSION,
-  ACTIVITY_SCOPE_METADATA_KEY,
-  ACTIVITY_VIEW_METADATA_KEY,
-  registerActivityCardResource,
-  ACTIVITY_CARD_HTML,
-  ACTIVITY_CARD_HTML_MAX_BYTES,
-  ACTIVITY_CARD_URI
-} from "./activityCard.js";
-import {
   DASHBOARD_CARD_CONTRACT_GENERATION,
   DASHBOARD_CARD_URI,
   DASHBOARD_PRIVATE_METADATA_CONTRACT_VERSION,
@@ -129,13 +148,15 @@ import {
   registerDashboardCardResource
 } from "./dashboardCard.js";
 import type { ScopeResolver, ToolCallMetadata } from "./scopeResolver.js";
+import { eventAccessOutputSchema, eventSubscriptionStateSchema, type EventSubscriptionState } from "./mcpEventAccess.js";
 import {
   BridgeStateStore,
-  normalizeActivityTitle,
+  canonicalActivityTitle,
   type ActivityProjectAdmission,
   type BeginSteeringDeliveryInput,
   type CreateActivityInput,
   type DashboardRetainedJobSummary,
+  type DashboardExecutionRecord,
   type SteeringDeliveryRecord
 } from "./stateStore.js";
 import {
@@ -149,6 +170,7 @@ import {
   normalizeProjectName,
   normalizeProjectRef,
   projectNameKey,
+  type ProjectSelection,
   type RuntimeProjectSelection,
   type ProjectTarget
 } from "./projectRegistry.js";
@@ -168,12 +190,8 @@ import {
 } from "./upstream.js";
 import { backendRoutingArgument } from "./upstreamRouter.js";
 import {
-  ACTIVITY_CARD_VISIBILITIES,
-  COMPLETION_HANDOFF_MODES,
-  type ActivityCardVisibility,
   type BridgeUserSettings,
   type BridgeUserSettingsPatch,
-  type CompletionHandoffMode,
   type ProjectRegistryOperation,
   UserSettingsStore
 } from "./userSettings.js";
@@ -185,6 +203,13 @@ import {
   type UiLocalePreference
 } from "./uiI18n.js";
 import { localizeSettingsView } from "./settingsLocalization.js";
+import {
+  assertJsonTextIntegrity,
+  decodeUtf8Strict,
+  hasAtMostUnicodeScalars,
+  parseJsonUtf8Strict,
+  verbatimText
+} from "./textIntegrity.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 import {
   CANCELLATION_REASON_MAX_LENGTH,
@@ -200,6 +225,7 @@ import { assertRuntimeEnvOutsideProjectRoots } from "./runtimeEnvProjectGuard.js
 import {
   MAX_MODEL_DESCRIPTION_LENGTH,
   modelDescriptionProjection,
+  type ModelDescriptionHistoryPage,
   type ModelDescriptionOverrides
 } from "./modelDescriptions.js";
 import {
@@ -211,6 +237,25 @@ import {
   type AuthoritativeProjectionChannel,
   type ToolResultContract
 } from "./toolResultContracts.js";
+import {
+  BRIDGE_SKILL_LIMITS,
+  BRIDGE_SKILL_SOURCE,
+  SkillLibrary,
+  type BridgeSkill,
+  type CreateBridgeSkillInput,
+  type CreateBridgeSkillPackageInput,
+  type DeleteBridgeSkillInput,
+  type DeletedBridgeSkill,
+  type SkillFile,
+  type SkillReference,
+  type SkillSearchResult,
+  type SkillSummary,
+  type SkillVersionList,
+  type RestoreBridgeSkillInput,
+  type SetBridgeSkillEnabledInput,
+  type UpdateBridgeSkillInput,
+  type UpdateBridgeSkillPackageInput
+} from "./skillLibrary.js";
 
 type CodexJobStatus =
   | "running"
@@ -228,18 +273,29 @@ export const MODEL_PRIMARY_ANSWER_MAX_JSON_BYTES = 24 * 1024;
 /** Complete serialized codex_task descriptor ceiling at maximum bounded choices. */
 export const CODEX_TASK_DESCRIPTOR_MAX_JSON_BYTES = 128 * 1024;
 /** Stable task envelope adopted once; settings/catalog/project values stay runtime-authoritative. */
-export const CODEX_TASK_INPUT_CONTRACT_VERSION = "2" as const;
+/** v6 exposes one durable asynchronous admission contract. */
+export const CODEX_TASK_INPUT_CONTRACT_VERSION = "6" as const;
 const MODEL_PRIMARY_ANSWER_TRUNCATION_WARNING =
   "The model-authoritative primary answer was truncated by the structured-output byte limit. Request a narrower report only if the missing sections are required.";
 
 type ForceTerminateOptions = {
+  retirementThreadIds?: readonly string[];
   interruptOnly?: true;
   acknowledgeAffectedJobIds?: string[];
   /** Durable intents for every job the caller explicitly intended to stop. */
   requestedTargetIntents?: CancellationIntentRecord[];
 };
 
-type JobCompletionCallback = (result: ToolResult) => void | (() => void);
+type JobCompletionCallback = (result: ToolResult, job: CodexJob) => void | (() => void);
+
+class JobTerminalCommitError extends Error {
+  constructor(cause: unknown) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    super(`BRIDGE_TERMINAL_COMMIT_FAILED: ${detail}`, { cause });
+    this.name = "JobTerminalCommitError";
+  }
+}
+
 type DeferredJobSettlement =
   | { kind: "resolved"; result: ToolResult; onComplete?: JobCompletionCallback }
   | { kind: "rejected"; error: unknown };
@@ -263,7 +319,7 @@ export class TaskProjectAvailabilityProjection {
   selectable(settings: BridgeUserSettings): ProjectTarget[] {
     this.synchronizeRegistry(settings);
     return settings.projects.filter((project) =>
-      project.archivedAt === undefined && this.stable.get(project.projectRef)?.available === true
+      (project.archiveState === undefined || project.archiveState === "active") && project.archivedAt === undefined && this.stable.get(project.projectRef)?.available === true
     );
   }
 
@@ -312,7 +368,7 @@ export class TaskProjectAvailabilityProjection {
       if (current?.projectRevision === project.projectRevision) continue;
       this.stable.set(project.projectRef, {
         projectRevision: project.projectRevision,
-        available: project.archivedAt === undefined && this.probe(project)
+        available: (project.archiveState === undefined || project.archiveState === "active") && project.archivedAt === undefined && this.probe(project)
       });
       this.pending.delete(project.projectRef);
     }
@@ -328,23 +384,13 @@ export class TaskProjectAvailabilityProjection {
 }
 
 export const MAX_CODEX_STATUS_WAIT_MS = 60_000;
-export const DEFAULT_CODEX_STATUS_WAIT_MS = 55_000;
+const MAX_ACTIVE_JOB_OBSERVATION_WAITS = 128;
+/** Keep model-visible reads comfortably below common 60-second host lifetimes. */
+export const DEFAULT_CODEX_STATUS_WAIT_MS = 20_000;
 const JOB_PROGRESS_PERSIST_INTERVAL_MS = 30_000;
-
-const ACTIVITY_CARD_RENDER_REASONS = [
-  "explicit",
-  "visibility-disabled",
-  "presentation-unavailable",
-  "active-lease",
-  "render-reserved",
-  "render-retry",
-  "render-latest",
-  "render-confirmed",
-  "new-presentation"
-] as const;
-
-type ActivityCardRenderReason = (typeof ACTIVITY_CARD_RENDER_REASONS)[number];
-type ActivityCardLeaseStopReason = "presentation-superseded" | "presentation-duplicate";
+const PROGRESS_PERSISTENCE_QUEUE_CAPACITY = 256;
+const PROGRESS_PERSISTENCE_PER_PROJECT_CAPACITY = 32;
+const PROGRESS_PERSISTENCE_IMMEDIATE_BUDGET = 4;
 
 /**
  * Explicit escape hatch for protocol-owned or upstream-owned JSON leaves. The
@@ -358,9 +404,17 @@ const modelChoiceOutputSchema = z.strictObject({
   serviceTier: z.string().optional()
 });
 
+const executionFieldEvidenceOutputSchema = z.strictObject({
+  value: z.string().nullable(), confirmed: z.boolean(), reason: z.enum(["server-does-not-report-applied-value", "no-correlated-server-evidence"]).nullable(),
+  evidence: z.literal("model/rerouted").nullable(), eventId: z.string().nullable(), threadId: z.string().nullable(), turnId: z.string().nullable()
+});
 const compactExecutionAuditOutputSchema = z.strictObject({
   requested: modelChoiceOutputSchema.omit({ serviceTier: true }).nullable(),
-  actual: modelChoiceOutputSchema,
+  actual: z.strictObject({ model: z.string().nullable(), reasoningEffort: z.string().nullable(), serviceTier: z.string().nullable() }),
+  intent: z.strictObject({ modelSource: z.string(), processingSpeed: z.string(), scope: z.enum(["turn", "conversation"]) }),
+  sent: opaqueJsonObjectOutputSchema.nullable(),
+  acceptance: z.strictObject({ threadId: z.string(), turnId: z.string(), eventId: z.string() }).nullable(),
+  confirmed: z.strictObject({ model: executionFieldEvidenceOutputSchema, reasoningEffort: executionFieldEvidenceOutputSchema, serviceTier: executionFieldEvidenceOutputSchema }),
   source: z.enum([
     "fixed",
     "configured-fallback",
@@ -393,8 +447,6 @@ const nextToolActionOutputSchema = z.strictObject({
   arguments: opaqueJsonObjectOutputSchema,
   userPrompt: z.string().optional()
 });
-
-const modelNextActionOutputSchema = z.string();
 
 const structuredErrorOutputSchema = z.strictObject({
   code: z.string(),
@@ -437,31 +489,30 @@ const bridgeSessionOutputSchema = z.strictObject({
   handoff: backendHandoffAuditOutputSchema.optional(),
   scopeId: z.string(),
   requestId: z.string(),
-  projectName: z.string().nullable(),
-  activityPresentationId: z.string().nullable()
+  projectName: z.string().nullable()
 });
 
-const activityCardTrackingOutputSchema = z.strictObject({
+const dashboardPresentationOutputSchema = z.strictObject({
   statusTool: z.literal("codex_status"),
-  automaticRenderTool: z.literal("codex_activity"),
-  explicitRenderTool: z.literal("codex_activity"),
-  followUpRenderRequired: z.boolean(),
-  renderToolAvailable: z.boolean(),
-  explicitRenderAllowed: z.boolean(),
-  activityCardVisibility: z.enum(ACTIVITY_CARD_VISIBILITIES),
-  activityId: z.string(),
-  cardGeneration: z.number().int().min(1),
-  presentationKind: z.enum(["automatic", "explicit"]),
-  activityPresentationId: z.string().optional(),
-  shouldRenderActivityCard: z.boolean(),
-  renderReason: z.enum(ACTIVITY_CARD_RENDER_REASONS),
-  renderTiming: z.enum(["immediate", "after-result-or-existing-mounted-card"])
+  openTool: z.literal("codex_dashboard"),
+  scope: z.literal("conversation"),
+  automatic: z.literal(false),
+  reason: z.enum(["direct-wait", "relay-card", "events"]),
+  completionDeliveryRoute: z.enum(["direct-wait", "relay-card", "events"])
 });
 
-const codexTaskOutputSchema = z.strictObject({
-  waitContext: z.null().default(null).describe("Reserved legacy field; always null."),
-  recovery: liveRecoverySchema.nullable().default(null),
-  contractVersion: z.enum(["1"]),
+const followupViewOutputSchema = z.strictObject({
+  followupId: z.string().regex(FOLLOWUP_ID_PATTERN), requestId: z.string().uuid(),
+  status: z.enum(["approved-pending", "admitted", "expired"])
+});
+const approvedFollowupsOutputSchema = z.array(followupViewOutputSchema).min(1).max(24).optional();
+const followupPageOutputSchema = z.strictObject({
+  kind: z.literal("followups"), jobId: z.string().uuid(),
+  receipts: z.array(followupViewOutputSchema).max(24), after: z.string().regex(FOLLOWUP_ID_PATTERN).nullable()
+});
+
+const codexTaskOutputBase = z.strictObject({
+  contractVersion: z.literal("4"),
   kind: z.enum(["task"]),
   state: z.enum([...ACTIVITY_JOB_STATUSES, "setup-required"]),
   terminal: z.boolean(),
@@ -473,15 +524,22 @@ const codexTaskOutputSchema = z.strictObject({
   threadId: z.string().nullable(),
   projectName: z.string().nullable(),
   requestId: z.string().nullable(),
+  approvedFollowups: z.array(followupViewOutputSchema).min(1).max(24).nullable(),
   jobVersion: z.number().int().min(1).nullable(),
   activityVersion: z.number().int().min(1).nullable(),
-  executionMode: z.enum(ACTIVITY_EXECUTION_MODES).nullable(),
   backend: z.enum(["mcp-server", "app-server", "codex-sdk"]).nullable(),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]).nullable(),
+  completionDeliveryPolicy: z.enum(["live-card", "direct-wait", "relay-card", "events"]).nullable(),
+  eventSubscription: eventSubscriptionStateSchema.nullable().optional(),
   requestedModel: z.string().nullable(),
   requestedReasoningEffort: z.string().nullable(),
   actualModel: z.string().nullable(),
   actualReasoningEffort: z.string().nullable(),
+  processingSpeed: z.string().nullable().optional(),
+  requestedServiceTier: z.string().nullable().optional(),
+  actualServiceTier: z.string().nullable().optional(),
+  serviceTierScope: z.enum(["turn", "conversation"]).nullable().optional(),
+  executionConfirmation: z.strictObject({ accepted: z.boolean(), model: z.boolean(), reasoningEffort: z.boolean(), serviceTier: z.boolean() }).optional(),
   rerouted: z.boolean(),
   rerouteReason: z.string().nullable(),
   resultAvailability: z.enum(["pending", "delivered", "omitted", "unavailable"]),
@@ -489,22 +547,75 @@ const codexTaskOutputSchema = z.strictObject({
   answer: z.string().nullable(),
   error: taskStructuredErrorOutputSchema.nullable(),
   warnings: z.array(z.string()),
-  nextActions: z.array(modelNextActionOutputSchema)
+  nextActions: z.array(monitoringNextActionOutputSchema)
 });
+function refineTaskOutput(value: z.infer<typeof codexTaskOutputBase>, context: z.RefinementCtx) {
+  const issue = (path: string[], message: string) => context.addIssue({ code: "custom", path, message });
+  const hasJob = value.jobId !== null;
+  const active = value.state === "running" || value.state === "terminating" || value.state === "termination-failed";
+  const terminalFailure = value.state === "failed" || value.state === "interrupted" || value.state === "cancelled";
 
-const activityModelOutputSchema = z.strictObject({
-  kind: z.literal("activity"),
-  mode: z.enum(["compact-monitor", "full-history"]),
-  scopeVersion: z.number().int().min(0),
-  activityId: z.string().optional(),
-  activityVersion: z.number().int().min(1).optional(),
-  counts: z.strictObject({
-    activities: z.number().int().min(0),
-    agents: z.number().int().min(0),
-    active: z.number().int().min(0),
-    needsAttention: z.number().int().min(0)
-  })
-});
+  if (value.resultOmitted !== (value.resultAvailability === "omitted")) {
+    issue(["resultOmitted"], "resultOmitted must match resultAvailability=omitted.");
+  }
+  if (value.resultAvailability === "delivered" !== (value.answer !== null)) {
+    issue(["answer"], "A delivered result must carry exactly one model-authoritative answer.");
+  }
+  if (value.answer !== null && value.answer.length === 0) {
+    issue(["answer"], "A model-authoritative answer cannot be empty.");
+  }
+  if (!hasJob) {
+    if (value.state !== "failed" && value.state !== "setup-required") {
+      issue(["state"], "A task without an admitted Job must be failed or setup-required.");
+    }
+    if (!value.terminal || value.delivery !== "none" || value.resultAvailability !== "unavailable" || value.error === null) {
+      issue(["state"], "A pre-admission task result must be terminal, unavailable, and carry a structured error.");
+    }
+    for (const field of ["activityId", "agentId", "threadId", "requestId", "approvedFollowups", "jobVersion", "activityVersion", "backend", "sandbox", "completionDeliveryPolicy", "eventSubscription"] as const) {
+      if (value[field] != null) issue([field], "A pre-admission task result cannot contain Job identity or execution fields.");
+    }
+    return;
+  }
+  // An asynchronous admission can return before App Server assigns its first
+  // thread. The Job and Agent are already durable and scoped, while threadId
+  // stays null until the assignment callback records it. Do not invent a
+  // thread identity merely to satisfy the task envelope.
+  for (const field of ["activityId", "agentId", "requestId", "jobVersion", "backend", "sandbox", "completionDeliveryPolicy"] as const) {
+    if (value[field] === null) issue([field], "An admitted Job result requires its current identity and execution fields.");
+  }
+  if (value.eventSubscription != null && value.completionDeliveryPolicy !== "events") {
+    issue(["eventSubscription"], "Only an Events Job must expose its actual subscription state.");
+  }
+  if (active) {
+    if (value.terminal || value.delivery !== "status" || value.resultAvailability !== "pending" || value.answer !== null) {
+      issue(["state"], "An active Job must be non-terminal with a pending status result.");
+    }
+    return;
+  }
+  if (!value.terminal) issue(["terminal"], "A terminal Job state must set terminal=true.");
+  if (value.state === "completed") {
+    if (value.error !== null) issue(["error"], "A completed Job cannot carry an error.");
+    if (value.resultAvailability === "pending") {
+      issue(["resultAvailability"], "A completed Job must have a delivered, omitted, or unavailable result.");
+    }
+    if (value.resultAvailability === "delivered" && !["primary-content", "status"].includes(value.delivery)) {
+      issue(["delivery"], "A delivered completed result must use primary-content or status delivery.");
+    }
+    if (value.resultAvailability === "omitted" && value.delivery !== "omitted") {
+      issue(["delivery"], "An omitted completed result must use omitted delivery.");
+    }
+    if (value.resultAvailability === "unavailable" && value.delivery !== "none") {
+      issue(["delivery"], "An unavailable completed result must use no delivery.");
+    }
+    return;
+  }
+  if (terminalFailure && (value.delivery !== "none" || value.resultAvailability !== "unavailable" || value.answer !== null || value.error === null)) {
+    issue(["state"], "A failed, interrupted, or cancelled Job must expose only a terminal structured error.");
+  }
+}
+const codexTaskOutputSchema = codexTaskOutputBase.superRefine(refineTaskOutput);
+const ordinaryTaskOutputSchema = codexTaskOutputBase.omit({ eventSubscription: true })
+  .extend({ nextActions: z.array(modelNextActionOutputSchema) }).superRefine(refineTaskOutput);
 
 export const DASHBOARD_STATUSES = [
   "running",
@@ -529,7 +640,10 @@ const dashboardExecutionOutputSchema = z.strictObject({
   serviceTier: z.string().optional(),
   reroutedModel: z.string().optional(),
   reroutedModelDisplayName: z.string().optional(),
-  isCurrent: z.boolean()
+  isCurrent: z.boolean(),
+  processingSpeed: z.string().optional(),
+  serviceTierScope: z.literal("turn").optional(),
+  requestState: z.enum(["requested", "accepted"]).optional(),
 });
 
 const cancellationDisplayOutputSchema = z.strictObject({
@@ -547,7 +661,16 @@ const dashboardTokenUsageOutputSchema = z.object({
   totalTokens: z.number()
 });
 
+const executionDisplayFields = {
+  jobId:z.string().min(1).max(200).optional(),scopeId:z.string().optional(),activityId:z.string().optional(),agentId:z.string().nullable().optional(),
+  executionRevision:z.string().regex(/^[a-f0-9]{64}$/).optional(),executionName:z.string().max(200).nullable().optional(),
+  summary:z.string().max(500).nullable().optional(),error:z.string().max(1000).nullable().optional(),reasonAvailability:z.enum(["recorded","unrecorded"]).optional()
+};
 const dashboardTurnOutputSchema = z.strictObject({
+  ...executionDisplayFields,
+  executionKey: z.string().regex(/^[a-f0-9]{32}$/).optional(),
+  endedAtSource: z.enum(["recorded","legacy-estimate"]).nullable().optional(),
+  detailAvailability: z.enum(["complete","legacy-partial","expired"]).optional(),
   activityKey: z.string().regex(/^[0-9a-f]{32}$/).optional(),
   activityTitle: z.string().nullable(),
   tokenUsage: dashboardTokenUsageOutputSchema.optional(),
@@ -569,17 +692,14 @@ const dashboardCodexThreadUrlOutputSchema = z.string().regex(
 );
 
 const workHistoryPolicyOutputSchema = z.strictObject({
+  policyRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(), evaluatedAt: z.iso.datetime().optional(),
   retentionDays: z.number().int().min(0), issueAttentionDays: z.number().int().positive(),
   reviewUntilRetention: z.boolean().optional(),
   automaticRecovery: z.boolean().optional(),
   lastCleanupAt: z.string().nullable(), lastCleanupCount: z.number().int().min(0), totalRemoved: z.number().int().min(0)
 });
-const dashboardHistoryControlsSchema = z.strictObject({
-  revision: z.string().regex(/^[a-f0-9]{64}$/),
-  canAcknowledge: z.boolean()
-});
 const dashboardRowOutputSchema = z.strictObject({
-  historyControls: dashboardHistoryControlsSchema.optional(),
+  ...executionDisplayFields,
   handoff: z.object({ phase: z.string(), reason: z.string().optional(), requested: z.boolean(), canOpen: z.boolean() }).optional(),
   rowKey: z.string().regex(/^[0-9a-f]{32}$/),
   activityKey: z.string().regex(/^[0-9a-f]{32}$/),
@@ -602,21 +722,33 @@ const dashboardRowOutputSchema = z.strictObject({
   controlKind: z.literal("request").nullable().optional(),
   latestTurn: dashboardTurnOutputSchema.nullable().optional(),
   history: z.array(dashboardTurnOutputSchema).optional(),
-  historyCount: z.number().int().min(0).optional()
+  historyCount: z.number().int().min(0).optional(),
+  historyHasMore: z.boolean().optional(), policyRevision: z.string().optional(),
+  representativeExecutionKey: z.string().nullable().optional(), nextExpiryAt: z.iso.datetime().nullable().optional(),
+  /**
+   * Identifies the execution represented by this Agent row. A deferred
+   * history response must carry the same value before a client renders it.
+   */
+  historyRevision: z.string().regex(/^[a-f0-9]{64}$/).optional()
 });
 
 const dashboardProblemOutputSchema = z.strictObject({
+  ...executionDisplayFields,executionKey:z.string().nullable().optional(),executionAvailability:z.enum(["retained","unavailable","not-linked"]).optional(),
   problemKey: z.string().regex(/^[a-f0-9]{32}$/), revision: z.string().regex(/^[a-f0-9]{64}$/),
-  kind: z.enum(["failed", "unknown", "termination-failed", "orphaned"]),
+  occurredAt: z.iso.datetime().optional(), currentImpact: z.enum(["none","confirmed","unknown"]).optional(),
+  progress: z.array(z.strictObject({at:z.iso.datetime(),step:z.string(),reason:z.string().nullable(),evidence:z.string().nullable(),attempt:z.number().nullable()})).optional(),
+  kind: z.enum(["failed", "interrupted", "cancelled", "unknown", "termination-failed", "orphaned"]),
   source: z.enum(["execution", "runtime", "recovery"]), review: z.enum(["pending", "acknowledged", "automatic"]),
   acknowledgedAt: z.string().nullable(), observedAt: z.string(), reason: z.string().max(1000).nullable(),
   canAcknowledge: z.boolean(), canUnacknowledge: z.boolean(), canRecheck: z.boolean(), canRetryStop: z.boolean(),
   stopImpact: z.strictObject({ affectedJobIds: z.array(z.string()).max(100), agentNames: z.array(z.string()).max(100) }).optional(),
   automatic: z.strictObject({kind:z.enum(["recheck","retry-stop","release"]),state:z.enum(["retrying","resolved","blocked"]),
-    attempts:z.number().int().min(1),reason:z.string(),evidence:z.string().optional()}).optional(),
+    attempts:z.number().int().min(0),reason:z.string(),evidence:z.string().optional()}).optional(),
   row: dashboardRowOutputSchema
 });
 const dashboardProblemsOutputSchema = z.strictObject({
+  affectedExecutionCount:z.number().int().min(0).optional(),unavailableExecutionCount:z.number().int().min(0).optional(),systemIncidentCount:z.number().int().min(0).optional(),
+  incidentCount:z.number().int().min(0).optional(),currentImpactCount:z.number().int().min(0).optional(),
   query: problemQuerySchema, revision: z.string(), pendingCount: z.number().int().min(0),
   reviewableCount: z.number().int().min(0),
   acknowledgedCount: z.number().int().min(0),
@@ -625,32 +757,6 @@ const dashboardProblemsOutputSchema = z.strictObject({
   rows: z.array(dashboardProblemOutputSchema),
   page: z.strictObject({ offset:z.number().int().min(0),limit:z.number().int().positive(),
     total:z.number().int().min(0),returned:z.number().int().min(0),hasPrevious:z.boolean(),hasNext:z.boolean() })
-});
-
-const dashboardConversationOutputSchema = z.strictObject({
-  conversationKey: z.string().regex(/^[0-9a-f]{32}$/),
-  conversationUrl: dashboardConversationUrlOutputSchema.optional(),
-  projectNames: z.array(z.string()),
-  status: z.enum(DASHBOARD_STATUSES),
-  updatedAt: z.string(),
-  agentCount: z.number().int().min(0),
-  idleOnly: z.boolean(),
-  rows: z.array(dashboardRowOutputSchema)
-});
-
-const dashboardProjectOutputSchema = z.strictObject({
-  projectKey: z.string().regex(/^[0-9a-f]{32}$/),
-  projectName: z.string().nullable(),
-  status: z.enum(DASHBOARD_STATUSES),
-  updatedAt: z.string(),
-  agentCount: z.number().int().min(0),
-  conversationCount: z.number().int().min(0),
-  attentionCount: z.number().int().min(0),
-  activeAgentCount: z.number().int().min(0),
-  recentAgentCount: z.number().int().min(0),
-  idleAgentCount: z.number().int().min(0),
-  idleOnly: z.boolean(),
-  conversations: z.array(dashboardConversationOutputSchema)
 });
 
 const dashboardPageOutputSchema = z.strictObject({
@@ -664,22 +770,8 @@ const dashboardPageOutputSchema = z.strictObject({
   hasNext: z.boolean()
 });
 
-const dashboardConversationPageOutputSchema = z.strictObject({
-  offset: z.number().int().min(0),
-  limit: z.number().int().positive(),
-  returned: z.number().int().min(0),
-  total: z.number().int().min(0),
-  activeOrRecentTotal: z.number().int().min(0),
-  idleTotal: z.number().int().min(0),
-  returnedAgents: z.number().int().min(0),
-  totalAgents: z.number().int().min(0),
-  hasPrevious: z.boolean(),
-  hasNext: z.boolean()
-});
-
-const dashboardProjectPageOutputSchema = dashboardConversationPageOutputSchema;
-
 const dashboardCountsOutputSchema = z.strictObject({
+  progressJobCount:z.number().int().min(0).optional(),executionCount:z.number().int().min(0).optional(),
   trackedProjects: z.number().int().min(0),
   trackedConversations: z.number().int().min(0),
   retainedJobs: z.number().int().min(0),
@@ -693,6 +785,7 @@ const dashboardCountsOutputSchema = z.strictObject({
   problems: z.number().int().min(0).optional(),
   backgroundProcesses: z.number().int().min(0),
   backgroundProcessAgents: z.number().int().min(0),
+  backgroundProcessUnknownAgents: z.number().int().min(0).optional(),
   runtimeUnknownAgents: z.number().int().min(0),
   runtimeProbeSkippedAgents: z.number().int().min(0),
   completed: z.number().int().min(0),
@@ -721,6 +814,7 @@ const dashboardModelOutputSchema = z.strictObject({
   summary: z.string()
 });
 
+
 const cardEnrichmentOutputSchema = z.strictObject({
   state: z.enum(["structural", "enriched"]),
   runtimeRequests: z.number().int().min(0),
@@ -731,10 +825,14 @@ const cardEnrichmentOutputSchema = z.strictObject({
   runtimeUnavailable: z.number().int().min(0).optional(),
   pendingReads: z.number().int().min(0).optional(),
   usageUnavailable: z.boolean().optional(),
+  backgroundInventoryUnavailable: z.boolean().optional(),
   oldestObservationAt: z.iso.datetime().optional()
 });
 
 const dashboardViewOutputSchema = z.strictObject({
+  executionContractVersion:z.literal(2).optional(),historyModeApplied:z.enum(["agents","jobs"]).optional(),
+  progressRevision:z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  executionHistoryRevision:z.string().regex(/^[a-f0-9]{64}$/).optional(),
   problems: dashboardProblemsOutputSchema.optional(),
   historyPolicy: workHistoryPolicyOutputSchema.optional(),
   kind: z.literal("dashboard"),
@@ -750,24 +848,61 @@ const dashboardViewOutputSchema = z.strictObject({
   coverage: z.literal("bridge-known-retained"),
   enrichment: cardEnrichmentOutputSchema,
   codexAccount: z.record(z.string(), z.unknown()).nullable().optional(),
+  usageContext: z.string().nullable().optional(),
   weeklyUsage: codexWeeklyUsageOutputSchema.nullable().optional(),
+  usageDisplayStatus: z.enum(["checking", "switching", "available", "timed-out", "unavailable", "no-limit", "signed-out", "not-applicable"]).optional(),
   counts: dashboardCountsOutputSchema,
-  projects: z.array(dashboardProjectOutputSchema).optional(),
-  conversations: z.array(dashboardConversationOutputSchema).optional(),
   activeRows: z.array(dashboardRowOutputSchema),
   terminalRows: z.array(dashboardRowOutputSchema),
   idleRows: z.array(dashboardRowOutputSchema),
+  backgroundRows:z.array(dashboardRowOutputSchema).optional(),
+  backgroundPagination:dashboardPageOutputSchema.optional(),
+  backgroundRevision:z.string().regex(/^[a-f0-9]{64}$/).optional(),
   statusRows: z.array(dashboardRowOutputSchema).optional(),
-  statusRowsComplete: z.literal(true).optional(),
+  statusRowsComplete: z.boolean().optional(),
+  statusPagination:dashboardPageOutputSchema.optional(),
   historyIncluded: z.boolean().optional(),
   pagination: z.strictObject({
-    projects: dashboardProjectPageOutputSchema.optional(),
-    conversations: dashboardConversationPageOutputSchema.optional(),
     active: dashboardPageOutputSchema,
     terminal: dashboardPageOutputSchema,
     idle: dashboardPageOutputSchema
   }),
   uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES)
+});
+
+/**
+ * A narrow, on-demand history slice for one visible Agent row. Status cards
+ * deliberately omit every row's history from their initial projection; this
+ * keeps the summary fast without making an Agent's previous runs invisible.
+ */
+export const dashboardExecutionDetailInputSchema=z.strictObject({scopeId:z.string().uuid(),jobId:z.string().trim().min(1).max(200),
+  expectedExecutionRevision:z.string().regex(/^[a-f0-9]{64}$/).optional(),expectedPolicyRevision:z.string().regex(/^[a-f0-9]{64}$/).optional()});
+const dashboardExecutionDetailOutputSchema=z.strictObject({kind:z.literal("dashboard-execution"),scopeId:z.string(),jobId:z.string(),
+  executionRevision:z.string(),policyRevision:z.string(),nextExpiryAt:z.string().nullable(),execution:dashboardTurnOutputSchema});
+export type BridgeDashboardExecutionDetailOptions=z.infer<typeof dashboardExecutionDetailInputSchema>;
+export type DashboardExecutionDetail=z.infer<typeof dashboardExecutionDetailOutputSchema>;
+
+const dashboardHistoryDetailOutputSchema = z.strictObject({
+  kind: z.literal("dashboard-history"),
+  rowKey: z.string().regex(/^[0-9a-f]{32}$/),
+  history: z.array(dashboardTurnOutputSchema),
+  historyCount: z.number().int().min(0),
+  historyHasMore: z.boolean().optional(), policyRevision: z.string().optional(),
+  representativeExecutionKey: z.string().nullable().optional(), nextExpiryAt: z.iso.datetime().nullable().optional(),
+  nextCursor:z.string().nullable().optional(),
+  /** Matches the snapshot row that selected the representative execution. */
+  historyRevision: z.string().regex(/^[a-f0-9]{64}$/).optional()
+});
+
+const modelDescriptionHistoryPageOutputSchema = z.strictObject({
+  kind: z.literal("model-description-history"),
+  modelId: z.string(),
+  versions: z.array(z.strictObject({
+    version: z.number().int().positive(),
+    description: z.string().nullable(),
+    createdAt: z.string().nullable()
+  })),
+  nextBeforeVersion: z.number().int().positive().nullable()
 });
 
 export const DASHBOARD_VIEW_PRIVATE_MAX_BYTES = 512 * 1_024;
@@ -791,274 +926,6 @@ export function validateDashboardViewPrivateMetadata(
   return parsed;
 }
 
-const activityViewOutputSchema = z.strictObject({
-  scopeVersion: z.number().int().min(0),
-  generatedAt: z.string(),
-  enrichment: cardEnrichmentOutputSchema,
-  weeklyUsage: codexWeeklyUsageOutputSchema.nullable().optional(),
-  aggregates: opaqueJsonObjectOutputSchema,
-  agents: z.array(opaqueJsonObjectOutputSchema),
-  agentPagination: z.strictObject({
-    limit: z.number().int().positive(),
-    returned: z.number().int().min(0),
-    total: z.number().int().min(0),
-    hasMore: z.boolean()
-  }),
-  unassignedJobs: z.array(opaqueJsonObjectOutputSchema),
-  activities: z.array(opaqueJsonObjectOutputSchema),
-  activityPagination: z.strictObject({
-    limit: z.number().int().positive(),
-    returned: z.number().int().min(0),
-    total: z.number().int().min(0),
-    hasMore: z.boolean()
-  }),
-  pendingHandoffs: z.array(opaqueJsonObjectOutputSchema),
-  completionHandoff: z.enum(COMPLETION_HANDOFF_MODES),
-  activityCardVisibility: z.enum(ACTIVITY_CARD_VISIBILITIES),
-  mountedActivity: opaqueJsonObjectOutputSchema.nullable(),
-  mountedPresentation: opaqueJsonObjectOutputSchema,
-  uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES),
-  watcherPolicy: opaqueJsonObjectOutputSchema,
-  feed: opaqueJsonObjectOutputSchema,
-  presentation: opaqueJsonObjectOutputSchema.optional(),
-  wait: opaqueJsonObjectOutputSchema.optional()
-});
-
-const activityRehydrateOutputSchema = activityViewOutputSchema.superRefine((value, context) => {
-  const presentation = value.mountedPresentation;
-  const watcher = value.watcherPolicy;
-  const historical = presentation.kind === "historical" &&
-    typeof presentation.jobId === "string" &&
-    typeof presentation.requestId === "string";
-  const restored = presentation.kind === "restored-explicit" &&
-    presentation.mode === "full-history";
-  if (!historical && !restored) {
-    context.addIssue({
-      code: "custom",
-      path: ["mountedPresentation"],
-      message:
-        "Activity rehydration requires exact historical Job/request correlation or a restored full-history presentation."
-    });
-  }
-  if (
-    watcher.presentationKind !== presentation.kind ||
-    watcher.mode !== "one-shot" ||
-    watcher.live !== false ||
-    watcher.stopped !== false ||
-    watcher.ownsCompletionHandoff !== false
-  ) {
-    context.addIssue({
-      code: "custom",
-      path: ["watcherPolicy"],
-      message: "Rehydrated Activity views must be one-shot and non-owning."
-    });
-  }
-  if (value.pendingHandoffs.length !== 0) {
-    context.addIssue({
-      code: "custom",
-      path: ["pendingHandoffs"],
-      message: "Activity rehydration cannot expose completion handoffs."
-    });
-  }
-});
-
-export const ACTIVITY_BOOTSTRAP_PRIVATE_MAX_BYTES = 8 * 1_024;
-export const ACTIVITY_VIEW_PRIVATE_MAX_BYTES = 768 * 1_024;
-const privateActivityIdentitySchema = z.string().trim().min(1).max(200);
-const activityPrivatePresentationSchema = z.discriminatedUnion("kind", [
-  z.strictObject({
-    kind: z.literal("automatic"),
-    activityPresentationId: privateActivityIdentitySchema,
-    reservationOwnerId: privateActivityIdentitySchema.optional()
-  }),
-  z.strictObject({ kind: z.literal("explicit") }),
-  z.strictObject({
-    kind: z.literal("historical"),
-    jobId: privateActivityIdentitySchema,
-    requestId: privateActivityIdentitySchema
-  }),
-  z.strictObject({
-    kind: z.literal("restored-explicit"),
-    mode: z.literal("full-history"),
-    activityId: privateActivityIdentitySchema.optional(),
-    activityVersion: z.number().int().min(1).optional()
-  })
-]);
-
-export const activityBootstrapPrivateMetadataSchema = z.strictObject({
-  kind: z.literal("codex/activityBootstrap"),
-  version: z.literal(ACTIVITY_PRIVATE_METADATA_CONTRACT_VERSION),
-  purpose: z.literal("presentation-hydration-only"),
-  correlation: z.strictObject({
-    requestId: privateActivityIdentitySchema,
-    activityPresentationId: privateActivityIdentitySchema,
-    jobId: privateActivityIdentitySchema
-  }),
-  activity: z.strictObject({
-    activityId: privateActivityIdentitySchema,
-    cardGeneration: z.number().int().min(1)
-  }),
-  presentation: z.strictObject({
-    kind: z.literal("automatic"),
-    reservationOwnerId: privateActivityIdentitySchema.optional()
-  }),
-  render: z.strictObject({
-    eligible: z.boolean(),
-    reason: z.enum(ACTIVITY_CARD_RENDER_REASONS),
-    timing: z.enum(["immediate", "after-result-or-existing-mounted-card"])
-  })
-}).superRefine((value, context) => {
-  if (
-    value.presentation.reservationOwnerId !== undefined &&
-    value.presentation.reservationOwnerId !== value.correlation.jobId
-  ) {
-    context.addIssue({
-      code: "custom",
-      path: ["presentation", "reservationOwnerId"],
-      message: "Activity bootstrap reservation owner must match its correlated Job."
-    });
-  }
-});
-
-export const activityViewPrivateMetadataSchema = z.strictObject({
-  kind: z.literal("codex/activityView"),
-  version: z.literal(ACTIVITY_PRIVATE_METADATA_CONTRACT_VERSION),
-  purpose: z.literal("presentation-hydration-only"),
-  source: z.enum(["codex_activity", "codex_activity_snapshot", "codex_activity_rehydrate"]),
-  correlation: z.strictObject({
-    scopeVersion: z.number().int().min(0),
-    activity: z.strictObject({
-      activityId: privateActivityIdentitySchema,
-      cardGeneration: z.number().int().min(1)
-    }).nullable(),
-    presentation: activityPrivatePresentationSchema
-  }),
-  view: activityViewOutputSchema
-}).superRefine((value, context) => {
-  const rehydratedPresentation =
-    value.correlation.presentation.kind === "historical" ||
-    value.correlation.presentation.kind === "restored-explicit";
-  const emptyHistoryPresentation = value.source === "codex_activity" &&
-    value.correlation.activity === null &&
-    value.correlation.presentation.kind === "restored-explicit" &&
-    value.view.feed.mode === "full" && value.view.feed.activityTotal === 0;
-  if ((value.source === "codex_activity_rehydrate" || emptyHistoryPresentation) !== rehydratedPresentation) {
-    context.addIssue({
-      code: "custom",
-      path: ["source"],
-      message: "Rehydrated Activity presentations are exclusive to the rehydrate source, except empty full-history openings."
-    });
-  }
-  if (
-    rehydratedPresentation &&
-    !activityRehydrateOutputSchema.safeParse(value.view).success
-  ) {
-    context.addIssue({
-      code: "custom",
-      path: ["view"],
-      message: "Rehydrated Activity view must remain one-shot, read-only, and non-owning."
-    });
-  }
-  if (value.correlation.scopeVersion !== value.view.scopeVersion) {
-    context.addIssue({
-      code: "custom",
-      path: ["correlation", "scopeVersion"],
-      message: "Activity view scope versions must match."
-    });
-  }
-  const mountedActivity = isRecord(value.view.mountedActivity)
-    ? value.view.mountedActivity
-    : null;
-  if (
-    (value.correlation.activity === null) !== (mountedActivity === null) ||
-    (
-      value.correlation.activity !== null &&
-      mountedActivity !== null &&
-      (
-        mountedActivity.activityId !== value.correlation.activity.activityId ||
-        mountedActivity.cardGeneration !== value.correlation.activity.cardGeneration
-      )
-    )
-  ) {
-    context.addIssue({
-      code: "custom",
-      path: ["correlation", "activity"],
-      message: "Activity view mounted Activity identity must match its correlation envelope."
-    });
-  }
-  const mountedPresentation = value.view.mountedPresentation;
-  if (
-    !isRecord(mountedPresentation) ||
-    mountedPresentation.kind !== value.correlation.presentation.kind ||
-    (
-      value.correlation.presentation.kind === "automatic" &&
-      (
-        mountedPresentation.activityPresentationId !==
-          value.correlation.presentation.activityPresentationId ||
-        mountedPresentation.reservationOwnerId !==
-          value.correlation.presentation.reservationOwnerId
-      )
-    ) ||
-    (
-      value.correlation.presentation.kind === "historical" &&
-      (
-        mountedPresentation.jobId !== value.correlation.presentation.jobId ||
-        mountedPresentation.requestId !== value.correlation.presentation.requestId
-      )
-    ) ||
-    (
-      value.correlation.presentation.kind === "restored-explicit" &&
-      (
-        mountedPresentation.mode !== value.correlation.presentation.mode ||
-        mountedPresentation.activityId !== value.correlation.presentation.activityId ||
-        mountedPresentation.activityVersion !== value.correlation.presentation.activityVersion
-      )
-    )
-  ) {
-    context.addIssue({
-      code: "custom",
-      path: ["correlation", "presentation"],
-      message: "Activity view mounted presentation must match its correlation envelope."
-    });
-  }
-});
-
-export function validateActivityBootstrapPrivateMetadata(
-  value: unknown
-): z.infer<typeof activityBootstrapPrivateMetadataSchema> {
-  return validateBoundedPrivateActivityMetadata(
-    activityBootstrapPrivateMetadataSchema,
-    value,
-    ACTIVITY_BOOTSTRAP_PRIVATE_MAX_BYTES,
-    ACTIVITY_BOOTSTRAP_METADATA_KEY
-  );
-}
-
-export function validateActivityViewPrivateMetadata(
-  value: unknown
-): z.infer<typeof activityViewPrivateMetadataSchema> {
-  return validateBoundedPrivateActivityMetadata(
-    activityViewPrivateMetadataSchema,
-    value,
-    ACTIVITY_VIEW_PRIVATE_MAX_BYTES,
-    ACTIVITY_VIEW_METADATA_KEY
-  );
-}
-
-function validateBoundedPrivateActivityMetadata<Schema extends z.ZodType>(
-  schema: Schema,
-  value: unknown,
-  maxBytes: number,
-  contractName: string
-): z.output<Schema> {
-  const parsed = schema.parse(value);
-  const bytes = Buffer.byteLength(JSON.stringify(parsed), "utf8");
-  if (bytes > maxBytes) {
-    throw new Error(`${contractName} is ${bytes} bytes, above its ${maxBytes}-byte contract.`);
-  }
-  return parsed;
-}
-
 const bridgeUserSettingsOutputSchema = z.strictObject({
   schemaVersion: z.literal(MODEL_POLICY_SCHEMA_VERSION),
   settingsRevision: z.number().int().min(0),
@@ -1069,6 +936,8 @@ const bridgeUserSettingsOutputSchema = z.strictObject({
   modelPolicy: modelPolicyZod(),
   modelDescriptionOverrides: z.record(z.string(), z.string()),
   usePriorityServiceTier: z.boolean(),
+  processingSpeed: z.string(),
+  retainedServiceTiers: z.array(z.strictObject({ path: z.string(), selection: opaqueJsonObjectOutputSchema })),
   historyRetentionDays: z.union([z.literal(7), z.literal(30), z.literal(90), z.literal(0)]),
   projects: z.array(z.strictObject({
     id: z.string(),
@@ -1080,13 +949,17 @@ const bridgeUserSettingsOutputSchema = z.strictObject({
     sortOrder: z.number().int(),
     createdAt: z.number(),
     updatedAt: z.number(),
-    archivedAt: z.number().optional()
+    archivedAt: z.number().optional(),
+    archiveState: z.enum(["active","processing","unresolved","complete"]).optional(),
+    archiveRevision: z.number().int().optional(),
+    archiveRequestedAt: z.number().optional(),
+    archiveReasons: z.array(z.string()).optional()
   })),
   uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES),
   maxConcurrentJobs: z.number().int().positive(),
   showBridgeThreadsInCodexApp: z.boolean(),
-  activityCardVisibility: z.enum(ACTIVITY_CARD_VISIBILITIES),
-  completionHandoff: z.enum(COMPLETION_HANDOFF_MODES)
+  bridgeThreadPersistence: z.enum(["persistent", "ephemeral"]),
+  experimentalDirectResultDelivery: z.boolean()
 });
 
 const catalogModelOutputSchema = z.strictObject({
@@ -1122,19 +995,21 @@ const catalogModelOutputSchema = z.strictObject({
 
 const settingsViewOutputSchema = z.strictObject({
   historyPolicy: workHistoryPolicyOutputSchema.optional(),
+  modelDescriptionHistoryModelIds: z.array(z.string()).optional(),
   settings: bridgeUserSettingsOutputSchema,
   operatorDefaults: bridgeUserSettingsOutputSchema,
   capabilities: z.strictObject({
+    availableProcessingSpeeds: z.array(z.enum(PROCESSING_SPEED_MODES)).optional(),
+    processingSpeedSupport: z.strictObject({ protocol: z.enum(["supported", "unverified"]), account: z.literal("unverified"), workspace: z.literal("unverified") }).optional(),
     availableAccessStrategies: z.array(z.enum(["read-only", "adaptive", "always-full"])),
     availableUiLocalePreferences: z.array(z.enum(UI_LOCALE_PREFERENCES)),
-    availableActivityCardVisibilities: z.array(z.enum(ACTIVITY_CARD_VISIBILITIES)),
-    availableCompletionHandoffs: z.array(z.enum(COMPLETION_HANDOFF_MODES)),
     projectAvailability: z.array(z.strictObject({
       projectId: z.string(),
       name: z.string(),
       available: z.boolean(),
       archived: z.boolean()
     })),
+    recoverableProjects: bridgeUserSettingsOutputSchema.shape.projects.optional(),
     maxConcurrentJobs: z.number().int().positive(),
     defaultBackend: z.literal("app-server"),
     allowWorkspaceWrite: z.boolean(),
@@ -1157,6 +1032,20 @@ const settingsViewOutputSchema = z.strictObject({
   }),
   warnings: z.array(z.string()),
   scopeNotice: z.string(),
+  presentation: z.strictObject({
+    warnings: z.array(z.strictObject({
+      key: z.string(),
+      parameters: z.record(z.string(), z.union([z.string(), z.number()]))
+    })),
+    catalogWarning: z.strictObject({
+      key: z.string(),
+      parameters: z.record(z.string(), z.union([z.string(), z.number()]))
+    }).nullable(),
+    scopeNotice: z.strictObject({
+      key: z.string(),
+      parameters: z.record(z.string(), z.union([z.string(), z.number()]))
+    })
+  }).optional(),
   policyActivation: z.strictObject({
     policyRevision: z.number().int().min(0),
     executionPolicyActive: z.boolean(),
@@ -1175,6 +1064,7 @@ const jobWaitOutputSchema = z.strictObject({
 });
 
 const jobSemanticOutputSchema = z.strictObject({
+  approvedFollowups: approvedFollowupsOutputSchema,
   runtime: opaqueJsonObjectOutputSchema.optional(),
   status: z.enum(ACTIVITY_JOB_STATUSES),
   terminal: z.boolean(),
@@ -1185,7 +1075,6 @@ const jobSemanticOutputSchema = z.strictObject({
   activityId: z.string(),
   agentId: z.string().nullable(),
   contextMode: z.enum(AGENT_CONTEXT_MODES).nullable(),
-  executionMode: z.enum(ACTIVITY_EXECUTION_MODES),
   backendKind: z.enum(["mcp-server", "app-server", "codex-sdk"]),
   threadId: z.string().nullable(),
   turnId: z.string().nullable(),
@@ -1196,17 +1085,19 @@ const jobSemanticOutputSchema = z.strictObject({
   operation: z.enum(["start", "continue"]),
   projectName: z.string().nullable(),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]),
+  completionDeliveryPolicy: z.enum(["live-card", "direct-wait", "relay-card", "events"]),
+  eventSubscription: eventSubscriptionStateSchema.optional(),
   executionAudit: compactExecutionAuditOutputSchema.nullable(),
   scopeId: z.string(),
   requestId: z.string(),
-  activityPresentationId: z.string().nullable(),
   bridgeSession: bridgeSessionOutputSchema,
-  bridgeActivity: activityCardTrackingOutputSchema.extend({
+  bridgeActivity: z.strictObject({
+    activityId: z.string(),
     jobId: z.string(),
     agentId: z.string().nullable(),
     projectName: z.string().nullable(),
-    executionMode: z.enum(ACTIVITY_EXECUTION_MODES)
-  }).strict(),
+    dashboard: dashboardPresentationOutputSchema
+  }),
   createdAt: z.string(),
   updatedAt: z.string(),
   cancelRequestedAt: z.string().nullable(),
@@ -1215,6 +1106,7 @@ const jobSemanticOutputSchema = z.strictObject({
   health: z.enum([
     "running",
     "no-progress-observed",
+    "liveness-unknown",
     "terminating",
     "termination-failed",
     "terminal",
@@ -1256,6 +1148,7 @@ const statusCountsOutputSchema = z.strictObject({
 });
 
 const statusItemOutputSchema = z.strictObject({
+  approvedFollowups: approvedFollowupsOutputSchema,
   inputs: z.strictObject({ cursor: z.string(), ordinaryQuestions: z.number().int().min(0), approvalRequests: z.number().int().min(0), readTool: z.literal("codex_status"), queryKind: z.literal("input") }).optional(),
   runtime: z.string().optional(),
   type: z.enum(["session", "job", "activity", "agent", "thread"]),
@@ -1268,13 +1161,30 @@ const statusItemOutputSchema = z.strictObject({
   threadId: z.string().optional(),
   terminal: z.boolean().optional(),
   delivery: z.enum(["status", "primary-content", "omitted", "none"]).optional(),
+  completionDeliveryPolicy: z.enum(["live-card", "direct-wait", "relay-card", "events"]).optional(),
+  eventSubscription: eventSubscriptionStateSchema.optional(),
+  completionEvidence: z.strictObject({
+    jobRecord: z.enum(["active-last-known", "terminal-committed"]),
+    ownerObservation: z.enum(["connected", "liveness-unknown", "worker-lost", "orphaned"]).nullable(),
+    ownerTerminalResult: z.strictObject({
+      origin: z.enum(JOB_TERMINAL_ORIGINS),
+      // Date.now() is emitted as a fixed-width UTC ISO string. Keep the
+      // model-visible schema small while validating that wire shape.
+      observedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
+    }).nullable(),
+    terminalOrigin: z.enum(JOB_TERMINAL_ORIGINS).nullable(),
+    deliveryRecord: z.enum([
+      "pending", "leased", "host-rejected", "host-accepted", "acceptance-unknown", "result-read"
+    ]).nullable(),
+    resultOffer: z.enum(["none", "direct-query", "completion-receipt", "both"]),
+    activityLifecycle: z.enum(ACTIVITY_LIFECYCLES).nullable()
+  }).optional(),
   replay: z.boolean().optional(),
   versions: z.strictObject({
     job: z.number().int().min(1),
     activity: z.number().int().min(1).nullable()
   }).optional(),
   execution: z.strictObject({
-    mode: z.enum(ACTIVITY_EXECUTION_MODES),
     backend: z.enum(["mcp-server", "app-server", "codex-sdk"]),
     sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"])
   }).optional(),
@@ -1282,7 +1192,7 @@ const statusItemOutputSchema = z.strictObject({
   answer: z.string().optional(),
   error: structuredErrorOutputSchema.optional(),
   wait: jobWaitOutputSchema.optional(),
-  nextActions: z.array(modelNextActionOutputSchema).optional(),
+  nextActions: z.array(monitoringNextActionOutputSchema).optional(),
   message: z.string().optional()
 });
 
@@ -1307,11 +1217,17 @@ const codexStatusOutputSchema = z.strictObject({
   warnings: z.array(z.string())
 });
 
+const ordinaryStatusOutputSchema = codexStatusOutputSchema.extend({
+  items: z.array(statusItemOutputSchema.omit({ eventSubscription: true }).extend({
+    nextActions: z.array(modelNextActionOutputSchema).optional()
+  }))
+});
+
 const projectStatusOutputSchema = z.strictObject({
   kind: z.literal("project"),
   project: currentProjectSelectionZod().nullable(),
   error: structuredErrorOutputSchema.optional(),
-  nextActions: z.array(z.string())
+  nextActions: z.array(modelNextActionOutputSchema)
 });
 
 const mutationOutputSchema = z.strictObject({
@@ -1411,24 +1327,6 @@ const codexSteerOutputSchema = z.strictObject({
   nextActions: z.array(modelNextActionOutputSchema)
 });
 
-const handoffOutputSchema = z.strictObject({
-  kind: z.literal("handoff"),
-  action: z.enum(["claim-batch", "delivered-batch", "release-batch"]),
-  claimed: z.boolean().optional(),
-  delivered: z.boolean().optional(),
-  released: z.boolean().optional(),
-  handoffBatchId: z.string().nullable().optional(),
-  origin: z.literal("activity-handoff").optional(),
-  handoffDepth: z.number().int().min(0).optional(),
-  events: z.array(opaqueJsonObjectOutputSchema).optional(),
-  outboxIds: z.array(z.number().int().positive()).optional(),
-  stopped: z.boolean().optional(),
-  stopReason: z.enum([
-    "explicit-presentation-does-not-own-handoff",
-    "presentation-superseded"
-  ]).optional()
-});
-
 const compactCatalogEffortOutputSchema = z.strictObject({
   id: z.string(),
   description: z.string().optional()
@@ -1450,21 +1348,149 @@ const compactCatalogModelOutputSchema = z.strictObject({
   serviceTiers: z.array(compactCatalogServiceTierOutputSchema)
 });
 
-const legacyCodexModelsOutputSchema = z.strictObject({
+const codexModelsOutputSchema = z.strictObject({
+  contractVersion: z.literal("2"),
+  selectionMode: z.enum(["fixed", "automatic"]),
+  processingSpeed: z.strictObject({ selected: z.string(), scope: z.enum(["turn", "conversation"]).nullable(), protocol: z.enum(["supported", "unverified"]), account: z.literal("unverified"), workspace: z.literal("unverified") }).optional(),
   source: z.string(),
   stale: z.boolean(),
   warning: z.string().nullable(),
   models: z.array(compactCatalogModelOutputSchema)
 });
 
-// Opt-in v2 keeps the exact old result shape for cached callers that omit it.
-const codexModelsOutputSchema = objectSchemaUnion([
-  legacyCodexModelsOutputSchema,
-  legacyCodexModelsOutputSchema.extend({
-    contractVersion: z.literal("2"),
-    selectionMode: z.enum(["fixed", "automatic"])
-  })
+const skillReferenceOutputSchema = z.strictObject({
+  skillId: z.string().min(1),
+  source: z.literal(BRIDGE_SKILL_SOURCE),
+  version: z.string().min(1)
+});
+
+const skillSummaryOutputSchema = skillReferenceOutputSchema.extend({
+  name: z.string().min(1),
+  description: z.string(),
+  contentDigest: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  enabled: z.boolean(),
+  availability: z.enum(["available", "disabled"])
+});
+
+const bridgeSkillSearchOutputSchema = z.strictObject({
+  kind: z.literal("skill-search"),
+  skills: z.array(skillSummaryOutputSchema)
+});
+
+const bridgeSkillValueOutputSchema = skillSummaryOutputSchema.extend({
+  content: z.string().min(1),
+  files: z.array(z.strictObject({
+    path: z.string().min(1),
+    format: z.literal("markdown"),
+    bytes: z.number().int().nonnegative(),
+    contentDigest: z.string().regex(/^[a-f0-9]{64}$/)
+  })),
+  format: z.literal("markdown"),
+  legacy: z.boolean(),
+  sourceSnapshot: z.literal("versioned-bridge-record"),
+  warnings: z.array(z.enum(["archived", "legacy-structured"]))
+});
+
+const bridgeSkillReadOutputSchema = z.strictObject({
+  kind: z.literal("skill"),
+  skill: bridgeSkillValueOutputSchema
+});
+
+const bridgeSkillFileOutputSchema = z.strictObject({
+  kind: z.literal("skill-file"),
+  skill: skillSummaryOutputSchema,
+  path: z.string().min(1),
+  content: z.string(),
+  format: z.literal("markdown"),
+  bytes: z.number().int().nonnegative(),
+  contentDigest: z.string().regex(/^[a-f0-9]{64}$/)
+});
+
+const bridgeSkillVersionsOutputSchema = z.strictObject({
+  kind: z.literal("skill-versions"),
+  skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/),
+  source: z.literal(BRIDGE_SKILL_SOURCE),
+  currentVersion: z.string().regex(/^[1-9]\d*$/),
+  enabled: z.boolean(),
+  versions: z.array(skillSummaryOutputSchema.extend({
+    contentDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    createdAt: z.string().min(1),
+    format: z.literal("markdown"),
+    legacy: z.boolean()
+  }))
+});
+
+const bridgeSkillOutputSchema = z.union([
+  bridgeSkillSearchOutputSchema,
+  bridgeSkillReadOutputSchema,
+  bridgeSkillFileOutputSchema,
+  bridgeSkillVersionsOutputSchema
 ]);
+
+const bridgeSkillManageOutputSchema = z.strictObject({
+  kind: z.literal("skill-mutation"),
+  action: z.enum(["create", "update", "create-package", "update-package", "restore", "set-enabled"]),
+  requestId: z.string().uuid(),
+  skill: skillSummaryOutputSchema,
+  message: z.string().min(1)
+});
+
+const durationDiagnosticsOutputSchema = z.strictObject({
+  count: z.number().int().min(0),
+  p50Ms: z.number().min(0),
+  p95Ms: z.number().min(0),
+  maxMs: z.number().min(0)
+});
+
+const jobWaitDiagnosticsOutputSchema = z.strictObject({
+  defaultWaitMs: z.number().int().positive(),
+  exactStatusWaits: z.number().int().min(0),
+  started: z.strictObject({
+    total: z.number().int().min(0),
+    change: z.number().int().min(0),
+    terminal: z.number().int().min(0)
+  }),
+  sources: z.strictObject({
+    modelStatus: z.number().int().min(0),
+    dashboardCompletion: z.number().int().min(0),
+    internal: z.number().int().min(0)
+  }),
+  completed: z.number().int().min(0),
+  timedOut: z.number().int().min(0),
+  waitedMs: durationDiagnosticsOutputSchema,
+  wakes: z.strictObject({
+    total: z.number().int().min(0),
+    progress: z.number().int().min(0),
+    terminal: z.number().int().min(0),
+    stateChange: z.number().int().min(0)
+  }),
+  hostAborts: z.strictObject({
+    total: z.number().int().min(0),
+    modelStatus: z.number().int().min(0),
+    dashboardCompletion: z.number().int().min(0),
+    internal: z.number().int().min(0),
+    recordedStatusWaitAborts: z.number().int().min(0)
+  }),
+  active: z.strictObject({
+    total: z.number().int().min(0),
+    modelStatus: z.number().int().min(0),
+    dashboardCompletion: z.number().int().min(0),
+    internal: z.number().int().min(0),
+    jobs: z.array(z.strictObject({
+      jobId: z.string(),
+      total: z.number().int().min(0),
+      change: z.number().int().min(0),
+      terminal: z.number().int().min(0),
+      modelStatus: z.number().int().min(0),
+      dashboardCompletion: z.number().int().min(0),
+      internal: z.number().int().min(0)
+    }))
+  }),
+  maintenance: z.strictObject({
+    pruneAndPersist: durationDiagnosticsOutputSchema,
+    telemetryTransaction: durationDiagnosticsOutputSchema
+  })
+});
 
 const diagnosticsOutputSchema = z.strictObject({
   kind: z.literal("diagnostics"),
@@ -1528,11 +1554,18 @@ const diagnosticsOutputSchema = z.strictObject({
       timeouts: z.number().int().min(0),
       cacheHits: z.number().int().min(0)
     })),
+    jobWaits: jobWaitDiagnosticsOutputSchema,
+    stateMaintenance: z.array(z.strictObject({
+      slice: z.enum(STATE_MAINTENANCE_SLICES),
+      startedAt: z.number().int().min(0),
+      durationMs: z.number().min(0),
+      changed: z.number().int().min(0),
+      failed: z.boolean(),
+      deferred: z.boolean()
+    })),
     html: z.strictObject({
       dashboardBytes: z.number().int().min(0),
       dashboardBudgetBytes: z.number().int().positive(),
-      activityBytes: z.number().int().min(0),
-      activityBudgetBytes: z.number().int().positive(),
       settingsBytes: z.number().int().min(0),
       settingsBudgetBytes: z.number().int().positive()
     })
@@ -1544,34 +1577,13 @@ const diagnosticsOutputSchema = z.strictObject({
   })
 });
 
-// Keep runtime validation stronger than the discovery encoding while avoiding
-// redundant JSON Schema bytes. JavaScript-safe integer ceilings add no model
-// guidance, and runtime Zod validation retains every numeric bound. Preserve
-// explicit primitive types on every literal: ChatGPT can omit an otherwise
-// valid tool from its callable inventory when an output const/enum leaf has no
-// type. Repeated status rows use local draft-07 definitions; every object
-// remains closed.
-for (const [schema, reuse] of [
-  [activityModelOutputSchema, false],
-  [activityCancelMutationOutputSchema, false],
-  [activityUpdateMutationOutputSchema, false],
-  [agentMutationOutputSchema, false],
-  [cancelMutationOutputSchema, false],
-  [codexModelsOutputSchema, false],
-  [dashboardModelOutputSchema, false],
-  [codexStatusOutputSchema, false],
-  [codexSteerOutputSchema, false],
-  [codexTaskOutputSchema, false]
-] as const) {
-  installCompactPublishedOutputSchema(schema, reuse);
-}
-
 function toolOutputContract<Schema extends z.ZodType>(
   toolName: string,
   channel: AuthoritativeProjectionChannel,
   outputSchema: Schema,
   maxBytes: number,
-  completeness: "summary-only" | "documented-support-level" | "primary-payload" = "summary-only"
+  completeness: "summary-only" | "documented-support-level" | "primary-payload" = "summary-only",
+  format: "plain-text" | "compact-json" = "plain-text"
 ): ToolResultContract<Schema> {
   const structuredMaxBytes = structuredByteCapFor(toolName);
   return defineToolResultContract({
@@ -1582,7 +1594,7 @@ function toolOutputContract<Schema extends z.ZodType>(
     privateMeta: { maxBytes: TOOL_STRUCTURED_BYTE_CAPS.app_only_hydration },
     compatibility: {
       channel: "text-protocol-compatibility",
-      format: "plain-text",
+      format,
       maxBytes,
       completeness
     }
@@ -1595,16 +1607,11 @@ function structuredByteCapFor(toolName: string): number {
       toolName as keyof typeof TOOL_STRUCTURED_BYTE_CAPS
     ];
   }
+  if (toolName === "mutation" || toolName === "app-only-mutation") {
+    return TOOL_STRUCTURED_BYTE_CAPS.app_only_mutation;
+  }
   if (
-    toolName === "mutation" ||
-    toolName === "app-only-mutation" ||
-    toolName === "codex_activity_handoff"
-  ) return TOOL_STRUCTURED_BYTE_CAPS.app_only_mutation;
-  if (
-    toolName === "codex_activity_snapshot" ||
-    toolName === "codex_activity_rehydrate" ||
-    toolName === "codex_dashboard_snapshot" ||
-    toolName === "codex_settings_snapshot" ||
+    toolName === "codex_ui_read" ||
     toolName === "codex_update_settings"
   ) {
     return TOOL_STRUCTURED_BYTE_CAPS.app_only_hydration;
@@ -1630,7 +1637,7 @@ const dashboardModelResultContract = toolOutputContract(
   TOOL_CONTENT_BYTE_CAPS.codex_dashboard
 );
 const dashboardAppResultContract = toolOutputContract(
-  "codex_dashboard_snapshot",
+  "codex_ui_read",
   "app-hydration",
   dashboardViewOutputSchema,
   TOOL_CONTENT_BYTE_CAPS.app_only_hydration
@@ -1641,8 +1648,23 @@ const modelsResultContract = toolOutputContract(
   codexModelsOutputSchema,
   TOOL_CONTENT_BYTE_CAPS.codex_models
 );
+const skillResultContract = toolOutputContract(
+  "bridge_skill",
+  "model-orchestrator-semantic",
+  bridgeSkillOutputSchema,
+  TOOL_CONTENT_BYTE_CAPS.bridge_skill,
+  "primary-payload",
+  "compact-json"
+);
+const skillManageResultContract = toolOutputContract(
+  "bridge_skill_manage",
+  "model-orchestrator-semantic",
+  bridgeSkillManageOutputSchema,
+  TOOL_CONTENT_BYTE_CAPS.bridge_skill_manage,
+  "documented-support-level"
+);
 const settingsSnapshotResultContract = toolOutputContract(
-  "codex_settings_snapshot",
+  "codex_ui_read",
   "app-hydration",
   settingsViewOutputSchema,
   TOOL_CONTENT_BYTE_CAPS.app_only_hydration
@@ -1651,24 +1673,6 @@ const settingsEditorResultContract = toolOutputContract(
   "codex_update_settings",
   "app-hydration",
   settingsViewOutputSchema,
-  TOOL_CONTENT_BYTE_CAPS.app_only_hydration
-);
-const activityModelResultContract = toolOutputContract(
-  "codex_activity",
-  "model-orchestrator-semantic",
-  activityModelOutputSchema,
-  TOOL_CONTENT_BYTE_CAPS.codex_activity
-);
-const activityAppResultContract = toolOutputContract(
-  "codex_activity_snapshot",
-  "app-hydration",
-  activityViewOutputSchema,
-  TOOL_CONTENT_BYTE_CAPS.app_only_hydration
-);
-const activityRehydrateResultContract = toolOutputContract(
-  "codex_activity_rehydrate",
-  "app-hydration",
-  activityRehydrateOutputSchema,
   TOOL_CONTENT_BYTE_CAPS.app_only_hydration
 );
 const modelMutationResultContracts = Object.freeze({
@@ -1714,12 +1718,6 @@ const appMutationResultContract = toolOutputContract(
   mutationOutputSchema,
   TOOL_CONTENT_BYTE_CAPS.app_only_mutation
 );
-const handoffResultContract = toolOutputContract(
-  "codex_activity_handoff",
-  "app-hydration",
-  handoffOutputSchema,
-  TOOL_CONTENT_BYTE_CAPS.app_only_mutation
-);
 const taskStateResultContract = toolOutputContract(
   "codex_task",
   "model-orchestrator-semantic",
@@ -1741,50 +1739,42 @@ const diagnosticsResultContract = toolOutputContract(
   TOOL_CONTENT_BYTE_CAPS.codex_diagnostics
 );
 
-const { codex_input: legacyInputOutputSchema, ...currentQuestionOutputSchemas } = QUESTION_MODEL_OUTPUT_SCHEMAS;
-export const LEGACY_MODEL_OUTPUT_SCHEMAS = Object.freeze({
-  codex_input: legacyInputOutputSchema, codex_activity: activityModelOutputSchema,
-  codex_activity_cancel: activityCancelMutationOutputSchema
-});
+// These are JSON descriptor byte limits, measured after Zod emits JSON Schema
+// 2020-12. They are intentionally separate from result payload byte caps.
+export const MODEL_VISIBLE_OUTPUT_SCHEMA_BYTE_BUDGET = 64_000;
+export const MODEL_VISIBLE_OUTPUT_SCHEMA_PER_TOOL_BYTE_BUDGET = 18_000;
+
 export const MODEL_VISIBLE_OUTPUT_SCHEMAS = Object.freeze({
-  ...currentQuestionOutputSchemas,
+  codex_answer: CODEX_INPUT_MODEL_OUTPUT_SCHEMAS.codex_answer,
+  codex_relay_control: relayControlOutputSchema,
   codex_activity_update: activityUpdateMutationOutputSchema,
   codex_agent: agentMutationOutputSchema,
-  codex_cancel: objectSchemaUnion([cancelMutationOutputSchema, activityCancelMutationOutputSchema]),
+  codex_cancel: z.union([cancelMutationOutputSchema, activityCancelMutationOutputSchema]),
   codex_dashboard: dashboardModelOutputSchema,
+  codex_event_access: eventAccessOutputSchema,
   codex_models: codexModelsOutputSchema,
+  bridge_skill: bridgeSkillOutputSchema,
+  bridge_skill_manage: bridgeSkillManageOutputSchema,
   codex_settings: z.strictObject({ kind: z.literal("settings"), opened: z.literal(true) }),
-  codex_status: objectSchemaUnion([codexStatusOutputSchema, legacyInputOutputSchema, projectStatusOutputSchema]),
+  codex_status: z.union([codexStatusOutputSchema, CODEX_INPUT_MODEL_OUTPUT_SCHEMAS.status_input, projectStatusOutputSchema, followupPageOutputSchema]),
   codex_steer: codexSteerOutputSchema,
   codex_task: codexTaskOutputSchema
 });
 const uiControlSummaryOutputSchema = z.strictObject({ kind: z.literal("control"), ready: z.literal(true) });
-export const LEGACY_APP_OUTPUT_SCHEMAS = Object.freeze({
-  ...QUESTION_APP_OUTPUT_SCHEMAS,
-  codex_activity_handoff: handoffOutputSchema,
-  codex_activity_job_cancel: mutationOutputSchema,
-  codex_activity_rehydrate: activityRehydrateOutputSchema,
-  codex_activity_snapshot: activityViewOutputSchema,
-  codex_background_process_terminate: mutationOutputSchema,
-  codex_dashboard_snapshot: dashboardViewOutputSchema,
-  codex_job_steer: mutationOutputSchema,
-  codex_settings_snapshot: settingsViewOutputSchema
-});
+export const APP_PRIVATE_OUTPUT_SCHEMAS = Object.freeze({});
 export const OPERATOR_OUTPUT_SCHEMAS = Object.freeze({
   codex_agent_recovery_detach: mutationOutputSchema, codex_diagnostics: diagnosticsOutputSchema
 });
 export const APP_ONLY_OUTPUT_SCHEMAS = Object.freeze({
-  codex_ui_read: objectSchemaUnion([dashboardViewOutputSchema, settingsViewOutputSchema, QUESTION_APP_OUTPUT_SCHEMAS.codex_question_card, uiControlSummaryOutputSchema]),
-  codex_question_action: objectSchemaUnion([QUESTION_APP_OUTPUT_SCHEMAS.codex_question_card, QUESTION_APP_OUTPUT_SCHEMAS.codex_question_notify]),
-  codex_ui_stop: mutationOutputSchema,
-  codex_ui_history: z.strictObject({ok:z.literal(true)}),
+  codex_relay: relayMutationOutputSchema, codex_relay_wait: relayWaitOutputSchema,
+  codex_ui_read: z.union([dashboardViewOutputSchema, dashboardExecutionDetailOutputSchema, dashboardHistoryDetailOutputSchema, settingsViewOutputSchema, modelDescriptionHistoryPageOutputSchema, uiControlSummaryOutputSchema]),
   codex_ui_problem: problemActionResultSchema,
   codex_interaction_respond: mutationOutputSchema,
   codex_update_settings: settingsViewOutputSchema
 });
 
-export type ModelVisibleOutputToolName = keyof typeof MODEL_VISIBLE_OUTPUT_SCHEMAS | keyof typeof LEGACY_MODEL_OUTPUT_SCHEMAS;
-export type AppOnlyOutputToolName = keyof typeof APP_ONLY_OUTPUT_SCHEMAS | keyof typeof LEGACY_APP_OUTPUT_SCHEMAS | keyof typeof OPERATOR_OUTPUT_SCHEMAS;
+export type ModelVisibleOutputToolName = keyof typeof MODEL_VISIBLE_OUTPUT_SCHEMAS;
+export type AppOnlyOutputToolName = keyof typeof APP_ONLY_OUTPUT_SCHEMAS | keyof typeof APP_PRIVATE_OUTPUT_SCHEMAS | keyof typeof OPERATOR_OUTPUT_SCHEMAS;
 
 export function validateModelVisibleStructuredOutput(
   toolName: ModelVisibleOutputToolName,
@@ -1792,12 +1782,13 @@ export function validateModelVisibleStructuredOutput(
 ): unknown {
   if (toolName === "codex_task") return validateTaskOutput(value);
   if (toolName === "codex_status") {
-    if ((value as { kind?: unknown })?.kind === "codex-input") return QUESTION_MODEL_OUTPUT_SCHEMAS.codex_input.parse(value);
+    if ((value as { kind?: unknown })?.kind === "codex-input") return CODEX_INPUT_MODEL_OUTPUT_SCHEMAS.status_input.parse(value);
     if ((value as { kind?: unknown })?.kind === "project") return projectStatusOutputSchema.parse(value);
+    if ((value as { kind?: unknown })?.kind === "followups") return followupPageOutputSchema.parse(value);
     return validateStatusOutput(value);
   }
   if (toolName === "codex_steer") return validateSteerOutput(value);
-  return ({ ...MODEL_VISIBLE_OUTPUT_SCHEMAS, ...LEGACY_MODEL_OUTPUT_SCHEMAS })[toolName].parse(value);
+  return MODEL_VISIBLE_OUTPUT_SCHEMAS[toolName].parse(value);
 }
 
 function validateSteerOutput(value: unknown): z.infer<typeof codexSteerOutputSchema> {
@@ -1864,7 +1855,10 @@ function validateStatusOutput(value: unknown): z.infer<typeof codexStatusOutputS
     }
     if (
       job.result?.availability === "delivered" &&
-      !job.nextActions?.includes(exactJobAnswerRetrievalAction(job.id))
+      !job.nextActions?.some(action =>
+        action.kind === "tool" && action.tool === "codex_status" &&
+        action.arguments.query?.kind === "job" && action.arguments.query.id === job.id
+      )
     ) {
       throw new Error(
         "A summary with a delivered Job must include its exact-Job answer retrieval action."
@@ -1887,7 +1881,7 @@ export function validateAppOnlyStructuredOutput(
   toolName: AppOnlyOutputToolName,
   value: unknown
 ): unknown {
-  return ({ ...APP_ONLY_OUTPUT_SCHEMAS, ...LEGACY_APP_OUTPUT_SCHEMAS, ...OPERATOR_OUTPUT_SCHEMAS })[toolName].parse(value);
+  return ({ ...APP_ONLY_OUTPUT_SCHEMAS, ...APP_PRIVATE_OUTPUT_SCHEMAS, ...OPERATOR_OUTPUT_SCHEMAS })[toolName].parse(value);
 }
 
 type SessionDecision = {
@@ -1920,16 +1914,19 @@ type BackendHandoff = BackendHandoffAudit & {
 };
 
 type CodexRouting = {
+  mcpPrincipal?: string;
+  completionDeliveryPolicy?: CompletionDeliveryPolicy;
+  approvedFollowups?: ApprovedFollowup[];
+  followup?: FollowupReference;
+  relayFollowup?: DynamicFollowupReference;
   scopeId: string;
   requestId: string;
-  activityPresentationId?: string;
   requestHash: string;
-  requestHashVersion: 2 | 3 | 4 | 5 | 6 | 7;
+  requestHashVersion: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
 };
 
-type CodexActivityViewMode = "compact-monitor" | "full-history";
-
-const CURRENT_TASK_REQUEST_HASH_VERSION = 7 as const;
+// Version 11 removes foreground/background from execution identity.
+const CURRENT_TASK_REQUEST_HASH_VERSION = 11 as const;
 
 type TaskProjectAdmission = {
   projectId: string;
@@ -1937,106 +1934,44 @@ type TaskProjectAdmission = {
   cwd: string;
 };
 
-type ActivityCardPresentationContext =
-  | { kind: "automatic"; activityPresentationId: string; reservationOwnerId?: string }
-  | { kind: "explicit" };
-
-type ActivityViewPresentationContext =
-  | ActivityCardPresentationContext
-  | { kind: "historical"; jobId: string; requestId: string }
-  | {
-      kind: "restored-explicit";
-      mode: "full-history";
-      activityId?: string;
-      activityVersion?: number;
-    };
-
-const activityCardPresentationInputSchema = z.discriminatedUnion("kind", [
-  z.strictObject({
-    kind: z.literal("automatic"),
-    activityPresentationId: scopeIdSchema(),
-    reservationOwnerId: scopeIdSchema().optional()
-  }),
-  z.strictObject({ kind: z.literal("explicit") })
-]);
-
 const widgetInstanceIdSchema = scopeIdSchema().describe(
-  "UUID generated once by this mounted Activity iframe. It is correlation-only; app visibility and exact card/version checks remain authoritative."
+  "UUID generated once by the mounted Dashboard iframe. It is correlation-only; app visibility and exact control checks remain authoritative."
 );
 
-const activityCardProofInputSchema = z.strictObject({
-  activityId: scopeIdSchema(),
-  generation: z.number().int().min(1),
-  presentation: activityCardPresentationInputSchema
+/** Dashboard controls carry only an opaque proof. */
+const dashboardControlProofInputSchema = z.strictObject({
+  kind: z.literal("dashboard"),
+  token: z.string().min(1).max(32_768)
 });
-
-const dashboardControlProofInputSchema = activityCardProofInputSchema.extend({
-  kind: z.literal("dashboard"), token: z.string().min(1).max(32_768)
-});
-const userControlProofInputSchema = z.union([dashboardControlProofInputSchema, activityCardProofInputSchema]);
-
-const automaticActivityCardProofInputSchema = z.strictObject({
-  activityId: scopeIdSchema(),
-  generation: z.number().int().min(1),
-  presentation: z.strictObject({
-    kind: z.literal("automatic"),
-    activityPresentationId: scopeIdSchema(),
-    reservationOwnerId: scopeIdSchema().optional()
-  })
-});
-
-type ActivityCardProofInput = z.infer<typeof activityCardProofInputSchema>;
+const userControlProofInputSchema = dashboardControlProofInputSchema;
 
 function mountedWidgetInstanceId(
   args: { widgetInstanceId?: string },
   meta: unknown
 ): string | undefined {
   // MCP Apps does not normatively forward a host-side widget session id on
-  // app-initiated tools/call requests. Current cards therefore provide their
-  // own per-iframe correlation id; the host metadata fallback keeps retained
-  // OpenAI-compatible cards working where that metadata is available.
+  // app-initiated tools/call requests. The Dashboard therefore provides its
+  // own per-iframe correlation id; host metadata remains a compatibility
+  // fallback where available.
   return args.widgetInstanceId || metadataString(meta, "openai/widgetSessionId");
 }
 
-function presentationFromActivityCardProof(
-  card: ActivityCardProofInput
-): ActivityCardPresentationContext {
-  return card.presentation.kind === "automatic"
-    ? {
-        kind: "automatic",
-        activityPresentationId: card.presentation.activityPresentationId,
-        ...(card.presentation.reservationOwnerId
-          ? { reservationOwnerId: card.presentation.reservationOwnerId }
-          : {})
-      }
-    : { kind: "explicit" };
-}
-
-type ActivityScopeWatchResult = {
-  scopeVersion: number;
-  changed: boolean;
-  timedOut: boolean;
-  waitedMs: number;
-  stopped: boolean;
-  stopReason?: ActivityCardLeaseStopReason;
-};
-
-type ActivityCardLeaseTouchResult = {
-  stopped: boolean;
-  stopReason?: ActivityCardLeaseStopReason;
-};
-
-type ActivityCardReservation = {
-  ownerId: string;
-  sequence: number;
-  state: "reserved" | "confirmed";
-  expiresAt: number;
-  widgetSessionId?: string;
-};
+type CompletionDeliveryPolicy = "live-card" | "direct-wait" | "relay-card" | "events";
 
 type CodexJob = {
+  mcpPrincipal?: string;
+  approvedFollowups?: ApprovedFollowup[];
+  followup?: FollowupReference;
+  relayFollowup?: DynamicFollowupReference;
+  executionReceipt?: boolean;
+  /** Durable dispatch boundary; absence in legacy data means unknown. */
+  executionDispatched?: boolean;
+  /** Non-secret owner boundary captured when this execution was admitted. */
+  authBoundary?: string;
   threadPersistence?: UpstreamWorkerAssignment["threadPersistence"];
   jobId: string;
+  executionName?: string;
+  summary?: string;
   activityId: string;
   projectId?: string;
   projectName?: string;
@@ -2045,7 +1980,6 @@ type CodexJob = {
   agentId?: string;
   contextMode?: AgentContextMode;
   threadId?: string;
-  executionMode: ActivityExecutionMode;
   backendKind: string;
   trackingState: "connected" | "liveness-unknown" | "worker-lost" | "orphaned";
   runtime?: UpstreamWorkerAssignment["runtime"];
@@ -2059,18 +1993,23 @@ type CodexJob = {
   operation: CodexJobOperation;
   createdAt: number;
   updatedAt: number;
+  endedAt?: number;
   lastProgressAt: number;
   version: number;
   cwd: string;
   sandbox: SandboxMode;
   scopeId: string;
   requestId: string;
-  activityPresentationId?: string;
   requestHash: string;
-  requestHashVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7;
+  requestHashVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
+  /** Exact public request identity, independent of later settings/catalog changes. */
+  requestEnvelopeHash?: string;
+  /** Immutable admission-time snapshot; later Settings changes affect only new Jobs. */
+  completionDeliveryPolicy: CompletionDeliveryPolicy;
   sourceThreadId?: string;
   selectionKey?: string;
   executionDecision?: ExecutionDecision;
+  executionEvidence?: ExecutionEvidence;
   exclusiveKeys: string[];
   sessionDecision: SessionDecision;
   status: CodexJobStatus;
@@ -2091,14 +2030,31 @@ type CodexJob = {
 
 type PersistedCodexJob = Omit<CodexJob, "promise">;
 
+type ProgressPersistenceSnapshot = {
+  jobId: string;
+  scopeId: string;
+  projectKey: string;
+  version: number;
+  updatedAt: number;
+  lastProgressAt: number;
+  lastProgress?: Progress;
+  pendingInteractions: CodexPendingInteraction[];
+  publicEvent?: CodexPublicEvent;
+};
+
+export type ProgressPersistenceStatus = ScopeFairQueueStatus & {
+  immediateBudget: number;
+  immediateRemaining: number;
+};
+
 type CodexJobStartInput = Omit<
   CodexJob,
   | "jobId"
+  | "authBoundary"
   | "activityId"
   | "agentId"
   | "contextMode"
   | "threadId"
-  | "executionMode"
   | "backendKind"
   | "trackingState"
   | "bridgeInstanceId"
@@ -2125,23 +2081,31 @@ type CodexJobStartInput = Omit<
   | "resultBytes"
   | "resultOmitted"
   | "error"
+  | "completionDeliveryPolicy"
 > & {
   activityId?: string;
   agentId?: string;
   contextMode?: AgentContextMode;
-  executionMode?: ActivityExecutionMode;
   backendKind?: CodexBackendKind;
+  completionDeliveryPolicy?: CompletionDeliveryPolicy;
 };
 
 export type CodexJobRegistryOptions = {
+  /** Current admission provenance; never an ACL for retained work. */
+  authBoundary?: () => string | null;
+  /** Attach persisted receipts to their exact original executor. */
+  recoverExecutions?: boolean;
   maxConcurrentJobs?: number;
   ttlMs?: number;
-  activityPresentationTtlMs?: number;
-  activityMountReservationTtlMs?: number;
   maxJobs?: number;
   maxResultBytes?: number;
   staleAfterMs?: number;
   stateStore?: BridgeStateStore;
+  telemetry?: BridgeTelemetryService;
+  /** Read-worker snapshot: load persisted state without recovery mutations. */
+  projectionOnly?: boolean;
+  /** Query-only worker: detail hydrates one Agent; Settings hydrates no Jobs. */
+  projectionJobs?: { agentId?: string; scopeId?: string } | false;
   allowedRoots?: string[];
 };
 
@@ -2152,6 +2116,154 @@ type CodexJobWaitResult = {
   waitTimedOut: boolean;
   changed: boolean;
 };
+
+type CodexJobWaitSource = "model-status" | "dashboard-completion" | "internal";
+type CodexJobWakeReason = "progress" | "terminal" | "state-change";
+type ActiveJobWaitCounts = {
+  change: number;
+  terminal: number;
+  modelStatus: number;
+  dashboardCompletion: number;
+  internal: number;
+};
+
+class BoundedDurationDiagnostics {
+  private count = 0;
+  private readonly samples: number[] = [];
+
+  record(durationMs: number): void {
+    this.count += 1;
+    this.samples.push(Math.max(0, durationMs));
+    if (this.samples.length > 256) this.samples.splice(0, this.samples.length - 256);
+  }
+
+  snapshot(): z.infer<typeof durationDiagnosticsOutputSchema> {
+    const values = [...this.samples].sort((left, right) => left - right);
+    const percentile = (fraction: number): number => {
+      if (values.length === 0) return 0;
+      return values[Math.min(values.length - 1, Math.ceil(values.length * fraction) - 1)] || 0;
+    };
+    const rounded = (value: number) => Math.round(value * 1_000) / 1_000;
+    return {
+      count: this.count,
+      p50Ms: rounded(percentile(0.5)),
+      p95Ms: rounded(percentile(0.95)),
+      maxMs: rounded(values.at(-1) || 0)
+    };
+  }
+}
+
+class JobWaitDiagnostics {
+  private readonly started = { change: 0, terminal: 0 };
+  private readonly sources = { modelStatus: 0, dashboardCompletion: 0, internal: 0 };
+  private completed = 0;
+  private timedOut = 0;
+  private readonly wakes = { progress: 0, terminal: 0, stateChange: 0 };
+  private readonly hostAborts = { modelStatus: 0, dashboardCompletion: 0, internal: 0 };
+  private readonly active = new Map<string, ActiveJobWaitCounts>();
+  private readonly waitedMs = new BoundedDurationDiagnostics();
+  readonly pruneAndPersist = new BoundedDurationDiagnostics();
+  readonly telemetryTransaction = new BoundedDurationDiagnostics();
+
+  begin(jobId: string, waitFor: CodexJobWaitMode, source: CodexJobWaitSource): void {
+    this.started[waitFor] += 1;
+    this.sources[this.sourceKey(source)] += 1;
+    const counts = this.active.get(jobId) || {
+      change: 0,
+      terminal: 0,
+      modelStatus: 0,
+      dashboardCompletion: 0,
+      internal: 0
+    };
+    counts[waitFor] += 1;
+    counts[this.sourceKey(source)] += 1;
+    this.active.set(jobId, counts);
+  }
+
+  finish(
+    jobId: string,
+    waitFor: CodexJobWaitMode,
+    source: CodexJobWaitSource,
+    outcome: {
+      waitedMs: number;
+      completed: boolean;
+      timedOut: boolean;
+      aborted: boolean;
+      wakeReason?: CodexJobWakeReason;
+    }
+  ): void {
+    this.waitedMs.record(outcome.waitedMs);
+    if (outcome.completed) this.completed += 1;
+    if (outcome.timedOut) this.timedOut += 1;
+    if (outcome.aborted) this.hostAborts[this.sourceKey(source)] += 1;
+    if (outcome.wakeReason) this.wakes[this.wakeKey(outcome.wakeReason)] += 1;
+
+    const counts = this.active.get(jobId);
+    if (!counts) return;
+    counts[waitFor] = Math.max(0, counts[waitFor] - 1);
+    const sourceKey = this.sourceKey(source);
+    counts[sourceKey] = Math.max(0, counts[sourceKey] - 1);
+    const total = counts.change + counts.terminal;
+    if (total === 0) this.active.delete(jobId);
+  }
+
+  snapshot(recordedStatusWaitAborts: number): z.infer<typeof jobWaitDiagnosticsOutputSchema> {
+    const activeJobs = [...this.active.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([jobId, counts]) => ({
+        jobId,
+        total: counts.change + counts.terminal,
+        ...counts
+      }));
+    const active = activeJobs.reduce(
+      (totals, entry) => ({
+        total: totals.total + entry.total,
+        modelStatus: totals.modelStatus + entry.modelStatus,
+        dashboardCompletion: totals.dashboardCompletion + entry.dashboardCompletion,
+        internal: totals.internal + entry.internal
+      }),
+      { total: 0, modelStatus: 0, dashboardCompletion: 0, internal: 0 }
+    );
+    const totalAborts = this.hostAborts.modelStatus +
+      this.hostAborts.dashboardCompletion + this.hostAborts.internal;
+    const totalWakes = this.wakes.progress + this.wakes.terminal + this.wakes.stateChange;
+    return {
+      defaultWaitMs: DEFAULT_CODEX_STATUS_WAIT_MS,
+      exactStatusWaits: this.sources.modelStatus,
+      started: {
+        total: this.started.change + this.started.terminal,
+        ...this.started
+      },
+      sources: { ...this.sources },
+      completed: this.completed,
+      timedOut: this.timedOut,
+      waitedMs: this.waitedMs.snapshot(),
+      wakes: { total: totalWakes, ...this.wakes },
+      hostAborts: {
+        total: totalAborts,
+        ...this.hostAborts,
+        recordedStatusWaitAborts
+      },
+      active: { ...active, jobs: activeJobs },
+      maintenance: {
+        pruneAndPersist: this.pruneAndPersist.snapshot(),
+        telemetryTransaction: this.telemetryTransaction.snapshot()
+      }
+    };
+  }
+
+  private sourceKey(source: CodexJobWaitSource): keyof JobWaitDiagnostics["sources"] {
+    return source === "model-status"
+      ? "modelStatus"
+      : source === "dashboard-completion"
+        ? "dashboardCompletion"
+        : "internal";
+  }
+
+  private wakeKey(reason: CodexJobWakeReason): keyof JobWaitDiagnostics["wakes"] {
+    return reason === "state-change" ? "stateChange" : reason;
+  }
+}
 
 type SteeringTerminalStatus = Extract<
   SteeringDeliveryRecord["status"],
@@ -2170,44 +2282,41 @@ type SteeringMutationFallbacks = {
 };
 
 export class CodexJobRegistry {
-  readonly originWaits = new OriginWaits();
+  private readonly authBoundary?: () => string | null;
   private readonly jobs = new Map<string, CodexJob>();
-  private readonly waiters = new Map<string, Set<() => void>>();
+  private readonly jobsByAgent = new Map<string, Set<string>>();
+  private readonly indexedJobAgent = new Map<string, string>();
+  private readonly waiters = new Map<string, Set<(reason: CodexJobWakeReason) => void>>();
+  private readonly terminalWaiters = new Map<string, Set<() => void>>();
+  private activeJobObservationWaits = 0;
+  private readonly lastWake = new Map<string, { version: number; reason: CodexJobWakeReason }>();
   private readonly scopeWaiters = new Map<string, Set<() => void>>();
-  private readonly watcherLeases = new Set<string>();
-  private readonly activityCardLeases = new Map<string, number>();
-  private readonly activityCardReservations = new Map<string, ActivityCardReservation>();
-  private readonly latestAutomaticPresentationByScope = new Map<
-    string,
-    { activityPresentationId: string; reservationOwnerId: string; sequence: number; expiresAt: number }
-  >();
-  private readonly activityCardLeaseTtlMs = 75_000;
-  // A short unconfirmed reservation elects the newest sibling result while
-  // allowing bounded recovery when the host never mounts that candidate.
-  private readonly activityCardMountReservationTtlMs: number;
-  // A confirmed presentation outlives widget suspension and exact retries.
-  // Both states are intentionally in-memory: after a bridge restart, retained
-  // cards safely re-establish ownership from their exact card proof.
-  private readonly activityCardPresentationTtlMs: number;
-  private activityCardPresentationSequence = 0;
+  private readonly waitDiagnosticsTracker = new JobWaitDiagnostics();
   private readonly maxConcurrentJobs: number;
   private readonly ttlMs: number;
   private readonly maxJobs: number;
   private readonly maxResultBytes: number;
   private readonly staleAfterMs: number;
   private readonly stateStore?: BridgeStateStore;
+  private readonly telemetry?: BridgeTelemetryService;
+  private readonly projectionOnly: boolean;
   private readonly activityStore: BridgeStateStore;
   private readonly allowedRoots: string[];
-  private readonly maxConcurrentWatchers = 8;
-  private readonly maxConcurrentWatchersPerScope = 4;
-  private readonly maxConcurrentExplicitWatchersPerScope = 3;
-  private activeWatchers = 0;
+  private eventDeliveryPrincipal?: string;
+  private eventDeliveryProfileEnabled = false;
   // HTTP requests and the native companion share one runtime admission gate.
-  readonly runtimeAdmission = { acceptingNewJobs: true, pendingAdmissions: 0 };
-  private readonly activeWatchersByScope = new Map<string, number>();
-  private readonly activeAutomaticWatchersByScope = new Map<string, number>();
-  private readonly activeExplicitWatchersByScope = new Map<string, number>();
+  readonly runtimeAdmission: {
+    acceptingNewJobs: boolean;
+    pendingAdmissions: number;
+    admissionRevision: number;
+    storageError?: BridgeStorageAdmissionError;
+  } = { acceptingNewJobs: true, pendingAdmissions: 0, admissionRevision: 0 };
+  readonly runtimeDrain = new RuntimeDrainGate(this.runtimeAdmission, initialRuntimeDrainBinding());
   private upstream?: CodexUpstream;
+  private readonly recoverExecutions: boolean;
+  private recoverySessions?: SessionRegistry;
+  private readonly recoveryJobs = new Set<string>();
+  private recoveryStarted = false;
   private readonly terminations = new Map<
     string,
     { intentId: string; promise: Promise<CodexJob> }
@@ -2229,44 +2338,96 @@ export class CodexJobRegistry {
     { responseHash: string; promise: Promise<CodexJob> }
   >();
   private readonly deferredSettlements = new Map<string, DeferredJobSettlement>();
-  private readonly changeListeners = new Set<() => void>();
+  // Exact owner outcomes waiting for the existing Job terminal transaction.
+  // This is observation only: it never advances the durable Job or releases
+  // the owner's retained result before the transaction commits.
+  private readonly pendingTerminalCommits = new WeakMap<
+    CodexJob,
+    { origin: JobTerminalOrigin; observedAt: number }
+  >();
+  private readonly deferredExecutions = new Map<
+    string,
+    { launch(): void; discard(): void }
+  >();
+  private readonly changeListeners = new Set<(
+    reason?: CodexJobWakeReason, agentId?: string
+  ) => void>();
+  private projectController?: ProjectLifecycleController;
+  private readonly dispatchedJobs = new Set<string>();
   private threadController?: ThreadConnectionController;
+  private maintenanceScheduler?: StateMaintenanceScheduler;
   private recoveryController?: AutomaticRecoveryController;
   private unsubscribeRecovery?: () => void;
+  private projectedProjectRevision = -1;
+  private retainedJobMaintenanceIterator?: IterableIterator<[string, CodexJob]>;
+  private readonly retentionProtectedJobs = new Set<string>();
+  private retainedJobTarget?: number;
+  private retainedJobMaintenanceTimer?: NodeJS.Timeout;
+  private stateMaintenanceClosed = false;
+  private readonly progressPersistenceQueue: ScopeFairQueue<ProgressPersistenceSnapshot>;
+  private readonly progressPersisted = new Map<
+    string,
+    { version: number; persistedAt: number }
+  >();
+  private progressPersistenceImmediateRemaining = PROGRESS_PERSISTENCE_IMMEDIATE_BUDGET;
+  private progressPersistenceImmediateReset?: NodeJS.Immediate;
 
   configureAutomaticRecovery(options: ConstructorParameters<typeof AutomaticRecoveryController>[1]): void {
+    if (this.projectionOnly) return;
     if (this.recoveryController) return;
     this.recoveryController = new AutomaticRecoveryController(this.activityStore.automaticRecovery, options);
-    this.unsubscribeRecovery = this.subscribeChanges(() => this.recoveryController?.schedule());
+    this.unsubscribeRecovery = this.subscribeChanges((reason, agentId) => {
+      // Scope-only Dashboard notifications have no recovery identity. The
+      // periodic keyset pass covers them without triggering a global survey.
+      if (reason === "progress") return;
+      if (agentId || reason) this.recoveryController?.schedule(agentId);
+    });
     this.recoveryController.start();
   }
 
   sweepAutomaticRecovery(): Promise<void> { return this.recoveryController?.sweep() || Promise.resolve(); }
 
-  async recoverAwaitedJob(jobId: string): Promise<void> {
-    if (!this.recoveryController) return;
-    const operation = this.recoveryController.recoverJob(jobId);
-    let timer: NodeJS.Timeout | undefined;
-    try { await Promise.race([operation,new Promise<void>(resolve => {timer=setTimeout(resolve,1_500);})]); }
-    finally { if (timer) clearTimeout(timer); }
-  }
-
   configureThreadConnections(upstream: CodexUpstream, idleMs?: number): void {
+    if (this.projectionOnly) return;
     if (this.threadController) return;
     this.threadController = new ThreadConnectionController(this.activityStore.threadConnections, upstream, {
-      idleMs, changed: () => { for (const listener of this.changeListeners) listener(); },
-      maintain: () => {
-        const {historyRemoved} = this.activityStore.maintainRetention();
-        this.pruneAndPersist();
-        if (historyRemoved) for (const listener of this.changeListeners) listener();
-      }
+      idleMs, changed: () => { for (const listener of this.changeListeners) listener(); }
     });
     this.threadController.start();
   }
 
+  configureStateMaintenance(intervalMs?: number): void {
+    if (this.projectionOnly) return;
+    if (this.maintenanceScheduler || this.stateMaintenanceClosed) return;
+    const stateService = new InProcessOperationalStateService(this.activityStore);
+    this.maintenanceScheduler = new StateMaintenanceScheduler(stateService, {
+      intervalMs,
+      changed: () => { for (const listener of this.changeListeners) listener(); },
+      shouldDefer: () => this.runtimeAdmission.pendingAdmissions > 0 || this.observedRunningCount() > 0,
+      maxDeferMs: 30_000,
+      command: slice => this.stateMaintenanceCommand(slice),
+      completed: (command, result) => {
+        this.applyStateMaintenanceResult(command,result);
+        if(command.slice === "events") this.telemetry?.maintainRetention?.();
+      }
+    });
+    this.maintenanceScheduler.start();
+    this.scheduleIdleRetainedJobMaintenance();
+  }
+
   async closeThreadConnections(): Promise<void> {
+    this.stateMaintenanceClosed = true;
+    this.progressPersistenceQueue.close();
+    if (this.progressPersistenceImmediateReset) {
+      clearImmediate(this.progressPersistenceImmediateReset);
+      this.progressPersistenceImmediateReset = undefined;
+    }
     this.unsubscribeRecovery?.();
+    this.maintenanceScheduler?.close();
+    if (this.retainedJobMaintenanceTimer) clearTimeout(this.retainedJobMaintenanceTimer);
+    this.retainedJobMaintenanceTimer = undefined;
     await this.recoveryController?.close();
+    await this.projectController?.close();
     await this.threadController?.close();
   }
 
@@ -2277,15 +2438,15 @@ export class CodexJobRegistry {
     return current;
   }
 
-  subscribeChanges(listener: () => void): () => void {
+  subscribeChanges(listener: (reason?: CodexJobWakeReason, agentId?: string) => void): () => void {
     this.changeListeners.add(listener);
     return () => { this.changeListeners.delete(listener); };
   }
 
   private persistenceWarningShown = false;
-  private lastPersistedAt = 0;
 
   constructor(options: CodexJobRegistryOptions = {}) {
+    this.authBoundary = options.authBoundary;
     const maxConcurrentJobs = options.maxConcurrentJobs ?? 30;
     if (
       !Number.isInteger(maxConcurrentJobs) ||
@@ -2298,17 +2459,28 @@ export class CodexJobRegistry {
     }
     this.maxConcurrentJobs = maxConcurrentJobs;
     this.ttlMs = options.ttlMs ?? 6 * 60 * 60 * 1000;
-    this.maxJobs = options.maxJobs ?? 100;
+    const maxJobs = options.maxJobs ?? 100;
+    if (!Number.isInteger(maxJobs) || maxJobs < maxConcurrentJobs) {
+      throw new Error("Codex retained Job capacity must be an integer no lower than concurrency.");
+    }
+    this.maxJobs = maxJobs;
     this.maxResultBytes = options.maxResultBytes ?? 1024 * 1024;
     this.staleAfterMs = options.staleAfterMs ?? 10 * 60 * 1000;
-    this.activityCardPresentationTtlMs =
-      options.activityPresentationTtlMs ?? 6 * 60 * 60 * 1000;
-    this.activityCardMountReservationTtlMs =
-      options.activityMountReservationTtlMs ?? 15_000;
     this.stateStore = options.stateStore;
+    this.telemetry = options.telemetry;
+    this.projectionOnly = options.projectionOnly === true;
+    this.recoverExecutions = options.recoverExecutions === true;
     this.activityStore = options.stateStore || new BridgeStateStore({ file: ":memory:" });
     this.allowedRoots = options.allowedRoots || [];
-    this.load();
+    this.progressPersistenceQueue = new ScopeFairQueue<ProgressPersistenceSnapshot>({
+      capacity: PROGRESS_PERSISTENCE_QUEUE_CAPACITY,
+      perScopeCapacity: PROGRESS_PERSISTENCE_PER_PROJECT_CAPACITY,
+      run: snapshot => this.persistDeferredProgress(snapshot)
+    });
+    if (options.projectionJobs !== undefined && (!this.projectionOnly || !this.stateStore?.readOnly)) {
+      throw new Error("Partial Job hydration requires a query-only projection.");
+    }
+    this.load(options.projectionJobs);
   }
 
   get persistent(): boolean {
@@ -2336,459 +2508,191 @@ export class CodexJobRegistry {
     return this.activityStore;
   }
 
+  configureEventDelivery(principal?: string, enabled = true): void { this.eventDeliveryPrincipal = principal; this.eventDeliveryProfileEnabled = enabled; }
+
+  get experimentalEventsEnabled(): boolean { return this.eventDeliveryProfileEnabled; }
+
+  eventDeliveryAvailableFor(job: Pick<CodexJob, "mcpPrincipal">): boolean {
+    return this.eventDeliveryPrincipal !== undefined && this.eventDeliveryPrincipal === job.mcpPrincipal && !this.activityStore.readOnly;
+  }
+
   get staleThresholdMs(): number {
     return this.staleAfterMs;
   }
 
-  activityCardRenderHint(
-    activityId: string,
-    executionMode: ActivityExecutionMode,
-    preferences?: Pick<BridgeUserSettings, "activityCardVisibility">,
-    options: {
-      explicit?: boolean;
-      reserve?: boolean;
-      activityPresentationId?: string;
-      presentationKind?: "automatic" | "explicit";
-      reservationOwnerId?: string;
-    } = {}
-  ) {
-    this.pruneActivityCardLeases();
-    const activity = this.getActivity(activityId);
-    const generation = activity?.cardGeneration || 1;
-    const scopeId = activity?.scopeId || "unknown";
-    const visibility = preferences?.activityCardVisibility || "always";
-    const visible =
-      visibility === "always" ||
-      (visibility === "background-only" && executionMode === "background");
-    const presentationKind = options.presentationKind || "automatic";
-    const activityPresentationId = options.activityPresentationId;
-    const reservationOwnerId = options.reservationOwnerId || activityId;
-    const reservationKey = activityPresentationId
-      ? this.activityPresentationKey(scopeId, activityPresentationId)
-      : undefined;
-    let reservation = reservationKey
-      ? this.activityCardReservations.get(reservationKey)
-      : undefined;
-    const hasActiveLease = activityPresentationId
-      ? this.hasActiveAutomaticPresentationLease(scopeId, activityPresentationId)
-      : false;
-    const latestPresentation = this.latestAutomaticPresentationByScope.get(scopeId);
-    let newestSibling = false;
-    if (
-      visible &&
-      presentationKind === "automatic" &&
-      reservationKey &&
-      (
-        (reservation && reservation.ownerId !== reservationOwnerId) ||
-        (
-          !reservation &&
-          hasActiveLease &&
-          latestPresentation?.activityPresentationId === activityPresentationId &&
-          latestPresentation?.reservationOwnerId !== reservationOwnerId
-        )
-      ) &&
-      options.reserve !== false
-    ) {
-      reservation = {
-        ownerId: reservationOwnerId,
-        sequence: ++this.activityCardPresentationSequence,
-        state: "reserved",
-        expiresAt: Date.now() + this.activityCardMountReservationTtlMs
-      };
-      this.activityCardReservations.set(reservationKey, reservation);
-      newestSibling = true;
-    }
-    let shouldRenderActivityCard = false;
-    let renderReason: ActivityCardRenderReason;
-    if (presentationKind === "explicit") {
-      shouldRenderActivityCard = true;
-      renderReason = "explicit";
-    } else if (!visible) {
-      renderReason = "visibility-disabled";
-    } else if (!activityPresentationId) {
-      renderReason = "presentation-unavailable";
-    } else if (newestSibling) {
-      shouldRenderActivityCard = true;
-      renderReason = "render-latest";
-    } else if (hasActiveLease) {
-      renderReason = "active-lease";
-    } else if (reservation?.state === "confirmed") {
-      renderReason = "render-confirmed";
-    } else if (reservation?.ownerId === reservationOwnerId) {
-      shouldRenderActivityCard = true;
-      renderReason = "render-retry";
-      if (options.reserve !== false) {
-        reservation.expiresAt = Date.now() + this.activityCardMountReservationTtlMs;
-      }
-    } else if (reservation) {
-      renderReason = "render-reserved";
-    } else {
-      shouldRenderActivityCard = true;
-      renderReason = "new-presentation";
-      if (options.reserve !== false && reservationKey) {
-        this.activityCardReservations.set(reservationKey, {
-          ownerId: reservationOwnerId,
-          sequence: ++this.activityCardPresentationSequence,
-          state: "reserved",
-          expiresAt: Date.now() + this.activityCardMountReservationTtlMs
-        });
-      }
-    }
-    return {
-      statusTool: "codex_status",
-      automaticRenderTool: "codex_activity",
-      explicitRenderTool: "codex_activity",
-      followUpRenderRequired: false,
-      renderToolAvailable: true,
-      explicitRenderAllowed: true,
-      activityCardVisibility: visibility,
-      activityId,
-      cardGeneration: generation,
-      presentationKind,
-      ...(activityPresentationId ? { activityPresentationId } : {}),
-      shouldRenderActivityCard,
-      renderReason,
-      renderTiming: executionMode === "background" ? "immediate" : "after-result-or-existing-mounted-card"
-    };
-  }
-
-  touchActivityCardLease(
-    scopeId: string,
-    activityId: string,
-    cardGeneration: number,
-    widgetSessionId: string,
-    presentation: ActivityCardPresentationContext
-  ): ActivityCardLeaseTouchResult {
-    const activity = this.getActivity(activityId);
-    if (!activity || activity.scopeId !== scopeId || activity.cardGeneration !== cardGeneration) {
-      throw new Error("The mounted Activity card generation is no longer valid in this scope.");
-    }
-    this.pruneActivityCardLeases();
-    if (presentation.kind === "automatic") {
-      const now = Date.now();
-      const reservationKey = this.activityPresentationKey(
-        scopeId,
-        presentation.activityPresentationId
-      );
-      let reservation = this.activityCardReservations.get(reservationKey);
-      const latest = this.latestAutomaticPresentationByScope.get(scopeId);
-      const leaseKey = this.activityCardLeaseKey(
-        scopeId,
-        activityId,
-        cardGeneration,
-        widgetSessionId,
-        presentation
-      );
-      const hasExistingWidgetLease = (this.activityCardLeases.get(leaseKey) || 0) > now;
-      if (
-        latest &&
-        latest.activityPresentationId !== presentation.activityPresentationId &&
-        (!reservation || reservation.sequence < latest.sequence)
-      ) {
-        this.releaseActivityCardLease(
-          scopeId,
-          activityId,
-          cardGeneration,
-          widgetSessionId,
-          presentation
-        );
-        return { stopped: true, stopReason: "presentation-superseded" };
-      }
-
-      const ownerMismatch = Boolean(
-        reservation &&
-        presentation.reservationOwnerId &&
-        reservation.ownerId !== presentation.reservationOwnerId
-      );
-      if (ownerMismatch && !hasExistingWidgetLease) {
-        return { stopped: true, stopReason: "presentation-superseded" };
-      }
-
-      // A previously mounted card remains live while a newer sibling is only
-      // reserved. The newer result takes ownership only after its matching
-      // iframe establishes a lease, so a failed mount cannot blank the feed.
-      if (!ownerMismatch) {
-        if (
-          reservation?.state === "confirmed" &&
-          this.hasActiveAutomaticPresentationLease(
-            scopeId,
-            presentation.activityPresentationId,
-            widgetSessionId
-          )
-        ) {
-          return { stopped: true, stopReason: "presentation-duplicate" };
-        }
-
-        if (!reservation) {
-          const retainedSequence =
-            latest?.activityPresentationId === presentation.activityPresentationId &&
-            latest.reservationOwnerId === presentation.reservationOwnerId
-              ? latest.sequence
-              : undefined;
-          reservation = {
-            ownerId: presentation.reservationOwnerId || `widget:${widgetSessionId}`,
-            sequence: retainedSequence ?? ++this.activityCardPresentationSequence,
-            state: "confirmed",
-            expiresAt: now + this.activityCardPresentationTtlMs,
-            widgetSessionId
-          };
-          this.activityCardReservations.set(reservationKey, reservation);
-        } else {
-          reservation.state = "confirmed";
-          reservation.expiresAt = now + this.activityCardPresentationTtlMs;
-          reservation.widgetSessionId = widgetSessionId;
-        }
-
-        if (
-          !latest ||
-          latest.activityPresentationId !== presentation.activityPresentationId ||
-          latest.sequence !== reservation.sequence
-        ) {
-          this.activateAutomaticPresentation(
-            scopeId,
-            presentation.activityPresentationId,
-            reservation.ownerId,
-            reservation.sequence
-          );
-        } else {
-          latest.expiresAt = now + this.activityCardPresentationTtlMs;
-        }
-      }
-    } else if (this.isPresentationSuperseded(scopeId, presentation)) {
-      this.releaseActivityCardLease(scopeId, activityId, cardGeneration, widgetSessionId, presentation);
-      return { stopped: true, stopReason: "presentation-superseded" };
-    }
-    this.activityCardLeases.set(
-      this.activityCardLeaseKey(
-        scopeId,
-        activityId,
-        cardGeneration,
-        widgetSessionId,
-        presentation
-      ),
-      Date.now() + this.activityCardLeaseTtlMs
-    );
-    return { stopped: false };
-  }
-
-  releaseActivityCardLease(
-    scopeId: string,
-    activityId: string,
-    cardGeneration: number,
-    widgetSessionId: string,
-    presentation: ActivityCardPresentationContext
-  ): void {
-    this.activityCardLeases.delete(
-      this.activityCardLeaseKey(
-        scopeId,
-        activityId,
-        cardGeneration,
-        widgetSessionId,
-        presentation
-      )
-    );
-  }
-
-  requireActivityCardLease(
-    scopeId: string,
-    activityId: string,
-    cardGeneration: number,
-    widgetSessionId: string,
-    presentation: ActivityCardPresentationContext
-  ): void {
-    const activity = this.getActivity(activityId);
-    if (!activity || activity.scopeId !== scopeId || activity.cardGeneration !== cardGeneration) {
-      throw new Error("CARD_VERSION_UNSUPPORTED: The mounted Activity card generation is no longer valid.");
-    }
-    this.pruneActivityCardLeases();
-    if (this.isPresentationSuperseded(scopeId, presentation)) {
-      throw new Error("CARD_VERSION_UNSUPPORTED: The mounted Activity presentation has been superseded.");
-    }
-    const key = this.activityCardLeaseKey(
-      scopeId,
-      activityId,
-      cardGeneration,
-      widgetSessionId,
-      presentation
-    );
-    if ((this.activityCardLeases.get(key) || 0) <= Date.now()) {
-      throw new Error("CARD_LEASE_REQUIRED: Refresh the mounted Activity card before retrying this control action.");
-    }
-  }
-
-  activityPresentationWatcherPolicy(
-    scopeId: string,
-    presentation: ActivityViewPresentationContext
-  ) {
-    if (
-      presentation.kind === "historical" ||
-      presentation.kind === "restored-explicit"
-    ) {
-      return {
-        presentationKind: presentation.kind,
-        ...(presentation.kind === "historical"
-          ? {
-              jobId: presentation.jobId,
-              requestId: presentation.requestId
-            }
-          : {
-              ...(presentation.activityId ? { activityId: presentation.activityId } : {}),
-              ...(presentation.activityVersion
-                ? { activityVersion: presentation.activityVersion }
-                : {})
-            }),
-        mode: "one-shot" as const,
-        live: false,
-        stopped: false,
-        ownsCompletionHandoff: false,
-        maxAutomaticPerScope: 1,
-        maxExplicitPerScope: this.maxConcurrentExplicitWatchersPerScope
-      };
-    }
-    const stopped = this.isPresentationSuperseded(scopeId, presentation);
-    return {
-      presentationKind: presentation.kind,
-      ...(presentation.kind === "automatic"
-        ? {
-            activityPresentationId: presentation.activityPresentationId,
-            ...(presentation.reservationOwnerId
-              ? { reservationOwnerId: presentation.reservationOwnerId }
-              : {})
-          }
-        : {}),
-      live: !stopped,
-      stopped,
-      ...(stopped ? { stopReason: "presentation-superseded" as const } : {}),
-      ownsCompletionHandoff:
-        !stopped && presentation.kind !== "explicit",
-      maxAutomaticPerScope: 1,
-      maxExplicitPerScope: this.maxConcurrentExplicitWatchersPerScope
-    };
-  }
-
-  canClaimCompletionHandoff(
-    scopeId: string,
-    presentation: ActivityCardPresentationContext
-  ): boolean {
-    return this.activityPresentationWatcherPolicy(scopeId, presentation).ownsCompletionHandoff;
-  }
-
-  private activityPresentationKey(scopeId: string, activityPresentationId: string): string {
-    return `${scopeId}\0${activityPresentationId}`;
-  }
-
-  private activityCardLeaseKey(
-    scopeId: string,
-    activityId: string,
-    cardGeneration: number,
-    widgetSessionId: string,
-    presentation: ActivityCardPresentationContext
-  ): string {
-    if (presentation.kind === "automatic") {
-      return `${scopeId}\0automatic\0${presentation.activityPresentationId}\0${widgetSessionId}`;
-    }
-    return `${scopeId}\0${presentation.kind}\0${activityId}\0${cardGeneration}\0${widgetSessionId}`;
-  }
-
-  private hasActiveAutomaticPresentationLease(
-    scopeId: string,
-    activityPresentationId: string,
-    excludingWidgetSessionId?: string
-  ): boolean {
-    const prefix = `${scopeId}\0automatic\0${activityPresentationId}\0`;
-    const excludedKey = excludingWidgetSessionId
-      ? `${prefix}${excludingWidgetSessionId}`
-      : undefined;
-    return [...this.activityCardLeases.keys()].some((key) =>
-      key.startsWith(prefix) && key !== excludedKey
-    );
-  }
-
-  private isPresentationSuperseded(
-    scopeId: string,
-    presentation: ActivityCardPresentationContext
-  ): boolean {
-    this.pruneActivityCardLeases();
-    const latest = this.latestAutomaticPresentationByScope.get(scopeId);
-    if (presentation.kind === "explicit") return false;
-    if (!latest) {
-      return false;
-    }
-    if (latest.activityPresentationId === presentation.activityPresentationId) {
-      return Boolean(
-        presentation.reservationOwnerId &&
-        latest.reservationOwnerId !== presentation.reservationOwnerId
-      );
-    }
-    const reservation = this.activityCardReservations.get(
-      this.activityPresentationKey(scopeId, presentation.activityPresentationId)
-    );
-    return !reservation || reservation.sequence < latest.sequence;
-  }
-
-  private activateAutomaticPresentation(
-    scopeId: string,
-    activityPresentationId: string,
-    reservationOwnerId: string,
-    sequence: number
-  ): void {
-    const now = Date.now();
-    const previous = this.latestAutomaticPresentationByScope.get(scopeId);
-    this.latestAutomaticPresentationByScope.set(scopeId, {
-      activityPresentationId,
-      reservationOwnerId,
-      sequence,
-      expiresAt: now + this.activityCardPresentationTtlMs
-    });
-    if (
-      previous &&
-      previous.activityPresentationId === activityPresentationId &&
-      previous.sequence === sequence
-    ) return;
-    for (const key of [...this.activityCardLeases.keys()]) {
-      if (key.startsWith(`${scopeId}\0automatic\0`)) {
-        this.activityCardLeases.delete(key);
-      }
-    }
-    // Scope waiters re-check presentation ownership as well as persisted scope
-    // version, so this releases a superseded long poll without fabricating a
-    // domain-state version change.
-    this.notifyScope(scopeId);
-  }
-
-  private pruneActivityCardLeases(): void {
-    const now = Date.now();
-    for (const [key, expiresAt] of this.activityCardLeases) {
-      if (expiresAt <= now) this.activityCardLeases.delete(key);
-    }
-    for (const [key, reservation] of this.activityCardReservations) {
-      if (reservation.expiresAt <= now) this.activityCardReservations.delete(key);
-    }
-    for (const [scopeId, latest] of this.latestAutomaticPresentationByScope) {
-      if (latest.expiresAt <= now) this.latestAutomaticPresentationByScope.delete(scopeId);
-    }
+  get resultResponseByteLimit(): number {
+    return this.maxResultBytes;
   }
 
   get size(): number {
-    this.pruneAndPersist();
     return this.jobs.size;
   }
 
-  attachUpstream(upstream: CodexUpstream): void {
+  attachUpstream(upstream: CodexUpstream, sessions?: SessionRegistry): void {
     if (this.upstream && this.upstream !== upstream) {
       throw new Error("Codex job registry is already attached to another upstream.");
     }
     this.upstream = upstream;
+    if (!this.projectionOnly && !this.projectController) {
+      this.projectController = new ProjectLifecycleController(this.activityStore,this,upstream);
+      this.projectController.start();
+    }
+    if (this.recoveryStarted || !this.recoverExecutions || !sessions || this.projectionOnly) return;
+    this.recoveryStarted = true;
+    this.recoverySessions = sessions;
+    this.resumeAuthorizedRecoveries();
+  }
+
+  sweepProjectArchives(): Promise<void> { return this.projectController?.sweep() || Promise.resolve(); }
+
+  assertJobMayExecute(jobId: string): void {
+    const job = this.jobs.get(jobId);
+    if (!job || job.status !== "running") throw new Error("PROJECT_MANAGEMENT_ENDED: Execution admission has ended.");
+    try {
+      this.activityStore.transaction(()=>{
+        this.activityStore.projectLifecycle.assertActive(job.projectId);
+        job.executionDispatched=true;
+        this.persistJob(job);
+      });
+    } catch (error) { job.executionDispatched=false; throw error; }
+    this.dispatchedJobs.add(jobId);
+  }
+
+  refreshRetiredProjectState(): void { this.projectedProjectRevision = -1; this.refreshProjectIdentities(); }
+
+  async stopForProjectArchive(jobId: string): Promise<void> {
+    const job=this.get(jobId);
+    if (!job || isTerminalActivityJobStatus(job.status)) return;
+    const pending=this.terminations.get(jobId);
+    if (pending) { await pending.promise; if (!isTerminalActivityJobStatus(job.status)) throw new Error(job.error || "Termination remains unconfirmed."); return; }
+    if (!job.workerId && (this.dispatchedJobs.has(jobId) || job.executionDispatched !== false)) throw new Error("Waiting for dispatched or unknown execution ownership; admission is closed.");
+    const requestId=randomUUID();
+    const actionHash=createHash("sha256").update(JSON.stringify(["project-archive",job.projectId,jobId,job.version])).digest("hex");
+    const {intent}=this.activityStore.beginCancellationOperation({scopeId:job.scopeId,requestId,actionHash,
+      source:"operator",toolName:"settings.update",actionName:"project-archive",target:cancellationTargetForJob(job),
+      expectedVersion:job.version,reasonCode:"project-archive"});
+    if (!job.workerId) {
+      const previous={...job};
+      try {
+        this.activityStore.transaction(()=>{
+          job.status="cancelled"; job.terminalOrigin="explicit-cancellation"; job.cancellationIntentId=intent.intentId;
+          job.pendingInteractions=[]; job.error="Project archive cancelled this Job before execution dispatch.";
+          job.updatedAt=Date.now(); job.version+=1;
+          this.setCancellationIntentStatus(intent.intentId,"dispatched"); this.persistJob(job); this.setCancellationIntentStatus(intent.intentId,"succeeded");
+        });
+      } catch (error) { Object.assign(job,previous); throw error; }
+      this.deferredExecutions.get(jobId)?.discard();
+      this.notify(jobId,"terminal");
+    } else {
+      const affected=this.jobsForWorker(job);
+      if (job.backendKind !== "app-server" && affected.some(peer=>peer.projectId !== job.projectId)) throw new Error("Shared worker has another project's active execution.");
+      await this.cancel(jobId,intent,job.backendKind === "app-server" && affected.some(peer=>peer.projectId !== job.projectId)
+        ? {interruptOnly:true} : {acknowledgeAffectedJobIds:affected.map(peer=>peer.jobId),
+          ...(job.backendKind === "app-server" ? {retirementThreadIds:this.activityStore.projectLifecycle.threadIds(job.projectId!)} : {})});
+    }
+    this.completeCancellationOperation(job.scopeId,requestId,{code:isTerminalActivityJobStatus(job.status) ? "ARCHIVE_STOP_CONFIRMED" : "ARCHIVE_STOP_UNCONFIRMED"},isTerminalActivityJobStatus(job.status) ? "completed" : "failed");
+    if (!isTerminalActivityJobStatus(job.status)) throw new Error(job.error || "Termination remains unconfirmed.");
+  }
+
+  /** Recover exact retained executions even when new-execution authentication is unavailable. */
+  resumeAuthorizedRecoveries(): void {
+    const upstream = this.upstream;
+    const sessions = this.recoverySessions;
+    if (!upstream || !sessions || !this.recoveryStarted || this.projectionOnly) return;
+    const record = (job: CodexJob, threadId: string | undefined, lineage: { sessionId?: string; forkedFromThreadId?: string }) => {
+      if (this.activityStore.projectLifecycle.jobReceipt(job.jobId) || (job.projectId && !this.activityStore.projectLifecycle.active(job.projectId))) return;
+      const agent = job.agentId ? this.getAgent(job.agentId) : undefined;
+      if (!threadId || !agent || !job.executionDecision || !isCodexBackendKind(job.backendKind)) return;
+      return recordAdmittedThread({ sessions, jobs: this, sessionDecision: job.sessionDecision,
+        authBoundary: job.authBoundary,
+        agent, threadId, scopeId: job.scopeId, cwd: job.cwd, sandbox: job.sandbox,
+        ...(job.projectId && job.projectName ? { projectAdmission: { projectId: job.projectId, projectName: job.projectName } } : {}),
+        selection: job.executionDecision.effectiveSelection, policyRevision: job.executionDecision.policyRevision,
+        backendKind: job.backendKind, visibleInCodexApp: sessions.getForJob(threadId, job.authBoundary)?.visibleInCodexApp ?? false,
+        persistence: job.threadPersistence,
+        contextMode: job.contextMode || "fresh", ...lineage });
+    };
+    for (const job of this.jobs.values()) {
+      if (job.executionReceipt && isTerminalActivityJobStatus(job.status)) {
+        this.acknowledgeSettledExecution(job); continue;
+      }
+      if (!this.recoveryJobs.has(job.jobId) || !upstream.recoverExecution) continue;
+      this.recoveryJobs.delete(job.jobId);
+      // A cancellation dispatch whose controller vanished is unconfirmed,
+      // not proof of a stopped turn. Exact terminal replay settles the race.
+      if (job.status === "terminating") job.status = "termination-failed";
+      job.promise = upstream.recoverExecution(job.jobId,
+        progress => this.recordProgress(job, progress),
+        assignment => { this.recordWorkerAssignment(job, assignment); record(job, assignment.threadId, assignment); })
+        .then(result => this.settleExecutionResult(job, result,
+          value => record(job, extractThreadId(value), extractResultThreadLineage(value))))
+        .catch(error => this.settleExecutionError(job, error))
+        .finally(() => this.acknowledgeSettledExecution(job));
+    }
+  }
+
+  private acknowledgeSettledExecution(job: CodexJob): void {
+    const assignment = this.jobAssignment(job);
+    if (!assignment || this.upstream?.ownsRetainedResult?.(job.jobId, assignment) !== true) return;
+    if (job.executionReceipt && isTerminalActivityJobStatus(job.status) && job.terminalOrigin) {
+      void Promise.resolve(this.upstream?.acknowledgeExecution?.(job.jobId)).catch(() => {});
+    }
+  }
+
+  private async settleExecutionResult(job: CodexJob, result: ToolResult, onComplete?: JobCompletionCallback): Promise<void> {
+    return this.settleExecution(job, { kind: "resolved", result, onComplete });
+  }
+
+  private async settleExecutionError(job: CodexJob, error: unknown): Promise<void> {
+    return this.settleExecution(job, { kind: "rejected", error });
+  }
+
+  private async settleExecution(job: CodexJob, settlement: DeferredJobSettlement): Promise<void> {
+    while (!this.stateMaintenanceClosed) {
+      if (job.status === "terminating") {
+        this.deferredSettlements.set(job.jobId, settlement);
+        return;
+      }
+      try {
+        if (settlement.kind === "resolved") this.settleResolvedJob(job, settlement.result, settlement.onComplete);
+        else this.settleRejectedJob(job, settlement.error);
+        this.pendingTerminalCommits.delete(job);
+        return;
+      }
+      catch (error) {
+        if (!job.executionReceipt || !(error instanceof JobTerminalCommitError)) throw error;
+        if (settlement.kind === "resolved" && !this.pendingTerminalCommits.has(job)) {
+          const turnStatus = extractResultTurnStatus(settlement.result);
+          this.pendingTerminalCommits.set(job, {
+            origin: turnStatus === "interrupted"
+              ? "app-server-interrupted"
+              : settlement.result.isError ? "upstream-failure" : "normal-completion",
+            observedAt: Date.now()
+          });
+        }
+        // Keep the exact outcome reserved at the owner until the DB commit
+        // succeeds. A busy DB must not replace a completed turn's outcome.
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+    this.pendingTerminalCommits.delete(job);
+  }
+
+  pendingTerminalCommit(job: CodexJob): { origin: JobTerminalOrigin; observedAt: number } | null {
+    if (this.jobs.get(job.jobId) !== job || !job.executionReceipt || isTerminalActivityJobStatus(job.status)) return null;
+    return this.pendingTerminalCommits.get(job) || null;
   }
 
   get(jobId: string): CodexJob | undefined {
-    this.pruneAndPersist();
+    this.refreshProjectIdentities();
     return this.jobs.get(jobId);
   }
 
   list(limit = 20, offset = 0): CodexJob[] {
-    this.pruneAndPersist();
-    return [...this.jobs.values()]
+    this.refreshProjectIdentities();
+    const values=[...this.jobs.values()];
+    const visible=this.activityStore.retainedJobIds(values.map(job=>job.jobId));
+    return values.filter(job=>visible.has(job.jobId))
       .sort((a, b) => b.updatedAt - a.updatedAt)
       .slice(Math.max(0, offset), Math.max(0, offset) + Math.max(0, limit));
   }
@@ -2800,12 +2704,10 @@ export class CodexJobRegistry {
   }
 
   sizeForScope(scopeId: string): number {
-    this.pruneAndPersist();
-    return [...this.jobs.values()].filter((job) => job.scopeId === scopeId).length;
+    return this.list(Number.MAX_SAFE_INTEGER).filter(job=>job.scopeId===scopeId).length;
   }
 
   runningCount(scopeId?: string): number {
-    this.pruneAndPersist();
     return this.observedRunningCount(scopeId);
   }
 
@@ -2817,7 +2719,7 @@ export class CodexJobRegistry {
   }
 
   findRequest(scopeId: string, requestId: string, requestHash: string): CodexJob | undefined {
-    this.pruneAndPersist();
+    this.activityStore.projectLifecycle.assertRequest("task",scopeId,requestId,requestHash);
     const job = [...this.jobs.values()].find(
       (entry) => entry.scopeId === scopeId && entry.requestId === requestId
     );
@@ -2827,15 +2729,41 @@ export class CodexJobRegistry {
     return job;
   }
 
+  private jobAssignment(job: CodexJob): UpstreamWorkerAssignment | null {
+    if (!isCodexBackendKind(job.backendKind) || !job.workerId ||
+        job.workerGeneration === undefined || !job.upstreamRequestId || !job.threadId) return null;
+    return { backendKind: job.backendKind, workerId: job.workerId,
+      workerGeneration: job.workerGeneration, upstreamRequestId: job.upstreamRequestId,
+      threadId: job.threadId };
+  }
+
+  /** Existing controls must still target the original live request after login changes. */
+  private assertOriginalJobControl(job: CodexJob): void {
+    if (!isActiveActivityJobStatus(job.status)) return;
+    // Production adapters prove the exact live request, regardless of login.
+    // Legacy adapters validate their own opaque control handles at dispatch.
+    if (!this.upstream?.ownsActiveExecution) return;
+    const assignment = this.jobAssignment(job);
+    if (isActiveActivityJobStatus(job.status) && job.trackingState === "connected" && assignment &&
+        this.upstream.ownsActiveExecution(job.jobId, assignment) === true) return;
+    throw new Error("CODEX_EXECUTION_OWNER_UNAVAILABLE: The original live worker request cannot be verified.");
+  }
+
+  private assertCancellationTargetOwner(target: { jobId?: string; activityId: string }): void {
+    for (const job of this.jobs.values()) {
+      if (target.jobId === job.jobId || !target.jobId && job.activityId === target.activityId) {
+        this.assertOriginalJobControl(job);
+      }
+    }
+  }
+
   peekRequest(scopeId: string, requestId: string): CodexJob | undefined {
-    this.pruneAndPersist();
     return [...this.jobs.values()].find(
       (entry) => entry.scopeId === scopeId && entry.requestId === requestId
     );
   }
 
   isThreadActive(threadId: string): boolean {
-    this.pruneAndPersist();
     const exclusiveKey = threadExclusiveKey(threadId);
     return [...this.jobs.values()].some(
       (job) => isActiveActivityJobStatus(job.status) && job.exclusiveKeys.includes(exclusiveKey)
@@ -2843,23 +2771,24 @@ export class CodexJobRegistry {
   }
 
   listForActivity(activityId: string): CodexJob[] {
-    this.pruneAndPersist();
+    this.refreshProjectIdentities();
     return [...this.jobs.values()]
       .filter((job) => job.activityId === activityId)
       .sort((a, b) => a.createdAt - b.createdAt);
   }
 
   listForThread(threadId: string, scopeId?: string): CodexJob[] {
-    this.pruneAndPersist();
+    this.refreshProjectIdentities();
     return [...this.jobs.values()]
       .filter((job) => job.threadId === threadId && (!scopeId || job.scopeId === scopeId))
       .sort((a, b) => a.createdAt - b.createdAt);
   }
 
   listForAgent(agentId: string): CodexJob[] {
-    this.pruneAndPersist();
-    return [...this.jobs.values()]
-      .filter((job) => job.agentId === agentId)
+    this.refreshProjectIdentities();
+    return [...(this.jobsByAgent.get(agentId) || [])]
+      .map(id => this.jobs.get(id))
+      .filter((job): job is CodexJob => job !== undefined)
       .sort((a, b) => a.createdAt - b.createdAt);
   }
 
@@ -2868,10 +2797,40 @@ export class CodexJobRegistry {
    * once; safety-sensitive lookups keep using get/listForAgent. */
   observedLatestJobForAgent(agentId: string): CodexJob | undefined {
     let latest: CodexJob | undefined;
-    for (const job of this.jobs.values()) {
-      if (job.agentId === agentId && (!latest || job.createdAt >= latest.createdAt)) latest = job;
+    for (const id of this.jobsByAgent.get(agentId) || []) {
+      const job = this.jobs.get(id);
+      if (job && (!latest || job.createdAt >= latest.createdAt)) latest = job;
     }
     return latest;
+  }
+
+  private setIndexedJob(job: CodexJob): void {
+    this.jobs.set(job.jobId, job);
+    const previousAgent = this.indexedJobAgent.get(job.jobId);
+    if (previousAgent && previousAgent !== job.agentId) {
+      const ids = this.jobsByAgent.get(previousAgent);
+      ids?.delete(job.jobId);
+      if (ids?.size === 0) this.jobsByAgent.delete(previousAgent);
+      this.indexedJobAgent.delete(job.jobId);
+    }
+    if (job.agentId) {
+      const ids = this.jobsByAgent.get(job.agentId) || new Set<string>();
+      ids.add(job.jobId);
+      this.jobsByAgent.set(job.agentId, ids);
+      this.indexedJobAgent.set(job.jobId, job.agentId);
+    }
+  }
+
+  private deleteIndexedJob(jobId: string): void {
+    this.jobs.delete(jobId);
+    this.dispatchedJobs.delete(jobId);
+    const agentId = this.indexedJobAgent.get(jobId);
+    if (agentId) {
+      const ids = this.jobsByAgent.get(agentId);
+      ids?.delete(jobId);
+      if (ids?.size === 0) this.jobsByAgent.delete(agentId);
+      this.indexedJobAgent.delete(jobId);
+    }
   }
 
   activityTransaction<T>(operation: () => T): T {
@@ -2906,7 +2865,7 @@ export class CodexJobRegistry {
 
   createAgent(input: { scopeId: string; agentName: string }): BridgeAgent {
     const agent = this.activityStore.createAgent(input);
-    this.notifyScope(agent.scopeId);
+    this.notifyScope(agent.scopeId, agent.agentId);
     return agent;
   }
 
@@ -2938,6 +2897,10 @@ export class CodexJobRegistry {
     return this.activityStore.listCurrentAgentThreads();
   }
 
+  currentAgentThread(agentId: string): BridgeAgentThread | undefined {
+    return this.activityStore.currentAgentThread(agentId);
+  }
+
   listAgentThreads(agentId: string): BridgeAgentThread[] {
     return this.activityStore.listAgentThreads(agentId);
   }
@@ -2958,14 +2921,14 @@ export class CodexJobRegistry {
   }): ActivityAgentAssignment {
     const assignment = this.activityStore.assignAgent(input);
     const agent = this.activityStore.getAgent(input.agentId);
-    if (agent) this.notifyScope(agent.scopeId);
+    if (agent) this.notifyScope(agent.scopeId, agent.agentId);
     return assignment;
   }
 
   releaseAgentAssignment(activityId: string, agentId: string): ActivityAgentAssignment | undefined {
     const assignment = this.activityStore.releaseAgentAssignment(activityId, agentId);
     const agent = this.activityStore.getAgent(agentId);
-    if (agent) this.notifyScope(agent.scopeId);
+    if (agent) this.notifyScope(agent.scopeId, agent.agentId);
     return assignment;
   }
 
@@ -2975,7 +2938,7 @@ export class CodexJobRegistry {
     expectedAgentVersion: number;
   }) {
     const detached = this.activityStore.detachIdleAgentAssignment(input);
-    this.notifyScope(detached.agent.scopeId);
+    this.notifyScope(detached.agent.scopeId, detached.agent.agentId);
     return detached;
   }
 
@@ -2992,7 +2955,7 @@ export class CodexJobRegistry {
     forkedFromThreadId?: string;
   }): BridgeAgentThread {
     const thread = this.activityStore.linkAgentThread(input);
-    this.notifyScope(thread.scopeId);
+    this.notifyScope(thread.scopeId, input.agentId);
     return thread;
   }
 
@@ -3002,13 +2965,13 @@ export class CodexJobRegistry {
     options: { currentJobId?: string; orphanedReason?: string } = {}
   ): BridgeAgent {
     const agent = this.activityStore.setAgentExecutionState(agentId, lifecycle, options);
-    this.notifyScope(agent.scopeId);
+    this.notifyScope(agent.scopeId, agent.agentId);
     return agent;
   }
 
   renameAgent(agentId: string, name: string): BridgeAgent {
     const agent = this.activityStore.renameAgent(agentId, name);
-    this.notifyScope(agent.scopeId);
+    this.notifyScope(agent.scopeId, agent.agentId);
     return agent;
   }
 
@@ -3030,7 +2993,13 @@ export class CodexJobRegistry {
 
   resolveHistoryRuntimeProblem(agent: BridgeAgent, revision: string): void {
     this.activityStore.transaction(() => this.activityStore.workHistory.resolveRuntimeProblem(agent.agentId, revision));
-    this.notifyScope(agent.scopeId);
+    this.notifyScope(agent.scopeId, agent.agentId);
+  }
+
+  settleEndedOrphan(input: Parameters<BridgeStateStore["settleEndedOrphan"]>[0]): BridgeAgent | undefined {
+    const agent=this.activityStore.settleEndedOrphan(input);
+    if (agent) this.notifyScope(agent.scopeId,agent.agentId);
+    return agent;
   }
 
   recordAgentMutation(scopeId: string, requestId: string, actionHash: string, result: unknown): void {
@@ -3242,12 +3211,14 @@ export class CodexJobRegistry {
     operation: CancellationOperationRecord;
     intent: CancellationIntentRecord;
   } {
+    this.assertCancellationTargetOwner(input.target);
     const result = this.activityStore.beginCancellationOperation(input);
     this.notifyScope(result.operation.scopeId);
     return result;
   }
 
   createCancellationIntent(input: CreateCancellationIntentInput): CancellationIntentRecord {
+    this.assertCancellationTargetOwner(input.target);
     const intent = this.activityStore.createCancellationIntent(input);
     this.notifyScope(intent.scopeId);
     return intent;
@@ -3291,7 +3262,9 @@ export class CodexJobRegistry {
 
   recordTransportObservation(input: Parameters<BridgeStateStore["recordTransportObservation"]>[0]) {
     try {
-      return this.activityStore.recordTransportObservation(input);
+      return this.telemetry
+        ? this.telemetry.recordTransportObservation(input, this.activityStore.bridgeInstanceId)
+        : this.activityStore.recordTransportObservation(input);
     } catch (error) {
       if (process.env.CODEX_MCP_BRIDGE_DEBUG === "1") {
         console.error("Could not persist transport observation:", error);
@@ -3303,7 +3276,27 @@ export class CodexJobRegistry {
   listTransportObservations(
     kind?: Parameters<BridgeStateStore["listTransportObservations"]>[0]
   ) {
-    return this.activityStore.listTransportObservations(kind);
+    return this.telemetry
+      ? this.telemetry.listTransportObservations(kind)
+      : this.activityStore.listTransportObservations(kind);
+  }
+
+  waitDiagnostics(): z.infer<typeof jobWaitDiagnosticsOutputSchema> {
+    return this.waitDiagnosticsTracker.snapshot(
+      this.listTransportObservations("status-wait-aborted").length
+    );
+  }
+
+  progressPersistenceStatus(): ProgressPersistenceStatus {
+    return {
+      ...this.progressPersistenceQueue.status(),
+      immediateBudget: PROGRESS_PERSISTENCE_IMMEDIATE_BUDGET,
+      immediateRemaining: this.progressPersistenceImmediateRemaining
+    };
+  }
+
+  stateMaintenanceDiagnostics(): z.infer<typeof diagnosticsOutputSchema>["performance"]["stateMaintenance"] {
+    return [...(this.maintenanceScheduler?.diagnostics() || [])];
   }
 
   getScopeVersion(scopeId: string): number {
@@ -3326,156 +3319,67 @@ export class CodexJobRegistry {
     return this.activityStore.listPendingCompletionActivityIds(scopeId);
   }
 
-  claimCompletionOutboxBatch(outboxIds: number[], scopeId: string, leaseOwner: string) {
-    return this.activityTransaction(() =>
-      [...new Set(outboxIds)].sort((a, b) => a - b).flatMap((outboxId) => {
-        const record = this.activityStore.claimCompletionOutbox(outboxId, scopeId, leaseOwner);
-        return record ? [record] : [];
+  claimNativeCompletionNotifications(limit: number, leaseOwner: string) {
+    if (!this.activityStore.nativeCompletionAvailability().available) {
+      this.nativeCompletionClaims.emptyPreflights++;
+      return [];
+    }
+    this.nativeCompletionClaims.transactions++;
+    const records = this.activityTransaction(() =>
+      this.activityStore.listPendingNotifyCompletionOutbox(Math.max(1, Math.min(10, limit))).flatMap((candidate) => {
+        const record = this.activityStore.claimCompletionOutbox(
+          candidate.outboxId,
+          candidate.scopeId,
+          leaseOwner
+        );
+        return record?.channel === "notify" ? [record] : [];
       })
     );
-  }
-
-  markCompletionOutboxBatchDelivered(outboxIds: number[], scopeId: string, leaseOwner: string) {
-    const records = this.activityTransaction(() =>
-      [...new Set(outboxIds)].sort((a, b) => a - b).map((outboxId) =>
-        this.activityStore.markCompletionOutboxDelivered(outboxId, scopeId, leaseOwner)
-      )
-    );
-    this.notifyScope(scopeId);
+    if (!records.length) this.nativeCompletionClaims.lostRaces++;
     return records;
   }
 
-  releaseCompletionOutboxBatch(outboxIds: number[], scopeId: string, leaseOwner: string): void {
-    this.activityTransaction(() => {
-      for (const outboxId of [...new Set(outboxIds)]) {
-        this.activityStore.releaseCompletionOutbox(outboxId, scopeId, leaseOwner);
-      }
-    });
+  private readonly nativeCompletionClaims = { emptyPreflights: 0, transactions: 0, lostRaces: 0 };
+
+  nativeCompletionClaimDiagnostics() { return { ...this.nativeCompletionClaims }; }
+
+  nativeCompletionAvailability() { return this.activityStore.nativeCompletionAvailability(); }
+
+  subscribeNativeCompletionReady(listener: () => void) {
+    return this.activityStore.subscribeNativeCompletionReady(listener);
   }
 
-  async waitForScopeVersion(
-    scopeId: string,
-    afterVersion: number,
-    waitMs: number,
-    watcherId: string | undefined,
-    signal: AbortSignal | undefined,
-    presentation: ActivityCardPresentationContext
-  ): Promise<ActivityScopeWatchResult> {
-    const startedAt = Date.now();
-    const initialPolicy = this.activityPresentationWatcherPolicy(scopeId, presentation);
-    if (initialPolicy.stopped) {
-      return {
-        scopeVersion: this.getScopeVersion(scopeId),
-        changed: false,
-        timedOut: false,
-        waitedMs: 0,
-        stopped: true,
-        stopReason: "presentation-superseded"
-      };
-    }
-    const current = this.getScopeVersion(scopeId);
-    if (current > afterVersion) {
-      return {
-        scopeVersion: current,
-        changed: true,
-        timedOut: false,
-        waitedMs: 0,
-        stopped: false
-      };
-    }
-    if (this.activeWatchers >= this.maxConcurrentWatchers) {
-      throw new Error(`Too many Activity watchers are open. The watcher limit is ${this.maxConcurrentWatchers}.`);
-    }
-    const scopeWatcherCount = this.activeWatchersByScope.get(scopeId) || 0;
-    if (scopeWatcherCount >= this.maxConcurrentWatchersPerScope) {
-      throw new Error(
-        `Too many Activity watchers are open for this conversation. The per-scope watcher limit is ${this.maxConcurrentWatchersPerScope}.`
-      );
-    }
-    const explicitWatcherCount = this.activeExplicitWatchersByScope.get(scopeId) || 0;
-    const automaticWatcherCount = this.activeAutomaticWatchersByScope.get(scopeId) || 0;
-    if (presentation.kind === "automatic" && automaticWatcherCount >= 1) {
-      throw new Error(
-        "The latest automatic Activity presentation already has its one live watcher."
-      );
-    }
-    if (
-      presentation.kind === "explicit" &&
-      explicitWatcherCount >= this.maxConcurrentExplicitWatchersPerScope
-    ) {
-      throw new Error(
-        `Too many explicit Activity cards are watching this conversation. The explicit-card watcher limit is ${this.maxConcurrentExplicitWatchersPerScope}.`
-      );
-    }
-    const leaseKey = watcherId ? `${scopeId}\0${watcherId}` : undefined;
-    if (leaseKey && this.watcherLeases.has(leaseKey)) {
-      throw new Error("This mounted Activity widget already has an active watch request.");
-    }
-    if (signal?.aborted) throw new Error("The Activity watch was cancelled before it started.");
-    this.activeWatchers += 1;
-    this.activeWatchersByScope.set(scopeId, scopeWatcherCount + 1);
-    if (presentation.kind === "automatic") {
-      this.activeAutomaticWatchersByScope.set(scopeId, automaticWatcherCount + 1);
-    }
-    if (presentation.kind === "explicit") {
-      this.activeExplicitWatchersByScope.set(scopeId, explicitWatcherCount + 1);
-    }
-    if (leaseKey) this.watcherLeases.add(leaseKey);
-    try {
-      const changed = await new Promise<boolean>((resolve, reject) => {
-        let settled = false;
-        const listeners = this.scopeWaiters.get(scopeId) || new Set<() => void>();
-        this.scopeWaiters.set(scopeId, listeners);
-        const finish = (value: boolean, error?: Error) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          listeners.delete(onChange);
-          if (listeners.size === 0) this.scopeWaiters.delete(scopeId);
-          signal?.removeEventListener("abort", onAbort);
-          if (error) reject(error);
-          else resolve(value);
-        };
-        const onChange = () => finish(this.getScopeVersion(scopeId) > afterVersion);
-        const onAbort = () => finish(false, new Error("The Activity watch was cancelled by the host."));
-        const timer = setTimeout(() => finish(false), waitMs);
-        listeners.add(onChange);
-        signal?.addEventListener("abort", onAbort, { once: true });
-        if (this.getScopeVersion(scopeId) > afterVersion) finish(true);
-        else if (signal?.aborted) onAbort();
-      });
-      const stopped = this.isPresentationSuperseded(scopeId, presentation);
-      return {
-        scopeVersion: this.getScopeVersion(scopeId),
-        changed,
-        timedOut: !changed && !stopped,
-        waitedMs: Date.now() - startedAt,
-        stopped,
-        ...(stopped ? { stopReason: "presentation-superseded" as const } : {})
-      };
-    } finally {
-      this.activeWatchers -= 1;
-      const remainingForScope = (this.activeWatchersByScope.get(scopeId) || 1) - 1;
-      if (remainingForScope > 0) this.activeWatchersByScope.set(scopeId, remainingForScope);
-      else this.activeWatchersByScope.delete(scopeId);
-      if (presentation.kind === "automatic") {
-        const remainingAutomatic = (this.activeAutomaticWatchersByScope.get(scopeId) || 1) - 1;
-        if (remainingAutomatic > 0) {
-          this.activeAutomaticWatchersByScope.set(scopeId, remainingAutomatic);
-        } else {
-          this.activeAutomaticWatchersByScope.delete(scopeId);
+  markNativeCompletionNotificationsDelivered(outboxIds: number[], leaseOwner: string) {
+    const records = this.activityTransaction(() =>
+      [...new Set(outboxIds)].sort((a, b) => a - b).map((outboxId) => {
+        const record = this.activityStore.getCompletionOutbox(outboxId);
+        if (!record || record.channel !== "notify") {
+          throw new Error("Unknown native completion notification.");
         }
-      }
-      if (presentation.kind === "explicit") {
-        const remainingExplicit = (this.activeExplicitWatchersByScope.get(scopeId) || 1) - 1;
-        if (remainingExplicit > 0) {
-          this.activeExplicitWatchersByScope.set(scopeId, remainingExplicit);
-        } else {
-          this.activeExplicitWatchersByScope.delete(scopeId);
-        }
-      }
-      if (leaseKey) this.watcherLeases.delete(leaseKey);
+        return this.activityStore.markCompletionOutboxDelivered(
+          record.outboxId,
+          record.scopeId,
+          leaseOwner
+        );
+      })
+    );
+    for (const scopeId of new Set(records.map((record) => record.scopeId))) {
+      this.notifyScope(scopeId);
     }
+    return records;
+  }
+
+  releaseNativeCompletionNotifications(outboxIds: number[], leaseOwner: string): void {
+    const scopes = this.activityTransaction(() => {
+      const affected = new Set<string>();
+      for (const outboxId of [...new Set(outboxIds)].sort((a, b) => a - b)) {
+        const record = this.activityStore.getCompletionOutbox(outboxId);
+        if (!record || record.channel !== "notify") continue;
+        if (this.activityStore.releaseNativeCompletionOutbox(record, leaseOwner)) affected.add(record.scopeId);
+      }
+      return affected;
+    });
+    for (const scopeId of scopes) this.notifyScope(scopeId);
   }
 
   setActivityPolicy(
@@ -3483,7 +3387,6 @@ export class CodexJobRegistry {
     policy: {
       handoffPolicy?: ActivityHandoffPolicy;
       completionTrigger?: ActivityCompletionTrigger;
-      executionMode?: ActivityExecutionMode;
       kind?: ActivityKind;
     }
   ): BridgeActivity {
@@ -3552,11 +3455,13 @@ export class CodexJobRegistry {
     onComplete?: JobCompletionCallback,
     activeLimit = this.maxConcurrentJobs,
     rejectIfSelectionActive = false,
-    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
+    onAssigned?: (assignment: UpstreamWorkerAssignment, job: CodexJob) => void,
+    deferExecution = false,
+    prepareExecution = false
   ): CodexJob {
-    this.pruneAndPersist();
     const replay = this.findRequest(input.scopeId, input.requestId, input.requestHash);
     if (replay) return replay;
+    this.activityStore.projectLifecycle.assertActive(input.projectId);
     this.activityStore.threadConnections.assertAdmission(input.agentId, input.sessionDecision.threadId || input.sourceThreadId);
     if (!Number.isInteger(activeLimit) || activeLimit < 1 || activeLimit > this.maxConcurrentJobs) {
       throw new Error(`Invalid active Codex job limit: ${activeLimit}.`);
@@ -3583,17 +3488,31 @@ export class CodexJobRegistry {
         "A compatible Codex context is still starting or running for this Activity. Wait for it, or create another Agent with contextMode='fresh' for deliberate parallel work."
       );
     }
+    if (this.retainedJobAdmissionReservations() >= this.maxJobs) {
+      this.requestRetainedJobHeadroom();
+      throw new Error(
+        "JOB_RETENTION_CAPACITY: Retained Job capacity is reserved by active or not-yet-classified terminal work. Retry after foreground work settles and bounded maintenance catches up."
+      );
+    }
     const now = Date.now();
+    const currentAuthBoundary = this.authBoundary?.();
+    if (this.authBoundary && !currentAuthBoundary) {
+      throw new Error("CODEX_AUTH_ADMISSION_REQUIRED: Validate the current execution conditions before starting a Job.");
+    }
     const job: CodexJob = {
       ...input,
+      executionName:input.activityId ? this.activityStore.getActivity(input.activityId)?.title : undefined,
+      ...(currentAuthBoundary ? { authBoundary: currentAuthBoundary } : {}),
       activityId: input.activityId || randomUUID(),
       threadId: input.sessionDecision.threadId,
-      executionMode: input.executionMode || "background",
       backendKind: input.backendKind || "app-server",
       trackingState: "liveness-unknown",
       bridgeInstanceId: this.activityStore.bridgeInstanceId,
       requestHashVersion: input.requestHashVersion || CURRENT_TASK_REQUEST_HASH_VERSION,
+      completionDeliveryPolicy: input.completionDeliveryPolicy || "direct-wait",
       jobId: randomUUID(),
+      executionReceipt: this.upstream?.supportsExecutionRecovery?.() === true,
+      executionDispatched: false,
       createdAt: now,
       updatedAt: now,
       lastProgressAt: now,
@@ -3603,39 +3522,81 @@ export class CodexJobRegistry {
       pendingInteractions: [],
       promise: Promise.resolve()
     };
-    this.jobs.set(job.jobId, job);
+    job.approvedFollowups = issueApprovedFollowups(job.jobId, job.approvedFollowups);
+    this.setIndexedJob(job);
     try {
       this.persistJob(job);
     } catch (error) {
-      this.jobs.delete(job.jobId);
+      this.deleteIndexedJob(job.jobId);
       throw error;
     }
-    job.promise = Promise.resolve()
-      .then(() =>
-        run(
+    const execute = () => Promise.resolve()
+      .then(() => {
+        if (!prepareExecution) this.assertJobMayExecute(job.jobId);
+        else {
+          if (job.status !== "running") throw new Error("PROJECT_MANAGEMENT_ENDED: Execution admission has ended.");
+          this.activityStore.projectLifecycle.assertActive(job.projectId);
+        }
+        return withExecutionIdentity(job.jobId, () => run(
           (progress) => this.recordProgress(job, progress),
           (assignment) => {
+            if (isTerminalActivityJobStatus(job.status) || this.activityStore.projectLifecycle.jobReceipt(job.jobId)) return;
             this.recordWorkerAssignment(job, assignment);
-            onAssigned?.(assignment);
+            if (!job.projectId || this.activityStore.projectLifecycle.active(job.projectId)) onAssigned?.(assignment, job);
           }
-        )
-      )
+        ));
+      })
       .then((result) => {
         if (job.status === "terminating") {
           this.deferredSettlements.set(job.jobId, { kind: "resolved", result, onComplete });
           return;
         }
-        this.settleResolvedJob(job, result, onComplete);
+        return this.settleExecutionResult(job, result, onComplete);
       })
       .catch((error: unknown) => {
         if (job.status === "terminating") {
           this.deferredSettlements.set(job.jobId, { kind: "rejected", error });
           return;
         }
-        this.settleRejectedJob(job, error);
+        return this.settleExecutionError(job, error);
+      }).finally(() => this.acknowledgeSettledExecution(job));
+    if (deferExecution) {
+      job.promise = new Promise<void>((resolve, reject) => {
+        let settled = false;
+        const finish = (operation?: () => Promise<void>) => {
+          if (settled) return;
+          settled = true;
+          this.deferredExecutions.delete(job.jobId);
+          if (operation) void operation().then(resolve, reject);
+          else resolve();
+        };
+        this.deferredExecutions.set(job.jobId, {
+          launch: () => finish(execute),
+          discard: () => finish()
+        });
       });
-    this.pruneAndPersist();
+    } else {
+      job.promise = execute();
+    }
     return job;
+  }
+
+  activateDeferredExecution(jobId: string): void {
+    this.deferredExecutions.get(jobId)?.launch();
+  }
+
+  discardDeferredAdmission(jobId: string): void {
+    const deferred = this.deferredExecutions.get(jobId);
+    if (!deferred) return;
+    deferred.discard();
+    this.deferredSettlements.delete(jobId);
+    this.steeringPromptRedactions.delete(jobId);
+    this.deleteIndexedJob(jobId);
+    this.progressPersistenceQueue.remove(snapshot => snapshot.jobId === jobId);
+    this.progressPersisted.delete(jobId);
+    this.lastWake.delete(jobId);
+    this.retentionProtectedJobs.delete(jobId);
+    this.scheduleIdleRetainedJobMaintenance();
   }
 
   private settleResolvedJob(
@@ -3659,33 +3620,39 @@ export class CodexJobRegistry {
     );
     let undo: (() => void) | undefined;
     try {
-      const finish = () => {
-        undo = onComplete?.(result) || undefined;
-        job.threadId = job.sessionDecision.threadId;
-        job.status = turnStatus === "interrupted" ? "interrupted" : "completed";
-        job.terminalOrigin = turnStatus === "interrupted"
-          ? "app-server-interrupted"
-          : "normal-completion";
-        job.cancellationIntentId = undefined;
-        job.result = retained.result;
-        job.resultBytes = retained.originalBytes;
-        job.resultOmitted = retained.omitted;
-        job.pendingInteractions = [];
-        job.error = turnStatus === "interrupted"
-          ? "The Codex App Server turn was interrupted before normal completion."
-          : undefined;
-        job.updatedAt = Date.now();
-        job.version += 1;
-        this.persistJob(job);
-      };
-      if (this.stateStore) this.stateStore.transaction(finish);
-      else finish();
+      const next = this.activityStore.transaction(() => {
+        undo = onComplete?.(result, job) || undefined;
+        const candidate: CodexJob = {
+          ...job,
+          threadId: job.sessionDecision.threadId,
+          status: turnStatus === "interrupted" ? "interrupted" : "completed",
+          terminalOrigin: turnStatus === "interrupted"
+            ? "app-server-interrupted"
+            : "normal-completion",
+          cancellationIntentId: undefined,
+          summary: retained.body.content?.filter(block=>block.type==="text").slice(0,3).map(block=>typeof block.text==="string" ? block.text.slice(0,500) : "").join("\n").slice(0,500) || undefined,
+          result: retained.result,
+          resultBytes: retained.originalBytes,
+          resultOmitted: retained.omitted,
+          pendingInteractions: [],
+          error: turnStatus === "interrupted"
+            ? "The Codex App Server turn was interrupted before normal completion."
+            : undefined,
+          updatedAt: Date.now(),
+          endedAt: Date.now(),
+          version: job.version + 1
+        };
+        this.persistJob(candidate, [], false);
+        this.activityStore.saveJobResultBody(candidate.jobId,retained.body);
+        return candidate;
+      });
+      Object.assign(job, next);
       this.steeringPromptRedactions.delete(job.jobId);
-      this.notify(job.jobId);
-      this.pruneAndPersist();
+      this.notify(job.jobId, "terminal");
+      this.notifyScope(job.scopeId);
     } catch (error) {
       undo?.();
-      throw error;
+      throw new JobTerminalCommitError(error);
     }
   }
 
@@ -3703,75 +3670,120 @@ export class CodexJobRegistry {
       this.steeringPromptsFor(job.jobId)
     );
     let undo: (() => void) | undefined;
-    const fail = () => {
-      // A failed turn can still have created or resumed a durable thread. Keep
-      // the same thread/session persistence callback used by successful turns
-      // so a structured upstream error never leaves that execution untracked.
-      undo = onComplete?.(result) || undefined;
-      job.threadId = job.sessionDecision.threadId;
-      job.status = "failed";
-      job.terminalOrigin = "upstream-failure";
-      job.cancellationIntentId = undefined;
-      job.result = retained.result;
-      job.resultBytes = retained.originalBytes;
-      job.resultOmitted = retained.omitted;
-      job.pendingInteractions = [];
-      job.error = sanitizeTextForJob(
-        toolResultErrorMessage(result),
-        job.cwd,
-        this.allowedRoots,
-        this.steeringPromptsFor(job.jobId)
-      ).slice(0, 4_000);
-      job.updatedAt = Date.now();
-      job.version += 1;
-      this.persistJob(job);
-    };
     try {
-      if (this.stateStore) this.stateStore.transaction(fail);
-      else fail();
+      const next = this.activityStore.transaction(() => {
+        // A failed turn can still have created or resumed a durable thread.
+        // Keep the same callback in the atomic terminal transaction.
+        undo = onComplete?.(result, job) || undefined;
+        const candidate: CodexJob = {
+          ...job,
+          threadId: job.sessionDecision.threadId,
+          status: "failed",
+          terminalOrigin: "upstream-failure",
+          cancellationIntentId: undefined,
+          summary: retained.body.content?.filter(block=>block.type==="text").slice(0,3).map(block=>typeof block.text==="string" ? block.text.slice(0,500) : "").join("\n").slice(0,500) || undefined,
+          result: retained.result,
+          resultBytes: retained.originalBytes,
+          resultOmitted: retained.omitted,
+          pendingInteractions: [],
+          error: sanitizeTextForJob(
+            toolResultErrorMessage(result),
+            job.cwd,
+            this.allowedRoots,
+            this.steeringPromptsFor(job.jobId)
+          ).slice(0, 4_000),
+          updatedAt: Date.now(),
+          endedAt: Date.now(),
+          version: job.version + 1
+        };
+        this.persistJob(candidate, [], false);
+        this.activityStore.saveJobResultBody(candidate.jobId,retained.body);
+        return candidate;
+      });
+      Object.assign(job, next);
       this.steeringPromptRedactions.delete(job.jobId);
-      this.notify(job.jobId);
-      this.pruneAndPersist();
+      this.notify(job.jobId, "terminal");
+      this.notifyScope(job.scopeId);
     } catch (error) {
       undo?.();
-      throw error;
+      throw new JobTerminalCommitError(error);
     }
   }
 
   private settleRejectedJob(job: CodexJob, error: unknown): void {
     if (job.status !== "running" && job.status !== "termination-failed") return;
+    const terminalCommitFailed = error instanceof JobTerminalCommitError;
     const workerLost =
       error instanceof Error && error.message.startsWith("CODEX_WORKER_LOST:");
-    job.status = workerLost ? "interrupted" : "failed";
-    job.terminalOrigin = workerLost ? "worker-loss" : "upstream-failure";
-    if (workerLost) job.trackingState = "worker-lost";
-    job.cancellationIntentId = undefined;
-    job.result = undefined;
-    job.resultBytes = undefined;
-    job.resultOmitted = undefined;
-    job.pendingInteractions = [];
-    job.error = sanitizeTextForJob(
-      error instanceof Error ? error.message : String(error),
-      job.cwd,
-      this.allowedRoots,
-      this.steeringPromptsFor(job.jobId)
-    ).slice(0, 4_000);
-    this.recordChange(job);
+    const candidate: CodexJob = {
+      ...job,
+      status: workerLost ? "interrupted" : "failed",
+      terminalOrigin: terminalCommitFailed
+        ? undefined
+        : workerLost
+          ? "worker-loss"
+          : "upstream-failure",
+      trackingState: workerLost ? "worker-lost" : job.trackingState,
+      cancellationIntentId: undefined,
+      result: undefined,
+      resultBytes: undefined,
+      resultOmitted: undefined,
+      pendingInteractions: [],
+      error: sanitizeTextForJob(
+        error instanceof Error ? error.message : String(error),
+        job.cwd,
+        this.allowedRoots,
+        this.steeringPromptsFor(job.jobId)
+      ).slice(0, 4_000),
+      updatedAt: Date.now(),
+      version: job.version + 1
+    };
+    try {
+      this.activityStore.transaction(() => this.persistJob(candidate, [], false));
+      Object.assign(job, candidate);
+    } catch (commitError) {
+      const failure = new JobTerminalCommitError(commitError);
+      if (job.executionReceipt) throw failure;
+      const fallback: CodexJob = {
+        ...job,
+        status: "failed",
+        terminalOrigin: undefined,
+        cancellationIntentId: undefined,
+        result: undefined,
+        resultBytes: undefined,
+        resultOmitted: undefined,
+        pendingInteractions: [],
+        error: sanitizeTextForJob(
+          failure.message,
+          job.cwd,
+          this.allowedRoots,
+          this.steeringPromptsFor(job.jobId)
+        ).slice(0, 4_000),
+        updatedAt: Date.now(),
+        version: job.version + 1
+      };
+      try {
+        this.activityStore.transaction(() => this.persistJob(fallback, [], false));
+      } catch {
+        // The durable running receipt remains authoritative. Never publish a
+        // terminal state from memory when neither the intended terminal nor
+        // its explicit persistence-failure receipt could be committed.
+        return;
+      }
+      Object.assign(job, fallback);
+    }
+    this.steeringPromptRedactions.delete(job.jobId);
+    this.notify(job.jobId, "terminal");
+    this.notifyScope(job.scopeId);
   }
 
   private flushDeferredSettlement(job: CodexJob): void {
     const settlement = this.deferredSettlements.get(job.jobId);
     if (!settlement) return;
     this.deferredSettlements.delete(job.jobId);
-    if (settlement.kind === "rejected") {
-      this.settleRejectedJob(job, settlement.error);
-      return;
-    }
-    try {
-      this.settleResolvedJob(job, settlement.result, settlement.onComplete);
-    } catch (error) {
-      this.settleRejectedJob(job, error);
-    }
+    job.promise = this.settleExecution(job, settlement)
+      .catch(error => this.settleExecutionError(job, error))
+      .finally(() => this.acknowledgeSettledExecution(job));
   }
 
   terminationImpact(jobId: string): { targetJobId: string; affectedJobIds: string[]; collateralJobIds: string[] } {
@@ -3793,6 +3805,8 @@ export class CodexJobRegistry {
     intent: CancellationIntentRecord,
     options: ForceTerminateOptions = {}
   ): Promise<CodexJob> {
+    const job = this.jobs.get(jobId);
+    if (job) this.assertOriginalJobControl(job);
     this.assertCancellationIntentForJob(jobId, intent);
     const existingTermination = this.terminations.get(jobId);
     if (existingTermination) {
@@ -3868,30 +3882,46 @@ export class CodexJobRegistry {
     interactionId: string,
     response: CodexInteractionResponse
   ): Promise<CodexJob> {
-    const job = this.get(jobId);
-    if (!job || !isActiveActivityJobStatus(job.status)) {
-      throw new Error("The selected Codex job is not active.");
+    let job: CodexJob;
+    let interaction: CodexPendingInteraction;
+    let sendResponse: NonNullable<CodexUpstream["respondToInteraction"]>;
+    try {
+      const current = this.get(jobId);
+      if (!current || !isActiveActivityJobStatus(current.status)) {
+        throw new Error("The selected Codex job is not active.");
+      }
+      this.activityStore.projectLifecycle.assertActive(current.projectId);
+      this.assertOriginalJobControl(current);
+      if (current.workerId && current.workerGeneration !== undefined &&
+          !interactionId.startsWith(`${current.workerId}:${current.workerGeneration}:`)) {
+        throw new Error("CODEX_EXECUTION_OWNER_UNAVAILABLE: The interaction does not belong to the original worker generation.");
+      }
+      const pending = current.pendingInteractions.find((entry) => entry.interactionId === interactionId);
+      if (!pending) throw new Error("Unknown or already resolved Codex interaction id for this job.");
+      if (pending.kind === "user-input" && !response.answers) {
+        throw new Error("This Codex interaction requires answers.");
+      }
+      if (pending.kind === "mcp-elicitation" && !response.elicitation) {
+        throw new Error("This MCP elicitation requires an elicitation response.");
+      }
+      if (!isInputInteraction(pending) && !response.decision) {
+        throw new Error("This Codex approval interaction requires a decision.");
+      }
+      if (response.decision && pending.availableDecisions &&
+          !pending.availableDecisions.includes(response.decision)) {
+        throw new Error("The selected decision is not available for this Codex approval request.");
+      }
+      const checkedUpstream = this.upstream;
+      if (!checkedUpstream?.respondToInteraction) throw new Error("The active Codex backend cannot accept interactions.");
+      job = current;
+      interaction = pending;
+      sendResponse = checkedUpstream.respondToInteraction.bind(checkedUpstream);
+    } catch (error) {
+      throw new InteractionNotDispatchedError(error);
     }
-    const interaction = job.pendingInteractions.find((entry) => entry.interactionId === interactionId);
-    if (!interaction) throw new Error("Unknown or already resolved Codex interaction id for this job.");
-    if (interaction.kind === "user-input" && !response.answers) {
-      throw new Error("This Codex interaction requires answers.");
-    }
-    if (interaction.kind === "mcp-elicitation" && !response.elicitation) {
-      throw new Error("This MCP elicitation requires an elicitation response.");
-    }
-    if (!isInputInteraction(interaction) && !response.decision) {
-      throw new Error("This Codex approval interaction requires a decision.");
-    }
-    if (
-      response.decision &&
-      interaction.availableDecisions &&
-      !interaction.availableDecisions.includes(response.decision)
-    ) {
-      throw new Error("The selected decision is not available for this Codex approval request.");
-    }
-    if (!this.upstream?.respondToInteraction) throw new Error("The active Codex backend cannot accept interactions.");
-    await this.upstream.respondToInteraction(interactionId, response);
+    // Keep the checked upstream instance and interaction together. An error
+    // from this call can mean the answer was sent; it must remain uncertain.
+    await sendResponse(interactionId, response);
     job.pendingInteractions = job.pendingInteractions.filter((entry) => entry.interactionId !== interactionId);
     this.recordProgress(job, {
       progress: (job.lastProgress?.progress || 0) + 1,
@@ -3910,6 +3940,7 @@ export class CodexJobRegistry {
   async steer(jobId: string, prompt: string): Promise<CodexJob> {
     const job = this.get(jobId);
     if (!job || job.status !== "running") throw new Error("The selected Codex job has no active turn to steer.");
+    this.assertOriginalJobControl(job);
     if (!backendSupports(job.backendKind, "supportsSteering") || !job.threadId || !this.upstream?.steerThread) {
       throw new Error("Steering is available only for an active Codex App Server turn.");
     }
@@ -3956,41 +3987,61 @@ export class CodexJobRegistry {
     jobId: string,
     waitFor: CodexJobWaitMode,
     waitMs: number,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    source: CodexJobWaitSource = "internal"
   ): Promise<CodexJobWaitResult> {
     if (!Number.isInteger(waitMs) || waitMs < 1 || waitMs > MAX_CODEX_STATUS_WAIT_MS) {
       throw new Error(`waitMs must be an integer between 1 and ${MAX_CODEX_STATUS_WAIT_MS}.`);
     }
     const initial = this.get(jobId);
     if (!initial) throw new Error("Unknown Codex job id. Read codex_status({}) for the current conversation and use an exact retained Job id.");
-    if (signal?.aborted) throw new Error("The status wait was cancelled by the host.");
     const startedAt = Date.now();
     const initialVersion = initial.version;
-    let current = initial;
-    let changed = false;
-
-    if (isActiveActivityJobStatus(current.status)) {
-      const deadline = startedAt + waitMs;
-      do {
-        const remaining = deadline - Date.now();
-        if (remaining <= 0) break;
-        const observedVersion = current.version;
-        const didChange = await this.waitForVersion(jobId, observedVersion, remaining, signal);
-        changed ||= didChange;
-        current = this.get(jobId) || current;
-        if (waitFor === "change" && current.version !== initialVersion) break;
-      } while (waitFor === "terminal" && isActiveActivityJobStatus(current.status));
-    }
-
-    return {
-      job: current,
-      waitFor,
-      waitedMs: Date.now() - startedAt,
-      waitTimedOut:
+    let wakeReason: CodexJobWakeReason | undefined;
+    this.waitDiagnosticsTracker.begin(jobId, waitFor, source);
+    try {
+      if (signal?.aborted) throw new Error("The status wait was cancelled by the host.");
+      let current = initial;
+      if (isActiveActivityJobStatus(current.status)) {
+        const remaining = startedAt + waitMs - Date.now();
+        if (remaining > 0) {
+          wakeReason = waitFor === "terminal"
+            ? await this.waitForTerminal(jobId, remaining, signal)
+            : await this.waitForVersion(jobId, current.version, remaining, signal);
+          // The public lookup above checked the project-registry revision once.
+          // Waiting itself is an in-memory hot path with no retention writes.
+          current = this.jobs.get(jobId) || current;
+        }
+      }
+      const waitedMs = Math.max(0, Date.now() - startedAt);
+      const waitTimedOut =
         isActiveActivityJobStatus(current.status) &&
-        (waitFor === "terminal" || current.version === initialVersion),
-      changed: changed || current.version !== initialVersion
-    };
+        (waitFor === "terminal" || current.version === initialVersion);
+      const result = {
+        job: current,
+        waitFor,
+        waitedMs,
+        waitTimedOut,
+        changed: wakeReason !== undefined || current.version !== initialVersion
+      };
+      this.waitDiagnosticsTracker.finish(jobId, waitFor, source, {
+        waitedMs,
+        completed: true,
+        timedOut: waitTimedOut,
+        aborted: false,
+        wakeReason
+      });
+      return result;
+    } catch (error) {
+      this.waitDiagnosticsTracker.finish(jobId, waitFor, source, {
+        waitedMs: Math.max(0, Date.now() - startedAt),
+        completed: false,
+        timedOut: false,
+        aborted: Boolean(signal?.aborted),
+        wakeReason
+      });
+      throw error;
+    }
   }
 
   async waitForInput(jobId: string, afterCursor?: string, waitMs = 0, signal?: AbortSignal) {
@@ -4028,10 +4079,33 @@ export class CodexJobRegistry {
       this.allowedRoots,
       steeringPrompts
     );
+    let resolvedInteractionId: string | undefined;
+    let interaction: CodexPendingInteraction | undefined;
+    if (publicEvent && job.publicEvents.some(event => event.eventId === publicEvent.eventId)) {
+      // A retained live question can follow an older recovery snapshot whose
+      // event has already aged out of public history. Restore current input
+      // independently of history deduplication, without adding another event.
+      const recovered = readPendingInteraction(publicEvent.details?.interaction);
+      if (recovered && progress.pendingInteractionIds?.includes(recovered.interactionId) &&
+          !job.pendingInteractions.some(entry => entry.interactionId === recovered.interactionId)) {
+        job.pendingInteractions = [...job.pendingInteractions, recovered].slice(-20);
+        job.updatedAt = now;
+        job.version += 1;
+        this.persistProgressSnapshotBestEffort(this.progressSnapshot(job));
+        this.notify(job.jobId, "progress");
+      }
+      return;
+    }
+    if (progress.pendingInteractionIds) {
+      const current = new Set(progress.pendingInteractionIds);
+      job.pendingInteractions = job.pendingInteractions.filter(entry => current.has(entry.interactionId));
+    }
+    const previousEvidence = job.executionEvidence;
+    if (publicEvent) job.executionEvidence = retainExecutionEvidence(job, publicEvent);
     if (publicEvent) {
       if (isCodexInputEvent(publicEvent)) job.inputEvents = [...(job.inputEvents || []), publicEvent].slice(-40);
       job.publicEvents = [...job.publicEvents, publicEvent].slice(-200);
-      const resolvedInteractionId = typeof publicEvent.details?.resolvedInteractionId === "string"
+      resolvedInteractionId = typeof publicEvent.details?.resolvedInteractionId === "string"
         ? publicEvent.details.resolvedInteractionId
         : undefined;
       if (resolvedInteractionId) {
@@ -4039,30 +4113,62 @@ export class CodexJobRegistry {
           (entry) => entry.interactionId !== resolvedInteractionId
         );
       }
-      const interaction = readPendingInteraction(publicEvent.details?.interaction);
-      if (interaction) {
+      const pendingInteraction = readPendingInteraction(publicEvent.details?.interaction);
+      interaction = pendingInteraction;
+      if (pendingInteraction) {
         job.pendingInteractions = [
-          ...job.pendingInteractions.filter((entry) => entry.interactionId !== interaction.interactionId),
-          interaction
+          ...job.pendingInteractions.filter(
+            (entry) => entry.interactionId !== pendingInteraction.interactionId
+          ),
+          pendingInteraction
         ].slice(-20);
       }
     }
     job.lastProgressAt = now;
     job.updatedAt = now;
     job.version += 1;
-    this.notify(job.jobId);
+    if (job.executionEvidence !== previousEvidence) this.persistJobBestEffort(job);
+    this.notify(job.jobId, "progress");
+    const snapshot = this.progressSnapshot(job, publicEvent);
     if (publicEvent) {
-      this.persistTelemetryBestEffort(job, publicEvent);
+      const critical = resumedFromTerminationFailure ||
+        isCodexInputEvent(publicEvent) ||
+        progress.pendingInteractionIds !== undefined ||
+        resolvedInteractionId !== undefined ||
+        interaction !== undefined ||
+        publicEvent.phase !== "updated" ||
+        publicEvent.type === "error" ||
+        publicEvent.type === "warning" ||
+        publicEvent.type === "usage";
+      if (critical || this.claimImmediateProgressPersistence()) {
+        this.progressPersistenceQueue.remove(
+          queued => queued.jobId === job.jobId && queued.version <= snapshot.version
+        );
+        this.persistProgressSnapshotBestEffort(snapshot);
+      } else {
+        this.progressPersistenceQueue.enqueue(snapshot.projectKey, snapshot);
+      }
     } else if (
       resumedFromTerminationFailure ||
-      now - this.lastPersistedAt >= JOB_PROGRESS_PERSIST_INTERVAL_MS
+      now - (this.progressPersisted.get(job.jobId)?.persistedAt || job.createdAt) >=
+        JOB_PROGRESS_PERSIST_INTERVAL_MS
     ) {
-      this.persistProgressStateBestEffort(job);
+      if (resumedFromTerminationFailure || this.claimImmediateProgressPersistence()) {
+        this.progressPersistenceQueue.remove(
+          queued => queued.jobId === job.jobId && queued.version <= snapshot.version
+        );
+        this.persistProgressSnapshotBestEffort(snapshot);
+      } else {
+        this.progressPersistenceQueue.remove(
+          queued => queued.jobId === job.jobId && queued.publicEvent === undefined
+        );
+        this.progressPersistenceQueue.enqueue(snapshot.projectKey, snapshot);
+      }
     }
   }
 
   private recordWorkerAssignment(job: CodexJob, assignment: UpstreamWorkerAssignment): void {
-    if (job.status !== "running") return;
+    if (job.status !== "running" && job.status !== "termination-failed") return;
     if (job.workerId && (job.workerId !== assignment.workerId || job.workerGeneration !== assignment.workerGeneration ||
         job.upstreamRequestId && assignment.upstreamRequestId && job.upstreamRequestId !== assignment.upstreamRequestId)) {
       job.pendingInteractions = [];
@@ -4106,6 +4212,7 @@ export class CodexJobRegistry {
     const primaryIntent = this.assertCancellationIntentForJob(jobId, suppliedIntent);
     const target = this.get(jobId);
     if (!target) throw new Error("Unknown Codex job id. Read codex_status({}) for the current conversation and use an exact retained Job id.");
+    this.assertOriginalJobControl(target);
     if (primaryIntent.scopeId !== target.scopeId || primaryIntent.targetActivityId !== target.activityId) {
       throw new Error("Cancellation intent scope or Activity no longer matches the target job.");
     }
@@ -4222,8 +4329,24 @@ export class CodexJobRegistry {
         assignment,
         cancellationTerminationCorrelation(primaryIntent),
         undefined,
-        options.interruptOnly ? {interruptOnly:true} : undefined
+        options.interruptOnly ? {interruptOnly:true} : options.retirementThreadIds ? {retirementThreadIds:options.retirementThreadIds} : undefined
       );
+      if (result.mode === "already-completed") {
+        this.activityTransaction(() => {
+          for (const job of initiallyTerminating) {
+            job.status = "running";
+            job.cancellationIntentId = undefined;
+            job.error = undefined;
+            this.recordChange(job);
+          }
+          for (const intent of impactIntentByJobId.values()) this.setCancellationIntentStatus(intent.intentId, "no-op");
+        });
+        for (const job of initiallyTerminating) {
+          this.flushDeferredSettlement(job);
+          this.acknowledgeSettledExecution(job);
+        }
+        return this.get(jobId) as CodexJob;
+      }
       if (options.interruptOnly && (result.mode !== "turn-interrupt" || result.workerExited)) {
         throw new Error("PRECISE_INTERRUPTION_UNCONFIRMED: The backend did not confirm an isolated turn interruption.");
       }
@@ -4266,6 +4389,7 @@ export class CodexJobRegistry {
           }
         }
       });
+      for (const job of actuallyAffected) this.acknowledgeSettledExecution(job);
     } catch (error) {
       this.activityTransaction(() => {
         for (const job of initiallyTerminating) {
@@ -4288,15 +4412,11 @@ export class CodexJobRegistry {
   private recordChange(job: CodexJob): void {
     job.updatedAt = Date.now();
     job.version += 1;
-    this.notify(job.jobId);
-    const beforePrune = new Map(this.jobs);
-    const removed = this.prune();
-    if (!this.persistJobBestEffort(job, removed)) {
-      for (const jobId of removed) {
-        const previous = beforePrune.get(jobId);
-        if (previous) this.jobs.set(jobId, previous);
-      }
-    }
+    this.notify(
+      job.jobId,
+      isTerminalActivityJobStatus(job.status) ? "terminal" : "state-change"
+    );
+    this.persistJobBestEffort(job);
     if (isTerminalActivityJobStatus(job.status)) {
       this.steeringPromptRedactions.delete(job.jobId);
     }
@@ -4307,63 +4427,178 @@ export class CodexJobRegistry {
     version: number,
     waitMs: number,
     signal?: AbortSignal
-  ): Promise<boolean> {
+  ): Promise<CodexJobWakeReason | undefined> {
+    if (this.activeJobObservationWaits >= MAX_ACTIVE_JOB_OBSERVATION_WAITS) {
+      return Promise.reject(new Error("JOB_WAIT_CAPACITY: Active Job observation waits are at capacity."));
+    }
+    this.activeJobObservationWaits += 1;
     return new Promise((resolve, reject) => {
       let settled = false;
-      const listeners = this.waiters.get(jobId) || new Set<() => void>();
+      const listeners = this.waiters.get(jobId) || new Set<(reason: CodexJobWakeReason) => void>();
       this.waiters.set(jobId, listeners);
-      const finish = (changed: boolean, error?: Error) => {
+      const finish = (reason?: CodexJobWakeReason, error?: Error) => {
         if (settled) return;
         settled = true;
+        this.activeJobObservationWaits -= 1;
         clearTimeout(timer);
         listeners.delete(onChange);
         if (listeners.size === 0) this.waiters.delete(jobId);
         signal?.removeEventListener("abort", onAbort);
         if (error) reject(error);
-        else resolve(changed);
+        else resolve(reason);
       };
-      const onChange = () => finish((this.jobs.get(jobId)?.version || version) !== version);
-      const onAbort = () => finish(false, new Error("The status wait was cancelled by the host."));
-      const timer = setTimeout(() => finish(false), waitMs);
+      const onChange = (reason: CodexJobWakeReason) => {
+        finish((this.jobs.get(jobId)?.version || version) !== version ? reason : undefined);
+      };
+      const onAbort = () => finish(undefined, new Error("The status wait was cancelled by the host."));
+      const timer = setTimeout(() => finish(), waitMs);
       listeners.add(onChange);
       signal?.addEventListener("abort", onAbort, { once: true });
-      if ((this.jobs.get(jobId)?.version || version) !== version) finish(true);
+      const currentVersion = this.jobs.get(jobId)?.version || version;
+      if (currentVersion !== version) {
+        const lastWake = this.lastWake.get(jobId);
+        finish(lastWake?.version === currentVersion ? lastWake.reason : "state-change");
+      }
       else if (signal?.aborted) onAbort();
     });
   }
 
-  private notify(jobId: string): void {
-    for (const listener of this.changeListeners) listener();
-    for (const listener of [...(this.waiters.get(jobId) || [])]) listener();
+  private waitForTerminal(
+    jobId: string,
+    waitMs: number,
+    signal?: AbortSignal
+  ): Promise<CodexJobWakeReason | undefined> {
+    if (this.activeJobObservationWaits >= MAX_ACTIVE_JOB_OBSERVATION_WAITS) {
+      return Promise.reject(new Error("JOB_WAIT_CAPACITY: Active Job observation waits are at capacity."));
+    }
+    this.activeJobObservationWaits += 1;
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const listeners = this.terminalWaiters.get(jobId) || new Set<() => void>();
+      this.terminalWaiters.set(jobId, listeners);
+      const finish = (reason?: CodexJobWakeReason, error?: Error) => {
+        if (settled) return;
+        settled = true;
+        this.activeJobObservationWaits -= 1;
+        clearTimeout(timer);
+        listeners.delete(onTerminal);
+        if (listeners.size === 0) this.terminalWaiters.delete(jobId);
+        signal?.removeEventListener("abort", onAbort);
+        if (error) reject(error);
+        else resolve(reason);
+      };
+      const onTerminal = () => finish("terminal");
+      const onAbort = () => finish(undefined, new Error("The status wait was cancelled by the host."));
+      const timer = setTimeout(() => finish(), waitMs);
+      listeners.add(onTerminal);
+      signal?.addEventListener("abort", onAbort, { once: true });
+      const current = this.jobs.get(jobId);
+      if (current && isTerminalActivityJobStatus(current.status)) onTerminal();
+      else if (signal?.aborted) onAbort();
+    });
   }
 
-  private notifyScope(scopeId: string): void {
-    for (const listener of this.changeListeners) listener();
+  private notify(jobId: string, reason: CodexJobWakeReason = "state-change"): void {
+    const current = this.jobs.get(jobId);
+    const effectiveReason = current && isTerminalActivityJobStatus(current.status)
+      ? "terminal"
+      : reason;
+    if (current) this.lastWake.set(jobId, { version: current.version, reason: effectiveReason });
+    for (const listener of this.changeListeners) listener(effectiveReason, current?.agentId);
+    for (const listener of [...(this.waiters.get(jobId) || [])]) listener(effectiveReason);
+    if (effectiveReason === "terminal") {
+      for (const listener of [...(this.terminalWaiters.get(jobId) || [])]) listener();
+      if (this.observedRunningCount() === 0) {
+        this.scheduleIdleRetainedJobMaintenance();
+      }
+    }
+  }
+
+  private notifyScope(scopeId: string, agentId?: string): void {
+    for (const listener of this.changeListeners) listener(undefined, agentId);
     for (const listener of [...(this.scopeWaiters.get(scopeId) || [])]) listener();
   }
 
-  private prune(): string[] {
-    const removed: string[] = [];
-    const cutoff = Date.now() - this.ttlMs;
+  /**
+   * Active Jobs reserve a retained slot because they can become terminal at
+   * any time. Terminal Jobs count until a bounded maintenance pass either
+   * removes them or confirms a durable retention protection.
+   */
+  private retainedJobAdmissionReservations(): number {
+    let reservations = 0;
     for (const [jobId, job] of this.jobs) {
-      if (!isActiveActivityJobStatus(job.status) && job.updatedAt < cutoff && !this.activityStore.retentionProtection(jobId).length) {
-        this.jobs.delete(jobId);
-        removed.push(jobId);
+      if (
+        isActiveActivityJobStatus(job.status) ||
+        isTerminalActivityJobStatus(job.status) && !this.retentionProtectedJobs.has(jobId)
+      ) {
+        reservations++;
+        if (reservations > this.maxJobs) break;
       }
     }
-    if (this.jobs.size <= this.maxJobs) return removed;
-    const sorted = [...this.jobs.values()].sort((a, b) => a.updatedAt - b.updatedAt);
-    for (const job of sorted.filter((entry) => !isActiveActivityJobStatus(entry.status) && !this.activityStore.retentionProtection(entry.jobId).length).slice(0, this.jobs.size - this.maxJobs)) {
-      this.jobs.delete(job.jobId);
-      removed.push(job.jobId);
-    }
-    return removed;
+    return reservations;
   }
 
-  private load(): void {
-    if (!this.stateStore) return;
-    const stored = this.stateStore.listJobs();
+  private requestRetainedJobHeadroom(): void {
+    const target = Math.max(0, this.maxJobs - 1);
+    this.retainedJobTarget = Math.min(this.retainedJobTarget ?? target, target);
+    this.scheduleIdleRetainedJobMaintenance();
+  }
+
+  private scheduleIdleRetainedJobMaintenance(delayMs = 0): void {
+    if (
+      this.stateMaintenanceClosed ||
+      this.retainedJobMaintenanceTimer ||
+      !this.maintenanceScheduler && this.retainedJobTarget === undefined
+    ) return;
+    this.retainedJobMaintenanceTimer = setTimeout(() => {
+      this.retainedJobMaintenanceTimer = undefined;
+      if (
+        this.runtimeAdmission.pendingAdmissions > 0 ||
+        this.observedRunningCount() > 0
+      ) return;
+      const sweep = this.maintenanceScheduler
+        ? this.maintenanceScheduler.sweep("jobs")
+        : Promise.resolve({ failed: false, changed: this.maintainRetainedJobs() });
+      void sweep.then(observation => {
+        if (
+          this.retainedJobTarget !== undefined &&
+          this.retainedJobAdmissionReservations() > this.retainedJobTarget
+        ) {
+          this.scheduleIdleRetainedJobMaintenance(observation?.failed ? 1_000 : 250);
+        }
+      }, () => this.scheduleIdleRetainedJobMaintenance(1_000));
+    }, Math.max(0, delayMs));
+    this.retainedJobMaintenanceTimer.unref();
+  }
+
+  /** Protect a small first slice before admission; the maintenance scheduler
+   * continues classification and pruning after startup. This prevents restart
+   * from synchronously checking every historical Job's protection authorities. */
+  private classifyLoadedJobsAtStartup(): void {
+    let inspected = 0;
+    const now = Date.now();
+    for (const job of this.jobs.values()) {
+      if (!isTerminalActivityJobStatus(job.status)) continue;
+      if (++inspected > 32) break;
+      if (this.activityStore.retentionProtection(job.jobId, now, this.ttlMs).length > 0) {
+        this.retentionProtectedJobs.add(job.jobId);
+      }
+    }
+  }
+
+  private load(filter?: { agentId?: string; scopeId?: string } | false): void {
+    if (!this.stateStore || filter === false) return;
+    const stored = filter
+      ? this.stateStore.listJobsForDashboard(filter.agentId, filter.scopeId)
+      : this.stateStore.listJobs();
     const changed = this.loadJobs(stored);
+    for (const job of this.jobs.values()) {
+      this.progressPersisted.set(job.jobId, {
+        version: job.version,
+        persistedAt: job.updatedAt
+      });
+    }
+    if (this.projectionOnly) return;
     if (changed || this.jobs.size !== stored.length) {
       this.stateStore.replaceJobs(this.persistedJobs());
     }
@@ -4384,19 +4619,23 @@ export class CodexJobRegistry {
     const loaded = [...byRequest.values()].sort((a, b) => a.updatedAt - b.updatedAt);
     if (loaded.length !== valid.length) changed = true;
     for (const persisted of loaded) {
-      const requestConflict = [...this.jobs.values()].find(
-        (job) =>
-          job.jobId !== persisted.jobId &&
-          job.scopeId === persisted.scopeId &&
-          job.requestId === persisted.requestId
-      );
-      if (requestConflict) {
-        changed = true;
-        if (requestConflict.updatedAt >= persisted.updatedAt) continue;
-        this.jobs.delete(requestConflict.jobId);
-      }
       const job: CodexJob = { ...persisted, promise: Promise.resolve() };
-      if (isActiveActivityJobStatus(job.status)) {
+      if (this.projectionOnly) {
+        this.setIndexedJob(job);
+        continue;
+      }
+      if (isActiveActivityJobStatus(job.status) && this.recoverExecutions && job.executionReceipt) {
+        job.trackingState = "liveness-unknown";
+        this.recoveryJobs.add(job.jobId);
+      } else if (isActiveActivityJobStatus(job.status)) {
+        if (job.projectId && job.executionDispatched !== false) {
+          job.status="termination-failed";
+          job.trackingState="liveness-unknown";
+          job.error="Restarted with dispatched or unknown project execution; termination requires ownership confirmation.";
+          job.updatedAt=now; job.version+=1; changed=true;
+          this.setIndexedJob(job);
+          continue;
+        }
         job.status = "interrupted";
         job.terminalOrigin = "bridge-restart";
         job.trackingState = "orphaned";
@@ -4416,9 +4655,11 @@ export class CodexJobRegistry {
         job.version += 1;
         changed = true;
       }
-      this.jobs.set(job.jobId, job);
+      this.setIndexedJob(job);
     }
-    changed = this.prune().length > 0 || changed || loaded.length !== values.length;
+    if (this.projectionOnly) return changed || loaded.length !== values.length;
+    this.classifyLoadedJobsAtStartup();
+    changed = changed || loaded.length !== values.length;
     return changed;
   }
 
@@ -4426,7 +4667,11 @@ export class CodexJobRegistry {
     const persisted = this.persistedJobs();
     if (this.stateStore) this.stateStore.replaceJobs(persisted);
     else this.activityStore.replaceJobs(persisted);
-    this.lastPersistedAt = Date.now();
+    const persistedAt = Date.now();
+    this.progressPersistenceQueue.remove(() => true);
+    for (const job of persisted) {
+      this.progressPersisted.set(job.jobId, { version: job.version, persistedAt });
+    }
     this.persistenceWarningShown = false;
   }
 
@@ -4436,20 +4681,24 @@ export class CodexJobRegistry {
       .map(({ promise: _promise, ...job }) => job);
   }
 
-  private persistJob(job: CodexJob, removed: string[] = []): void {
-    if (!this.stateStore) {
-      this.persist();
-      this.notifyScope(job.scopeId);
-      return;
-    }
+  private persistJob(job: CodexJob, removed: string[] = [], notifyScope = true): void {
+    if(isTerminalActivityJobStatus(job.status)) job.endedAt ??= job.updatedAt;
+    if (this.activityStore.projectLifecycle.jobReceipt(job.jobId)) { this.deleteIndexedJob(job.jobId); return; }
     const { promise: _promise, ...persisted } = job;
-    this.stateStore.transaction(() => {
-      this.stateStore?.upsertJob(persisted);
-      for (const jobId of removed) this.stateStore?.deleteJob(jobId);
+    this.activityStore.transaction(() => {
+      this.activityStore.upsertJob(persisted);
+      for (const jobId of removed) this.activityStore.deleteJob(jobId);
     });
-    this.lastPersistedAt = Date.now();
+    this.setIndexedJob(this.jobs.get(job.jobId) || job);
+    const removedIds = new Set([job.jobId, ...removed]);
+    this.progressPersistenceQueue.remove(snapshot => removedIds.has(snapshot.jobId));
+    this.progressPersisted.set(job.jobId, {
+      version: job.version,
+      persistedAt: Date.now()
+    });
+    for (const jobId of removed) this.progressPersisted.delete(jobId);
     this.persistenceWarningShown = false;
-    this.notifyScope(job.scopeId);
+    if (notifyScope) this.notifyScope(job.scopeId);
   }
 
   private persistJobBestEffort(job: CodexJob, removed: string[] = []): boolean {
@@ -4467,34 +4716,50 @@ export class CodexJobRegistry {
     }
   }
 
-  private persistTelemetryBestEffort(
-    job: CodexJob,
-    publicEvent: CodexPublicEvent
+  private persistProgressSnapshotBestEffort(snapshot: ProgressPersistenceSnapshot): boolean {
+    return snapshot.publicEvent
+      ? this.persistTelemetrySnapshotBestEffort(snapshot)
+      : this.persistProgressStateSnapshotBestEffort(snapshot);
+  }
+
+  private persistTelemetrySnapshotBestEffort(
+    snapshot: ProgressPersistenceSnapshot
   ): boolean {
+    const publicEvent = snapshot.publicEvent as CodexPublicEvent;
     try {
-      this.activityStore.recordJobTelemetryEvent(
-        job.jobId,
-        `app-${publicEvent.type}-${publicEvent.phase}`,
-        publicEvent,
-        publicEvent.createdAt,
-        publicEvent.type === "approval-required" || publicEvent.type === "input-required"
-          ? publicEvent.phase === "waiting"
-            ? "user"
-            : publicEvent.phase === "completed"
-              ? "codex"
-              : undefined
-          : undefined,
-        {
-          updatedAt: job.updatedAt,
-          version: job.version,
-          lastProgressAt: job.lastProgressAt,
-          lastProgress: job.lastProgress,
-          pendingInteractions: job.pendingInteractions
-        }
-      );
-      this.lastPersistedAt = Date.now();
+      const transactionStartedAt = performance.now();
+      try {
+        this.activityStore.recordJobTelemetryEvent(
+          snapshot.jobId,
+          `app-${publicEvent.type}-${publicEvent.phase}`,
+          publicEvent,
+          publicEvent.createdAt,
+          publicEvent.type === "approval-required" || publicEvent.type === "input-required"
+            ? publicEvent.phase === "waiting"
+              ? "user"
+              : publicEvent.phase === "completed"
+                ? "codex"
+                : undefined
+            : undefined,
+          {
+            updatedAt: snapshot.updatedAt,
+            version: snapshot.version,
+            lastProgressAt: snapshot.lastProgressAt,
+            lastProgress: snapshot.lastProgress,
+            pendingInteractions: snapshot.pendingInteractions
+          }
+        );
+      } finally {
+        this.waitDiagnosticsTracker.telemetryTransaction.record(
+          performance.now() - transactionStartedAt
+        );
+      }
+      this.progressPersisted.set(snapshot.jobId, {
+        version: snapshot.version,
+        persistedAt: Date.now()
+      });
       this.persistenceWarningShown = false;
-      this.notifyScope(job.scopeId);
+      this.notifyScope(snapshot.scopeId);
       return true;
     } catch (error) {
       if (!this.persistenceWarningShown) {
@@ -4507,18 +4772,23 @@ export class CodexJobRegistry {
     }
   }
 
-  private persistProgressStateBestEffort(job: CodexJob): boolean {
+  private persistProgressStateSnapshotBestEffort(
+    snapshot: ProgressPersistenceSnapshot
+  ): boolean {
     try {
-      const scopeChanged = this.activityStore.updateJobProgressState(job.jobId, {
-        updatedAt: job.updatedAt,
-        version: job.version,
-        lastProgressAt: job.lastProgressAt,
-        lastProgress: job.lastProgress,
-        pendingInteractions: job.pendingInteractions
+      const scopeChanged = this.activityStore.updateJobProgressState(snapshot.jobId, {
+        updatedAt: snapshot.updatedAt,
+        version: snapshot.version,
+        lastProgressAt: snapshot.lastProgressAt,
+        lastProgress: snapshot.lastProgress,
+        pendingInteractions: snapshot.pendingInteractions
       });
-      this.lastPersistedAt = Date.now();
+      this.progressPersisted.set(snapshot.jobId, {
+        version: snapshot.version,
+        persistedAt: Date.now()
+      });
       this.persistenceWarningShown = false;
-      if (scopeChanged) this.notifyScope(job.scopeId);
+      if (scopeChanged) this.notifyScope(snapshot.scopeId);
       return true;
     } catch (error) {
       if (!this.persistenceWarningShown) {
@@ -4531,39 +4801,245 @@ export class CodexJobRegistry {
     }
   }
 
-  private pruneAndPersist(): void {
-    this.refreshProjectIdentities();
-    const beforePrune = new Map(this.jobs);
-    const removed = this.prune();
-    if (removed.length === 0) return;
+  private progressSnapshot(
+    job: CodexJob,
+    publicEvent?: CodexPublicEvent
+  ): ProgressPersistenceSnapshot {
+    const projectRef = job.projectRequest && "projectRef" in job.projectRequest
+      ? job.projectRequest.projectRef
+      : undefined;
+    return {
+      jobId: job.jobId,
+      scopeId: job.scopeId,
+      projectKey: job.projectId
+        ? `project:${job.projectId}`
+        : projectRef
+          ? `project-ref:${projectRef}`
+          : `cwd:${job.cwd}`,
+      version: job.version,
+      updatedAt: job.updatedAt,
+      lastProgressAt: job.lastProgressAt,
+      ...(job.lastProgress ? { lastProgress: { ...job.lastProgress } } : {}),
+      pendingInteractions: [...job.pendingInteractions],
+      ...(publicEvent ? { publicEvent } : {})
+    };
+  }
+
+  private claimImmediateProgressPersistence(): boolean {
+    if (this.progressPersistenceImmediateRemaining <= 0) return false;
+    this.progressPersistenceImmediateRemaining -= 1;
+    if (!this.progressPersistenceImmediateReset) {
+      this.progressPersistenceImmediateReset = setImmediate(() => {
+        this.progressPersistenceImmediateReset = undefined;
+        this.progressPersistenceImmediateRemaining = PROGRESS_PERSISTENCE_IMMEDIATE_BUDGET;
+      });
+      this.progressPersistenceImmediateReset.unref();
+    }
+    return true;
+  }
+
+  private persistDeferredProgress(snapshot: ProgressPersistenceSnapshot): void {
+    const current = this.jobs.get(snapshot.jobId);
+    if (!current || isTerminalActivityJobStatus(current.status) || this.activityStore.projectLifecycle.jobReceipt(snapshot.jobId)) return;
+    const persisted = this.progressPersisted.get(snapshot.jobId);
+    if (persisted && persisted.version >= snapshot.version) return;
+    this.persistProgressSnapshotBestEffort(snapshot);
+  }
+
+  /** Explicit Job-retention command used by mutation boundaries and the
+   * independent maintenance scheduler. Registry reads never enter this path. */
+  maintainRetainedJobs(options: {
+    maxInspected?: number;
+    maxRemoved?: number;
+    maxDurationMs?: number;
+  } = {}): number {
+    const startedAt = performance.now();
     try {
-      if (this.stateStore) {
-        this.stateStore.transaction(() => {
-          for (const jobId of removed) this.stateStore?.deleteJob(jobId);
-        });
-      } else {
-        this.persist();
+      this.refreshProjectIdentities();
+      try {
+        const command = this.retainedJobMaintenanceCommand(options);
+        const result = executeOperationalStateCommand(this.activityStore, command);
+        return this.applyRetainedJobMaintenanceResult(command, result);
+      } catch (error) {
+        this.retainedJobMaintenanceIterator = undefined;
+        if (!this.persistenceWarningShown) {
+          console.error(
+            `Could not persist Codex job pruning: ${error instanceof Error ? error.message : String(error)}`
+          );
+          this.persistenceWarningShown = true;
+        }
+        return 0;
       }
-    } catch (error) {
-      this.jobs.clear();
-      for (const [jobId, job] of beforePrune) this.jobs.set(jobId, job);
-      if (!this.persistenceWarningShown) {
-        console.error(
-          `Could not persist Codex job pruning: ${error instanceof Error ? error.message : String(error)}`
-        );
-        this.persistenceWarningShown = true;
-      }
+    } finally {
+      this.waitDiagnosticsTracker.pruneAndPersist.record(performance.now() - startedAt);
     }
   }
 
+  private stateMaintenanceCommand(slice: (typeof STATE_MAINTENANCE_SLICES)[number]): OperationalStateCommand {
+    return slice === "jobs"
+      ? this.retainedJobMaintenanceCommand()
+      : { operation: "maintain", slice };
+  }
+
+  private applyStateMaintenanceResult(
+    command: OperationalStateCommand,
+    result: OperationalStateResult
+  ): void {
+    if(command.slice==="history") {
+      const visible=this.activityStore.retainedJobIds([...this.jobs.keys()]);
+      for(const [id,job] of this.jobs) if(isTerminalActivityJobStatus(job.status) && !visible.has(id)) this.deleteIndexedJob(id);
+    }
+    if (command.slice === "jobs") this.applyRetainedJobMaintenanceResult(command, result);
+  }
+
+  private retainedJobMaintenanceCommand(options: {
+    maxInspected?: number;
+    maxRemoved?: number;
+    maxDurationMs?: number;
+  } = {}): OperationalJobRetentionCommand {
+    const maxInspected = Math.max(1, Math.min(256, Math.floor(options.maxInspected ?? 64)));
+    const maxRemoved = Math.max(1, Math.min(64, Math.floor(options.maxRemoved ?? 32)));
+    const maxDurationMs = Math.max(1, Math.min(1_000, Math.floor(options.maxDurationMs ?? 10)));
+    const deadline = performance.now() + maxDurationMs;
+    this.retainedJobMaintenanceIterator ||= this.jobs.entries();
+    const inspected: Array<[string, CodexJob]> = [];
+    while (inspected.length < maxInspected) {
+      if (inspected.length > 0 && performance.now() >= deadline) break;
+      const next = this.retainedJobMaintenanceIterator.next();
+      if (next.done) {
+        this.retainedJobMaintenanceIterator = undefined;
+        break;
+      }
+      const [jobId, job] = next.value;
+      if (this.jobs.get(jobId) === job) inspected.push([jobId, job]);
+    }
+
+    const now = Date.now();
+    const cutoffAt = now - this.ttlMs;
+    const retentionTarget = Math.min(this.maxJobs, this.retainedJobTarget ?? this.maxJobs);
+    const admissionReservations = this.retainedJobAdmissionReservations();
+    const candidates = inspected
+      .filter(([, job]) =>
+        isTerminalActivityJobStatus(job.status) &&
+        (
+          job.updatedAt < cutoffAt ||
+          admissionReservations > retentionTarget ||
+          this.retentionProtectedJobs.has(job.jobId)
+        )
+      )
+      .sort((left, right) =>
+        left[1].updatedAt - right[1].updatedAt || left[0].localeCompare(right[0])
+      )
+      .map(([jobId, job]) => ({
+        jobId,
+        version: job.version,
+        updatedAt: job.updatedAt,
+        knownProtected: this.retentionProtectedJobs.has(jobId)
+      }));
+    return {
+      operation: "maintain",
+      slice: "jobs",
+      now,
+      cutoffAt,
+      completionResultRecoveryMs: this.ttlMs,
+      retentionTarget,
+      admissionReservations,
+      maxRemoved,
+      maxDurationMs,
+      candidates
+    };
+  }
+
+  private applyRetainedJobMaintenanceResult(
+    command: OperationalJobRetentionCommand,
+    result: OperationalStateResult
+  ): number {
+    if (
+      result.operation !== "maintain" ||
+      result.slice !== "jobs" ||
+      !result.jobRetention ||
+      !Number.isSafeInteger(result.changed) ||
+      result.changed < 0 ||
+      !Array.isArray(result.jobRetention.classifications) ||
+      result.jobRetention.classifications.length > command.candidates.length ||
+      !Number.isSafeInteger(result.jobRetention.remainingAdmissionReservations) ||
+      result.jobRetention.remainingAdmissionReservations < 0
+    ) {
+      throw new Error("STATE_RESULT_INVALID: Job retention result is missing its classification.");
+    }
+    const classifications = result.jobRetention.classifications;
+    for (const [index, classification] of classifications.entries()) {
+      const candidate = command.candidates[index];
+      if (
+        !candidate ||
+        candidate.jobId !== classification.jobId ||
+        candidate.version !== classification.version ||
+        candidate.updatedAt !== classification.updatedAt ||
+        candidate.knownProtected !== classification.knownProtected ||
+        !["protected", "retained", "removed", "skipped"].includes(classification.disposition)
+      ) {
+        throw new Error("STATE_RESULT_INVALID: Job retention classification does not match its command.");
+      }
+    }
+    if (result.changed !== classifications.filter(
+      classification => classification.disposition === "removed"
+    ).length) {
+      throw new Error("STATE_RESULT_INVALID: Job retention change count does not match its classification.");
+    }
+    let removed = 0;
+    for (const [index, classification] of classifications.entries()) {
+      const candidate = command.candidates[index]!;
+      const current = this.jobs.get(classification.jobId);
+      if (
+        !current ||
+        current.version !== candidate.version ||
+        current.updatedAt !== candidate.updatedAt ||
+        !isTerminalActivityJobStatus(current.status)
+      ) continue;
+      if (classification.disposition === "protected") {
+        this.retentionProtectedJobs.add(classification.jobId);
+      } else if (classification.disposition !== "skipped") {
+        this.retentionProtectedJobs.delete(classification.jobId);
+      }
+      if (classification.disposition !== "removed") continue;
+      this.deleteIndexedJob(classification.jobId);
+      this.progressPersistenceQueue.remove(
+        snapshot => snapshot.jobId === classification.jobId
+      );
+      this.progressPersisted.delete(classification.jobId);
+      this.lastWake.delete(classification.jobId);
+      this.retentionProtectedJobs.delete(classification.jobId);
+      removed += 1;
+    }
+    if (
+      this.retainedJobTarget !== undefined &&
+      this.retainedJobAdmissionReservations() <= this.retainedJobTarget
+    ) this.retainedJobTarget = undefined;
+    return removed;
+  }
+
   private refreshProjectIdentities(): void {
+    const revision = this.activityStore.getProjectRegistryRevision();
+    if (revision === this.projectedProjectRevision) return;
     const activities = new Map(
       this.activityStore.listActivityProjectIdentities().map((activity) => [
         activity.activityId,
         activity
       ])
     );
+    const retired = this.projectionOnly
+      ? this.activityStore.dashboardReadModel.retiredJobIds([...this.jobs.keys()]) : undefined;
     for (const job of this.jobs.values()) {
+      if (retired ? retired.has(job.jobId) : this.activityStore.projectLifecycle.jobReceipt(job.jobId)) {
+        this.deferredExecutions.get(job.jobId)?.discard();
+        this.deferredSettlements.delete(job.jobId);
+        this.progressPersistenceQueue.remove(snapshot=>snapshot.jobId === job.jobId);
+        this.progressPersisted.delete(job.jobId);
+        this.dispatchedJobs.delete(job.jobId);
+        this.deleteIndexedJob(job.jobId);
+        this.notify(job.jobId);
+        continue;
+      }
       const activity = activities.get(job.activityId);
       if (!activity) {
         delete job.projectId;
@@ -4573,6 +5049,7 @@ export class CodexJobRegistry {
       job.projectId = activity.projectId;
       job.projectName = activity.projectName;
     }
+    this.projectedProjectRevision = revision;
   }
 
   private isAllowedCwd(cwd: string): boolean {
@@ -4607,7 +5084,10 @@ export class CardPerformanceTracker {
     this.samples.set(name, entries);
   }
 
-  snapshot(): z.infer<typeof diagnosticsOutputSchema>["performance"] {
+  snapshot(): Omit<
+    z.infer<typeof diagnosticsOutputSchema>["performance"],
+    "jobWaits" | "stateMaintenance"
+  > {
     const percentile = (values: number[], fraction: number): number => {
       if (values.length === 0) return 0;
       return values[Math.min(values.length - 1, Math.ceil(values.length * fraction) - 1)] || 0;
@@ -4630,8 +5110,6 @@ export class CardPerformanceTracker {
       html: {
         dashboardBytes: Buffer.byteLength(DASHBOARD_CARD_HTML, "utf8"),
         dashboardBudgetBytes: DASHBOARD_CARD_HTML_MAX_BYTES,
-        activityBytes: Buffer.byteLength(ACTIVITY_CARD_HTML, "utf8"),
-        activityBudgetBytes: ACTIVITY_CARD_HTML_MAX_BYTES,
         settingsBytes: Buffer.byteLength(SETTINGS_CARD_HTML, "utf8"),
         settingsBudgetBytes: SETTINGS_CARD_HTML_MAX_BYTES
       }
@@ -4645,8 +5123,8 @@ const appMutationOperations = new WeakMap<CodexJobRegistry, Map<string, {
   actionHash: string; promise: Promise<unknown>;
 }>>();
 
-export function registerBridgeTools(
-  server: McpServer,
+/** Query-only facade; mutation methods and MCP dispatch are never exposed. */
+export function createBridgeReadProjectionService(
   config: BridgeConfig,
   upstream: CodexUpstream,
   sessions: SessionRegistry,
@@ -4654,51 +5132,75 @@ export function registerBridgeTools(
   modelCatalog: CodexModelCatalogProvider,
   userSettings: UserSettingsStore,
   scopeResolver: ScopeResolver,
-  sharedDescriptorCoordinator?: SdkToolDescriptorCoordinator,
+  projectAvailability?: TaskProjectAvailabilityProjection
+): BridgeReadProjectionService {
+  const { applicationService: app } = registerBridgeTools(undefined, config,
+    upstream, sessions, jobs, modelCatalog, userSettings, scopeResolver, projectAvailability);
+  return {
+    dashboardSnapshot: options => app.dashboardSnapshot(options),
+    dashboardExecutionDetail: options => app.dashboardExecutionDetail!(options),
+    dashboardHistoryDetail: options => app.dashboardHistoryDetail!(options),
+    settingsSnapshot: options => app.settingsSnapshot(options),
+    dashboardRuntimePlan: options => app.dashboardRuntimePlan!(options),
+    dashboardSnapshotWithEnrichment: (options, enrichment) =>
+      app.dashboardSnapshotWithEnrichment!(options, enrichment)
+  };
+}
+
+export function registerBridgeTools(
+  server: McpServer | undefined,
+  config: BridgeConfig,
+  upstream: CodexUpstream,
+  sessions: SessionRegistry,
+  jobs: CodexJobRegistry,
+  modelCatalog: CodexModelCatalogProvider,
+  userSettings: UserSettingsStore,
+  scopeResolver: ScopeResolver,
   projectAvailability?: TaskProjectAvailabilityProjection,
-  sharedCardPerformance?: CardPerformanceTracker
+  sharedCardPerformance?: CardPerformanceTracker,
+  skillLibrary?: SkillLibrary,
+  readProjection?: BridgeReadProjectionService,
+  runtimeOptions: {
+    onOperationFailure?: (error: unknown) => void;
+    conformanceFixtures?: boolean;
+    canAcceptNewJobs?: () => boolean;
+  } = {}
 ): {
   applicationService: BridgeApplicationService;
-  reconcileTaskDescriptor(catalog?: CodexModelCatalogSnapshot): SdkToolDescriptorProjectionStatus;
-  markTaskDescriptorNotificationEligible(): boolean;
   dispose(): void;
 } {
-  const compatibility = installLegacyToolCompatibility(server);
-  jobs.attachUpstream(upstream);
-  registerSettingsCardResource(server);
-  registerActivityCardResource(server);
-  const questions = registerQuestionTools(server, jobs, scopeResolver, () => userSettings.current.uiLocalePreference, compatibility);
-  registerDashboardCardResource(server);
-  const descriptorCoordinator = sharedDescriptorCoordinator || new SdkToolDescriptorCoordinator();
+  if (!server && !jobs.admissionStateStore.readOnly) {
+    throw new Error("STATE_READ_WRITABLE_STORE: Application-only projection requires a query-only state store.");
+  }
+  if (!server && (userSettings.admissionStateStore !== jobs.admissionStateStore ||
+      sessions.admissionStateStore !== jobs.admissionStateStore)) {
+    throw new Error("PROJECT_ADMISSION_STORE_MISMATCH: Read projections must share one state store.");
+  }
+  jobs.attachUpstream(upstream, sessions);
   const cardPerformance = sharedCardPerformance || new CardPerformanceTracker();
-  const ownsDescriptorCoordinator = sharedDescriptorCoordinator === undefined;
+  const effectiveSkillLibrary = skillLibrary || new SkillLibrary({
+    directory: config.bridgeSkillsDirectory
+  });
   const taskExecutionEnvelopeRef = () => userSettings.taskExecutionEnvelopeRef();
-  const taskDescriptorSnapshot = (
-    _settings: BridgeUserSettings,
-    _catalog?: CodexModelCatalogSnapshot
-  ): SdkToolDescriptorSnapshotInput => {
-    const executionEnvelopeRef = taskExecutionEnvelopeRef();
-    const snapshot: SdkToolDescriptorSnapshotInput = {
-      title: codexTaskTool.title,
-      inputSchema: codexTaskInputSchema(config, executionEnvelopeRef),
-      outputSchema: codexTaskOutputSchema,
-      annotations: codexTaskEnvelopeAnnotations(config),
-      execution: codexTaskTool.execution,
-      _meta: codexTaskTool._meta,
-      // This is deliberately the static operator envelope rather than the
-      // mutable execution policy. Internal descriptor fingerprints therefore
-      // stay byte-identical across settings, catalog, and project changes.
-      admissionRef: executionEnvelopeRef,
-      enabled: codexTaskTool.enabled,
-      description: codexTaskTool.description
-    };
-    assertCodexTaskDescriptorBudget(snapshot);
-    return snapshot;
-  };
-  const publishTaskProjection = (catalog?: CodexModelCatalogSnapshot) => {
-    return descriptorCoordinator.publish(taskDescriptorSnapshot(userSettings.current, catalog));
-  };
+  // A modern HTTP request receives a fresh McpServer, while the task
+  // descriptor itself is stable across mutable user settings. There is no
+  // session-bound descriptor mutation or tools/list_changed recovery path.
+  const publishTaskProjection = (_catalog?: CodexModelCatalogSnapshot) => ({
+    descriptorProjectionUpdated: false,
+    developerModeRefreshRequired: false
+  });
   const runtimeAdmission = jobs.runtimeAdmission;
+  const executionAcceptingNewJobs = () => runtimeOptions.canAcceptNewJobs?.() !== false;
+  const acceptingNewJobs = () =>
+    runtimeAdmission.acceptingNewJobs && runtimeAdmission.storageError === undefined &&
+    executionAcceptingNewJobs();
+  let testTaskReadStorageError =
+    runtimeOptions.conformanceFixtures && process.env.NODE_ENV === "test" &&
+      /^SQLITE_[A-Z0-9_]+$/u.test(
+        process.env.CODEX_MCP_BRIDGE_TEST_TASK_READ_STORAGE_ERROR || ""
+      )
+      ? process.env.CODEX_MCP_BRIDGE_TEST_TASK_READ_STORAGE_ERROR
+      : undefined;
   let backgroundProcessImpact: BridgeBackgroundProcessImpact = {
     state: "unknown",
     processes: 0,
@@ -4711,14 +5213,25 @@ export function registerBridgeTools(
     if (options.inspectBackgroundProcesses) {
       backgroundProcessImpact = await inspectBridgeBackgroundProcessImpact(jobs, upstream);
     }
+    const memoryOnlyImpact = classifyMemoryOnlyThreadImpact(
+      sessions.list(),
+      (threadId, backendKind) => upstream.canResumeThread?.(threadId, backendKind) === true,
+      threadId => jobs.admissionStateStore.threadConnections.hasUnfinishedWork(threadId)
+    );
+    const authSource = config.codexService?.environment.CODEX_MCP_BRIDGE_AUTH_SOURCE;
+    const account = config.codexService?.cachedAccount("app-server");
     return {
-      acceptingNewJobs: runtimeAdmission.acceptingNewJobs,
+      ...(config.codexService ? { authConnection: {
+        source: authSource === "bridge-chatgpt" || authSource === "bridge-api" || authSource === "disconnected"
+          ? authSource : "shared" as const,
+        mode: account?.authMode || "unknown" as const,
+        observedAt: account?.observedAt || null
+      } } : {}),
+      acceptingNewJobs: acceptingNewJobs(),
       activeJobs: jobs.runningCount(),
       pendingAdmissions: runtimeAdmission.pendingAdmissions,
       pendingInteractions: jobs.list(config.maxRetainedJobs).reduce((count, job) => count + job.pendingInteractions.length, 0),
-      memoryOnlyThreads: sessions.list().filter(session => session.backendKind === "app-server" &&
-        (session.persistence === "ephemeral" || session.persistence !== "persistent" && session.visibleInCodexApp === false) &&
-        upstream.canResumeThread?.(session.threadId, session.backendKind) === true).length,
+      ...memoryOnlyImpact,
       backgroundProcessState: backgroundProcessImpact.state,
       backgroundProcesses: backgroundProcessImpact.processes,
       backgroundProcessAgents: backgroundProcessImpact.agents,
@@ -4726,13 +5239,26 @@ export function registerBridgeTools(
     };
   };
   const acquireRuntimeAdmission = (): (() => void) => {
+    if (runtimeAdmission.storageError) {
+      throw new Error(
+        `STATE_STORAGE_UNAVAILABLE: Persistent state storage is ` +
+        `${runtimeAdmission.storageError}; retry only after a confirmed state commit.`
+      );
+    }
     if (!runtimeAdmission.acceptingNewJobs) {
       throw new Error(
         "BRIDGE_DRAINING: The app is preparing to stop or restart the bridge. " +
         "No new Codex work is being admitted; retry after the runtime is available."
       );
     }
+    if (!executionAcceptingNewJobs()) {
+      throw new Error(
+        "EXECUTION_UNAVAILABLE: The isolated Codex execution service is not ready. " +
+        "No Job was created; retry after execution readiness recovers."
+      );
+    }
     runtimeAdmission.pendingAdmissions += 1;
+    runtimeAdmission.admissionRevision += 1;
     let released = false;
     return () => {
       if (released) return;
@@ -4740,41 +5266,47 @@ export function registerBridgeTools(
       runtimeAdmission.pendingAdmissions = Math.max(0, runtimeAdmission.pendingAdmissions - 1);
     };
   };
-  const recordActivityPerformance = (
-    view: { structured: z.infer<typeof activityViewOutputSchema> },
-    startedAt: number
-  ): void => {
-    const enrichment = view.structured.enrichment;
-    cardPerformance.record(
-      enrichment.state === "enriched"
-        ? "activity.enriched.total"
-        : "activity.structural.db-projection",
-      Date.now() - startedAt,
-      {
-        requests: enrichment.runtimeRequests,
-        timeouts: enrichment.timeouts + (enrichment.usageTimedOut ? 1 : 0),
-        cacheHits: enrichment.cacheHits
-      }
-    );
-    const serializationStartedAt = Date.now();
-    JSON.stringify(view.structured);
-    cardPerformance.record("activity.serialization", Date.now() - serializationStartedAt);
-  };
   type AccountObservation = {
     value: Awaited<ReturnType<NonNullable<BridgeConfig["codexService"]>["readAccount"]>>;
     failed: boolean;
   };
+  const weeklyUsageFromAccount = (account: CodexAccountSnapshot | null): CodexWeeklyUsageView | null => {
+    if (account?.authMode !== "chatgpt" || account.ownershipConflict ||
+        account.usageObservedAt === null) return null;
+    const window = account.windows.find(candidate =>
+      candidate.limitId === "codex" && candidate.windowDurationMins === 10_080);
+    if (!window || !Number.isFinite(account.usageObservedAt)) return null;
+    const observedAt = new Date(account.usageObservedAt);
+    if (!Number.isFinite(observedAt.getTime())) return null;
+    const reset = window.resetsAt === null ? null : new Date(window.resetsAt * 1_000);
+    return codexWeeklyUsageOutputSchema.parse({
+      source: "codex-account-rate-limits",
+      limitId: window.limitId,
+      usedPercent: window.usedPercent,
+      remainingPercent: window.remainingPercent,
+      windowDurationMins: window.windowDurationMins,
+      resetsAt: reset && Number.isFinite(reset.getTime()) ? reset.toISOString() : null,
+      observedAt: observedAt.toISOString()
+    });
+  };
   const accountDisplayReads = new DisplayReadPool<AccountObservation>(1, () => notifyCardObservation(upstream));
   let accountCompletion: { revision: string; failed: boolean } | undefined;
+  let lastVerifiedAccount: { revision: string; context: string | null } | undefined;
   const readAccountForDisplay = async () => {
     const service = config.codexService;
     if (!service) return { pending: false as const, value: { value: null, failed: false } };
     const revision = service.cacheRevision();
+    const startingContext = service.accountDisplayContext();
     accountDisplayReads.invalidate(key => key !== revision);
     const read = accountDisplayReads.start(revision, async () => {
       try {
-        const value = await service.readAccount(config.defaultBackend, true);
-        return { value, failed: value === null || value.billing.actualCosts?.status === "unavailable" };
+        const value = await service.readAccount(config.defaultBackend, true,
+          startingContext === null);
+        if (startingContext !== null && startingContext !== service.accountDisplayContext()) {
+          return { value: null, failed: false };
+        }
+        return { value, failed: value === null ||
+          value.authMode === "chatgpt" && value.usageStatus === "unavailable" };
       } catch { return { value: null, failed: true }; }
     }, (value, deferred) => {
       if (revision !== service.cacheRevision()) return;
@@ -4786,6 +5318,80 @@ export function registerBridgeTools(
     return revision === service.cacheRevision() ? result
       : { pending: false as const, value: { value: null, failed: false } };
   };
+  type AccountDisplayRead = Awaited<ReturnType<typeof readAccountForDisplay>>;
+  const projectAccountForDisplay = (
+    view: DashboardView,
+    account?: AccountDisplayRead
+  ): void => {
+    const service = config.codexService;
+    if (!service) {
+      view.usageDisplayStatus = view.enrichment.usageTimedOut ? "timed-out"
+        : view.enrichment.usageUnavailable ? "unavailable"
+        : view.weeklyUsage ? "available"
+        : view.enrichment.state === "enriched" ? "unavailable" : "checking";
+      return;
+    }
+    const revision = service.cacheRevision();
+    const displayContext = service.accountDisplayContext();
+    let displayed = service.cachedAccount(config.defaultBackend);
+    let currentRead = false;
+    if (account) {
+      if (account.pending) {
+        view.enrichment.pendingReads = (view.enrichment.pendingReads || 0) + 1;
+        view.enrichment.usageTimedOut = true;
+      } else {
+        if (account.value.value) {
+          displayed = account.value.value;
+          currentRead = true;
+        }
+        if (account.value.failed) view.enrichment.usageUnavailable = true;
+      }
+    } else {
+      view.enrichment.pendingReads = (view.enrichment.pendingReads || 0) +
+        accountDisplayReads.observePending(key => key === revision);
+      if (accountCompletion?.revision === revision && accountCompletion.failed) {
+        view.enrichment.usageUnavailable = true;
+      }
+    }
+    const currentContext = service.accountDisplayContext();
+    view.usageContext = currentContext;
+    if (currentContext !== displayContext ||
+        revision !== service.cacheRevision()) {
+      displayed = null;
+      currentRead = false;
+      view.usageContext = null;
+    }
+    // A stable file identity may reuse a previous observation during refresh.
+    // Keyring/auto has no such identity: only this completed account read may
+    // put a number on the card, even if an upstream usage cache exists.
+    if (view.usageContext === null && !currentRead) displayed = null;
+    view.codexAccount = displayed;
+    view.weeklyUsage = weeklyUsageFromAccount(displayed);
+    if (currentRead && displayed) {
+      lastVerifiedAccount = { revision, context: view.usageContext ?? null };
+    }
+    const identityChanged = Boolean(lastVerifiedAccount &&
+      (lastVerifiedAccount.context !== null
+        ? lastVerifiedAccount.context !== view.usageContext
+        : lastVerifiedAccount.revision !== revision));
+    view.usageDisplayStatus = account?.pending ? "timed-out"
+      : account && !account.pending && account.value.failed && !currentRead ? "unavailable"
+      : displayed?.authMode === "unknown" || displayed?.authenticated === false ? "signed-out"
+      : displayed?.authMode === "api-key" ? "not-applicable"
+      : displayed?.ownershipConflict ? "unavailable"
+      : displayed?.authMode === "chatgpt" && displayed.usageStatus === "unavailable" ? "unavailable"
+      : view.weeklyUsage ? currentRead ? "available" : "checking"
+      : displayed?.authMode === "chatgpt" && currentRead ? "no-limit"
+      : view.enrichment.usageUnavailable ? "unavailable"
+      : identityChanged ? "switching" : "checking";
+    const accountObservedAt = view.codexAccount?.usageObservedAt;
+    if (typeof accountObservedAt === "number") {
+      view.enrichment.oldestObservationAt = [
+        view.enrichment.oldestObservationAt,
+        new Date(accountObservedAt).toISOString()
+      ].filter((date): date is string => Boolean(date)).sort()[0];
+    }
+  };
   const historyTarget = (rowKey: string) => {
     const agent = listAllDashboardAgents(jobs).find(candidate => dashboardRowKey(candidate.agentId) === rowKey);
     if (!agent) throw new Error("HISTORY_TARGET_CHANGED: Refresh the selected execution.");
@@ -4793,7 +5399,67 @@ export function registerBridgeTools(
     return {agent,job,revision:dashboardHistoryRevision(agent,job)};
   };
   const applicationService: BridgeApplicationService = {
+    async skillLibrarySnapshot() {
+      // The native library screen manages the same bridge-owned store as MCP.
+      return effectiveSkillLibrary.listForManagement();
+    },
+    async readBridgeSkill(reference) {
+      if (reference.source !== BRIDGE_SKILL_SOURCE) {
+        throw new Error("SKILL_SOURCE_UNSUPPORTED: The native library can manage bridge-owned skills only.");
+      }
+      return effectiveSkillLibrary.read({ reference });
+    },
+    async readBridgeSkillFile(reference, filePath) {
+      if (reference.source !== BRIDGE_SKILL_SOURCE) {
+        throw new Error("SKILL_SOURCE_UNSUPPORTED: The native library can manage bridge-owned skills only.");
+      }
+      return effectiveSkillLibrary.readFile({ reference, path: filePath });
+    },
+    listBridgeSkillVersions(input) {
+      return effectiveSkillLibrary.listBridgeSkillVersions(input);
+    },
+    createBridgeSkill(input) {
+      return effectiveSkillLibrary.createBridgeSkill(input);
+    },
+    createBridgeSkillFromPackage(input) {
+      return effectiveSkillLibrary.createBridgeSkillFromPackage(input);
+    },
+    updateBridgeSkill(input) {
+      return effectiveSkillLibrary.updateBridgeSkill(input);
+    },
+    updateBridgeSkillFromPackage(input) {
+      return effectiveSkillLibrary.updateBridgeSkillFromPackage(input);
+    },
+    restoreBridgeSkill(input) {
+      return effectiveSkillLibrary.restoreBridgeSkill(input);
+    },
+    setBridgeSkillEnabled(input) {
+      return effectiveSkillLibrary.setBridgeSkillEnabled(input);
+    },
+    deleteBridgeSkill(input) {
+      return effectiveSkillLibrary.deleteBridgeSkill(input);
+    },
+    beginBridgeSkillPackageUpload() {
+      return effectiveSkillLibrary.beginBridgeSkillPackageUpload();
+    },
+    appendBridgeSkillPackageUpload(input) {
+      return effectiveSkillLibrary.appendBridgeSkillPackageUpload(input);
+    },
+    inspectBridgeSkillPackageUpload(uploadId) {
+      return effectiveSkillLibrary.inspectBridgeSkillPackageUpload(uploadId);
+    },
+    async exportBridgeSkillPackage(reference) {
+      const data = await effectiveSkillLibrary.exportBridgeSkillPackage(reference);
+      return {
+        fileName: `${reference.skillId}-v${reference.version}.zip`,
+        mediaType: "application/zip" as const,
+        bytes: data.byteLength,
+        contentDigest: createHash("sha256").update(data).digest("hex"),
+        data: data.toString("base64")
+      };
+    },
     async problemAction(rawInput, scopeId, source = "operator") {
+      if(source!=="automatic") throw new Error("PROBLEM_HISTORY_READ_ONLY: Problem history has no processing actions.");
       const input = problemActionSchema.parse(rawInput);
       const firstKey = input.targets[0]!.problemKey;
       const scope = scopeId || (["acknowledge", "unacknowledge"].includes(input.action)
@@ -4836,7 +5502,7 @@ export function registerBridgeTools(
           return jobs.runCancellationMutation(job.scopeId,input.requestId,digest,async () => {
             requireCurrent();
             const {intent} = jobs.beginCancellationOperation({scopeId:job.scopeId,requestId:input.requestId,actionHash:digest,
-              source,toolName:"dashboard.problem",actionName:"retry-stop",target:cancellationTargetForJob(job),
+              source:source === "automatic" ? "operator" : source,toolName:"dashboard.problem",actionName:"retry-stop",target:cancellationTargetForJob(job),
               expectedVersion:job.version,reasonCode:"problem-termination-retry"});
             await jobs.cancel(job.jobId,intent,{acknowledgeAffectedJobIds:input.acknowledgeAffectedJobIds});
             const result = {ok:true,changed:1};
@@ -4856,7 +5522,7 @@ export function registerBridgeTools(
               if (jobs.getAgent(current.agentId)?.version !== current.version) return;
               const cache = dashboardRuntimeCaches.get(upstream) || new Map<string,DashboardRuntimeCacheEntry>();
               dashboardRuntimeCaches.set(upstream,cache);
-              cacheDashboardRuntime(cache,candidate,result,deferred,jobs);
+              cacheDashboardRuntime(upstream,cache,candidate,result,deferred,jobs);
               notifyCardObservation(upstream);
             });
           const result = read ? await waitForDisplay(read,CARD_RUNTIME_BUDGET_MS) : {pending:true as const};
@@ -4879,19 +5545,16 @@ export function registerBridgeTools(
           cached.observation = observation;
           cached.unavailable = false;
           jobs.resolveHistoryRuntimeProblem(fresh,target.expectedRevision);
-          jobs.admissionStateStore.automaticRecovery.observeRecheck(recheckRecoveryIdentity(jobs,fresh),false,Date.now(),"not-loaded-no-background");
+          const recheckIdentity=recheckRecoveryIdentity(jobs,fresh);
+          if(recheckIdentity) jobs.admissionStateStore.automaticRecovery.observeRecheck(recheckIdentity,false,Date.now(),"not-loaded-no-background");
           return {ok:true,changed:1};
         }
         return {ok:true,changed:0};
       }) as Promise<ProblemActionResult>;
     },
     async historyAction(input) {
-      input = dashboardHistoryRuntimeInput.parse(input);
-      if (input.action !== "acknowledge") {
-        throw new Error(
-          "AGENT_ARCHIVE_REMOVED: Agent archive and restore are no longer supported. Existing archived Agents were restored during migration."
-        );
-      }
+      throw new Error("PROBLEM_HISTORY_READ_ONLY: History has no review actions.");
+      input = dashboardHistoryActionInput.parse(input);
       const initial = historyTarget(input.rowKey);
       const actionHash = createHash("sha256").update(JSON.stringify(["work-history",input])).digest("hex");
       return runIdempotentMutation(initial.agent.scopeId,input.requestId,actionHash,async () => {
@@ -4910,19 +5573,56 @@ export function registerBridgeTools(
       }) as Promise<{ok:true}>;
     },
     async threadHandoff(input) {
-      const agent = listAllDashboardAgents(jobs).find(candidate => dashboardRowKey(candidate.agentId) === input.rowKey);
-      const thread = agent && jobs.listAgentThreads(agent.agentId).find(candidate => input.codexThreadUrl === `codex://threads/${candidate.threadId}` &&
-        (input.action !== "request" || candidate.isCurrent));
-      if (!agent || !thread || thread.backendKind !== "app-server" || input.codexThreadUrl !== `codex://threads/${thread.threadId}`) {
+      const agents = listAllDashboardAgents(jobs);
+      const canonicalUrl = (thread: {threadId:string;sessionId?:string|null}) => dashboardCodexThreadUrl(true, {
+        threadId:thread.threadId,...(thread.sessionId ? {sessionId:thread.sessionId} : {}),backendKind:"app-server"
+      });
+      // Resolve the submitted Job against retained identities on this exact
+      // thread, rather than an unfiltered latest Job that may have expired.
+      const legacyAgent = agents.find(candidate => dashboardRowKey(candidate.agentId) === input.rowKey);
+      const recordTarget = legacyAgent ? undefined : jobs.admissionStateStore.dashboardExecutionIdentitiesForThread(
+        input.codexThreadUrl.replace("codex://threads/", "")
+      ).find(candidate => dashboardRowKey(undefined, candidate.jobId) === input.rowKey);
+      const agent = legacyAgent || (recordTarget && agents.find(candidate => candidate.agentId === recordTarget.agentId && candidate.scopeId === recordTarget.scopeId));
+      const exactJobTarget = !recordTarget || Boolean(recordTarget.threadId && input.codexThreadUrl === canonicalUrl({threadId:recordTarget.threadId,sessionId:recordTarget.sessionId}));
+      const matches = exactJobTarget && agent ? jobs.listAgentThreads(agent.agentId).filter(candidate => input.codexThreadUrl === canonicalUrl(candidate) &&
+        (!recordTarget || Boolean(recordTarget.threadId && dashboardThreadIdsEqual(candidate.threadId,recordTarget.threadId))) &&
+        (input.action !== "request" || candidate.isCurrent)) : [];
+      const thread = matches.length===1 ? matches[0] : undefined;
+      if (!agent || !thread || thread.backendKind !== "app-server" || input.codexThreadUrl !== canonicalUrl(thread)) {
         throw new Error("THREAD_HANDOFF_TARGET_CHANGED: Refresh this Agent before continuing in Codex.");
       }
       const record = jobs.threadHandoff(thread.threadId, input.action);
-      return { phase: record.phase, reason: record.reason, requested: record.handoffRequested,
+      return { phase: record.phase, ...(record.reason !== undefined ? { reason: record.reason } : {}), requested: record.handoffRequested,
         canOpen: record.phase === "released" && Boolean(record.evidence) };
+    },
+    async nativeCompletionAvailability() {
+      return jobs.nativeCompletionAvailability();
+    },
+    async claimNativeCompletionNotifications(input) {
+      // Native alerts are a separate, explicit Activity channel. They never
+      // stand in for ordinary exact-result review in ChatGPT.
+      return jobs.claimNativeCompletionNotifications(input.limit ?? 10, input.leaseOwner)
+        .flatMap((record) => record.channel === "notify"
+          ? [nativeCompletionNotification({
+              outboxId: record.outboxId,
+              scopeId: record.scopeId,
+              activityId: record.activityId,
+              completionVersion: record.completionVersion,
+              channel: "notify"
+            })]
+          : []);
+    },
+    async markNativeCompletionNotificationsDelivered(input) {
+      jobs.markNativeCompletionNotificationsDelivered(input.outboxIds, input.leaseOwner);
+    },
+    async releaseNativeCompletionNotifications(input) {
+      jobs.releaseNativeCompletionNotifications(input.outboxIds, input.leaseOwner);
     },
     subscribeChanges(listener) {
       const subscriptions = [
         jobs.subscribeChanges(() => listener("dashboard")),
+        jobs.subscribeNativeCompletionReady(() => listener("completion-outbox-ready")),
         userSettings.subscribeChanges(() => { listener("settings"); listener("dashboard"); }),
         modelCatalog.subscribe?.(() => listener("settings")),
         subscribeCardObservations(upstream, () => listener("enrichment"))
@@ -4941,39 +5641,21 @@ export function registerBridgeTools(
         config,
         userSettings.current,
         options.limit || 12,
-        options.terminalOffset || 0,
+        options.statusOffset ?? options.terminalOffset ?? 0,
         options.idleOffset || 0,
         options.inspectRuntime === true,
-        options.legacyGrouping,
         undefined,
         undefined,
         options.scopeId,
         options.statusFilter,
         options.problems,
-        options.includeHistory !== false
+        options.includeHistory !== false,
+        options.backgroundOffset || 0,
+        options.historyMode==="jobs",
+        options.cachedRuntime
       );
-      if (config.codexService) {
-        const service = config.codexService;
-        view.codexAccount = service.cachedAccount(config.defaultBackend);
-        if (accountRead) {
-          const account = await accountRead;
-          view.codexAccount = (!account.pending && account.value.value) || service.cachedAccount(config.defaultBackend);
-          if (account.pending) view.enrichment.pendingReads = (view.enrichment.pendingReads || 0) + 1;
-          if (!account.pending && account.value.failed) view.enrichment.usageUnavailable = true;
-        } else {
-          const revision = service.cacheRevision();
-          view.enrichment.pendingReads = (view.enrichment.pendingReads || 0) + accountDisplayReads.observePending(key => key === revision);
-          if (accountCompletion?.revision === revision && accountCompletion.failed) {
-            view.enrichment.usageUnavailable = true;
-          }
-        }
-        if (view.codexAccount?.authMode === "api-key") view.weeklyUsage = null;
-        const accountObservedAt = view.codexAccount?.observedAt;
-        if (typeof accountObservedAt === "number") {
-          view.enrichment.oldestObservationAt = [view.enrichment.oldestObservationAt,
-            new Date(accountObservedAt).toISOString()].filter((date): date is string => !!date).sort()[0];
-        }
-      }
+      applyExecutionContract(view,jobs.admissionStateStore,options,modelCatalog);
+      projectAccountForDisplay(view, accountRead ? await accountRead : undefined);
       const stage = view.enrichment.state === "enriched"
         ? "dashboard.enriched.total"
         : "dashboard.structural.db-projection";
@@ -4983,15 +5665,77 @@ export function registerBridgeTools(
         cacheHits: view.enrichment.cacheHits
       });
       const serializationStartedAt = Date.now();
-      for (const row of [...view.activeRows, ...view.terminalRows, ...view.idleRows, ...(view.statusRows || [])]) {
-        const threadId = row.codexThreadUrl?.replace("codex://threads/", "");
-        const connection = threadId ? jobs.admissionStateStore.threadConnections.get(threadId) : undefined;
-        if (connection) row.handoff = { phase: connection.phase, reason: connection.reason,
-          requested: connection.handoffRequested, canOpen: connection.phase === "released" && Boolean(connection.evidence) };
-      }
+      projectDashboardHandoffs(view, jobs);
       JSON.stringify(view);
       cardPerformance.record("dashboard.serialization", Date.now() - serializationStartedAt);
       return view;
+    },
+    async dashboardRuntimePlan(options = {}) {
+      return buildDashboardRuntimePlan(
+        jobs,
+        upstream,
+        modelCatalog,
+        sessions,
+        scopeResolver,
+        config,
+        userSettings.current,
+        options.limit || 12,
+        options.statusOffset ?? options.terminalOffset ?? 0,
+        options.idleOffset || 0,
+        options.scopeId,
+        options.statusFilter,
+        options.problems,
+        options.includeHistory !== false
+      );
+    },
+    async dashboardSnapshotWithEnrichment(options, projectedEnrichment) {
+      const startedAt = Date.now();
+      const view = await buildDashboardView(
+        jobs,
+        upstream,
+        modelCatalog,
+        sessions,
+        scopeResolver,
+        config,
+        userSettings.current,
+        options.limit || 12,
+        options.statusOffset ?? options.terminalOffset ?? 0,
+        options.idleOffset || 0,
+        true,
+        undefined,
+        dashboardEnrichmentInput(projectedEnrichment),
+        options.scopeId,
+        options.statusFilter,
+        options.problems,
+        options.includeHistory !== false,
+        options.backgroundOffset || 0,
+        options.historyMode==="jobs"
+      );
+      applyExecutionContract(view,jobs.admissionStateStore,options,modelCatalog);
+      cardPerformance.record("dashboard.enriched.read-projection", Date.now() - startedAt, {
+        requests: view.enrichment.runtimeRequests,
+        timeouts: view.enrichment.timeouts + (view.enrichment.usageTimedOut ? 1 : 0),
+        cacheHits: view.enrichment.cacheHits
+      });
+      const serializationStartedAt = Date.now();
+      projectDashboardHandoffs(view, jobs);
+      JSON.stringify(view);
+      cardPerformance.record("dashboard.serialization", Date.now() - serializationStartedAt);
+      return view;
+    },
+    async dashboardExecutionDetail(options) { return buildDashboardExecutionDetail(jobs.admissionStateStore,options); },
+    async dashboardHistoryDetail(options) {
+      const startedAt = Date.now();
+      const detail = buildDashboardHistoryDetail(jobs, modelCatalog, options);
+      cardPerformance.record("dashboard.history-detail.db-projection", Date.now() - startedAt, {
+        requests: 0,
+        timeouts: 0,
+        cacheHits: 0
+      });
+      const serializationStartedAt = Date.now();
+      JSON.stringify(detail);
+      cardPerformance.record("dashboard.history-detail.serialization", Date.now() - serializationStartedAt);
+      return detail;
     },
     async settingsSnapshot(options = {}) {
       const startedAt = Date.now();
@@ -4999,7 +5743,8 @@ export function registerBridgeTools(
         config,
         userSettings,
         modelCatalog,
-        options.refreshModels || false
+        options.refreshModels || false, false, false,
+        () => backendCapabilities(upstream, config.defaultBackend)
       );
       view.historyPolicy = jobs.admissionStateStore.workHistory.policy(userSettings.current.historyRetentionDays);
       const projectionStatus = publishTaskProjection(
@@ -5015,6 +5760,9 @@ export function registerBridgeTools(
       cardPerformance.record("settings.serialization", Date.now() - serializationStartedAt);
       return view;
     },
+    async modelDescriptionHistory(input) {
+      return userSettings.modelDescriptionHistory(input.modelId, input.beforeVersion);
+    },
     updateSettings(input) {
       return applySettingsMutation(input);
     },
@@ -5023,9 +5771,10 @@ export function registerBridgeTools(
     },
     runtimeHealth() {
       return {
-        acceptingNewJobs: runtimeAdmission.acceptingNewJobs,
+        acceptingNewJobs: acceptingNewJobs(),
         activeJobs: jobs.observedRunningCount(),
         pendingAdmissions: runtimeAdmission.pendingAdmissions,
+        progressPersistence: jobs.progressPersistenceStatus(),
         backgroundProcessState: backgroundProcessImpact.state,
         backgroundProcesses: backgroundProcessImpact.processes,
         backgroundProcessAgents: backgroundProcessImpact.agents,
@@ -5033,14 +5782,60 @@ export function registerBridgeTools(
       };
     },
     beginDrain(options) {
-      runtimeAdmission.acceptingNewJobs = false;
+      jobs.runtimeDrain.begin(options?.expectedRuntime);
       return runtimeAdmissionSnapshot(options);
     },
-    cancelDrain() {
-      runtimeAdmission.acceptingNewJobs = true;
+    cancelDrain(options) {
+      jobs.runtimeDrain.cancel(options?.expectedRuntime);
       return runtimeAdmissionSnapshot();
+    },
+    setStorageAdmissionError(error) {
+      runtimeAdmission.storageError = error;
     }
   };
+  if (readProjection) {
+    applicationService.dashboardSnapshot = async (options = {}, context) => {
+      if (!options.inspectRuntime) {
+        const view = await readProjection.dashboardSnapshot({
+          ...options, cachedRuntime: dashboardCachedRuntime(upstream)
+        }, context);
+        projectAccountForDisplay(view);
+        return view;
+      }
+      const accountRead = config.codexService
+        ? readAccountForDisplay().catch(() => ({
+            pending: false as const,
+            value: { value: null, failed: true }
+          }))
+        : undefined;
+      const plan = await readProjection.dashboardRuntimePlan(options, context);
+      const projectedEnrichment = await enrichDashboardRuntimePlan(upstream, plan, undefined,
+        !config.codexService);
+      const view = await readProjection.dashboardSnapshotWithEnrichment(
+        options,
+        projectedEnrichment, context
+      );
+      projectAccountForDisplay(view, accountRead ? await accountRead : undefined);
+      return view;
+    };
+    applicationService.dashboardExecutionDetail = (options, context) => readProjection.dashboardExecutionDetail(options,context);
+    applicationService.dashboardHistoryDetail = (options, context) =>
+      readProjection.dashboardHistoryDetail(options, context);
+    applicationService.settingsSnapshot = (options, context) =>
+      readProjection.settingsSnapshot(options, context);
+  }
+  // The isolated reader needs the same fresh application projections, but no
+  // wire tools, cards or execution handlers. Building their schemas for every
+  // read can itself exhaust the observation deadline. Never cache the registry
+  // graph: retirement and same-cwd registration must be visible on the next read.
+  if (!server) return { applicationService, dispose: () => undefined };
+  // MCP 2026 list results must be deterministic. Register immutable card
+  // resources in URI order; input tools do not add a resource.
+  registerDashboardCardResource(server);
+  registerRelayCardResource(server);
+  registerRelayTools(server, jobs.admissionStateStore, scopeResolver);
+  const codexInputs = registerCodexInputTools(server, jobs, scopeResolver, config.experimentalProfile !== "events");
+  registerSettingsCardResource(server);
   const currentTaskAdmissionRef = (
     settings: BridgeUserSettings = userSettings.current,
     catalogFingerprint = admissionFingerprintForCatalog(
@@ -5099,49 +5894,43 @@ export function registerBridgeTools(
 
   const controlProofs = uiControlProofs(jobs);
   const requireControlCard = (
-    args: { scopeId?: string; widgetInstanceId?: string; card: z.infer<typeof userControlProofInputSchema>; jobId?: string; agentId?: string; processId?: string },
+    args: { scopeId?: string; widgetInstanceId?: string; card: z.infer<typeof userControlProofInputSchema>; jobId?: string; agentId?: string },
     meta: unknown
   ) => {
     const widgetSessionId = mountedWidgetInstanceId(args, meta);
-    if (!widgetSessionId) throw new Error("CARD_LEASE_REQUIRED: Open the work details before using a control.");
-    if ("token" in args.card) {
-      const host = scopeResolver.resolve(meta as ToolCallMetadata, args.scopeId);
-      const claims = controlProofs.require(args.card.token, widgetSessionId, host?.scopeId);
-      if (claims.purpose === "history") throw new Error("UI_CONTROL_STALE: Open the work details before controlling execution.");
-      const agent = jobs.getAgent(claims.agentId), activity = jobs.getActivity(claims.activityId);
-      if (!agent || !activity || agent.scopeId !== claims.scopeId || activity.scopeId !== claims.scopeId ||
-        claims.activityId !== args.card.activityId || claims.generation !== args.card.generation || activity.cardGeneration !== claims.generation ||
-        (args.jobId !== undefined && args.jobId !== claims.jobId) ||
-        (args.agentId !== undefined && args.agentId !== claims.agentId) ||
-        (args.processId !== undefined && !claims.processIds.includes(args.processId))) {
-        throw new Error("UI_CONTROL_TARGET_CHANGED: Refresh the selected work details.");
-      }
-      // Domain handlers still check the exact current Job/Agent version and state
-      // immediately before dispatch. Proof identity never grants model scope.
-      return { scope: { scopeId: claims.scopeId }, widgetSessionId, presentation: { kind: "explicit" } as ActivityCardPresentationContext, claims };
+    if (!widgetSessionId) throw new Error("MOUNTED_DASHBOARD_REQUIRED: Open the Dashboard work details before using a control.");
+    const host = scopeResolver.resolve(meta as ToolCallMetadata, args.scopeId);
+    const claims = controlProofs.require(args.card.token, widgetSessionId, host?.scopeId);
+    if (claims.purpose === "history") throw new Error("UI_CONTROL_STALE: Open the work details before controlling execution.");
+    const agent = jobs.getAgent(claims.agentId), activity = jobs.getActivity(claims.activityId);
+    if (!agent || !activity || agent.scopeId !== claims.scopeId || activity.scopeId !== claims.scopeId ||
+      activity.cardGeneration !== claims.generation ||
+      (args.jobId !== undefined && args.jobId !== claims.jobId) ||
+      (args.agentId !== undefined && args.agentId !== claims.agentId)) {
+      throw new Error("UI_CONTROL_TARGET_CHANGED: Refresh the selected work details.");
     }
-    const scope = scopeResolver.require(meta as ToolCallMetadata, args.scopeId, "Retained Activity card control");
-    const presentation = presentationFromActivityCardProof(args.card);
-    jobs.requireActivityCardLease(scope.scopeId, args.card.activityId, args.card.generation, widgetSessionId, presentation);
-    return { scope, widgetSessionId, presentation, claims: undefined };
+    // Domain handlers still check the exact current Job/Agent version and state
+    // immediately before dispatch. Proof identity never grants model scope.
+    return { scope: { scopeId: claims.scopeId }, widgetSessionId, claims };
   };
   const controlDetailInput = z.strictObject({ view: z.literal("control"), rowKey: z.string().regex(/^[a-f0-9]{32}$/),
     widgetInstanceId: widgetInstanceIdSchema, scopeId: scopeIdSchema().optional() });
   const readControl: ToolCallback<typeof controlDetailInput> = async (args, extra) => {
-    const host = scopeResolver.resolve(extra._meta as ToolCallMetadata, args.scopeId);
-    const agent = listAllDashboardAgents(jobs).find(agent => dashboardRowKey(agent.agentId) === args.rowKey);
+    const host = scopeResolver.resolve(extra.mcpReq._meta as ToolCallMetadata, args.scopeId);
+    const rowJob=jobs.list(Math.max(jobs.size,config.maxRetainedJobs)).find(job=>isActiveActivityJobStatus(job.status) && dashboardRowKey(undefined,job.jobId)===args.rowKey);
+    const agent = rowJob?.agentId ? jobs.getAgent(rowJob.agentId) : listAllDashboardAgents(jobs).find(agent => dashboardRowKey(agent.agentId) === args.rowKey);
     if (!agent) throw new Error("UI_CONTROL_UNAVAILABLE: The selected Agent is unavailable.");
     const ownedJobs = jobs.listForAgent(agent.agentId);
     const job = agent.currentJobId ? jobs.get(agent.currentJobId) : ownedJobs.at(-1);
     const activity = job && jobs.getActivity(job.activityId);
-    if (!job || !activity || activity.scopeId !== agent.scopeId || job.scopeId !== agent.scopeId) {
+    if (!job || (rowJob && rowJob.jobId!==job.jobId) || !activity || activity.scopeId !== agent.scopeId || job.scopeId !== agent.scopeId) {
       throw new Error("UI_CONTROL_UNAVAILABLE: No retained work is available for this Agent.");
     }
     const pendingInteractions = job.pendingInteractions
       .filter((interaction) => !ordinaryCodexQuestion(interaction))
       .slice(0, MAX_CODEX_INTERACTION_QUESTIONS);
     if (pendingInteractions.length === 0) {
-      throw new Error("UI_CONTROL_UNAVAILABLE: This Agent has no review request.");
+      throw new Error("UI_CONTROL_UNAVAILABLE: This Agent has no pending response request.");
     }
     const initialVersion = agent.version, initialJobVersion = job.version;
     if (jobs.getAgent(agent.agentId)?.version !== initialVersion || jobs.get(job.jobId)?.version !== initialJobVersion) {
@@ -5150,10 +5939,9 @@ export function registerBridgeTools(
     const claims: Omit<UiControlClaims, "version" | "expiresAt"> = {
       widgetInstanceId: args.widgetInstanceId, hostScopeId: host?.scopeId || null, scopeId: agent.scopeId,
       activityId: activity.activityId, generation: activity.cardGeneration, agentId: agent.agentId,
-      agentVersion: agent.version, jobId: job.jobId, jobVersion: job.version, processIds: []
+      agentVersion: agent.version, jobId: job.jobId, jobVersion: job.version
     };
-    const card = { kind: "dashboard", token: controlProofs.issue(claims), activityId: activity.activityId,
-      generation: activity.cardGeneration, presentation: { kind: "explicit" } };
+    const card = { kind: "dashboard", token: controlProofs.issue(claims) };
     const detail = { kind: "control", rowKey: args.rowKey, agentId: agent.agentId, agentName: agent.agentName,
       agentVersion: agent.version, activityTitle: activity.title, projectName: job.projectName || null,
       conversationUrl: scopeResolver.conversationUrl(agent.scopeId), card,
@@ -5166,27 +5954,12 @@ export function registerBridgeTools(
       _meta: { "codex/uiControl@1": detail } };
   };
 
-  const historyDetailInput = controlDetailInput.extend({view:z.literal("history"),expectedRevision:z.string().regex(/^[a-f0-9]{64}$/)});
-  const readHistoryControl: ToolCallback<typeof historyDetailInput> = async (args,extra) => {
-    const host = scopeResolver.resolve(extra._meta as ToolCallMetadata,args.scopeId);
-    const target = historyTarget(args.rowKey);
-    if (target.revision !== args.expectedRevision || !target.job) throw new Error("HISTORY_TARGET_CHANGED: Refresh the selected execution.");
-    const activity = jobs.getActivity(target.job.activityId);
-    if (!activity || activity.scopeId !== target.agent.scopeId) throw new Error("HISTORY_TARGET_CHANGED: Refresh the selected execution.");
-    const token = controlProofs.issue({purpose:"history",historyRevision:target.revision,
-      widgetInstanceId:args.widgetInstanceId,hostScopeId:host?.scopeId || null,scopeId:target.agent.scopeId,
-      agentId:target.agent.agentId,agentVersion:target.agent.version,activityId:activity.activityId,generation:activity.cardGeneration,
-      jobId:target.job.jobId,jobVersion:null,processIds:[]});
-    return {content:[{type:"text",text:"History action ready."}],structuredContent:{kind:"control",ready:true},
-      _meta:{"codex/historyControl@1":{rowKey:args.rowKey,revision:target.revision,token}}};
-  };
-
   const reviewProofs = problemReviewProofs(jobs);
   const problemControlDetailInput = z.strictObject({view:z.literal("problem-control"),operation:problemOperationSchema,
     widgetInstanceId:widgetInstanceIdSchema,scopeId:scopeIdSchema().optional(),scope:z.enum(["conversation","all"])});
   const readProblemControl: ToolCallback<typeof problemControlDetailInput> = async (args,extra) => {
-    const host = scopeResolver.resolve(extra._meta as ToolCallMetadata,args.scopeId);
-    const widget = mountedWidgetInstanceId(args,extra._meta);
+    const host = scopeResolver.resolve(extra.mcpReq._meta as ToolCallMetadata,args.scopeId);
+    const widget = mountedWidgetInstanceId(args,extra.mcpReq._meta);
     if (!widget) throw new Error("MOUNTED_WIDGET_REQUIRED: Refresh the mounted problem list.");
     if (args.scope === "conversation" && !host) throw new Error("DASHBOARD_CONVERSATION_UNAVAILABLE: Reopen the card in its conversation.");
     const selectedScopeId = args.scope === "conversation" ? host!.scopeId : undefined;
@@ -5218,25 +5991,294 @@ export function registerBridgeTools(
       _meta:{"codex/problemControl@1":{token,operationDigest}}};
   };
 
-  const codexDashboardRuntimeInput = z.strictObject({
-    scopeId: scopeIdSchema()
-      .optional()
-      .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata.")
+  const skillReferenceInput = z.strictObject({
+    skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/).describe("Exact skill id returned by bridge_skill search."),
+    source: z.literal(BRIDGE_SKILL_SOURCE).describe("Bridge-owned skill source returned by bridge_skill search."),
+    version: z.string().regex(/^[1-9]\d*$/).describe("Exact bridge skill version returned by bridge_skill search.")
   });
-  const codexDashboardPublicInput = z.strictObject({});
+  // Zod measures `.max()` in UTF-16 code units. Bound that representation,
+  // then use the shared scalar counter that also defines the storage policy.
+  const bridgeSkillNameInput = z.string().min(1)
+    .max(BRIDGE_SKILL_LIMITS.nameMaxCharacters * 2)
+    .refine((value) => hasAtMostUnicodeScalars(
+      value, BRIDGE_SKILL_LIMITS.nameMaxCharacters, "Bridge skill name"
+    ));
+  const bridgeSkillDescriptionInput = z.string()
+    .max(BRIDGE_SKILL_LIMITS.descriptionMaxCharacters * 2)
+    .refine((value) => hasAtMostUnicodeScalars(
+      value, BRIDGE_SKILL_LIMITS.descriptionMaxCharacters, "Bridge skill description"
+    ));
+  const bridgeSkillContentInput = z.string().min(1).max(BRIDGE_SKILL_LIMITS.contentMaxBytes)
+    .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.contentMaxBytes, {
+      message: `Skill content must be at most ${BRIDGE_SKILL_LIMITS.contentMaxBytes} UTF-8 bytes.`
+    })
+    .refine((value) => !value.includes("\u0000"), { message: "Skill content cannot contain NUL characters." });
+  const bridgeSkillFilePathInput = z.string().min(1).max(BRIDGE_SKILL_LIMITS.filePathMaxBytes)
+    .describe("Logical relative .md or .markdown path returned by bridge_skill. Never use a host filesystem path.");
+  const bridgeSkillFileInput = z.strictObject({
+    path: bridgeSkillFilePathInput,
+    content: z.string().max(BRIDGE_SKILL_LIMITS.fileMaxBytes)
+      .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.fileMaxBytes, {
+        message: `Skill file must be at most ${BRIDGE_SKILL_LIMITS.fileMaxBytes} UTF-8 bytes.`
+      })
+      .refine((value) => !value.includes("\u0000"), { message: "Skill file cannot contain NUL characters." })
+  });
+  const bridgeSkillInput = z.discriminatedUnion("operation", [
+    z.strictObject({
+      operation: z.literal("search"),
+      query: z.string().max(BRIDGE_SKILL_LIMITS.searchQueryMaxBytes)
+        .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.searchQueryMaxBytes, {
+          message: `Search text must be at most ${BRIDGE_SKILL_LIMITS.searchQueryMaxBytes} UTF-8 bytes.`
+        })
+        .optional()
+        .describe("Task, goal, or procedure to search for. Omit to list available skills."),
+      limit: z.number().int().min(1).max(100).optional()
+    }),
+    z.strictObject({
+      operation: z.literal("read"),
+      skill: skillReferenceInput
+    }),
+    z.strictObject({
+      operation: z.literal("read-file"),
+      skill: skillReferenceInput,
+      path: bridgeSkillFilePathInput
+    }),
+    z.strictObject({
+      operation: z.literal("versions"),
+      skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/).describe("Bridge skill id whose immutable version history should be listed.")
+    })
+  ]);
+  const bridgeSkillManageInput = z.discriminatedUnion("operation", [
+    z.strictObject({
+      operation: z.literal("create"),
+      requestId: scopeIdSchema().describe("Unique UUID for this logical bridge skill mutation. Reuse only for an exact retry."),
+      name: bridgeSkillNameInput,
+      description: bridgeSkillDescriptionInput.optional().describe("Optional discovery summary. Content remains the complete skill body."),
+      content: bridgeSkillContentInput.describe("Complete free-form Markdown skill content. The bridge preserves it without adding frontmatter or splitting sections."),
+      files: z.array(bridgeSkillFileInput).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional()
+        .describe("Optional independent Markdown files in the same immutable skill version. Paths are logical relative paths.")
+    }),
+    z.strictObject({
+      operation: z.literal("create-package"),
+      requestId: scopeIdSchema().describe("Unique UUID for this logical bridge skill mutation. Reuse only for an exact retry."),
+      name: bridgeSkillNameInput,
+      description: bridgeSkillDescriptionInput.optional(),
+      uploadId: scopeIdSchema().describe("Expiring upload id supplied by a trusted binary-upload adapter after ZIP inspection."),
+      mainPath: bridgeSkillFilePathInput.describe("Exact inspected Markdown path selected as the skill content."),
+      includePaths: z.array(bridgeSkillFilePathInput).min(1).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional()
+    }),
+    z.strictObject({
+      operation: z.literal("update"),
+      requestId: scopeIdSchema().describe("Unique UUID for this logical bridge skill mutation. Reuse only for an exact retry."),
+      skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/).describe("Exact bridge-origin skill id."),
+      expectedVersion: z.string().regex(/^[1-9]\d*$/).describe("Current version read before this mutation. A successful update creates the next immutable version."),
+      name: bridgeSkillNameInput.optional(),
+      description: bridgeSkillDescriptionInput.optional(),
+      content: bridgeSkillContentInput.optional(),
+      files: z.strictObject({
+        upsert: z.array(bridgeSkillFileInput).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional(),
+        remove: z.array(bridgeSkillFilePathInput).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional()
+      }).optional().describe("Atomic attachment changes applied with the skill content and metadata update.")
+    }).refine((value) => value.name !== undefined || value.description !== undefined || value.content !== undefined || value.files !== undefined, {
+      message: "Provide at least one field to update."
+    }),
+    z.strictObject({
+      operation: z.literal("update-package"),
+      requestId: scopeIdSchema().describe("Unique UUID for this logical bridge skill mutation. Reuse only for an exact retry."),
+      skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/),
+      expectedVersion: z.string().regex(/^[1-9]\d*$/),
+      uploadId: scopeIdSchema().describe("Expiring upload id supplied by a trusted binary-upload adapter after ZIP inspection."),
+      mainPath: bridgeSkillFilePathInput.nullable().describe("Select replacement skill content, or null to import all inspected Markdown as attachments."),
+      includePaths: z.array(bridgeSkillFilePathInput).min(1).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional()
+    }),
+    z.strictObject({
+      operation: z.literal("restore"),
+      requestId: scopeIdSchema().describe("Unique UUID for this logical bridge skill mutation. Reuse only for an exact retry."),
+      skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/),
+      expectedVersion: z.string().regex(/^[1-9]\d*$/).describe("Current version read before this mutation."),
+      sourceVersion: z.string().regex(/^[1-9]\d*$/).describe("Historical immutable version to copy into a new current version.")
+    }),
+    z.strictObject({
+      operation: z.literal("set-enabled"),
+      requestId: scopeIdSchema().describe("Unique UUID for this logical bridge skill mutation. Reuse only for an exact retry."),
+      skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/),
+      expectedVersion: z.string().regex(/^[1-9]\d*$/).describe("Current version read before this mutation."),
+      enabled: z.boolean().describe("False archives the skill from Bridge discovery while preserving immutable history.")
+    })
+  ]);
+  server.registerTool(
+    "bridge_skill",
+    {
+      title: "Find and Read Bridge Skills",
+      description:
+        "Find and read reusable bridge-owned Markdown skills. Search by goal, read an exact immutable version to get its content and file inventory, then use read-file only for relevant attached Markdown. Reading never starts Codex, executes a script, or changes permissions.",
+      inputSchema: bridgeSkillInput,
+      outputSchema: bridgeSkillOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      }
+    },
+    async (args) => {
+      if (args.operation === "search") {
+        const result = await effectiveSkillLibrary.search({
+          query: args.query,
+          limit: args.limit
+        });
+        const structured = bridgeSkillSearchOutputSchema.parse({ kind: "skill-search", ...result });
+        return contractedToolResult(
+          skillResultContract,
+          result,
+          structured,
+          { content: bridgeSkillPrimaryContent(structured) }
+        );
+      }
+
+      if (args.operation === "versions") {
+        const result = await effectiveSkillLibrary.listBridgeSkillVersions({ skillId: args.skillId });
+        const structured = bridgeSkillVersionsOutputSchema.parse({ kind: "skill-versions", ...result });
+        return contractedToolResult(
+          skillResultContract,
+          result,
+          structured,
+          { content: bridgeSkillPrimaryContent(structured) }
+        );
+      }
+
+      if (args.operation === "read-file") {
+        const result = await effectiveSkillLibrary.readFile({ reference: args.skill as SkillReference, path: args.path });
+        const structured = bridgeSkillFileOutputSchema.parse(result);
+        return contractedToolResult(
+          skillResultContract,
+          result,
+          structured,
+          { content: bridgeSkillPrimaryContent(structured) }
+        );
+      }
+
+      const result = await effectiveSkillLibrary.read({ reference: args.skill as SkillReference });
+      const { skill: summary, ...body } = result;
+      const structured = bridgeSkillReadOutputSchema.parse({ kind: "skill", skill: { ...summary, ...body } });
+      return contractedToolResult(
+        skillResultContract,
+        result,
+        structured,
+        { content: bridgeSkillPrimaryContent(structured) }
+      );
+    }
+  );
+
+  server.registerTool(
+    "bridge_skill_manage",
+    {
+      title: "Manage a Bridge Skill",
+      description:
+        "Create, version, restore, or archive a bridge-owned free-form Markdown skill and its optional Markdown file tree. Every mutation requires a requestId for exact retries. Content and file updates are atomic and append-only: prior versions remain immutable.",
+      inputSchema: bridgeSkillManageInput,
+      outputSchema: bridgeSkillManageOutputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      }
+    },
+    async (args) => {
+      const skill = args.operation === "create"
+        ? await effectiveSkillLibrary.createBridgeSkill({
+            requestId: args.requestId,
+            name: args.name,
+            description: args.description,
+            content: args.content,
+            files: args.files
+          })
+        : args.operation === "create-package"
+          ? await effectiveSkillLibrary.createBridgeSkillFromPackage({
+              requestId: args.requestId,
+              name: args.name,
+              description: args.description,
+              uploadId: args.uploadId,
+              mainPath: args.mainPath,
+              includePaths: args.includePaths
+            })
+        : args.operation === "update"
+          ? await effectiveSkillLibrary.updateBridgeSkill({
+              requestId: args.requestId,
+              skillId: args.skillId,
+              expectedVersion: args.expectedVersion,
+              ...(args.name === undefined ? {} : { name: args.name }),
+              ...(args.description === undefined ? {} : { description: args.description }),
+              ...(args.content === undefined ? {} : { content: args.content }),
+              ...(args.files === undefined ? {} : { files: args.files })
+            })
+          : args.operation === "update-package"
+            ? await effectiveSkillLibrary.updateBridgeSkillFromPackage({
+                requestId: args.requestId,
+                skillId: args.skillId,
+                expectedVersion: args.expectedVersion,
+                uploadId: args.uploadId,
+                mainPath: args.mainPath,
+                includePaths: args.includePaths
+              })
+          : args.operation === "restore"
+            ? await effectiveSkillLibrary.restoreBridgeSkill({
+                requestId: args.requestId,
+                skillId: args.skillId,
+                expectedVersion: args.expectedVersion,
+                sourceVersion: args.sourceVersion
+              })
+            : await effectiveSkillLibrary.setBridgeSkillEnabled({
+                requestId: args.requestId,
+                skillId: args.skillId,
+                expectedVersion: args.expectedVersion,
+                enabled: args.enabled
+              });
+      const action = args.operation;
+      const structured = bridgeSkillManageOutputSchema.parse({
+        kind: "skill-mutation",
+        action,
+        requestId: args.requestId,
+        skill,
+        message: action === "create" || action === "create-package"
+          ? `Created bridge skill ${JSON.stringify(skill.name)} at version ${skill.version}.`
+          : action === "update" || action === "update-package"
+            ? `Created version ${skill.version} of bridge skill ${JSON.stringify(skill.name)}.`
+            : action === "restore"
+              ? `Restored historical content as version ${skill.version} of bridge skill ${JSON.stringify(skill.name)}.`
+              : skill.enabled
+                ? `Enabled bridge skill ${JSON.stringify(skill.name)}.`
+                : `Archived bridge skill ${JSON.stringify(skill.name)}; immutable history remains readable.`
+      });
+      return contractedToolResult(
+        skillManageResultContract,
+        structured,
+        structured,
+        { text: structured.message }
+      );
+    }
+  );
+
+  const codexDashboardInput = z.strictObject({
+    scopeId: scopeIdSchema().optional(),
+    scope: z.enum(["conversation", "all"]).optional()
+  });
+
   const dashboardSnapshotInput = z.strictObject({
+    historyMode:z.enum(["agents","jobs"]).optional(),
     problems: problemQuerySchema.optional(),
     scopeId: scopeIdSchema().optional(),
     statusFilter: z.enum(DASHBOARD_STATUS_FILTERS).optional().describe(
-      "Select the current three-category overview and filter its rows. Omission preserves retained cards' layout. Counts cover the full selected conversation scope before filtering and pagination."
+      "Select the current three-category overview and filter its rows. Counts cover the full selected conversation scope before filtering and pagination."
     ),
     widgetInstanceId: widgetInstanceIdSchema.optional(),
     scope: z.enum(["auto", "conversation", "all"]).optional().describe(
-      "Initial auto selects this conversation when it has retained Activity or Job records; conversation and all retain an explicit selection. Omission preserves older cards' all-conversation view."
+      "Initial auto selects this conversation when it has Activity or Job records; conversation and all retain an explicit selection."
     ),
     limit: z.number().int().min(5).max(50).optional(),
-    projectOffset: z.number().int().min(0).max(1_000_000_000).optional(),
-    conversationOffset: z.number().int().min(0).max(1_000_000_000).optional(),
+    backgroundOffset:z.number().int().min(0).max(1_000_000_000).optional(),
+    statusOffset:z.number().int().min(0).max(1_000_000_000).optional(),
     terminalOffset: z.number().int().min(0).max(1_000_000_000).optional(),
     idleOffset: z.number().int().min(0).max(1_000_000_000).optional(),
     enrich: z.boolean().optional().describe(
@@ -5246,14 +6288,22 @@ export function registerBridgeTools(
       "Include paged run history. Current cards omit it until the user opens history."
     )
   });
-
+  const dashboardExecutionDetailInput=dashboardExecutionDetailInputSchema.extend({view:z.literal("dashboard-execution"),widgetInstanceId:widgetInstanceIdSchema,scope:z.enum(["conversation","all"])});
+  const dashboardHistoryDetailInput = z.strictObject({
+    view: z.literal("dashboard-history"),
+    historyCursor:z.string().max(2048).optional(),
+    rowKey: z.string().regex(/^[0-9a-f]{32}$/),
+    widgetInstanceId: widgetInstanceIdSchema,
+    scopeId: scopeIdSchema().optional(),
+    scope: z.enum(["conversation", "all"])
+  });
   server.registerTool(
     "codex_dashboard",
     {
       title: `${PRODUCT_INFO.displayName} Codex Status`,
       description:
-        "Open the Codex status card. It starts with this conversation when it has Activity or Job records, including completed history; otherwise it shows all conversations. The user can switch between this conversation and all work in the card.",
-      inputSchema: withJsonSchemaProjection(codexDashboardRuntimeInput, codexDashboardPublicInput),
+        "Open the Codex status card only when the user explicitly requests to see the card or Dashboard. A request to check status uses structured codex_status reads. Admission, completion, errors, questions, approvals, timeouts and notifications never authorize automatic opening. The explicitly opened card displays state, history, problems and existing management controls; it never sends chat messages or launches followups.",
+      inputSchema: codexDashboardInput,
       outputSchema: dashboardModelOutputSchema,
       annotations: {
         readOnlyHint: true,
@@ -5264,24 +6314,31 @@ export function registerBridgeTools(
       _meta: dashboardCardToolMetadata()
     },
     async (args, extra) => {
-      const { _meta } = extra;
+      const _meta = extra.mcpReq._meta;
       // The card can open without host identity and start in the all-work view.
       // Supplied metadata must still be validated before returning the opener.
-      scopeResolver.resolve(_meta as ToolCallMetadata, args.scopeId);
-      const summary = "The Codex status card is open. The card loads current retained work, starting with this conversation when it has records and otherwise showing all conversations.";
+      const scope = scopeResolver.resolve(_meta as ToolCallMetadata, args.scopeId);
+      if (args.scope === "conversation" && !scope) {
+        throw new Error("DASHBOARD_CONVERSATION_UNAVAILABLE: Reopen the Dashboard in its conversation.");
+      }
+      const summary = args.scope === "conversation"
+        ? "The Codex status card is open for this conversation."
+        : "The Codex status card is open. It displays retained status, history and explicit management controls without sending chat messages.";
       return contractedToolResult(dashboardModelResultContract, {}, {
         kind: "dashboard", scope: "bridge-wide", readOnly: true,
         statusSource: "codex-runtime-only", summary
       }, { text: summary }, { appHydration: {
         "openai/locale": resolvePreferredUiLocale(userSettings.current.uiLocalePreference,
-          metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"))
+          metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n")),
+        "codex/dashboardOpen@2": { scope: args.scope || "auto", automatic: false }
       } });
     }
   );
 
     const readDashboard: ToolCallback<typeof dashboardSnapshotInput> = async (args, extra) => {
-      const { _meta } = extra;
-      if (!mountedWidgetInstanceId(args, _meta)) {
+      const _meta = extra.mcpReq._meta;
+      const widgetInstanceId = mountedWidgetInstanceId(args, _meta);
+      if (!widgetInstanceId) {
         throw new Error(
           "MOUNTED_WIDGET_REQUIRED: Refresh the mounted Codex status card before retrying."
         );
@@ -5298,24 +6355,17 @@ export function registerBridgeTools(
         throw new Error("DASHBOARD_CONVERSATION_UNAVAILABLE: This host did not identify the opening conversation. Select all work or reopen the status card.");
       }
       const view = await applicationService.dashboardSnapshot({
+        historyMode:args.historyMode,
         problems: args.problems,
         scopeId: mode === "conversation" ? openingScope!.scopeId : undefined,
         statusFilter: args.statusFilter,
         limit: args.limit || 12,
         terminalOffset: args.terminalOffset || 0,
+        statusOffset:args.statusOffset,
+        backgroundOffset:args.backgroundOffset,
         idleOffset: args.idleOffset || 0,
-        // Omission preserves retained Dashboard cards that predate the
-        // progressive contract. Generation 28 sends false explicitly, paints,
-        // and follows with true.
         inspectRuntime: args.enrich !== false,
-        includeHistory: args.includeHistory !== false,
-        legacyGrouping:
-          args.projectOffset !== undefined || args.conversationOffset !== undefined
-            ? {
-                projectOffset: args.projectOffset || 0,
-                conversationOffset: args.conversationOffset || 0
-              }
-            : undefined
+        includeHistory: args.includeHistory !== false
       });
       if (args.scope !== undefined) {
         view.filter = { mode, conversationAvailable: Boolean(openingScope), conversationHasWork };
@@ -5327,30 +6377,39 @@ export function registerBridgeTools(
       );
     };
 
-  server.registerTool(
-    "codex_dashboard_snapshot",
-    {
-      title: "Refresh Codex Overview",
-      description:
-        "App-only read-only fresh-data source for the mounted Codex overview. Current clients request an all-status structural summary and complete history-free status index, then optionally request bounded App Server and weekly-usage enrichment. Paged run history is included only when requested. Omission retains the enriched, history-included behavior of immutable older cards. Mounted recovery works when a host omits conversation metadata; any supplied host or compatibility scope is still validated. It has no execution controls or watcher lease.",
-      inputSchema: dashboardSnapshotInput,
-      outputSchema: dashboardViewOutputSchema,
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false
-      },
-      _meta: {
-        "codex/registrationTier": "compatibility",
-        ui: { visibility: ["app"] },
-        "openai/visibility": "private",
-        "openai/widgetAccessible": true,
-        "codex/uiContractGeneration": DASHBOARD_CARD_CONTRACT_GENERATION
+    const readDashboardExecutionDetail:ToolCallback<typeof dashboardExecutionDetailInput> = async(args,extra)=>{
+      const meta=extra.mcpReq._meta;
+      if(!mountedWidgetInstanceId(args,meta)) throw new Error("MOUNTED_WIDGET_REQUIRED: Refresh the card.");
+      const openingScope=scopeResolver.resolve(meta as ToolCallMetadata,args.scopeId);
+      if(args.scope==="conversation" && openingScope?.scopeId!==args.scopeId) throw new Error("EXECUTION_DETAIL_SCOPE_MISMATCH: Execution is outside this conversation.");
+      if(!applicationService.dashboardExecutionDetail) throw new Error("DASHBOARD_EXECUTION_DETAIL_UNSUPPORTED");
+      const detail=await applicationService.dashboardExecutionDetail({scopeId:args.scopeId,jobId:args.jobId,
+        expectedExecutionRevision:args.expectedExecutionRevision,expectedPolicyRevision:args.expectedPolicyRevision});
+      return {content:[{type:"text",text:"Execution detail loaded."}],structuredContent:detail};
+    };
+
+    const readDashboardHistoryDetail: ToolCallback<typeof dashboardHistoryDetailInput> = async (args, extra) => {
+      const _meta = extra.mcpReq._meta;
+      if (!mountedWidgetInstanceId(args, _meta)) {
+        throw new Error("MOUNTED_WIDGET_REQUIRED: Refresh the mounted Codex status card before retrying.");
       }
-    },
-    readDashboard
-  );
+      const openingScope = scopeResolver.resolve(_meta as ToolCallMetadata, args.scopeId);
+      if (args.scope === "conversation" && !openingScope) {
+        throw new Error("DASHBOARD_CONVERSATION_UNAVAILABLE: Reopen the card in its conversation.");
+      }
+      if (!applicationService.dashboardHistoryDetail) {
+        throw new Error("DASHBOARD_HISTORY_DETAIL_UNSUPPORTED: Refresh the Codex status card.");
+      }
+      const detail = await applicationService.dashboardHistoryDetail({
+        rowKey: args.rowKey,
+        historyCursor:args.historyCursor,
+        scopeId: args.scope === "conversation" ? openingScope!.scopeId : undefined
+      });
+      return {
+        content: [{ type: "text", text: "Execution history loaded." }],
+        structuredContent: detail
+      };
+    };
 
   const statusJobIdInput = z.string().trim().min(1).max(200)
     .describe("Exact job id returned by codex_task.");
@@ -5373,63 +6432,52 @@ export function registerBridgeTools(
     limit: z.number().int().min(1).max(100).optional(),
     cursor: z.string().trim().min(1).max(200).optional()
   });
-  const statusJobRuntimeQueryInput = z.strictObject({
+  const statusJobQueryInput = z.strictObject({
     kind: z.literal("job"),
     id: statusJobIdInput,
     waitFor: statusJobWaitForInput.optional(),
-    waitMs: statusJobWaitMsInput,
-    waitToken: originWaitTokenSchema.optional()
+    waitMs: statusJobWaitMsInput
+  }).refine(
+    (query) => query.waitMs === undefined || query.waitFor !== undefined,
+    "waitFor is required whenever waitMs is sent."
+  ).describe("Read one exact Job or its minimal expired-result admission receipt, optionally waiting for a change or terminal state.");
+  const statusRequestQueryInput = z.strictObject({
+    kind: z.literal("request"),
+    requestId: scopeIdSchema().describe(
+      "Logical codex_task requestId. Use this after an admission response is lost to recover the one existing Job without starting another execution."
+    ),
+    waitFor: statusJobWaitForInput.optional(),
+    waitMs: statusJobWaitMsInput
+  }).refine(
+    (query) => query.waitMs === undefined || query.waitFor !== undefined,
+    "waitFor is required whenever waitMs is sent."
+  ).describe("Resolve one exact Job or minimal expired-result admission receipt by its scope-bound logical requestId.");
+  const statusInputQueryInput = z.strictObject({
+    kind: z.literal("input"),
+    ...codexInputs.questionInputSchema.shape
   });
   const statusProjectQueryInput = z.strictObject({
     kind: z.literal("project"),
     name: projectNameInput().describe("Exact user-visible project name. Reads its current selector without executing Codex or opening a card.")
   });
-  const codexStatusQueryInput = z.discriminatedUnion("kind", [
-    statusJobRuntimeQueryInput,
-    z.strictObject({ kind: z.literal("input"), ...questions.questionInputSchema.shape }),
+  const statusFollowupsQueryInput = z.strictObject({
+    kind: z.literal("followups"), jobId: z.string().uuid(), after: z.string().regex(FOLLOWUP_ID_PATTERN).optional()
+  }).describe("Page the existing followup receipts for this exact retained predecessor; pass the returned after cursor for more. Never admits work or creates a card.");
+  const codexStatusQueryInput = z.union([
+    statusJobQueryInput,
+    statusRequestQueryInput,
+    statusInputQueryInput,
     statusActivityQueryInput,
     statusThreadQueryInput,
     statusPageQueryInput,
-    statusProjectQueryInput
+    statusProjectQueryInput,
+    statusFollowupsQueryInput
   ]);
-  const statusPublicQueryInput = withJsonSchemaProjection(
-    codexStatusQueryInput,
-    {
-      oneOf: [
-        jsonSchemaBody(z.strictObject({
-          kind: z.literal("job"),
-          id: statusJobIdInput
-        }).describe("Read one exact Job immediately without waiting.")),
-        jsonSchemaBody(z.strictObject({
-          kind: z.literal("job"),
-          id: statusJobIdInput,
-          waitFor: statusJobWaitForInput,
-          waitMs: statusJobWaitMsInput
-        }).describe("Wait on one exact Job; waitFor is required whenever waitMs is sent.")),
-        jsonSchemaBody(z.strictObject({ kind: z.literal("input"), ...questions.questionInputSchema.omit({waitToken:true}).shape })),
-        jsonSchemaBody(statusActivityQueryInput),
-        jsonSchemaBody(statusThreadQueryInput),
-        jsonSchemaBody(statusPageQueryInput),
-        jsonSchemaBody(statusProjectQueryInput)
-      ]
-    }
-  );
-  const codexStatusRuntimeInput = z.strictObject({
+  const codexStatusInput = z.strictObject({
     query: codexStatusQueryInput.optional(),
     scopeId: scopeIdSchema()
       .optional()
-      .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
-    includeAllScopes: z
-      .boolean()
-      .optional()
-      .describe(
-        "Admin audit across every scope. Unavailable to ordinary ChatGPT conversation calls."
-      )
-  });
-  const codexStatusPublicInput = z.strictObject({
-    query: statusPublicQueryInput.optional().describe(
-      "Exact detail, read-only project lookup, bounded input/job wait, or one cursor-paginated collection. Omit for the current scoped overview."
-    )
+      .describe("Conversation UUID for hosts that do not supply scoped MCP metadata.")
   });
 
   server.registerTool(
@@ -5437,9 +6485,11 @@ export function registerBridgeTools(
     {
       title: `${PRODUCT_INFO.displayName} Status`,
       description:
-        "Read project selectors and Codex work state, ordinary questions, and results in the current conversation. Exact Job queries retrieve retained final answers.",
-      inputSchema: withJsonSchemaProjection(codexStatusRuntimeInput, codexStatusPublicInput),
-      outputSchema: MODEL_VISIBLE_OUTPUT_SCHEMAS.codex_status,
+        "Read project selectors, exact Job state, current questions, original results and followup receipts in this conversation. The default server profile attaches a blank relay automatically. Optional bounded terminal waits observe the same exact Job; timeout or host abort never cancels it or permits replacement. A terminal wait wakes only for terminal lifecycle state; inspect its exact input action after every non-terminal return. At a current question or approval, do not keep a parallel terminal wait. Review the original result before continuing within the original user goal and delegation; reuse a declared followup receipt or bind a dynamic step with relayFollowup. Query kind=followups pages all existing receipts for an exact retained predecessor. Keep the original scope and honor explicit stops and new user decision or approval boundaries. Summary reads contain no original answer; retrieve the supplied exact Job action. A response offer is not proof of GPT review. Status checks never require opening Dashboard.",
+      inputSchema: codexStatusInput,
+      outputSchema: config.experimentalProfile === "events" && config.eventsEnabled
+        ? MODEL_VISIBLE_OUTPUT_SCHEMAS.codex_status
+        : z.union([ordinaryStatusOutputSchema, CODEX_INPUT_MODEL_OUTPUT_SCHEMAS.status_input, projectStatusOutputSchema, followupPageOutputSchema]),
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -5448,48 +6498,81 @@ export function registerBridgeTools(
       }
     },
     async (args, extra) => {
-      const { _meta, signal } = extra;
+      const _meta = extra.mcpReq._meta;
+      const signal = extra.mcpReq.signal;
       const query = args.query;
       if (query?.kind === "input") {
-        if (args.includeAllScopes) throw new Error("Input lookup is restricted to one conversation.");
         const { kind, ...input } = query;
-        return questions.readInput(input, extra, args.scopeId);
+        return codexInputs.readInput(input, extra);
       }
-      const jobQuery = query?.kind === "job" ? query : undefined;
+      const jobQuery = query?.kind === "job" || query?.kind === "request" ? query : undefined;
       const activityQuery = query?.kind === "activity" ? query : undefined;
       const threadQuery = query?.kind === "thread" ? query : undefined;
       const pageQuery = query?.kind === "page" ? query : undefined;
       const scopeResolution = scopeResolver.resolve(_meta as ToolCallMetadata, args.scopeId);
       const scopeId = scopeResolution?.scopeId;
-      if (scopeResolution?.source === "host-metadata" && args.includeAllScopes) {
-        throw new Error("A ChatGPT conversation scope cannot request the bridge-wide audit view.");
-      }
-      if (scopeId && args.includeAllScopes) {
-        throw new Error("scopeId and includeAllScopes cannot be used together.");
-      }
       if (query?.kind === "project") {
-        if (!scopeId) throw new Error("Project lookup requires conversation metadata or an explicit compatibility scopeId.");
+        if (!scopeId) throw new Error("Project lookup requires conversation metadata or an explicit scopeId.");
         return projectStatusResult(query.name, userSettings);
       }
-      if (pageQuery && !scopeId && !args.includeAllScopes) {
+      if (query?.kind === "followups") {
+        if (!scopeId || scopeResolution?.source !== "host-metadata") throw new Error("RELAY_HOST_SCOPE_REQUIRED: Use the originating conversation.");
+        const job = jobs.admissionStateStore.getRelayJobSnapshot(query.jobId);
+        if (!job || job.scopeId !== scopeId || job.mcpPrincipal !== authenticatedMcpPrincipal(extra) || job.projectId && !jobs.admissionStateStore.isEventProjectAvailable(job.projectId)) throw scopedHandleUnavailable("job");
+        const structuredContent = followupPageOutputSchema.parse({ kind: "followups", jobId: job.jobId,
+          ...jobs.admissionStateStore.taskFollowups.page({ jobId: job.jobId, scopeId, mcpPrincipal: job.mcpPrincipal }, query.after) });
+        return { content: [{ type: "text" as const, text: JSON.stringify(structuredContent) }], structuredContent };
+      }
+      if (pageQuery && !scopeId) {
         throw new Error(
-          "Status pagination requires ChatGPT conversation metadata, an explicit compatibility scopeId, or an admin all-scope audit."
+          "Status pagination requires conversation metadata or an explicit scopeId."
         );
       }
       if (jobQuery?.waitMs && !jobQuery.waitFor) {
         throw new Error("waitMs requires waitFor='change' or waitFor='terminal'.");
       }
       if (jobQuery) {
-        if (!scopeId && !args.includeAllScopes) {
+        if (!scopeId) {
           throw new Error(
-            "Job lookup requires ChatGPT conversation metadata or an explicit compatibility scopeId."
+            "Job lookup requires conversation metadata or an explicit scopeId."
           );
         }
-        const initial = jobs.get(jobQuery.id);
-        if (!initial) throw new Error("Unknown Codex job id. Read codex_status({}) for the current conversation and use an exact retained Job id.");
-        if (!args.includeAllScopes && initial.scopeId !== scopeId) {
-          throw new Error("The requested Codex job belongs to another conversation scope.");
+        let initial = jobQuery.kind === "job" ? jobs.get(jobQuery.id) : jobs.peekRequest(scopeId, jobQuery.requestId);
+        if (initial && !jobs.admissionStateStore.retainedJobVisible(initial.jobId)) initial=undefined;
+        if (!initial || isTerminalActivityJobStatus(initial.status)) {
+          const stored=jobs.admissionStateStore.readRetainedJobDetail(scopeId,jobQuery);
+          if (stored) initial={...stored,promise:Promise.resolve()} as unknown as CodexJob;
         }
+        if (!initial || initial.scopeId !== scopeId) {
+          const receipt = jobs.admissionStateStore.getArchivedJobAdmissionReceipt(scopeId, jobQuery);
+          if (!receipt) throw scopedHandleUnavailable("job");
+          if (receipt.managementEnded) throw new Error("PROJECT_MANAGEMENT_ENDED: This request was accepted and terminated; its project, results and resume management have ended. The requestId remains reserved.");
+          const completed = receipt.status === "completed";
+          const structured = compactStatusProjection({
+            kind: "job",
+            jobId: receipt.jobId,
+            status: receipt.status,
+            terminal: true,
+            replay: true,
+            delivery: completed ? "omitted" : "none",
+            result: {
+              availability: completed ? "omitted" : "unavailable",
+              bytes: null,
+              omitted: completed
+            },
+            scopeView: { mode: "scoped", source: scopeResolution?.source },
+            message:
+              "This exact request was admitted and reached a terminal state. Its result body is no longer retained; do not start a replacement for the same logical work. A new logical turn needs its own requestId and must remain within the user's authorization."
+          });
+          return contractedToolResult(
+            statusResultContract,
+            receipt,
+            structured,
+            { text: statusCompatibilityText(structured) }
+          );
+        }
+        if ((initial.completionDeliveryPolicy === "relay-card" || jobs.admissionStateStore.relay.registration(initial.jobId)) &&
+            (scopeResolution?.source !== "host-metadata" || initial.mcpPrincipal !== authenticatedMcpPrincipal(extra))) throw scopedHandleUnavailable("job");
         let wait: CodexJobWaitResult | undefined;
         if (jobQuery.waitFor) {
           let observedAbort = false;
@@ -5502,17 +6585,19 @@ export function registerBridgeTools(
               jobId: initial.jobId,
               activityId: initial.activityId,
               toolName: "codex_status",
-              callerRequestDigest: correlationDigest("mcp-request", extra.requestId),
+              callerRequestDigest: correlationDigest("mcp-request", extra.mcpReq.id),
               reasonCode: "host-aborted-read-wait"
             });
           };
           signal?.addEventListener("abort", onAbort, { once: true });
+          if (signal?.aborted) onAbort();
           try {
             wait = await jobs.wait(
-              jobQuery.id,
+              initial.jobId,
               jobQuery.waitFor,
-              jobQuery.waitMs || DEFAULT_CODEX_STATUS_WAIT_MS,
-              signal
+              jobQuery.waitMs ?? DEFAULT_CODEX_STATUS_WAIT_MS,
+              signal,
+              "model-status"
             );
           } finally {
             signal?.removeEventListener("abort", onAbort);
@@ -5522,22 +6607,36 @@ export function registerBridgeTools(
         const structured = {
           kind: "job" as const,
           ...formatJobStatus(job, jobs.staleThresholdMs, wait, userSettings.current, jobs),
+          completionEvidence: exactJobCompletionEvidence(job, jobs),
           inputs: { cursor: codexInputCursor(job), ordinaryQuestions: job.pendingInteractions.filter(ordinaryCodexQuestion).length, approvalRequests: job.pendingInteractions.filter(q => !ordinaryCodexQuestion(q)).length, readTool: "codex_status", queryKind: "input" }
         };
-        return statusToolResult(
-          compactStatusProjection(structured),
+        const projection = compactStatusProjection(structured);
+        const result = statusToolResult(
+          projection,
           job,
           config.maxJobResultBytes
         );
+        const deliveredResult = projection.items.find(
+          (item) => item.type === "job" && item.id === job.jobId
+        )?.result?.availability === "delivered";
+        if (scopeResolution?.source === "host-metadata" && deliveredResult) {
+          // Constructing a same-conversation tool response is not evidence that
+          // ChatGPT received it. Record the offer for audit, but never consume
+          // the historical completion delivery state.
+          jobs.admissionStateStore.recordJobCompletionResultOffer({
+            scopeId,
+            source: "direct-job-query",
+            jobId: job.jobId
+          });
+        }
+        return result;
       }
       if (activityQuery) {
-        if (!scopeId && !args.includeAllScopes) {
-          throw new Error("Activity lookup requires ChatGPT conversation metadata or an explicit compatibility scopeId.");
+        if (!scopeId) {
+          throw new Error("Activity lookup requires conversation metadata or an explicit scopeId.");
         }
         const activity = jobs.getActivity(activityQuery.id);
-        if (!activity || (!args.includeAllScopes && activity.scopeId !== scopeId)) {
-          throw new Error("The requested Activity belongs to another conversation scope or does not exist.");
-        }
+        if (!activity || activity.scopeId !== scopeId) throw scopedHandleUnavailable("activity");
         const childJobs = jobs.listForActivity(activity.activityId);
         const structured = {
           kind: "activity" as const,
@@ -5562,15 +6661,13 @@ export function registerBridgeTools(
         );
       }
       if (threadQuery) {
-        if (!scopeId && !args.includeAllScopes) {
-          throw new Error("Thread lookup requires ChatGPT conversation metadata or an explicit compatibility scopeId.");
+        if (!scopeId) {
+          throw new Error("Thread lookup requires conversation metadata or an explicit scopeId.");
         }
         const trackedSession = sessions.get(threadQuery.id);
-        const relatedJobs = jobs.listForThread(threadQuery.id, args.includeAllScopes ? undefined : scopeId);
-        const sessionVisible = trackedSession && (args.includeAllScopes || trackedSession.scopeId === scopeId);
-        if (!sessionVisible && relatedJobs.length === 0) {
-          throw new Error("The requested Codex thread belongs to another conversation scope or does not exist.");
-        }
+        const relatedJobs = jobs.listForThread(threadQuery.id, scopeId);
+        const sessionVisible = trackedSession && trackedSession.scopeId === scopeId;
+        if (!sessionVisible && relatedJobs.length === 0) throw scopedHandleUnavailable("thread");
         const activities = [...new Set(relatedJobs.map((job) => job.activityId))]
           .map((activityId) => jobs.getActivity(activityId))
           .filter((activity): activity is BridgeActivity => Boolean(activity));
@@ -5628,66 +6725,28 @@ export function registerBridgeTools(
       const activityOffset = activityPage?.cursor
         ? decodePageCursor(activityPage.cursor, "activities")
         : 0;
-      const visibleSessions = args.includeAllScopes
-        ? sessions.list(sessionLimit, sessionOffset)
-        : scopeId
-          ? sessions.listForScope(scopeId, sessionLimit, sessionOffset)
-          : [];
-      const visibleJobs = args.includeAllScopes
-        ? jobs.list(jobLimit, jobOffset)
-        : scopeId
-          ? jobs.listForScope(scopeId, jobLimit, jobOffset)
-          : [];
-      const visibleActivities = args.includeAllScopes
-        ? jobs.listAllActivities(activityLimit, activityOffset)
-        : scopeId
-          ? jobs.listActivities(scopeId, activityLimit, activityOffset)
-          : [];
+      const visibleSessions = scopeId ? sessions.listForScope(scopeId, sessionLimit, sessionOffset) : [];
+      const visibleJobs = scopeId ? jobs.listForScope(scopeId, jobLimit, jobOffset) : [];
+      const visibleActivities = scopeId ? jobs.listActivities(scopeId, activityLimit, activityOffset) : [];
       const visibleAgents = scopeId ? jobs.listAgents(scopeId, 100, 0) : [];
-      const scopedSessionCount = args.includeAllScopes
-        ? sessions.size()
-        : scopeId
-          ? sessions.sizeForScope(scopeId)
-          : 0;
-      const scopedJobCount = args.includeAllScopes
-        ? jobs.size
-        : scopeId
-          ? jobs.sizeForScope(scopeId)
-          : 0;
-      const scopedRunningCount = args.includeAllScopes
-        ? jobs.runningCount()
-        : scopeId
-          ? jobs.runningCount(scopeId)
-          : 0;
-      const scopedActivityCount = args.includeAllScopes
-        ? jobs.activityCount()
-        : scopeId
-          ? jobs.activityCount(scopeId)
-          : 0;
-      const scopedAgentCount = args.includeAllScopes
-        ? jobs.agentCount()
-        : scopeId
-          ? jobs.agentCount(scopeId)
-          : 0;
-      const scopedOrphanedAgentCount = args.includeAllScopes
-        ? jobs.orphanedAgentCount()
-        : scopeId
-          ? jobs.orphanedAgentCount(scopeId)
-          : 0;
-      const statusScopeView = args.includeAllScopes
-        ? { mode: "all" as const }
-        : scopeResolution
-          ? {
-              mode: "scoped" as const,
-              scopeId,
-              source: scopeResolution.source,
-              keyVersion: scopeResolution.keyVersion,
-              explicitInputIgnored: scopeResolution.explicitInputIgnored
-            }
-          : {
-              mode: "policy-only" as const,
-              hostMetadataOrCompatibilityScopeRequiredForDetails: true
-            };
+      const scopedSessionCount = scopeId ? sessions.sizeForScope(scopeId) : 0;
+      const scopedJobCount = scopeId ? jobs.sizeForScope(scopeId) : 0;
+      const scopedRunningCount = scopeId ? jobs.runningCount(scopeId) : 0;
+      const scopedActivityCount = scopeId ? jobs.activityCount(scopeId) : 0;
+      const scopedAgentCount = scopeId ? jobs.agentCount(scopeId) : 0;
+      const scopedOrphanedAgentCount = scopeId ? jobs.orphanedAgentCount(scopeId) : 0;
+      const statusScopeView = scopeResolution
+        ? {
+            mode: "scoped" as const,
+            scopeId,
+            source: scopeResolution.source,
+            keyVersion: scopeResolution.keyVersion,
+            explicitInputIgnored: scopeResolution.explicitInputIgnored
+          }
+        : {
+            mode: "policy-only" as const,
+            hostMetadataOrScopeRequiredForDetails: true
+          };
       const scopeCounts = {
         sessions: scopedSessionCount,
         jobs: scopedJobCount,
@@ -5770,7 +6829,7 @@ export function registerBridgeTools(
     {
       title: `${PRODUCT_INFO.displayName} Operator Diagnostics`,
       description:
-        "App-only operator diagnostics for build, authentication mode, storage, scope HMAC, pool limits, upstream inventory, descriptor notification/re-list observations, bounded card-stage latency/request/timeout/cache statistics, HTML byte budgets, and forensic warnings. A notification or re-list observation never claims descriptor adoption. Routine model status and unauthenticated health checks intentionally exclude this data.",
+        "App-only operator diagnostics for build, authentication mode, storage, scope HMAC, pool limits, upstream inventory, descriptor notification/re-list observations, bounded card-stage and exact-Job wait statistics, waiter counts, storage-path latency, HTML byte budgets, and forensic warnings. A notification or re-list observation never claims descriptor adoption. Routine model status and unauthenticated health checks intentionally exclude this data.",
       inputSchema: z.strictObject({}),
       outputSchema: diagnosticsOutputSchema,
       annotations: {
@@ -5802,7 +6861,6 @@ export function registerBridgeTools(
         : persistencePaths.every((entry) => entry === null)
           ? "memory" as const
           : "split-json" as const;
-      const descriptorStatus = descriptorCoordinator.status;
       const structured = {
         kind: "diagnostics" as const,
         bridge: {
@@ -5835,30 +6893,33 @@ export function registerBridgeTools(
         },
         upstream: { tools: upstreamTools, error: upstreamError },
         descriptorDiscovery: {
-          epoch: descriptorStatus.descriptorEpoch,
-          fingerprint: descriptorStatus.descriptorFingerprint,
-          activeBindings: descriptorStatus.bindingCount,
-          notificationEligibleBindings: descriptorStatus.notificationEligibleBindingCount,
-          notificationQueued: descriptorStatus.notificationQueued,
-          notificationAttempts: descriptorStatus.notificationAttemptCount,
-          notificationErrors: descriptorStatus.notificationErrorCount,
-          lastNotificationEpoch: descriptorStatus.lastNotificationEpoch,
-          lastNotificationAttemptAt: descriptorStatus.lastNotificationAttemptAt,
-          clientRelistObservations: descriptorStatus.clientRelistObservationCount,
-          currentEpochRelistedSessions: descriptorStatus.clientRelistedSessionCount,
-          lastClientRelistedEpoch: descriptorStatus.lastClientRelistedEpoch,
-          lastClientRelistedAt: descriptorStatus.lastClientRelistedAt,
-          lastObservedNotificationToRelistMs:
-            descriptorStatus.lastObservedNotificationToRelistMs,
-          // Even a current tools/list response does not prove that the host used
-          // the refreshed descriptor for a later call. Real-client acceptance
-          // records that separately instead of upgrading this state by inference.
+          epoch: 0,
+          fingerprint: null,
+          activeBindings: 0,
+          notificationEligibleBindings: 0,
+          notificationQueued: false,
+          notificationAttempts: 0,
+          notificationErrors: 0,
+          lastNotificationEpoch: null,
+          lastNotificationAttemptAt: null,
+          clientRelistObservations: 0,
+          currentEpochRelistedSessions: 0,
+          lastClientRelistedEpoch: null,
+          lastClientRelistedAt: null,
+          lastObservedNotificationToRelistMs: null,
           adoptionState: "unknown" as const
         },
-        performance: cardPerformance.snapshot(),
+        performance: {
+          ...cardPerformance.snapshot(),
+          jobWaits: jobs.waitDiagnostics(),
+          stateMaintenance: jobs.stateMaintenanceDiagnostics()
+        },
         forensics: {
           bridgeInstanceId: jobs.bridgeInstanceId,
-          startupWarnings: config.startupWarnings,
+          startupWarnings: [
+            ...config.startupWarnings,
+            ...config.developerStartupWarnings
+          ],
           settingsLoadWarnings: userSettings.loadWarnings
         }
       };
@@ -5875,640 +6936,6 @@ export function registerBridgeTools(
     }
   );
 
-  const codexActivityRuntimeInput = z.strictObject({
-    scopeId: scopeIdSchema()
-      .optional()
-      .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
-    mode: z.enum(["compact-monitor", "full-history"]).optional()
-      .describe("Presentation mode. Omission retains the full-history compatibility behavior."),
-    presentationId: scopeIdSchema().optional()
-      .describe("Required only for one compact monitor presentation; reuse it only for an exact retry of that presentation call."),
-    activityId: scopeIdSchema().optional()
-      .describe("Optional exact Activity to validate and mount in the card.")
-  });
-  const codexActivityPublicInput = z.strictObject({
-    mode: z.enum(["compact-monitor", "full-history"]).optional()
-      .describe("Use compact-monitor once after admitting one or more Codex tasks in this assistant response. Use full-history only for an explicit user request. Omission means full-history."),
-    presentationId: scopeIdSchema().optional()
-      .describe("Required for compact-monitor. Generate one UUID for the logical card presentation and reuse it only for its exact retry."),
-    activityId: scopeIdSchema().optional()
-      .describe("Optional exact Activity to mount; otherwise the newest Activity is selected when available.")
-  });
-
-  server.registerTool(
-    "codex_activity",
-    {
-      title: `${PRODUCT_INFO.displayName} Retained Activity Card`,
-      description:
-        "Compatibility-only descriptor for reopening Activity cards already saved in ChatGPT. Hidden from the model. Retains the original presentation, scope and ownership checks during migration; new work uses the overview and independent question card.",
-      inputSchema: withJsonSchemaProjection(codexActivityRuntimeInput, codexActivityPublicInput),
-      outputSchema: activityModelOutputSchema,
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false
-      },
-      _meta: {
-        "codex/registrationTier": "compatibility",
-        ...activityCardToolMetadata(),
-        ui: { resourceUri: ACTIVITY_CARD_URI, visibility: ["app"] },
-        "openai/visibility": "private"
-      }
-    },
-    async (args, extra) => {
-      const { _meta } = extra;
-      const scope = scopeResolver.require(
-        _meta as ToolCallMetadata,
-        args.scopeId,
-        "Codex Activity view"
-      );
-      const mode: CodexActivityViewMode = args.mode || "full-history";
-      if (mode === "compact-monitor" && !args.presentationId) {
-        throw new Error(
-          "ACTIVITY_PRESENTATION_ID_REQUIRED: compact-monitor requires one UUID presentationId for this logical card presentation."
-        );
-      }
-      if (mode === "full-history" && args.presentationId) {
-        throw new Error(
-          "ACTIVITY_PRESENTATION_ID_UNEXPECTED: full-history does not accept presentationId."
-        );
-      }
-      const visibility = userSettings.current.activityCardVisibility;
-      if (mode === "compact-monitor" && visibility === "never") {
-        throw new Error(
-          "ACTIVITY_CARD_VISIBILITY_DISABLED: The saved policy disables automatic Activity-card presentation."
-        );
-      }
-      const availableActivities = jobs.listActivities(
-        scope.scopeId,
-        Math.max(1, jobs.activityCount(scope.scopeId)),
-        0
-      );
-      const selected = args.activityId
-        ? jobs.getActivity(args.activityId)
-        : mode === "compact-monitor" && visibility === "background-only"
-          ? availableActivities.find((activity) => activity.executionMode === "background")
-          : availableActivities[0];
-      if (args.activityId && (!selected || selected.scopeId !== scope.scopeId)) {
-        throw new Error("The requested Activity is unavailable in this conversation scope.");
-      }
-      if (!selected && mode === "compact-monitor") {
-        throw new Error(
-          "ACTIVITY_CARD_EMPTY: No Activity is available for a compact monitor presentation in this conversation."
-        );
-      }
-      if (
-        selected &&
-        mode === "compact-monitor" &&
-        visibility === "background-only" &&
-        selected.executionMode !== "background"
-      ) {
-        throw new Error(
-          "ACTIVITY_CARD_VISIBILITY_DISABLED: The saved policy permits automatic cards only for background work."
-        );
-      }
-      const presentation: ActivityViewPresentationContext = mode === "compact-monitor"
-        ? {
-            kind: "automatic",
-            activityPresentationId: args.presentationId as string,
-            reservationOwnerId: args.presentationId as string
-          }
-        : selected
-          ? { kind: "explicit" }
-          // An empty history has no Activity proof to lease or refresh. Use
-          // the scoped, non-owning rehydration path until work is available.
-          : { kind: "restored-explicit", mode: "full-history" };
-      const renderHint = selected
-        ? jobs.activityCardRenderHint(
-            selected.activityId,
-            selected.executionMode,
-            userSettings.current,
-            mode === "compact-monitor"
-              ? {
-                  reserve: true,
-                  presentationKind: "automatic",
-                  activityPresentationId: args.presentationId,
-                  reservationOwnerId: args.presentationId
-                }
-              : { reserve: false, presentationKind: "explicit" }
-          )
-        : undefined;
-      const activityStartedAt = Date.now();
-      const view = await buildActivityView(
-        jobs,
-        upstream,
-        modelCatalog,
-        config,
-        userSettings.current,
-        scope.scopeId,
-        30,
-        selected?.activityId,
-        undefined,
-        presentation,
-        undefined,
-        undefined,
-        mode === "full-history" && Boolean(args.activityId)
-      );
-      recordActivityPerformance(view, activityStartedAt);
-      if (renderHint) {
-        (view.structured as Record<string, unknown>).presentation = renderHint;
-      }
-      return activityViewResult(
-        view,
-        metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
-        activityModelResultContract
-      );
-    }
-  );
-
-  const activityRehydrateInputSchema = z.strictObject({
-    scopeId: scopeIdSchema().optional(),
-    widgetInstanceId: widgetInstanceIdSchema.optional(),
-    jobId: scopeIdSchema().optional().describe(
-      "Exact Job UUID retained in a historical codex_task result."
-    ),
-    requestId: scopeIdSchema().optional().describe(
-      "Exact logical-request UUID retained in that same historical result."
-    ),
-    mode: z.literal("full-history").optional().describe(
-      "Restore an explicit conversation Activity view when its private hydration metadata is unavailable."
-    ),
-    activityId: scopeIdSchema().optional().describe(
-      "Optional Activity identity retained in the public full-history result."
-    ),
-    activityVersion: z.number().int().min(1).optional().describe(
-      "Optional last-observed Activity version paired with activityId."
-    ),
-    limit: z.number().int().min(1).max(100).optional(),
-    cursor: z.string().trim().min(1).max(256).optional().describe(
-      "Opaque full-history page cursor returned by an earlier rehydrated view."
-    ),
-    enrich: z.boolean().optional().describe(
-      "Request bounded runtime and weekly-usage evidence for this one-shot rehydrated view."
-    )
-  }).superRefine((value, context) => {
-    const historical = value.jobId !== undefined || value.requestId !== undefined;
-    const fullHistory = value.mode === "full-history";
-    if (historical === fullHistory) {
-      context.addIssue({
-        code: "custom",
-        message:
-          "Choose exactly one Activity rehydration correlation: historical Job/request or full-history mode."
-      });
-    }
-    if (historical && (!value.jobId || !value.requestId)) {
-      context.addIssue({
-        code: "custom",
-        message: "Historical Activity rehydration requires both jobId and requestId."
-      });
-    }
-    if (!fullHistory && (value.activityId !== undefined || value.activityVersion !== undefined)) {
-      context.addIssue({
-        code: "custom",
-        message: "Activity identity hints are valid only for full-history rehydration."
-      });
-    }
-    if (!fullHistory && value.cursor !== undefined) {
-      context.addIssue({
-        code: "custom",
-        message: "Activity history pagination is valid only for full-history rehydration."
-      });
-    }
-    if (value.activityVersion !== undefined && !value.activityId) {
-      context.addIssue({
-        code: "custom",
-        message: "activityVersion requires activityId."
-      });
-    }
-  });
-
-  server.registerTool(
-    "codex_activity_rehydrate",
-    {
-      title: "Rehydrate Codex Activity Card",
-      description:
-        "App-only one-shot reconstruction when a cold-remounted Activity card no longer has its private hydration metadata. A historical codex_task shell supplies exact public Job/request lookup hints; an explicit full-history result supplies its public mode and optional Activity identity/version. The server derives conversation scope, validates every supplied hint, and returns a read-only non-owning snapshot. Optional bounded runtime and weekly-usage enrichment never acquires ownership. This tool never creates a live watcher, completion-handoff owner, automatic presentation reservation, or control lease.",
-      inputSchema: activityRehydrateInputSchema,
-      outputSchema: activityRehydrateOutputSchema,
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false
-      },
-      _meta: {
-        "codex/registrationTier": "compatibility",
-        ui: { visibility: ["app"] },
-        "openai/visibility": "private",
-        "openai/widgetAccessible": true,
-        "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
-      }
-    },
-    async (args, extra) => {
-      const { _meta } = extra;
-      const scope = scopeResolver.require(
-        _meta as ToolCallMetadata,
-        args.scopeId,
-        "Rehydrated Codex Activity card"
-      );
-      if (!mountedWidgetInstanceId(args, _meta)) {
-        throw new Error(
-          "CARD_REHYDRATE_WIDGET_REQUIRED: Activity rehydration requires a mounted widget session."
-        );
-      }
-      let selected: BridgeActivity | undefined;
-      let presentation: ActivityViewPresentationContext;
-      let focusSelectedActivityPage = true;
-      if (args.mode === "full-history") {
-        const availableActivities = jobs.listActivities(
-          scope.scopeId,
-          Math.max(1, jobs.activityCount(scope.scopeId)),
-          0
-        );
-        selected = args.activityId
-          ? jobs.getActivity(args.activityId)
-          : availableActivities[0];
-        if (args.activityId && (!selected || selected.scopeId !== scope.scopeId)) {
-          throw new Error(
-            "ACTIVITY_REHYDRATE_UNAVAILABLE: The full-history Activity is unavailable in this conversation."
-          );
-        }
-        if (
-          selected &&
-          args.activityVersion !== undefined &&
-          selected.version < args.activityVersion
-        ) {
-          throw new Error(
-            "ACTIVITY_REHYDRATE_VERSION_INVALID: The supplied Activity version is newer than authoritative retained state."
-          );
-        }
-        presentation = {
-          kind: "restored-explicit",
-          mode: "full-history",
-          ...(args.activityId ? { activityId: args.activityId } : {}),
-          ...(args.activityVersion !== undefined
-            ? { activityVersion: args.activityVersion }
-            : {})
-        };
-        focusSelectedActivityPage = Boolean(args.activityId);
-      } else {
-        const job = jobs.get(args.jobId as string);
-        if (
-          !job ||
-          job.scopeId !== scope.scopeId ||
-          job.requestId !== args.requestId ||
-          !job.activityPresentationId
-        ) {
-          throw new Error(
-            "ACTIVITY_REHYDRATE_UNAVAILABLE: The historical Job correlation is unavailable in this conversation."
-          );
-        }
-        const visibility = userSettings.current.activityCardVisibility;
-        const eligible = visibility === "always" ||
-          (visibility === "background-only" && job.executionMode === "background");
-        if (!eligible) {
-          throw new Error(
-            "ACTIVITY_REHYDRATE_VISIBILITY_DISABLED: The saved Activity-card visibility policy does not allow this historical Job."
-          );
-        }
-        selected = jobs.getActivity(job.activityId);
-        if (!selected || selected.scopeId !== scope.scopeId) {
-          throw new Error(
-            "ACTIVITY_REHYDRATE_UNAVAILABLE: The historical Activity is unavailable in this conversation."
-          );
-        }
-        const latestEligibleSibling = jobs
-          .listForScope(scope.scopeId, config.maxRetainedJobs, 0)
-          .filter((candidate) =>
-            candidate.activityPresentationId === job.activityPresentationId &&
-            (
-              visibility === "always" ||
-              (visibility === "background-only" && candidate.executionMode === "background")
-            )
-          )
-          .sort((left, right) =>
-            right.createdAt - left.createdAt ||
-            right.jobId.localeCompare(left.jobId)
-          )[0];
-        if (!latestEligibleSibling || latestEligibleSibling.jobId !== job.jobId) {
-          throw new Error(
-            "ACTIVITY_REHYDRATE_DUPLICATE: Another Job was elected for this assistant-response historical shell."
-          );
-        }
-        presentation = {
-          kind: "historical",
-          jobId: job.jobId,
-          requestId: job.requestId
-        };
-      }
-      const activityStartedAt = Date.now();
-      const view = await buildActivityView(
-        jobs,
-        upstream,
-        modelCatalog,
-        config,
-        userSettings.current,
-        scope.scopeId,
-        args.limit || 30,
-        selected?.activityId,
-        undefined,
-        presentation,
-        undefined,
-        args.cursor,
-        focusSelectedActivityPage,
-        args.enrich === true
-      );
-      recordActivityPerformance(view, activityStartedAt);
-      return activityViewResult(
-        view,
-        metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
-        activityRehydrateResultContract
-      );
-    }
-  );
-
-  server.registerTool(
-    "codex_activity_snapshot",
-    {
-      title: "Refresh Codex Activity Card",
-      description:
-        "App-only localized Activity-feed snapshot and bounded scope-version watch. Current cards send enrich=false for structural reads and a separate enrich=true for bounded runtime/usage evidence; omission retains the enriched behavior of immutable older cards. The exact mounted card proof establishes or renews a widget-session lease; superseded automatic presentations stop normally.",
-      inputSchema: z.strictObject({
-        scopeId: scopeIdSchema().optional(),
-        widgetInstanceId: widgetInstanceIdSchema.optional(),
-        card: activityCardProofInputSchema,
-        afterVersion: z.number().int().min(0).optional(),
-        waitMs: z.number().int().min(1).max(MAX_CODEX_STATUS_WAIT_MS).optional(),
-        limit: z.number().int().min(1).max(100).optional(),
-        cursor: z.string().trim().min(1).max(256).optional(),
-        enrich: z.boolean().optional().describe(
-          "Request bounded runtime and weekly-usage enrichment after the default structural Activity snapshot."
-        )
-      }),
-      outputSchema: activityViewOutputSchema,
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false
-      },
-      _meta: {
-        "codex/registrationTier": "compatibility",
-        ui: { visibility: ["app"] },
-        "openai/visibility": "private",
-        "openai/widgetAccessible": true,
-        "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
-      }
-    },
-    async (args, extra) => {
-      const { _meta, signal } = extra;
-      const scope = scopeResolver.require(
-        _meta as ToolCallMetadata,
-        args.scopeId,
-        "Codex Activity card snapshot"
-      );
-      if (args.waitMs !== undefined && args.afterVersion === undefined) {
-        throw new Error("waitMs requires afterVersion from a previous Activity snapshot.");
-      }
-      const widgetSessionId = mountedWidgetInstanceId(args, _meta);
-      if (!widgetSessionId) {
-        throw new Error("CARD_LEASE_REQUIRED: Activity snapshots require a mounted widget session.");
-      }
-      const presentation = presentationFromActivityCardProof(args.card);
-      if (args.cursor && presentation.kind !== "explicit") {
-        throw new Error("Activity history pagination is available only in an explicit full view.");
-      }
-      const lease = jobs.touchActivityCardLease(
-        scope.scopeId,
-        args.card.activityId,
-        args.card.generation,
-        widgetSessionId,
-        presentation
-      );
-      let presentationObservationRecorded = false;
-      const recordPresentationSuperseded = () => {
-        if (presentationObservationRecorded) return;
-        presentationObservationRecorded = true;
-        jobs.recordTransportObservation({
-          kind: "presentation-superseded",
-          scopeId: scope.scopeId,
-          activityId: args.card.activityId,
-          toolName: "codex_activity_snapshot",
-          callerRequestDigest: correlationDigest("mcp-request", extra.requestId),
-          reasonCode: "presentation-superseded"
-        });
-      };
-      if (lease.stopReason === "presentation-superseded") recordPresentationSuperseded();
-      const onAbort = () => {
-        jobs.releaseActivityCardLease(
-          scope.scopeId,
-          args.card.activityId,
-          args.card.generation,
-          widgetSessionId,
-          presentation
-        );
-        jobs.recordTransportObservation({
-          kind: "activity-watch-aborted",
-          scopeId: scope.scopeId,
-          activityId: args.card.activityId,
-          toolName: "codex_activity_snapshot",
-          callerRequestDigest: correlationDigest("mcp-request", extra.requestId),
-          reasonCode: "host-aborted-activity-watch"
-        });
-      };
-      if (!lease.stopped) {
-        signal?.addEventListener("abort", onAbort, { once: true });
-      }
-      const wait: ActivityScopeWatchResult | undefined = lease.stopped
-        ? {
-            scopeVersion: jobs.getScopeVersion(scope.scopeId),
-            changed: false,
-            timedOut: false,
-            waitedMs: 0,
-            stopped: true,
-            stopReason: lease.stopReason
-          }
-        : args.afterVersion !== undefined
-        ? await jobs.waitForScopeVersion(
-            scope.scopeId,
-            args.afterVersion,
-            args.waitMs || DEFAULT_CODEX_STATUS_WAIT_MS,
-            widgetSessionId,
-            signal,
-            presentation
-          )
-        : undefined;
-      signal?.removeEventListener("abort", onAbort);
-      if (wait?.stopReason === "presentation-superseded") recordPresentationSuperseded();
-      const activityStartedAt = Date.now();
-      const view = await buildActivityView(
-        jobs,
-        upstream,
-        modelCatalog,
-        config,
-        userSettings.current,
-        scope.scopeId,
-        args.limit || 30,
-        args.card.activityId,
-        wait,
-        presentation,
-        lease,
-        args.cursor,
-        true,
-        // Retained Activity cards do not know this flag and historically
-        // received runtime-enriched snapshots. Generation 20 sends false for
-        // structural watches and true for its separate enrichment request.
-        args.enrich !== false
-      );
-      recordActivityPerformance(view, activityStartedAt);
-      return activityViewResult(
-        view,
-        metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
-        activityAppResultContract
-      );
-    }
-  );
-
-  const codexActivityHandoffRuntimeInput = z.strictObject({
-    scopeId: scopeIdSchema().optional(),
-    widgetInstanceId: widgetInstanceIdSchema.optional(),
-    action: z.enum(["claim-batch", "delivered-batch", "release-batch"]),
-    outboxIds: z.array(z.number().int().positive()).min(1).max(20),
-    card: automaticActivityCardProofInputSchema
-  });
-  const codexActivityHandoffInput = z.strictObject({
-    widgetInstanceId: widgetInstanceIdSchema.optional(),
-    action: z.enum(["claim-batch", "delivered-batch", "release-batch"]),
-    outboxIds: z.array(z.number().int().positive()).min(1).max(20),
-    card: automaticActivityCardProofInputSchema
-  });
-
-  server.registerTool(
-    "codex_activity_handoff",
-    {
-      title: "Deliver Codex Activity Handoff",
-      description: "App-only transactional outbox lease owned by the latest automatic Activity presentation.",
-      inputSchema: withJsonSchemaProjection(
-        codexActivityHandoffRuntimeInput,
-        codexActivityHandoffInput
-      ),
-      outputSchema: handoffOutputSchema,
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false
-      },
-      _meta: {
-        "codex/registrationTier": "compatibility",
-        ui: { visibility: ["app"] },
-        "openai/visibility": "private",
-        "openai/widgetAccessible": true,
-        "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
-      }
-    },
-    async (args, { _meta }) => {
-      const scope = scopeResolver.require(
-        _meta as ToolCallMetadata,
-        args.scopeId,
-        "Codex Activity handoff"
-      );
-      const leaseOwner = mountedWidgetInstanceId(args, _meta);
-      if (!leaseOwner) throw new Error("Completion handoff requires a mounted widget session id.");
-      const presentation = presentationFromActivityCardProof(args.card);
-      jobs.requireActivityCardLease(
-        scope.scopeId,
-        args.card.activityId,
-        args.card.generation,
-        leaseOwner,
-        presentation
-      );
-      const claimAction = args.action === "claim-batch";
-      if (claimAction && !jobs.canClaimCompletionHandoff(scope.scopeId, presentation)) {
-        const structured = {
-          kind: "handoff" as const,
-          action: args.action,
-          claimed: false,
-          handoffBatchId: null,
-          handoffDepth: 0,
-          events: [],
-          stopped: true,
-          stopReason: presentation.kind === "explicit"
-            ? "explicit-presentation-does-not-own-handoff"
-            : "presentation-superseded"
-        };
-        return contractedToolResult(
-          handoffResultContract,
-          structured,
-          structured,
-          { text: "Completion handoff was not claimed because this presentation does not own it." }
-        );
-      }
-      if (args.action === "delivered-batch") {
-        const records = jobs.markCompletionOutboxBatchDelivered(
-          args.outboxIds,
-          scope.scopeId,
-          leaseOwner
-        );
-        const structured = {
-          kind: "handoff" as const,
-          action: args.action,
-          delivered: true,
-          outboxIds: records.map((record) => record.outboxId)
-        };
-        return contractedToolResult(
-          handoffResultContract,
-          records,
-          structured,
-          { text: `Delivered ${records.length} completion handoff record(s).` }
-        );
-      }
-      if (args.action === "release-batch") {
-        jobs.releaseCompletionOutboxBatch(args.outboxIds, scope.scopeId, leaseOwner);
-        const structured = {
-          kind: "handoff" as const,
-          action: args.action,
-          released: true,
-          outboxIds: [...new Set(args.outboxIds)].sort((a, b) => a - b)
-        };
-        return contractedToolResult(
-          handoffResultContract,
-          structured,
-          structured,
-          { text: `Released ${structured.outboxIds.length} completion handoff record(s).` }
-        );
-      }
-      const records = jobs.claimCompletionOutboxBatch(args.outboxIds, scope.scopeId, leaseOwner);
-      const batchMaterial = records
-        .map((record) => `${record.outboxId}:${record.activityId}:${record.completionVersion}:${record.channel}`)
-        .join("|");
-      const handoffBatchId = batchMaterial
-        ? `handoff-${createHash("sha256").update(scope.scopeId).update("\0").update(batchMaterial).digest("hex").slice(0, 24)}`
-        : null;
-      const structured = {
-        kind: "handoff" as const,
-        action: args.action,
-        claimed: records.length > 0,
-        handoffBatchId,
-        origin: "activity-handoff",
-        handoffDepth: records.length > 0 ? 1 : 0,
-        events: records.map((record) => ({
-          outboxId: record.outboxId,
-          activityId: record.activityId,
-          completionVersion: record.completionVersion,
-          channel: record.channel
-        }))
-      };
-      return contractedToolResult(
-        handoffResultContract,
-        records,
-        structured,
-        { text: `Claimed ${records.length} completion handoff record(s).` }
-      );
-    }
-  );
-
   const codexAgentRuntimeOperationInput = z.discriminatedUnion("kind", [
     z.strictObject({ kind: z.literal("archive") }),
     z.strictObject({ kind: z.literal("restore") }),
@@ -6517,29 +6944,20 @@ export function registerBridgeTools(
       name: z.string().trim().min(1).max(80).describe("New human-friendly Agent display name.")
     })
   ]);
-  const codexAgentRuntimeInput = z.strictObject({
+  const codexAgentInput = z.strictObject({
     scopeId: scopeIdSchema().optional()
-      .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
+      .describe("Conversation UUID for hosts that do not supply scoped MCP metadata."),
     requestId: scopeIdSchema().describe("Unique UUID for this logical Agent mutation and its exact retries."),
     agentId: scopeIdSchema().describe("Immutable Agent routing id in the current conversation scope."),
     operation: codexAgentRuntimeOperationInput
   });
-  const codexAgentPublicInput = z.strictObject({
-    requestId: scopeIdSchema().describe("Unique UUID for this logical Agent mutation and its exact retries."),
-    agentId: scopeIdSchema().describe("Immutable Agent routing id in the current conversation scope."),
-    operation: z.strictObject({
-      kind: z.literal("rename"),
-      name: z.string().trim().min(1).max(80).describe("New human-friendly Agent display name.")
-    }).describe("Rename this Agent while preserving its identity, context, and history.")
-  });
-
   server.registerTool(
     "codex_agent",
     {
       title: "Rename Codex Agent",
       description:
         "Rename a Codex Agent in this conversation while preserving its identity, context, and work history.",
-      inputSchema: withJsonSchemaProjection(codexAgentRuntimeInput, codexAgentPublicInput),
+      inputSchema: codexAgentInput,
       outputSchema: agentMutationOutputSchema,
       annotations: {
         readOnlyHint: false,
@@ -6549,12 +6967,14 @@ export function registerBridgeTools(
       },
       _meta: { "openai/widgetAccessible": true }
     },
-    async (args, { _meta }) => {
+    async (args, extra) => {
+      const _meta = extra.mcpReq._meta;
       const action = args.operation.kind;
       if (action !== "rename") {
-        throw new Error(
-          "AGENT_ARCHIVE_REMOVED: Agent archive and restore are no longer supported. Existing archived Agents were restored during migration."
-        );
+        return { ...mutationToolResult({ ok: false, action, code: "AGENT_ARCHIVE_REMOVED",
+          warning: "Agent archive and restore are not supported. Agent history does not occupy executor receipt slots; archiving is not a retention recovery action.",
+          nextActions: [guidance("Use runtime diagnostics to inspect execution receipts and pending acknowledgements. Agent management supports rename only.")]
+        }, "model", "codex_agent"), isError: true };
       }
       const agentName = args.operation.name;
       const scope = scopeResolver.require(
@@ -6563,9 +6983,7 @@ export function registerBridgeTools(
         "Codex Agent management"
       );
       const agent = jobs.getAgent(args.agentId);
-      if (!agent || agent.scopeId !== scope.scopeId) {
-        throw new Error("The selected Agent belongs to another conversation scope or does not exist.");
-      }
+      if (!agent || agent.scopeId !== scope.scopeId) throw scopedHandleUnavailable("agent");
       const actionHash = createHash("sha256")
         .update(JSON.stringify({
           agentId: args.agentId,
@@ -6623,7 +7041,8 @@ export function registerBridgeTools(
         "openai/visibility": "private"
       }
     },
-    async (args, { _meta }) => {
+    async (args, extra) => {
+      const _meta = extra.mcpReq._meta;
       if (!config.enableRecoveryTools) {
         throw new Error(
           "RECOVERY_OPERATION_DISABLED: The operator must explicitly enable recovery tools before detaching an Agent assignment."
@@ -6651,9 +7070,7 @@ export function registerBridgeTools(
           return replay.result;
         }
         const agent = jobs.getAgent(args.agentId);
-        if (!agent || agent.scopeId !== scope.scopeId) {
-          throw new Error("The selected Agent belongs to another conversation scope or does not exist.");
-        }
+        if (!agent || agent.scopeId !== scope.scopeId) throw scopedHandleUnavailable("agent");
         const detached = jobs.detachIdleAgentAssignment({
           activityId: args.activityId,
           agentId: args.agentId,
@@ -6675,96 +7092,21 @@ export function registerBridgeTools(
     }
   );
 
-    const backgroundProcessStopInput = z.strictObject({
-        scopeId: scopeIdSchema().optional()
-          .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
-        widgetInstanceId: widgetInstanceIdSchema.optional(),
-        requestId: scopeIdSchema().describe("Unique UUID for this exact process termination and its retries."),
-        agentId: scopeIdSchema().describe("Exact Agent that owns the current App Server thread."),
-        expectedAgentVersion: z.number().int().min(1),
-        processId: z.string().trim().min(1).max(200),
-        card: userControlProofInputSchema
-      });
-  const stopBackgroundProcess: ToolCallback<typeof backgroundProcessStopInput> = async (args, { _meta }) => {
-      const { scope, widgetSessionId, presentation, claims } = requireControlCard(args, _meta);
-      if (claims && claims.agentVersion !== args.expectedAgentVersion) {
-        throw new Error("UI_CONTROL_TARGET_CHANGED: The requested version differs from the displayed work.");
-      }
-      const actionHash = createHash("sha256")
-        .update(JSON.stringify({
-          action: "terminate-background-process",
-          agentId: args.agentId,
-          expectedAgentVersion: args.expectedAgentVersion,
-          processId: args.processId,
-          card: args.card
-        }))
-        .digest("hex");
-      const mutationResult = await runIdempotentMutation(scope.scopeId, args.requestId, actionHash, async () => {
-        const result = await terminateAgentBackgroundProcess({
-          jobs, upstream, scopeId: scope.scopeId, agentId: args.agentId,
-          expectedAgentVersion: args.expectedAgentVersion, processId: args.processId
-        });
-        if (typeof result.threadId === "string") invalidateCardRuntimeCache(upstream, result.threadId);
-        return result;
-      });
-      return mutationToolResult(mutationResult, "app");
-    };
-
-  server.registerTool(
-    "codex_background_process_terminate",
-    {
-      title: "Stop Codex Background Process",
-      description:
-        "Stop one exact App Server background terminal selected from a currently mounted Activity card. The server revalidates the card lease, Agent version, current thread, process ownership, and idle turn state immediately before termination. Partial filesystem changes are not rolled back.",
-      inputSchema: backgroundProcessStopInput,
-      outputSchema: mutationOutputSchema,
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: true,
-        openWorldHint: false
-      },
-      _meta: {
-        "codex/registrationTier": "compatibility",
-        ui: { visibility: ["app"] },
-        "openai/visibility": "private",
-        "openai/widgetAccessible": true,
-        "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
-      }
-    },
-    stopBackgroundProcess
-  );
-
-  const codexCancelRuntimeInput = z.strictObject({
-    scopeId: scopeIdSchema()
-      .optional()
-      .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
-    requestId: scopeIdSchema()
-      .describe("Unique UUID for this logical job cancellation and its exact retries."),
-    jobId: z.string().trim().min(1).max(200).describe("Active job id returned by codex_task."),
-    expectedVersion: z.number().int().min(1)
-      .describe("Authoritative job version observed immediately before cancellation."),
-    reason: z.string().trim().min(1).max(CANCELLATION_REASON_MAX_LENGTH).describe(
-      "Short user-facing reason for this GPT-requested cancellation. Do not include private reasoning, raw prompts, secrets, or unnecessary file contents."
-    ),
-    acknowledgeAffectedJobIds: z
-      .array(z.string().trim().min(1).max(200))
-      .max(HARD_MAX_CONCURRENT_JOBS)
-      .optional()
-      .describe(
-        "Exact affected-job list shown by authoritative status/card confirmation when a worker is shared."
-      )
-  });
   const codexCancelTargetInput = z.strictObject({
-    scopeId: scopeIdSchema().optional(), requestId: scopeIdSchema(),
+    requestId: scopeIdSchema(),
     target: z.discriminatedUnion("kind", [
       z.strictObject({ kind: z.literal("job"), id: z.string().trim().min(1).max(200) }),
       z.strictObject({ kind: z.literal("activity"), id: scopeIdSchema() })
-    ]), expectedVersion: codexCancelRuntimeInput.shape.expectedVersion,
-    reason: codexCancelRuntimeInput.shape.reason,
-    acknowledgeAffectedJobIds: codexCancelRuntimeInput.shape.acknowledgeAffectedJobIds
+    ]), expectedVersion: z.number().int().min(1)
+      .describe("Authoritative Job or Activity version observed immediately before cancellation."),
+    reason: z.string().trim().min(1).max(CANCELLATION_REASON_MAX_LENGTH).describe(
+      "Short user-facing reason for this explicit cancellation. Do not include private reasoning, raw prompts, secrets, or unnecessary file contents."
+    ),
+    acknowledgeAffectedJobIds: z.array(z.string().trim().min(1).max(200))
+      .max(HARD_MAX_CONCURRENT_JOBS)
+      .optional()
+      .describe("Exact affected-job list confirmed when a worker is shared.")
   });
-  const codexCancelPublicInput = codexCancelTargetInput.omit({ scopeId: true });
 
   server.registerTool(
     "codex_cancel",
@@ -6772,8 +7114,8 @@ export function registerBridgeTools(
       title: "Force-stop Codex Work",
       description:
         "Force-stop a Codex Job or whole Activity in this conversation. Cancellation is confirmed only after execution stops; filesystem changes are not rolled back.",
-      inputSchema: objectSchemaUnion([codexCancelTargetInput, codexCancelRuntimeInput], codexCancelPublicInput),
-      outputSchema: objectSchemaUnion([cancelMutationOutputSchema, activityCancelMutationOutputSchema]),
+      inputSchema: codexCancelTargetInput,
+      outputSchema: z.union([cancelMutationOutputSchema, activityCancelMutationOutputSchema]),
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
@@ -6782,15 +7124,15 @@ export function registerBridgeTools(
       }
     },
     async (input, extra) => {
-      if ("target" in input && input.target.kind === "activity") {
+      if (input.target.kind === "activity") {
         const { target, ...args } = input;
         return cancelActivity({ ...args, activityId: target.id }, extra, "codex_cancel");
       }
-      const args = "target" in input ? (() => { const { target, ...rest } = input; return { ...rest, jobId: target.id }; })() : input;
-      const { _meta } = extra;
+      const args = (() => { const { target, ...rest } = input; return { ...rest, jobId: target.id }; })();
+      const _meta = extra.mcpReq._meta;
       const scope = scopeResolver.require(
         _meta as ToolCallMetadata,
-        args.scopeId,
+        undefined,
         "Codex job cancellation"
       );
       const actionHash = createHash("sha256")
@@ -6808,12 +7150,7 @@ export function registerBridgeTools(
         actionHash,
         async () => {
           const existing = jobs.get(args.jobId);
-          if (!existing) {
-            throw new Error("Unknown Codex job id. Read codex_status({}) for the current conversation and use an exact retained Job id.");
-          }
-          if (existing.scopeId !== scope.scopeId) {
-            throw new Error("The requested Codex job belongs to another conversation scope.");
-          }
+          if (!existing || existing.scopeId !== scope.scopeId) throw scopedHandleUnavailable("job");
           if (existing.version !== args.expectedVersion) {
             throw new Error(
               `Codex job version changed from ${args.expectedVersion} to ${existing.version}. Refresh authoritative status before retrying cancellation.`
@@ -6828,8 +7165,7 @@ export function registerBridgeTools(
             actionName: "cancel-job",
             target: cancellationTargetForJob(existing),
             expectedVersion: args.expectedVersion,
-            callerPresentation: callerPresentationFromMetadata(_meta),
-            callerRequestDigest: correlationDigest("mcp-request", extra.requestId),
+            callerRequestDigest: correlationDigest("mcp-request", extra.mcpReq.id),
             reasonCode: "public-job-cancel",
             reason: args.reason
           });
@@ -6855,123 +7191,15 @@ export function registerBridgeTools(
     }
   );
 
-    const cardJobStopInput = z.strictObject({
-        scopeId: scopeIdSchema().optional(),
-        widgetInstanceId: widgetInstanceIdSchema.optional(),
-        requestId: scopeIdSchema().describe("Unique UUID for this exact card cancellation and its retries."),
-        jobId: z.string().trim().min(1).max(200),
-        expectedJobVersion: z.number().int().min(1),
-        card: userControlProofInputSchema,
-        acknowledgeAffectedJobIds: z
-          .array(z.string().trim().min(1).max(200))
-          .max(HARD_MAX_CONCURRENT_JOBS)
-          .optional()
-      });
-  const stopCardJob: ToolCallback<typeof cardJobStopInput> = async (args, extra) => {
-      const { _meta } = extra;
-      const { scope, widgetSessionId, presentation, claims } = requireControlCard(args, _meta);
-      if (claims && claims.jobVersion !== args.expectedJobVersion) {
-        throw new Error("UI_CONTROL_TARGET_CHANGED: The requested version differs from the displayed work.");
-      }
-      const widgetInstanceDigest = correlationDigest("activity-widget", widgetSessionId) as string;
-      const actionHash = createHash("sha256")
-        .update(JSON.stringify({
-          action: "cancel-card-job",
-          jobId: args.jobId,
-          expectedJobVersion: args.expectedJobVersion,
-          card: args.card,
-          widgetInstanceDigest,
-          acknowledgeAffectedJobIds: [...(args.acknowledgeAffectedJobIds || [])].sort()
-        }))
-        .digest("hex");
-      const result = await runCancellationMutation(
-        scope.scopeId,
-        args.requestId,
-        actionHash,
-        async () => {
-          const job = jobs.get(args.jobId);
-          if (
-            !job ||
-            job.scopeId !== scope.scopeId ||
-            job.activityId !== args.card.activityId
-          ) {
-            throw new Error("The requested Codex job is unavailable in this card's exact Activity scope.");
-          }
-          if (job.version !== args.expectedJobVersion) {
-            throw new Error(
-              `Codex job version changed from ${args.expectedJobVersion} to ${job.version}. Refresh the Activity card before retrying cancellation.`
-            );
-          }
-          const { intent } = jobs.beginCancellationOperation({
-            scopeId: scope.scopeId,
-            requestId: args.requestId,
-            actionHash,
-            source: "widget-control",
-            toolName: claims ? "codex_ui_stop" : "codex_activity_job_cancel",
-            actionName: "cancel-card-job",
-            target: cancellationTargetForJob(job, presentation),
-            expectedVersion: args.expectedJobVersion,
-            callerPresentation: presentation,
-            widgetProof: {
-              instanceDigest: widgetInstanceDigest,
-              cardGeneration: args.card.generation
-            },
-            callerRequestDigest: correlationDigest("mcp-request", extra.requestId),
-            reasonCode: "widget-force-stop"
-          });
-          const cancelled = await jobs.cancel(job.jobId, intent, {
-            acknowledgeAffectedJobIds: args.acknowledgeAffectedJobIds
-          });
-          const formatted = formatJobStatus(
-            cancelled,
-            jobs.staleThresholdMs,
-            undefined,
-            userSettings.current,
-            jobs
-          );
-          jobs.completeCancellationOperation(scope.scopeId, args.requestId, formatted);
-          return formatted;
-        }
-      );
-      return mutationToolResult({ ok: true, action: "cancel-card-job", job: result }, "app");
-    };
-
-  server.registerTool(
-    "codex_activity_job_cancel",
-    {
-      title: "Force-stop Activity Card Job",
-      description:
-        "App-private destructive control for one exact job shown by a live, current Activity card. The bridge validates the widget instance, exact card generation and presentation lease, exact job version, and idempotency request before recording durable provenance and dispatching cancellation.",
-      inputSchema: cardJobStopInput,
-      outputSchema: mutationOutputSchema,
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: true,
-        openWorldHint: false
-      },
-      _meta: {
-        "codex/registrationTier": "compatibility",
-        ui: { visibility: ["app"] },
-        "openai/visibility": "private",
-        "openai/widgetAccessible": true,
-        "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
-      }
-    },
-    stopCardJob
-  );
-
   const interactionAnswersBaseInput = z.record(
     z.string().trim().min(1).max(200),
     z.array(z.string().max(4_000)).max(20)
   );
-  const interactionAnswersInput = withJsonSchemaProjection(
-    interactionAnswersBaseInput,
-    {
-      ...jsonSchemaBody(interactionAnswersBaseInput),
-      maxProperties: MAX_CODEX_INTERACTION_QUESTIONS
-    }
-  );
+  const interactionAnswersInput = interactionAnswersBaseInput
+    .refine(
+      (answers) => Object.keys(answers).length <= MAX_CODEX_INTERACTION_QUESTIONS,
+      `At most ${MAX_CODEX_INTERACTION_QUESTIONS} interaction questions can be answered at once.`
+    );
 
     const interactionResponseInput = z.strictObject({
         scopeId: scopeIdSchema().optional(),
@@ -6999,7 +7227,8 @@ export function registerBridgeTools(
         ]),
         card: userControlProofInputSchema
       });
-  const respondInteraction: ToolCallback<typeof interactionResponseInput> = async (args, { _meta }) => {
+  const respondInteraction: ToolCallback<typeof interactionResponseInput> = async (args, extra) => {
+    const _meta = extra.mcpReq._meta;
       if (
         "answers" in args.response &&
         Object.keys(args.response.answers).length > MAX_CODEX_INTERACTION_QUESTIONS
@@ -7008,7 +7237,7 @@ export function registerBridgeTools(
           `At most ${MAX_CODEX_INTERACTION_QUESTIONS} interaction questions can be answered at once.`
         );
       }
-      const { scope, widgetSessionId, presentation, claims } = requireControlCard(args, _meta);
+      const { scope, widgetSessionId, claims } = requireControlCard(args, _meta);
       if (claims && claims.jobVersion !== args.expectedJobVersion) {
         throw new Error("UI_CONTROL_TARGET_CHANGED: The requested version differs from the displayed work.");
       }
@@ -7047,7 +7276,7 @@ export function registerBridgeTools(
           }
           if (job.version !== args.expectedJobVersion) {
             throw new Error(
-              `Codex job version changed from ${args.expectedJobVersion} to ${job.version}. Refresh the Activity card before retrying the response.`
+              `Codex job version changed from ${args.expectedJobVersion} to ${job.version}. Refresh the Dashboard before retrying the response.`
             );
           }
           const interaction = job.pendingInteractions.find(
@@ -7117,7 +7346,7 @@ export function registerBridgeTools(
         ui: { visibility: ["app"] },
         "openai/visibility": "private",
         "openai/widgetAccessible": true,
-        "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
+        "codex/uiContractGeneration": DASHBOARD_CARD_CONTRACT_GENERATION
       }
     },
     respondInteraction
@@ -7129,30 +7358,18 @@ export function registerBridgeTools(
       title: "Steer Active Codex Job",
       description:
         "Send additional guidance to one running Codex turn in this conversation without starting another turn. This does not resolve structured questions or approvals.",
-      inputSchema: withJsonSchemaProjection(
-        z.strictObject({
-          scopeId: scopeIdSchema().optional()
-            .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
-          requestId: scopeIdSchema()
-            .describe("Unique UUID for this exact Job/version/prompt steering request and its retries."),
-          jobId: z.string().trim().min(1).max(200)
-            .describe("Exact active Job id returned by codex_task."),
-          expectedJobVersion: z.number().int().min(1)
-            .describe("Authoritative Job version observed immediately before steering."),
-          prompt: z.string().trim().min(1).max(config.maxPromptChars)
-            .describe("Bounded additional guidance for the current in-flight turn only.")
-        }),
-        z.strictObject({
-          requestId: scopeIdSchema()
-            .describe("Unique UUID for this exact Job/version/prompt steering request and its retries."),
-          jobId: z.string().trim().min(1).max(200)
-            .describe("Exact active Job id returned by codex_task."),
-          expectedJobVersion: z.number().int().min(1)
-            .describe("Authoritative Job version observed immediately before steering."),
-          prompt: z.string().trim().min(1).max(config.maxPromptChars)
-            .describe("Bounded additional guidance for the current in-flight turn only.")
-        })
-      ),
+      inputSchema: z.strictObject({
+        scopeId: scopeIdSchema().optional()
+          .describe("Conversation UUID for hosts that do not supply scoped MCP metadata."),
+        requestId: scopeIdSchema()
+          .describe("Unique UUID for this exact Job/version/prompt steering request and its retries."),
+        jobId: z.string().trim().min(1).max(200)
+          .describe("Exact active Job id returned by codex_task."),
+        expectedJobVersion: z.number().int().min(1)
+          .describe("Authoritative Job version observed immediately before steering."),
+        prompt: verbatimInput(config.maxPromptChars, "Steering prompt")
+          .describe("Bounded additional guidance for the current in-flight turn only.")
+      }),
       outputSchema: codexSteerOutputSchema,
       annotations: {
         readOnlyHint: false,
@@ -7161,13 +7378,19 @@ export function registerBridgeTools(
         openWorldHint: false
       }
     },
-    async (args, { _meta }) => {
+    async (args, extra) => {
+      const _meta = extra.mcpReq._meta;
       const scope = scopeResolver.require(
         _meta as ToolCallMetadata,
         args.scopeId,
         "Codex active Job steering"
       );
-      const promptHash = createHash("sha256").update(args.prompt).digest("hex");
+      const prompt = verbatimText(args.prompt, {
+        field: "Steering prompt",
+        maxCharacters: config.maxPromptChars,
+        rejectControlCharacters: false
+      });
+      const promptHash = createHash("sha256").update(prompt).digest("hex");
       const actionHash = createHash("sha256")
         .update(JSON.stringify({
           action: "steer",
@@ -7222,13 +7445,14 @@ export function registerBridgeTools(
               )
             };
           }
+          await config.codexService?.assertCurrentAdmission();
           jobs.markSteeringDeliveryDispatching(
             scope.scopeId,
             args.requestId,
             actionHash
           );
           try {
-            const updated = await jobs.steer(validation.job.jobId, args.prompt);
+            const updated = await jobs.steer(validation.job.jobId, prompt);
             return {
               status: "delivered",
               result: steeringSuccessResult(updated)
@@ -7248,108 +7472,6 @@ export function registerBridgeTools(
     }
   );
 
-  server.registerTool(
-    "codex_job_steer",
-    {
-      title: "Steer Active Codex Job",
-      description:
-        "App-only additional guidance for one exact active App Server turn selected from a currently leased Activity card. The server revalidates card ownership, Job/Activity/Agent scope, and optimistic Job version immediately before sending the prompt.",
-      inputSchema: z.strictObject({
-        scopeId: scopeIdSchema().optional(),
-        widgetInstanceId: widgetInstanceIdSchema.optional(),
-        requestId: scopeIdSchema().describe("Unique UUID for this exact steering request and its retries."),
-        jobId: z.string().trim().min(1).max(200),
-        expectedJobVersion: z.number().int().min(1),
-        prompt: z.string().trim().min(1).max(config.maxPromptChars),
-        card: activityCardProofInputSchema
-      }),
-      outputSchema: mutationOutputSchema,
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: true,
-        openWorldHint: false
-      },
-      _meta: {
-        "codex/registrationTier": "compatibility",
-        ui: { visibility: ["app"] },
-        "openai/visibility": "private",
-        "openai/widgetAccessible": true,
-        "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
-      }
-    },
-    async (args, { _meta }) => {
-      const scope = scopeResolver.require(
-        _meta as ToolCallMetadata,
-        args.scopeId,
-        "Codex Job steering"
-      );
-      const widgetSessionId = mountedWidgetInstanceId(args, _meta);
-      if (!widgetSessionId) {
-        throw new Error("CARD_LEASE_REQUIRED: Job steering requires a mounted Activity card.");
-      }
-      const presentation = presentationFromActivityCardProof(args.card);
-      jobs.requireActivityCardLease(
-        scope.scopeId,
-        args.card.activityId,
-        args.card.generation,
-        widgetSessionId,
-        presentation
-      );
-      const promptHash = createHash("sha256").update(args.prompt).digest("hex");
-      const actionHash = createHash("sha256")
-        .update(JSON.stringify({
-          action: "steer",
-          jobId: args.jobId,
-          expectedJobVersion: args.expectedJobVersion,
-          promptHash,
-          card: args.card
-        }))
-        .digest("hex");
-      const result = await runIdempotentMutation(
-        scope.scopeId,
-        args.requestId,
-        actionHash,
-        async () => {
-          const job = jobs.get(args.jobId);
-          const activity = job ? jobs.getActivity(job.activityId) : undefined;
-          const agent = job?.agentId ? jobs.getAgent(job.agentId) : undefined;
-          if (
-            !job ||
-            job.scopeId !== scope.scopeId ||
-            !activity ||
-            activity.scopeId !== scope.scopeId ||
-            !agent ||
-            agent.scopeId !== scope.scopeId
-          ) {
-            throw new Error("The requested Codex job is unavailable in this card's conversation scope.");
-          }
-          if (job.version !== args.expectedJobVersion) {
-            throw new Error(
-              `Codex job version changed from ${args.expectedJobVersion} to ${job.version}. Refresh the Activity card before retrying steering.`
-            );
-          }
-          const updated = await jobs.steer(job.jobId, args.prompt);
-          return {
-            ok: true,
-            action: "steer",
-            activityId: activity.activityId,
-            agentId: agent.agentId,
-            job: formatJobStatus(
-              updated,
-              jobs.staleThresholdMs,
-              undefined,
-              userSettings.current,
-              jobs
-            ),
-            promptPersistedByBridge: false,
-            steeringScope: "active-codex-turn-only"
-          };
-        }
-      );
-      return mutationToolResult(result, "app");
-    }
-  );
 
   const activityVerificationEvidenceInput = z.strictObject({
     summary: z.string().trim().min(1).max(1_000),
@@ -7358,24 +7480,13 @@ export function registerBridgeTools(
     artifacts: z.array(z.string().trim().min(1).max(500)).max(20).optional(),
     references: z.array(z.string().trim().min(1).max(500)).max(20).optional()
   });
-  const activityPolicyPatchInput = withJsonSchemaProjection(
-    z.strictObject({
-      kind: z.enum(ACTIVITY_KINDS).optional(),
-      executionMode: z.enum(ACTIVITY_EXECUTION_MODES).optional(),
-      handoff: z.enum(ACTIVITY_HANDOFF_POLICIES).optional(),
-      completion: z.enum(ACTIVITY_COMPLETION_TRIGGERS).optional()
-    }),
-    {
-      type: "object",
-      properties: {
-        kind: jsonSchemaBody(z.enum(ACTIVITY_KINDS)),
-        executionMode: jsonSchemaBody(z.enum(ACTIVITY_EXECUTION_MODES)),
-        handoff: jsonSchemaBody(z.enum(ACTIVITY_HANDOFF_POLICIES)),
-        completion: jsonSchemaBody(z.enum(ACTIVITY_COMPLETION_TRIGGERS))
-      },
-      minProperties: 1,
-      additionalProperties: false
-    }
+  const activityPolicyPatchInput = z.strictObject({
+    kind: z.enum(ACTIVITY_KINDS).optional(),
+    handoff: z.enum(ACTIVITY_HANDOFF_POLICIES).optional(),
+    completion: z.enum(ACTIVITY_COMPLETION_TRIGGERS).optional()
+  }).refine(
+    (patch) => Object.keys(patch).length > 0,
+    "Provide at least one Activity policy field."
   );
   const codexActivityOperationInput = z.discriminatedUnion("kind", [
     z.strictObject({
@@ -7400,15 +7511,10 @@ export function registerBridgeTools(
       policy: activityPolicyPatchInput
     })
   ]);
-  const codexActivityUpdateRuntimeInput = z.strictObject({
+  const codexActivityUpdateInput = z.strictObject({
     scopeId: scopeIdSchema()
       .optional()
-      .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
-    activityId: scopeIdSchema().describe("Exact Activity id in the current conversation scope."),
-    expectedVersion: z.number().int().min(1),
-    operation: codexActivityOperationInput
-  });
-  const codexActivityUpdatePublicInput = z.strictObject({
+      .describe("Conversation UUID for hosts that do not supply scoped MCP metadata."),
     activityId: scopeIdSchema().describe("Exact Activity id in the current conversation scope."),
     expectedVersion: z
       .number()
@@ -7444,10 +7550,7 @@ export function registerBridgeTools(
       title: "Update Codex Activity",
       description:
         "Update an Activity's lifecycle, verification, or policy at its current version.",
-      inputSchema: withJsonSchemaProjection(
-        codexActivityUpdateRuntimeInput,
-        codexActivityUpdatePublicInput
-      ),
+      inputSchema: codexActivityUpdateInput,
       outputSchema: activityUpdateMutationOutputSchema,
       annotations: {
         readOnlyHint: false,
@@ -7456,11 +7559,12 @@ export function registerBridgeTools(
         openWorldHint: false
       }
     },
-    async (args, { _meta }) => {
+    async (args, extra) => {
+      const _meta = extra.mcpReq._meta;
       const operation = args.operation;
       if (
         operation.kind === "set-policy" &&
-        !["kind", "executionMode", "handoff", "completion"].some((key) =>
+        !["kind", "handoff", "completion"].some((key) =>
           Object.prototype.hasOwnProperty.call(operation.policy, key)
         )
       ) {
@@ -7472,17 +7576,19 @@ export function registerBridgeTools(
         "Codex Activity update"
       );
       const existing = jobs.getActivity(args.activityId);
-      if (!existing) throw new Error("Unknown Activity id in this conversation scope.");
-      if (existing.scopeId !== scope.scopeId) {
-        throw new Error("The requested Activity belongs to another conversation scope.");
+      if (!existing || existing.scopeId !== scope.scopeId) throw scopedHandleUnavailable("activity");
+      if (existing.version !== args.expectedVersion) {
+        return { ...mutationToolResult({ ok: false, action: operation.kind, code: "STALE_ACTIVITY_VERSION",
+          activity: formatActivitySummary(existing),
+          warning: "Activity version changed. Read the current Activity before retrying; no mutation was applied.",
+          nextActions: [statusAction({ query: { kind: "activity", id: existing.activityId } }, "Read the current Activity version.")]
+        }, "model", "codex_activity_update"), isError: true };
       }
       let activity!: BridgeActivity;
       const cancelledJobIds: string[] = [];
       jobs.activityTransaction(() => {
         const current = jobs.getActivity(args.activityId);
-        if (!current || current.scopeId !== scope.scopeId) {
-          throw new Error("The requested Activity is no longer available in this conversation scope.");
-        }
+        if (!current || current.scopeId !== scope.scopeId) throw scopedHandleUnavailable("activity");
         if (current.version !== args.expectedVersion) {
           throw new Error(
             `Activity version changed from ${args.expectedVersion} to ${current.version}. Refresh authoritative state before retrying the transition.`
@@ -7513,7 +7619,6 @@ export function registerBridgeTools(
           case "set-policy":
             activity = jobs.setActivityPolicy(args.activityId, {
               kind: operation.policy.kind,
-              executionMode: operation.policy.executionMode,
               handoffPolicy: operation.policy.handoff,
               completionTrigger: operation.policy.completion
             });
@@ -7532,15 +7637,11 @@ export function registerBridgeTools(
     }
   );
 
-    const legacyActivityCancelInput = withJsonSchemaProjection(
-        codexActivityCancelRuntimeInput,
-        codexActivityCancelPublicInput
-      );
-  const cancelActivity = async (args: z.infer<typeof legacyActivityCancelInput>, extra: Parameters<ToolCallback<typeof legacyActivityCancelInput>>[1], toolName = "codex_activity_cancel") => {
-      const { _meta } = extra;
+  const cancelActivity = async (args: z.infer<typeof codexActivityCancelPublicInput>, extra: Parameters<ToolCallback<typeof codexActivityCancelPublicInput>>[1], toolName = "codex_cancel") => {
+      const _meta = extra.mcpReq._meta;
       const scope = scopeResolver.require(
         _meta as ToolCallMetadata,
-        args.scopeId,
+        undefined,
         "Codex Activity cancellation"
       );
       const actionHash = createHash("sha256")
@@ -7558,10 +7659,7 @@ export function registerBridgeTools(
         actionHash,
         async () => {
           const existing = jobs.getActivity(args.activityId);
-          if (!existing) throw new Error("Unknown Activity id in this conversation scope.");
-          if (existing.scopeId !== scope.scopeId) {
-            throw new Error("The requested Activity belongs to another conversation scope.");
-          }
+          if (!existing || existing.scopeId !== scope.scopeId) throw scopedHandleUnavailable("activity");
           if (existing.version !== args.expectedVersion) {
             throw new Error(
               `Activity version changed from ${args.expectedVersion} to ${existing.version}. Refresh authoritative state before retrying cancellation.`
@@ -7583,7 +7681,6 @@ export function registerBridgeTools(
               );
             }
           }
-          const callerPresentation = callerPresentationFromMetadata(_meta);
           const { intent: parentIntent } = jobs.beginCancellationOperation({
             scopeId: scope.scopeId,
             requestId: args.requestId,
@@ -7596,8 +7693,7 @@ export function registerBridgeTools(
               activityId: existing.activityId
             },
             expectedVersion: args.expectedVersion,
-            callerPresentation,
-            callerRequestDigest: correlationDigest("mcp-request", extra.requestId),
+            callerRequestDigest: correlationDigest("mcp-request", extra.mcpReq.id),
             reasonCode: "activity-cancel",
             reason: args.reason
           });
@@ -7617,7 +7713,6 @@ export function registerBridgeTools(
               actionName: "cancel-child-job",
               target: cancellationTargetForJob(job),
               expectedVersion: job.version,
-              callerPresentation,
               callerRequestDigest: parentIntent.callerRequestDigest,
               reasonCode: "activity-child-cancel"
             });
@@ -7696,24 +7791,6 @@ export function registerBridgeTools(
       return mutationToolResult(result, "model", "codex_activity_cancel");
     };
 
-  compatibility.registerTool(
-    "codex_activity_cancel",
-    {
-      title: "Force-stop Codex Activity",
-      description:
-        "Idempotently force-stop every active Codex job in one Activity at an exact authoritative Activity version with a required, short user-facing reason, then mark the Activity cancelled. Shared workers may interrupt jobs outside the Activity and require confirmation of the exact affected-job set. Partial filesystem changes are not rolled back.",
-      inputSchema: legacyActivityCancelInput,
-      outputSchema: activityCancelMutationOutputSchema,
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: true,
-        openWorldHint: false
-      }
-    },
-    cancelActivity
-  );
-
   server.registerTool(
     "codex_models",
     {
@@ -7721,9 +7798,6 @@ export function registerBridgeTools(
       description:
         "Read the model and reasoning choices allowed by current bridge policy and backend availability. Descriptions come from the installed Codex catalog; in automatic mode a saved user model description replaces the catalog description and is marked descriptionSource=user. The bridge filters executable choices and may return an empty list with a policy warning.",
       inputSchema: z.strictObject({
-        contractVersion: z.literal("2").optional().describe(
-          "Opt in to selectionMode alongside the allowed catalog from the same settings snapshot. Omission preserves the legacy catalog-only result."
-        ),
         refresh: z
           .boolean()
           .optional()
@@ -7750,7 +7824,8 @@ export function registerBridgeTools(
         effectiveModelCeiling(
           catalog,
           config.operatorModelCeiling,
-          preferences.usePriorityServiceTier
+          preferences.usePriorityServiceTier,
+          preferences.processingSpeed
         )
       );
       const allowedEffortsByModel = new Map<string, Set<string>>();
@@ -7787,13 +7862,16 @@ export function registerBridgeTools(
             }))
         }));
       const structured = {
-        ...(args.contractVersion === "2" ? { contractVersion: "2" as const, selectionMode: preferences.modelPolicy.mode } : {}),
+        contractVersion: "2" as const,
+        selectionMode: preferences.modelPolicy.mode,
+        processingSpeed: { selected: preferences.processingSpeed, scope: preferences.processingSpeed === "legacy" ? "conversation" : isProcessingSpeedMode(preferences.processingSpeed) ? "turn" : null, protocol: backendCapabilities(upstream, config.defaultBackend).supportsPerTurnServiceTier ? "supported" : "unverified", account: "unverified", workspace: "unverified" },
         source: catalog.source,
         stale: catalog.stale,
         warning: [
           catalog.warning,
+          processingSpeedWarning(preferences, catalog, config.operatorModelCeiling, backendCapabilities(upstream, config.defaultBackend)),
           isModelPolicySuspended(preferences.modelPolicy, catalog,
-            effectiveModelCeiling(catalog, config.operatorModelCeiling, preferences.usePriorityServiceTier))
+            config.operatorModelCeiling)
             ? ULTRA_DISABLED_NO_SELECTION_WARNING : undefined
         ].filter(Boolean).join(" ") || null,
         models
@@ -7840,7 +7918,8 @@ export function registerBridgeTools(
         "codex/uiContractGeneration": SETTINGS_CARD_CONTRACT_GENERATION
       }
     },
-    async (args, { _meta }) => {
+    async (args, extra) => {
+      const _meta = extra.mcpReq._meta;
       return {
         content: [{ type: "text" as const, text: "Settings opened. The card loads the current preferences." }],
         structuredContent: { kind: "settings", opened: true },
@@ -7858,7 +7937,8 @@ export function registerBridgeTools(
           .optional()
           .describe("Force a fresh Codex model catalog lookup for this settings snapshot.")
       });
-  const readSettings: ToolCallback<typeof settingsSnapshotInput> = async (args, { _meta }) => {
+  const readSettings: ToolCallback<typeof settingsSnapshotInput> = async (args, extra) => {
+    const _meta = extra.mcpReq._meta;
       const view = await applicationService.settingsSnapshot({
         refreshModels: args.refreshModels
       });
@@ -7868,31 +7948,20 @@ export function registerBridgeTools(
         "snapshot"
       );
     };
-
-  server.registerTool(
-    "codex_settings_snapshot",
-    {
-      title: `Refresh ${PRODUCT_INFO.displayName} Settings`,
-      description:
-        "App-only read-only fresh-data source for the mounted settings card. Cold mounts render only after this tool reads the current persisted settings, project registry, capabilities, and backend model catalog. Set refreshModels only when the model catalog itself must be refreshed.",
-      inputSchema: settingsSnapshotInput,
-      outputSchema: settingsViewOutputSchema,
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: true
-      },
-      _meta: {
-        "codex/registrationTier": "compatibility",
-        ui: { visibility: ["app"] },
-        "openai/visibility": "private",
-        "openai/widgetAccessible": true,
-        "codex/uiContractGeneration": SETTINGS_CARD_CONTRACT_GENERATION
-      }
-    },
-    readSettings
-  );
+  const modelDescriptionHistoryInput = z.strictObject({
+    view: z.literal("model-description-history"),
+    modelId: z.string().min(1).max(200),
+    beforeVersion: z.number().int().positive().optional()
+  });
+  const readModelDescriptionHistory: ToolCallback<typeof modelDescriptionHistoryInput> = async (args) => {
+    const page = await applicationService.modelDescriptionHistory({
+      modelId: args.modelId, beforeVersion: args.beforeVersion
+    });
+    return {
+      content: [{ type: "text", text: "Model description history loaded." }],
+      structuredContent: modelDescriptionHistoryPageOutputSchema.parse(page)
+    };
+  };
 
   const settingsAccessStrategyInput = config.allowDangerFullAccess
     ? z.enum(["read-only", "adaptive", "always-full"])
@@ -7931,38 +8000,26 @@ export function registerBridgeTools(
       projectId: scopeIdSchema()
     })
   ]);
-  const activityCardSettingsPatchBase = z.strictObject({
-    visibility: z.enum(ACTIVITY_CARD_VISIBILITIES).optional(),
-    completionHandoff: z.enum(COMPLETION_HANDOFF_MODES).optional()
-  });
-  const activityCardSettingsPatchInput = withJsonSchemaProjection(
-    activityCardSettingsPatchBase,
-    {
-      ...jsonSchemaBody(activityCardSettingsPatchBase),
-      minProperties: 1
-    }
-  );
   const nestedSettingsPatchBase = z.strictObject({
     accessStrategy: settingsAccessStrategyInput.optional(),
     modelPolicy: editableModelPolicyZod().optional(),
     modelDescriptionOverrides: z.record(z.string().min(1).max(200), z.string().max(MAX_MODEL_DESCRIPTION_LENGTH)).optional(),
     usePriorityServiceTier: z.boolean().optional(),
+    processingSpeed: z.enum(PROCESSING_SPEED_MODES).optional(),
     historyRetentionDays: z.union([z.literal(7), z.literal(30), z.literal(90), z.literal(0)]).optional(),
     uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES).optional(),
     maxConcurrentJobs: z.number().int().min(1).max(config.maxConcurrentJobs).optional(),
     showBridgeThreadsInCodexApp: z.boolean().optional(),
-    activityCard: activityCardSettingsPatchInput.optional(),
+    bridgeThreadPersistence: z.enum(["persistent", "ephemeral"]).optional(),
+    experimentalDirectResultDelivery: z.boolean().optional(),
     projectOperations: z.array(projectRegistryOperationInput)
       .min(1)
       .max(MAX_REGISTERED_PROJECTS * 2)
       .optional()
   });
-  const nestedSettingsPatchInput = withJsonSchemaProjection(
-    nestedSettingsPatchBase,
-    {
-      ...jsonSchemaBody(nestedSettingsPatchBase),
-      minProperties: 1
-    }
+  const nestedSettingsPatchInput = nestedSettingsPatchBase.refine(
+    (patch) => Object.keys(patch).length > 0,
+    "Provide at least one setting or project operation."
   );
   const settingsOperationInput = z.discriminatedUnion("kind", [
     z.strictObject({ kind: z.literal("reset") }),
@@ -7996,11 +8053,13 @@ export function registerBridgeTools(
         "modelPolicy",
         "modelDescriptionOverrides",
         "usePriorityServiceTier",
+        "processingSpeed",
         "historyRetentionDays",
         "uiLocalePreference",
         "maxConcurrentJobs",
         "showBridgeThreadsInCodexApp",
-        "activityCard",
+        "bridgeThreadPersistence",
+        "experimentalDirectResultDelivery",
         "projectOperations"
       ] as const;
       if (!nestedKeys.some((key) => Object.prototype.hasOwnProperty.call(settings, key))) {
@@ -8011,29 +8070,16 @@ export function registerBridgeTools(
         "modelPolicy",
         "modelDescriptionOverrides",
         "usePriorityServiceTier",
+        "processingSpeed",
         "historyRetentionDays",
         "uiLocalePreference",
         "maxConcurrentJobs",
-        "showBridgeThreadsInCodexApp"
+        "showBridgeThreadsInCodexApp",
+        "bridgeThreadPersistence",
+        "experimentalDirectResultDelivery"
       ] as const) {
         if (settings[key] !== undefined) {
           (patch as Record<string, unknown>)[key] = settings[key];
-        }
-      }
-      if (settings.activityCard !== undefined) {
-        if (
-          !Object.prototype.hasOwnProperty.call(settings.activityCard, "visibility") &&
-          !Object.prototype.hasOwnProperty.call(settings.activityCard, "completionHandoff")
-        ) {
-          throw new Error(
-            "SETTINGS_ACTIVITY_CARD_PATCH_EMPTY: Provide at least one Activity-card setting."
-          );
-        }
-        if (settings.activityCard.visibility !== undefined) {
-          patch.activityCardVisibility = settings.activityCard.visibility;
-        }
-        if (settings.activityCard.completionHandoff !== undefined) {
-          patch.completionHandoff = settings.activityCard.completionHandoff;
         }
       }
       projectOperations = (settings.projectOperations || []) as ProjectRegistryOperation[];
@@ -8041,7 +8087,6 @@ export function registerBridgeTools(
 
     const managedRuntimeEnv = process.env.CODEX_MCP_BRIDGE_ENV_FILE;
     if (managedRuntimeEnv && projectOperations.length > 0) {
-      const currentProjects = userSettings.current.projects;
       const candidateRoots = projectOperations.flatMap((operation) => {
         switch (operation.kind) {
           case "add":
@@ -8051,9 +8096,7 @@ export function registerBridgeTools(
           case "restore":
             return operation.cwd
               ? [operation.cwd]
-              : currentProjects
-                  .filter((project) => project.id === operation.projectId)
-                  .map((project) => project.cwd);
+              : [userSettings.projectRestoreTarget(operation.projectId).cwd];
           default:
             return [];
         }
@@ -8075,7 +8118,12 @@ export function registerBridgeTools(
     if (hasGeneralMutation) {
       userSettings.assertExpectedRevision(args.expectedSettingsRevision as number);
     }
-    if (projectOperations.length > 0) {
+    // Pure deletion has no pre-write catalog lookup. Let its transaction
+    // distinguish an already removed identity (an exact retry after response
+    // loss) from any still-present target that requires the original CAS.
+    // Mixed settings/registry edits retain the strict preflight check.
+    if (projectOperations.length > 0 && (hasGeneralMutation ||
+        !projectOperations.every(operation => operation.kind === "delete"))) {
       userSettings.assertExpectedRegistryRevision(args.expectedRegistryRevision as number);
     }
     const current = userSettings.current;
@@ -8104,10 +8152,12 @@ export function registerBridgeTools(
       );
       userSettings.reset(args.expectedSettingsRevision as number, resetPolicy);
     } else {
-      if (patch.modelPolicy !== undefined || patch.usePriorityServiceTier !== undefined) {
+      if (patch.processingSpeed === undefined && current.processingSpeed !== "legacy") delete patch.usePriorityServiceTier;
+      if (patch.modelPolicy !== undefined || patch.usePriorityServiceTier !== undefined || patch.processingSpeed !== undefined) {
         const policy = validateModelPolicy(patch.modelPolicy || current.modelPolicy);
         if (
           !sameModelPolicy(policy, current.modelPolicy) ||
+          (patch.processingSpeed !== undefined && patch.processingSpeed !== current.processingSpeed) ||
           (
             patch.usePriorityServiceTier !== undefined &&
             patch.usePriorityServiceTier !== current.usePriorityServiceTier
@@ -8125,13 +8175,20 @@ export function registerBridgeTools(
             config.operatorModelCeiling,
             nextRevision
           );
-          assertPriorityCompatibility(
+          const nextSpeed = patch.processingSpeed ?? current.processingSpeed;
+          if (nextSpeed === "legacy") assertPriorityCompatibility(
             policy,
             catalog,
             config.operatorModelCeiling,
             patch.usePriorityServiceTier ?? current.usePriorityServiceTier,
             nextRevision
           );
+          else if (isProcessingSpeedMode(nextSpeed)) {
+            requireProcessingSpeedAccess(nextSpeed);
+            const eligible = listAllowedModelSelections(policy, catalog, effectiveModelCeiling(catalog, config.operatorModelCeiling, false, nextSpeed));
+            if (!eligible.length) throw new Error(`PROCESSING_SPEED_UNAVAILABLE: No allowed model supports '${nextSpeed}'. Choose a supported model and speed.`);
+            resolveTurnSpeed(eligible[0]!, nextSpeed, catalog, await settingsBackendCapabilities(config, () => backendCapabilities(upstream, config.defaultBackend)));
+          }
         }
         if (patch.modelPolicy !== undefined) patch.modelPolicy = policy;
       }
@@ -8146,6 +8203,8 @@ export function registerBridgeTools(
         userSettings.update(patch, args.expectedSettingsRevision as number);
       }
     }
+    void jobs.sweepProjectArchives();
+    jobs.refreshRetiredProjectState();
     const projectionStatus = publishTaskProjection(validatedCatalog);
     return buildSettingsView(
       config,
@@ -8153,7 +8212,8 @@ export function registerBridgeTools(
       modelCatalog,
       false,
       projectionStatus.descriptorProjectionUpdated,
-      projectionStatus.developerModeRefreshRequired
+      projectionStatus.developerModeRefreshRequired,
+      () => backendCapabilities(upstream, config.defaultBackend)
     );
   }
 
@@ -8162,7 +8222,7 @@ export function registerBridgeTools(
     {
       title: `Save ${PRODUCT_INFO.displayName} Settings`,
       description:
-        "Save or reset bridge settings from the settings card. Reset preserves registered projects; removing a registration preserves its files and work history.",
+        "Save or reset bridge settings from the settings card. Reset preserves registered projects. Archive confirms execution shutdown; delete removes Bridge sessions, assignments and execution records while preserving files, Git and original Codex/ChatGPT conversations.",
       inputSchema: settingsInput,
       outputSchema: settingsViewOutputSchema,
       annotations: {
@@ -8180,7 +8240,8 @@ export function registerBridgeTools(
         "codex/uiContractGeneration": SETTINGS_CARD_CONTRACT_GENERATION
       }
     },
-    async (args, { _meta }) => {
+    async (args, extra) => {
+      const _meta = extra.mcpReq._meta;
       return settingsViewResult(
         await applicationService.updateSettings(args),
         metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
@@ -8189,122 +8250,153 @@ export function registerBridgeTools(
     }
   );
 
-  const taskPolicyAtRegistration = userSettings.current;
-  const taskCatalogAtRegistration = modelCatalog.getCachedCatalog?.({
-    backendKind: config.defaultBackend
-  });
-
-  const codexTaskTool = server.registerTool(
+  server.registerTool(
     "codex_task",
     {
       title: "Run or Continue Codex Task",
       description:
-        "Run or continue one Codex turn in the current conversation using the selected project and saved bridge settings.",
+        "Durably admit one asynchronous Codex turn and return its exact Job identity immediately. In the default server profile, ordinary Jobs automatically attach a blank relay for current input and terminal events throughout this Activity. The relay sends references to the originating GPT; it makes no decisions. Retrieve exact original state/results and existing followup receipts before acting within the original user goal and approvals. Direct reads remain available; a host acceptance or result offer is not proof of review or goal completion. For B fixed before A use the optional approvedFollowups receipt; for a dynamic B decided after reviewing A use relayFollowup with the returned eventId, one stable logical step and reviewedVersion; retain the original Activity and choose an authorized Agent/context. Keep one requestId and identical execution payload for exact retries; query it after response loss. Different requestIds are distinct even for similar prompts or the same Activity. Honor explicit stops and new user decision or approval boundaries; B admission is not overall completion. Never replace a Job after timeout or host abort. Open Dashboard only when the user explicitly requests its display; it never sends results or starts followups. Honor relay/followup stops and explicitly finish the Activity only after the whole goal is reviewed. Historical admission policy remains interpretable without enabling retired delivery." + (config.experimentalProfile === "events" && config.eventsEnabled ? " Explicit experimental completionDelivery=events requires original OAuth scope. The returned lifecycle root monitoring action connects current input and later Events Jobs in this Activity/Agent/project; terminal-only consent needs separate exact Job subscriptions. Never fall back to another receiver." : ""),
       inputSchema: codexTaskInputSchema(config, taskExecutionEnvelopeRef()),
-      outputSchema: codexTaskOutputSchema,
+      outputSchema: config.experimentalProfile === "events" && config.eventsEnabled ? codexTaskOutputSchema : ordinaryTaskOutputSchema,
+      _meta: config.experimentalProfile === "events" ? {} : RELAY_TOOL_METADATA,
       annotations: codexTaskEnvelopeAnnotations(config)
     },
     async (args, extra) => {
+      const openingRequestId = args.requestId;
+      const output = await (async () => {
       let removeTaskAbortObserver: (() => void) | undefined;
       let releaseRuntimeAdmission: (() => void) | undefined;
       let admittedForCall = false;
       let taskScopeId: string | undefined;
-      let originWait: OriginWaitLease | undefined;
       const onTaskAdmitted = () => {
         admittedForCall = true;
-        const job = taskScopeId ? jobs.peekRequest(taskScopeId,args.requestId) : undefined;
-        if (job?.executionMode === "foreground") originWait = jobs.originWaits.beginTask(job,extra.requestId,extra.signal);
         releaseRuntimeAdmission?.();
         releaseRuntimeAdmission = undefined;
       };
-      const finishOriginTask = async (result: ToolResult): Promise<ToolResult> => {
-        const job = taskScopeId ? jobs.peekRequest(taskScopeId,args.requestId) : undefined;
-        if (!job || !originWait) return result;
-        if (["failed","interrupted","termination-failed"].includes(job.status)) await jobs.recoverAwaitedJob(job.jobId);
-        const recovery = jobs.originWaits.finish(originWait,job,jobs.admissionStateStore.automaticRecovery.list(job.scopeId));
-        if (Object.keys(recovery).length === 0) return result;
-        return {...result,...contractedToolResult(result.isError ? taskErrorResultContract : taskStateResultContract,
-          job,{...result.structuredContent,...recovery},{content:result.content},{isError:result.isError})};
-      };
       try {
-        const { _meta, signal } = extra;
+        const _meta = extra.mcpReq._meta;
+        const signal = extra.mcpReq.signal;
         const preferences = userSettings.current;
         args = normalizeCodexTaskInput(args);
+        // The explicit Events experiment keeps its existing card-free ordinary
+        // fallback; it is not an implicit relay activation or dependency.
+        if (config.experimentalProfile === "events" && !args.completionDelivery && !args.followup && !args.relayFollowup) args.inheritedCompletionDeliveryPolicy = "direct-wait";
         const scope = scopeResolver.require(
           _meta as ToolCallMetadata,
           args.scopeId,
           "Codex task execution"
         );
         taskScopeId = scope.scopeId;
+        args.mcpPrincipal = authenticatedMcpPrincipal(extra);
+        const lifecycle = jobs.admissionStateStore.projectLifecycle;
+        if (lifecycle.receipt("task", scope.scopeId, args.requestId)) {
+          lifecycle.assertRequest(
+            "task-envelope-v1", scope.scopeId, args.requestId,
+            taskRequestEnvelopeHash(args, scope.scopeId)
+          );
+          lifecycle.assertRequest("task", scope.scopeId, args.requestId);
+        }
+        if (args.relayFollowup) {
+          if (scope.source !== "host-metadata") throw new Error("RELAY_HOST_SCOPE_REQUIRED: Dynamic relay steps require the originating host conversation.");
+          if (args.followup || args.completionDelivery === "events") throw new Error("FOLLOWUP_ADMISSION_CONFLICT: Choose one ordinary followup identity.");
+          const identity = jobs.admissionStateStore.taskFollowups.dynamicIdentity(scope.scopeId, args.relayFollowup);
+          args.requestId = identity.requestId;
+          if (args.agent?.mode === "new" && !args.agent.name) args.agentName = defaultTaskAgentName(args.requestId);
+          const receipt = jobs.admissionStateStore.taskFollowups.get(identity.followupId);
+          const envelope = taskRequestEnvelopeHash(args, scope.scopeId);
+          if (receipt && (receipt.scopeId !== scope.scopeId || receipt.mcpPrincipal !== args.mcpPrincipal ||
+              receipt.dynamic?.payloadSha256 !== envelope)) throw new Error("FOLLOWUP_ADMISSION_CONFLICT: This dynamic step is already bound to a different payload.");
+          if (receipt?.admittedJobId) {
+            const prior = retainedFollowupReplay(jobs, scope.scopeId, identity.requestId);
+            if (!prior) throw new Error("TASK_RESULT_EXPIRED: The step already ran; preserve its admission receipt.");
+            return resultForJob(prior, config.jobStaleAfterMs, preferences, jobs);
+          }
+          if (config.experimentalProfile === "events") throw new Error("RELAY_DELIVERY_UNAVAILABLE: New dynamic relay admission requires the ordinary server profile.");
+          const parent = jobs.admissionStateStore.relay.requireFollowup(args.relayFollowup.eventId,
+            { scopeId: scope.scopeId, mcpPrincipal: args.mcpPrincipal }, args.relayFollowup.reviewedVersion);
+          if (args.activity?.mode !== "existing" || args.activity.id !== parent.activityId) throw new Error("FOLLOWUP_OWNER_REQUIRED: Dynamic steps must retain the original Activity.");
+        }
+        if (args.followup) {
+          args = resolveApprovedFollowup(args, jobs, scope.scopeId);
+          if (args.inheritedCompletionDeliveryPolicy === "relay-card" && scope.source !== "host-metadata") throw new Error("RELAY_HOST_SCOPE_REQUIRED: Relay followups require the originating host conversation.");
+          const prior = retainedFollowupReplay(jobs, scope.scopeId, args.requestId);
+          if (prior) return resultForJob(prior, config.jobStaleAfterMs, preferences, jobs);
+        }
+        if (args.completionDelivery === "events") {
+          const hostScope = scopeResolver.resolve(_meta as ToolCallMetadata);
+          if (config.experimentalProfile !== "events" || !config.eventsEnabled || !config.oauth || !args.mcpPrincipal || !hostScope ||
+              hostScope.source !== "host-metadata" || hostScope.scopeId !== scope.scopeId) {
+            throw new Error("EVENTS_DELIVERY_UNAVAILABLE: Events admission requires enabled Events, OAuth authentication and original host conversation metadata.");
+          }
+        }
+        if (testTaskReadStorageError) {
+          const code = testTaskReadStorageError;
+          testTaskReadStorageError = undefined;
+          delete process.env.CODEX_MCP_BRIDGE_TEST_TASK_READ_STORAGE_ERROR;
+          throw Object.assign(
+            new Error("Injected non-transaction task read storage failure."),
+            { code }
+          );
+        }
         const onAbort = () => {
-          const running = jobs.peekRequest(scope.scopeId, args.requestId);
-          if (!running || running.executionMode !== "foreground") return;
+          const admitted = jobs.peekRequest(scope.scopeId, args.requestId);
+          if (!admitted) return;
           jobs.recordTransportObservation({
             kind: "mcp-handler-aborted",
             scopeId: scope.scopeId,
-            jobId: running.jobId,
-            activityId: running.activityId,
+            jobId: admitted.jobId,
+            activityId: admitted.activityId,
             toolName: "codex_task",
-            callerRequestDigest: correlationDigest("mcp-request", extra.requestId),
-            reasonCode: "foreground-call-detached"
+            callerRequestDigest: correlationDigest("mcp-request", extra.mcpReq.id),
+            reasonCode: "task-call-detached"
           });
         };
         signal?.addEventListener("abort", onAbort, { once: true });
         removeTaskAbortObserver = () => signal?.removeEventListener("abort", onAbort);
-        resolveImplicitTaskAgent(args, jobs, scope.scopeId);
-        const existingV4Request = jobs.peekRequest(scope.scopeId, args.requestId);
-        if (
-          existingV4Request?.requestHashVersion === 6 ||
-          existingV4Request?.requestHashVersion === 7 ||
-          existingV4Request?.requestHashVersion === 5
-        ) {
-          const replayRouting = existingV4Request.requestHashVersion === 5
-            ? resolveTaskReplayRoutingV5(args, scope.scopeId, existingV4Request)
-            : resolveTaskReplayRoutingV4(args, scope.scopeId, existingV4Request);
-          const replay = jobs.findRequest(
-            replayRouting.scopeId,
-            replayRouting.requestId,
-            replayRouting.requestHash
-          );
-          if (replay) {
-            return resultForJob(replay, config.jobStaleAfterMs, preferences, jobs);
-          }
-          throw new Error("Persisted Codex task replay registration disappeared.");
-        }
-        // Only exact already-admitted retries above may carry the retired
-        // permission field. Never reinterpret a cached restricted request as
-        // a new task under a more permissive bridge setting.
-        if (args.sandbox !== undefined) {
+        const existingRequest = jobs.peekRequest(scope.scopeId, args.requestId);
+        if (existingRequest && (existingRequest.completionDeliveryPolicy === "relay-card" || jobs.admissionStateStore.relay.registration(existingRequest.jobId)) &&
+            (scope.source !== "host-metadata" || existingRequest.mcpPrincipal !== args.mcpPrincipal)) throw scopedHandleUnavailable("job");
+        if (!existingRequest && jobs.admissionStateStore.getArchivedJobAdmissionReceipt(
+          scope.scopeId,
+          { kind: "request", requestId: args.requestId }
+        )) {
           throw new Error(
-            "TASK_PERMISSION_INPUT_RETIRED: Task permissions are owned by the bridge settings. This cached request contains a retired sandbox field and admitted no work. Refresh tool discovery; new task calls contain no permission fields. Do not automatically strip a denied request's restriction to retry."
+            "TASK_RESULT_EXPIRED: This requestId already admitted a terminal Codex Job outside the registry. Read codex_status query kind='request' for its admission fact and any detail retained by the configured history policy. Use a new requestId only for a newly authorized logical turn."
           );
         }
+        if (existingRequest && existingRequest.requestHashVersion !== CURRENT_TASK_REQUEST_HASH_VERSION) {
+          throw new Error(
+            "TASK_REPLAY_VERSION_UNSUPPORTED: This requestId belongs to a retired task contract. Read the existing Job with codex_status query kind='request' before considering a new logical turn."
+          );
+        }
+        const requestEnvelopeHash = taskRequestEnvelopeHash(args, scope.scopeId);
+        if (existingRequest?.requestEnvelopeHash) {
+          if (existingRequest.requestEnvelopeHash !== requestEnvelopeHash) {
+            throw new Error("requestId was already used for a different Codex task in this scope.");
+          }
+          // Preserve the existing v6 stale-project-selector contract. Historical
+          // work remains readable by Job/status handles without re-execution.
+          if (args.project) userSettings.resolveProject(args.project);
+          return resultForJob(existingRequest, config.jobStaleAfterMs, preferences, jobs);
+        }
+        args.admittedRequestEnvelopeHash = requestEnvelopeHash;
         admitTaskContractForNewCall({
           args,
           executionEnvelopeRef: taskExecutionEnvelopeRef(),
           executionPolicyRef: currentTaskAdmissionRef(preferences)
         });
-        if (args.projectLookup !== undefined) {
-          if (args.project !== undefined) {
-            throw new Error(
-              "PROJECT_LOOKUP_CONFLICT: projectLookup is a no-work discovery request and cannot be combined with project."
-            );
-          }
-          return projectLookupResult(args.projectLookup.name, userSettings);
+        if (!existingRequest) releaseRuntimeAdmission = acquireRuntimeAdmission();
+        if (!existingRequest) {
+          await config.codexService?.assertCurrentAdmission();
+          jobs.resumeAuthorizedRecoveries();
         }
-
-        const existingRequest = jobs.peekRequest(scope.scopeId, args.requestId);
-        if (existingRequest) {
-          throw new Error(
-            "TASK_REPLAY_VERSION_UNSUPPORTED: This requestId belongs to a retired task contract. Use a new requestId and the current descriptor."
-          );
-        }
-        const activityRequest = validateActivityTaskRequest(args, jobs, scope.scopeId);
-        const agentResolution = resolveAgentForTask(args, jobs, scope.scopeId, activityRequest);
-        validateTaskSelectionInput(args, preferences, activityRequest, agentResolution);
+        resolveImplicitTaskAgent(args, jobs, scope.scopeId);
+        const requestedActivity = validateActivityTaskRequest(args, jobs, scope.scopeId);
+        const agentResolution = resolveAgentForTask(args, jobs, scope.scopeId, requestedActivity);
+        validateTaskSelectionInput(args, preferences, requestedActivity, agentResolution);
         if (
           args.project === undefined &&
-          (activityRequest.activityId === undefined || agentResolution.contextMode === "fresh")
+          (requestedActivity.activityId === undefined || agentResolution.contextMode === "fresh")
         ) {
           // Distinguish an empty registry (setup required) from an omitted
           // selection (project required), without ever choosing a fallback.
@@ -8321,16 +8413,14 @@ export function registerBridgeTools(
           jobs,
           sessions,
           userSettings,
-          activityRequest,
+          activityRequest: requestedActivity,
           agentResolution
         });
-        const executionMode = resolveTaskExecutionMode(activityRequest, jobs);
+        const activityRequest = requestedActivity;
 
         if (scope.scopeId === LEGACY_SCOPE_ID && agentResolution.contextMode === "fresh") {
           throw new Error("The legacy scope cannot create a fresh bridge Agent thread.");
         }
-        releaseRuntimeAdmission = acquireRuntimeAdmission();
-
         if (agentResolution.contextMode === "fresh") {
           const backendHandoff = resolveBackendHandoff({
             args,
@@ -8391,8 +8481,9 @@ export function registerBridgeTools(
             requireSameCwd: true
           });
           await enforceSensitiveFilePreflight(config, cwd, "run Codex");
-          const routing = resolveTaskRoutingV4({
+          const routing = resolveTaskRouting({
             args,
+            activityRequest,
             scopeId: scope.scopeId,
             projectRequest: args.project,
             projectId: projectAdmission?.projectId,
@@ -8400,7 +8491,6 @@ export function registerBridgeTools(
             sandbox,
             operation: "start",
             backendKind: config.defaultBackend,
-            executionMode,
             effectiveSelection: decision.effectiveSelection,
             agentId: agentResolution.agent?.agentId,
             contextMode: "fresh",
@@ -8414,10 +8504,9 @@ export function registerBridgeTools(
           if (replay) {
             return resultForJob(replay, config.jobStaleAfterMs, preferences, jobs);
           }
-          return await finishOriginTask(await startNewSession({
+          return await startNewSession({
             args,
             routing,
-            executionMode,
             requestedMode: "new",
             reason: activityRequest.activityId ? "activity-no-compatible" : "activity-new",
             config,
@@ -8443,7 +8532,7 @@ export function registerBridgeTools(
             },
             preflightDone: true,
             onAdmitted: onTaskAdmitted
-          }));
+          });
         }
 
         if (!agentResolution.agent) {
@@ -8509,8 +8598,9 @@ export function registerBridgeTools(
           userSettings,
           requireSameCwd: false
         });
-        const routing = resolveTaskRoutingV4({
+        const routing = resolveTaskRouting({
           args,
+          activityRequest,
           scopeId: scope.scopeId,
           projectRequest: args.project,
           projectId: projectAdmission?.projectId,
@@ -8518,7 +8608,6 @@ export function registerBridgeTools(
           sandbox: session.sandbox,
           operation: agentResolution.contextMode === "continue" ? "continue" : "start",
           backendKind: session.backendKind,
-          executionMode,
           effectiveSelection: executionDecision.effectiveSelection,
           agentId: agentResolution.agent.agentId,
           contextMode: agentResolution.contextMode,
@@ -8533,13 +8622,13 @@ export function registerBridgeTools(
           return resultForJob(replay, config.jobStaleAfterMs, preferences, jobs);
         }
         if (agentResolution.contextMode === "fork") {
-          return await finishOriginTask(await forkTrackedSession({
+          return await forkTrackedSession({
             prompt: args.prompt,
             session,
             routing,
-            executionMode,
             config,
             upstream,
+            modelCatalog,
             sessions,
             jobs,
             preferences,
@@ -8552,18 +8641,19 @@ export function registerBridgeTools(
             executionPolicyRef: taskAdmissionPolicyRef(args),
             executionPolicyCatalogFingerprint: executionDescriptorCatalogFingerprint,
             projectRequest: args.project,
+            requestEnvelopeHash: args.admittedRequestEnvelopeHash,
             onAdmitted: onTaskAdmitted
-          }));
+          });
         }
-        return await finishOriginTask(await continueTrackedSession({
+        return await continueTrackedSession({
           prompt: args.prompt,
           requestedMode: "continue",
           reason: "activity-compatible",
           session,
           routing,
-          executionMode,
           config,
           upstream,
+          modelCatalog,
           sessions,
           jobs,
           preferences,
@@ -8577,16 +8667,19 @@ export function registerBridgeTools(
           executionPolicyRef: taskAdmissionPolicyRef(args),
           executionPolicyCatalogFingerprint: executionDescriptorCatalogFingerprint,
           projectRequest: args.project,
+          requestEnvelopeHash: args.admittedRequestEnvelopeHash,
           onAdmitted: onTaskAdmitted
-        }));
+        });
       } catch (error) {
+        try {
+          runtimeOptions.onOperationFailure?.(error);
+        } catch {
+          // Storage observation cannot replace the task's structured error.
+        }
         const admitted = admittedForCall && taskScopeId ? jobs.peekRequest(taskScopeId, args.requestId) : undefined;
-        if (admitted) return await finishOriginTask(resultForJob(admitted, config.jobStaleAfterMs, userSettings.current, jobs, false));
+        if (admitted) return resultForJob(admitted, config.jobStaleAfterMs, userSettings.current, jobs, false);
         if (error instanceof ExecutionPolicyChangedError) {
-          return executionPolicyChangedResult(
-            error,
-            args.taskContractVersion !== CODEX_TASK_INPUT_CONTRACT_VERSION
-          );
+          return executionPolicyChangedResult(error);
         }
         if (error instanceof ExecutionEnvelopeChangedError) {
           return executionEnvelopeChangedResult(error);
@@ -8598,10 +8691,7 @@ export function registerBridgeTools(
           return backendHandoffContractErrorResult(error);
         }
         if (error instanceof ModelPolicyError) {
-          return modelPolicyErrorResult(
-            error,
-            args.taskContractVersion === CODEX_TASK_INPUT_CONTRACT_VERSION
-          );
+          return modelPolicyErrorResult(error);
         }
         if (
           error instanceof Error &&
@@ -8618,56 +8708,32 @@ export function registerBridgeTools(
           error instanceof Error &&
           error.message.startsWith(`${PROJECT_REGISTRY_CHANGED}:`)
         ) {
-          return projectSelectionChangedResult(
-            error.message,
-            args.taskContractVersion === CODEX_TASK_INPUT_CONTRACT_VERSION,
-            userSettings,
-            args.project
-          );
+          return projectSelectionChangedResult(error.message, userSettings, args.project);
         }
         if (
           error instanceof Error &&
           error.message.startsWith("PROJECT_REQUIRED:")
         ) {
-          return projectSelectionRequiredResult(
-            error.message,
-            args.taskContractVersion === CODEX_TASK_INPUT_CONTRACT_VERSION,
-            userSettings
-          );
+          return projectSelectionRequiredResult(error.message, userSettings);
         }
         return taskPreflightErrorResult(errorFromException(error));
       } finally {
-        jobs.originWaits.abandon(originWait);
         releaseRuntimeAdmission?.();
         removeTaskAbortObserver?.();
       }
+      })();
+      return config.experimentalProfile === "events" ? output : relayToolResult(output, jobs.admissionStateStore, openingRequestId);
     }
   );
-  const descriptorBinding = descriptorCoordinator.attach(
-    server,
-    codexTaskTool,
-    taskDescriptorSnapshot(taskPolicyAtRegistration, taskCatalogAtRegistration),
-    { notificationEligible: sharedDescriptorCoordinator === undefined }
-  );
-  descriptorCoordinator.setReconcileHook(() => {
-    return taskDescriptorSnapshot(
-      userSettings.current,
-      modelCatalog.getCachedCatalog?.({ backendKind: config.defaultBackend })
-    );
-  });
-  const unsubscribeCatalog = ownsDescriptorCoordinator
-    ? modelCatalog.subscribe?.((event) => {
-        if (event.backendKind === config.defaultBackend) publishTaskProjection(event.snapshot);
-      })
-    : undefined;
   server.registerTool("codex_ui_read", {
-    title: "Read Card Data", description: "App-only data reads for overview, settings, question cards, and selected work details. Each view retains its own scope and proof checks.",
-    inputSchema: objectSchemaUnion([
+    title: "Read Card Data", description: "App-only data reads for Dashboard, Settings, and selected work details. Each view retains its own scope and proof checks.",
+    inputSchema: z.union([
       dashboardSnapshotInput.extend({ view: z.literal("dashboard") }),
+      dashboardHistoryDetailInput,
+      dashboardExecutionDetailInput,
       settingsSnapshotInput.extend({ view: z.literal("settings") }),
-      questions.questionCardInputSchema.extend({ view: z.literal("question") }),
+      modelDescriptionHistoryInput,
       controlDetailInput,
-      historyDetailInput,
       problemControlDetailInput
     ]),
     outputSchema: APP_ONLY_OUTPUT_SCHEMAS.codex_ui_read,
@@ -8675,131 +8741,222 @@ export function registerBridgeTools(
     _meta: { ui: { visibility: ["app"] }, "openai/visibility": "private", "openai/widgetAccessible": true }
   }, async (args, extra) => {
     if (args.view === "problem-control") return readProblemControl(args,extra);
-    if (args.view === "history") return readHistoryControl(args, extra);
     if (args.view === "control") return readControl(args, extra);
+    if (args.view === "dashboard-execution") return readDashboardExecutionDetail(args,extra);
+    if (args.view === "dashboard-history") return readDashboardHistoryDetail(args, extra);
     if (args.view === "dashboard") { const { view, ...input } = args; return readDashboard(input, extra); }
     if (args.view === "settings") { const { view, ...input } = args; return readSettings(input, extra); }
-    const { view, ...input } = args; return questions.readCard(input, extra);
+    if (args.view === "model-description-history") return readModelDescriptionHistory(args, extra);
+    throw new Error("UI_VIEW_UNSUPPORTED: Refresh the card and choose a supported view.");
   });
   server.registerTool("codex_ui_problem", {
-    title:"Review Problems",description:"App-only execution review, undo, non-loading status recheck, or an explicitly confirmed retry of failed termination. The complete selection and action require a fresh mounted-card proof.",
+    title:"Review Problems",description:"App-only execution review, undo, non-loading status recheck, and confirmed retry of failed termination. Every mutation requires a fresh mounted-card proof.",
     inputSchema:problemActionSchema.safeExtend({token:z.string().max(32768),widgetInstanceId:widgetInstanceIdSchema,scopeId:scopeIdSchema().optional()}),
-    outputSchema:problemActionResultSchema,
+    outputSchema:APP_ONLY_OUTPUT_SCHEMAS.codex_ui_problem,
     annotations:{readOnlyHint:false,destructiveHint:true,idempotentHint:true,openWorldHint:false},
     _meta:{ui:{visibility:["app"]},"openai/visibility":"private","openai/widgetAccessible":true}
   },async (args,extra) => {
-    const host = scopeResolver.resolve(extra._meta as ToolCallMetadata,args.scopeId);
-    const widget = mountedWidgetInstanceId(args,extra._meta);
+    const problemArgs = problemActionSchema.safeExtend({
+      token:z.string().max(32768),
+      widgetInstanceId:widgetInstanceIdSchema,
+      scopeId:scopeIdSchema().optional()
+    }).parse(args);
+    const host = scopeResolver.resolve(extra.mcpReq._meta as ToolCallMetadata,problemArgs.scopeId);
+    const widget = mountedWidgetInstanceId(problemArgs,extra.mcpReq._meta);
     if (!widget) throw new Error("MOUNTED_WIDGET_REQUIRED: Refresh the problem list.");
-    const claims = reviewProofs.require(args.token,widget,host?.scopeId,args);
-    const {token,widgetInstanceId,scopeId,...input} = args;
+    const claims = reviewProofs.require(problemArgs.token,widget,host?.scopeId,problemArgs);
+    const {token,widgetInstanceId,scopeId,...input} = problemArgs;
     const result = await applicationService.problemAction!(input,claims.selectedScopeId || undefined,"widget-control");
     return {content:[{type:"text",text:"Problem action completed."}],structuredContent:result};
   });
-  server.registerTool("codex_ui_history", {
-    title:"Acknowledge Execution History",description:"App-only acknowledgement of a selected failed or interrupted execution.",
-    inputSchema:withJsonSchemaProjection(
-      dashboardHistoryRuntimeInput.extend({token:z.string().max(32768),widgetInstanceId:widgetInstanceIdSchema,scopeId:scopeIdSchema().optional()}),
-      dashboardHistoryActionInput.extend({token:z.string().max(32768),widgetInstanceId:widgetInstanceIdSchema,scopeId:scopeIdSchema().optional()})
-    ),
-    outputSchema:z.strictObject({ok:z.literal(true)}),
-    annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true,openWorldHint:false},
-    _meta:{ui:{visibility:["app"]},"openai/visibility":"private","openai/widgetAccessible":true}
-  },async (args,extra) => {
-    const host = scopeResolver.resolve(extra._meta as ToolCallMetadata,args.scopeId);
-    const widget = mountedWidgetInstanceId(args,extra._meta);
-    if (!widget) throw new Error("CARD_LEASE_REQUIRED: Refresh this history row.");
-    const claims = controlProofs.require(args.token,widget,host?.scopeId);
-    if (claims.purpose !== "history" || claims.historyRevision !== args.expectedRevision || dashboardRowKey(claims.agentId) !== args.rowKey) {
-      throw new Error("HISTORY_TARGET_CHANGED: Refresh the selected execution.");
-    }
-    const {token,widgetInstanceId,scopeId,...input} = args;
-    const result = await applicationService.historyAction!(input);
-    return {content:[{type:"text",text:"History updated."}],structuredContent:result};
-  });
-  server.registerTool("codex_ui_stop", {
-    title: "Stop Work from a Card", description: "App-only cancellation of an active Job or termination of idle background processes. Target-specific ownership, version, state, and proof checks apply.",
-    inputSchema: objectSchemaUnion([
-      cardJobStopInput.extend({ kind: z.literal("job") }),
-      backgroundProcessStopInput.extend({ kind: z.literal("process") })
-    ]), outputSchema: mutationOutputSchema,
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-    _meta: { ui: { visibility: ["app"] }, "openai/visibility": "private", "openai/widgetAccessible": true }
-  }, async (args, extra) => {
-    if (args.kind === "job") { const { kind, ...input } = args; return stopCardJob(input, extra); }
-    const { kind, ...input } = args; return stopBackgroundProcess(input, extra);
-  });
-
-  configureAutomaticRecovery(jobs,upstream,applicationService);
+  configureAutomaticRecovery(jobs,upstream,applicationService,acceptingNewJobs);
   return {
     applicationService,
-    reconcileTaskDescriptor: publishTaskProjection,
-    markTaskDescriptorNotificationEligible: () =>
-      descriptorBinding.setNotificationEligible(true),
-    dispose: () => {
-      unsubscribeCatalog?.();
-      descriptorBinding.detach();
-      if (ownsDescriptorCoordinator) descriptorCoordinator.dispose();
-    }
+    dispose: () => undefined
   };
 }
 
-function recheckRecoveryIdentity(jobs: CodexJobRegistry, agent: BridgeAgent,
-  latest = jobs.observedLatestJobForAgent(agent.agentId)): AutomaticRecoveryCandidate {
-  return {key:automaticRecoveryKey("recheck",[agent.agentId,agent.version,latest?.jobId]),
-    scopeId:agent.scopeId,agentId:agent.agentId,jobId:agent.currentJobId || latest?.jobId,kind:"recheck"};
+function recheckRecoveryIdentity(jobs: CodexJobRegistry, agent: BridgeAgent, handoff=false): AutomaticRecoveryCandidate | undefined {
+  const latestControl=jobs.admissionStateStore.latestControlJob(agent.agentId);
+  const control=latestControl?.threadId === (agent.currentThreadId || null) ? latestControl : undefined;
+  const identity:AutomaticRecoveryCandidate={key:automaticRecoveryKey("recheck",[agent.agentId,control?.jobId,agent.currentThreadId]),
+    scopeId:agent.scopeId,agentId:agent.agentId,jobId:agent.currentJobId || control?.jobId,kind:"recheck"};
+  return jobs.admissionStateStore.automaticRecovery.handoffRecheckIdentity(identity,handoff);
 }
 
-function configureAutomaticRecovery(jobs: CodexJobRegistry, upstream: CodexUpstream, service: BridgeApplicationService): void {
+function freshPositiveRuntime(entry: DashboardRuntimeCacheEntry | undefined, stamp:string): boolean {
+  const now=Date.now();
+  return Boolean(entry && entry.stamp===stamp && entry.retainUntil>now &&
+    (entry.observation.state==="busy" && (entry.livenessFreshUntil || 0)>now ||
+      entry.observation.backgroundProcessCount>0 && entry.freshUntil>now));
+}
+
+/** Worker exit plus a fresh non-loading process read can finish a stranded
+ * lifecycle without editing past failures or spending another recovery attempt. */
+export async function settleReleasedOrphan(jobs: CodexJobRegistry, upstream: CodexUpstream,
+  agentId: string): Promise<boolean> {
+  const store=jobs.admissionStateStore,agent=jobs.getAgent(agentId),thread=jobs.currentAgentThread(agentId);
+  const admission=jobs.runtimeAdmission;
+  if (!agent || agent.lifecycle!=="orphaned" || agent.currentJobId || !thread || thread.backendKind!=="app-server" ||
+      !admission.acceptingNewJobs || admission.pendingAdmissions>0 || !upstream.listLoadedBackgroundTerminals) return false;
+  const connection=store.threadConnections.get(thread.threadId),control=store.latestControlJob(agentId);
+  if (connection?.agentId!==agentId || connection.scopeId!==agent.scopeId || connection.phase!=="released" ||
+      connection.evidence!=="worker-exited" || connection.handoffRequested || store.threadConnections.hasUnfinishedWork(thread.threadId)) return false;
+  const cacheKey=dashboardRuntimeCacheKey(thread),before=dashboardRuntimeCaches.get(upstream)?.get(cacheKey);
+  if (freshPositiveRuntime(before,dashboardRuntimeStamp(agent,jobs.observedLatestJobForAgent(agentId)))) return false;
+  const admissionRevision=admission.admissionRevision;
+  let settled=false;
+  const read=runtimeReadPool(upstream).start(`orphan-end\0${agentId}\0${agent.version}\0${connection.revision}`,
+    async isCurrent=> {
+      const result=await inspectDashboardRuntime(upstream,{agentId,thread,stamp:dashboardRuntimeStamp(agent),inspectLiveness:false},isCurrent);
+      // null proves the Thread is unloaded. [] only proves that a loaded
+      // Thread has no background terminals; a foreground turn can still run.
+      if (result.observation.state==="confirmed" && result.observation.backgroundProcessState==="confirmed" &&
+          result.observation.backgroundProcessCount===0) {
+        result.observation.state="unknown";
+        if (isCurrent() && upstream.probeThread) {
+          result.requests++;
+          try {
+            const probe=await upstream.probeThread(thread.threadId,thread.backendKind as CodexBackendKind);
+            if (isCurrent() && probe.state==="resumable" && ["idle","notLoaded"].includes(probe.runtimeStatus || "")) {
+              result.observation.state=probe.runtimeStatus==="notLoaded" ? "not-loaded" : "idle";
+              // An active turn can start a terminal while becoming idle.
+              // Refresh the background list after the foreground observation.
+              result.requests++;
+              const terminals=await upstream.listLoadedBackgroundTerminals!(thread.threadId,thread.backendKind as CodexBackendKind);
+              result.observation.backgroundProcessCount=terminals?.length || 0;
+              if (terminals===null) result.observation.state="not-loaded";
+              if (!isCurrent()) result.observation.state="unknown";
+            }
+          } catch { result.observation.state="unknown"; }
+        }
+      }
+      return result;
+    },
+    result=> {
+      if (admission.pendingAdmissions>0 || !admission.acceptingNewJobs || admission.admissionRevision!==admissionRevision ||
+          dashboardRuntimeCaches.get(upstream)?.get(cacheKey)!==before ||
+          result.observation.backgroundProcessState!=="confirmed" || result.observation.backgroundProcessCount!==0 ||
+          !["idle","not-loaded"].includes(result.observation.state)) return;
+      settled=Boolean(jobs.settleEndedOrphan({agentId,version:agent.version,threadId:thread.threadId,
+        connectionRevision:connection.revision,controlJobId:control?.jobId}));
+      if (settled) {
+        runtimeReadPool(upstream).invalidate(key=>key!==`orphan-end\0${agentId}\0${agent.version}\0${connection.revision}` &&
+          (key.includes(cacheKey) || key.startsWith(`problem\0${agentId}\0`)));
+        dashboardRuntimeCaches.get(upstream)?.delete(cacheKey);
+        notifyCardObservation(upstream);
+      }
+    });
+  if (!read) return false;
+  await waitForDisplay(read,CARD_RUNTIME_BUDGET_MS);
+  return settled;
+}
+
+/** An unavailable historical thread is a display limitation, not a new
+ * incident. Keep investigating actual work and connections whose shutdown
+ * is still unconfirmed, independently of whether their Job history expired. */
+function hasCurrentRecheckContext(jobs: CodexJobRegistry, agent: BridgeAgent,
+  thread: BridgeAgentThread, observation?: DashboardRuntimeObservation, knownConnection?: ThreadConnectionRecord): boolean {
+  const store=jobs.admissionStateStore;
+  const connection=knownConnection || store.threadConnections.get(thread.threadId);
+  if (connection?.agentId===agent.agentId && connection.scopeId===agent.scopeId &&
+      connection.phase!=="released" && !connection.evidence) return true;
+  return store.threadConnections.hasUnfinishedWork(thread.threadId) ||
+    observation?.state==="busy" || (observation?.backgroundProcessCount || 0)>0;
+}
+
+export function configureAutomaticRecovery(
+  jobs: CodexJobRegistry,
+  upstream: CodexUpstream,
+  service: BridgeApplicationService,
+  acceptingNewJobs: () => boolean
+): void {
   const store = jobs.admissionStateStore;
-  const candidates = (): AutomaticRecoveryCandidate[] => {
-    if (!jobs.runtimeAdmission.acceptingNewJobs || jobs.runtimeAdmission.pendingAdmissions > 0) return [];
-    const latestByAgent = new Map<string, CodexJob>();
-    for (const job of jobs.list(jobs.size)) {
-      if (!job.agentId) continue;
-      const previous = latestByAgent.get(job.agentId);
-      if (!previous || job.createdAt > previous.createdAt) latestByAgent.set(job.agentId, job);
+  const settling=new Set<string>();
+  // Survey deferral is independent of whether a physical read slot was
+  // obtained. Only the same authoritative execution/connection generation
+  // may retain this preservation contract during missing-record reconciliation.
+  const settlementDeferred=new Map<string,{scopeId:string;threadId:string;connectionRevision:number;controlJobId?:string}>();
+  const candidates = async (agentId?: string): Promise<AutomaticRecoveryCandidate[]> => {
+    if (!acceptingNewJobs() || jobs.runtimeAdmission.pendingAdmissions > 0) return [];
+    // Production reconciliation passes exactly one Agent. No changed-Agent
+    // event may materialize the global Job, incident, or connection catalog.
+    if (!agentId) return [];
+    settlementDeferred.delete(agentId);
+    const agent = jobs.getAgent(agentId);
+    if (!agent) return [];
+    const latest = jobs.observedLatestJobForAgent(agentId);
+    const current = agent.currentJobId ? jobs.get(agent.currentJobId) : undefined;
+    const thread = jobs.currentAgentThread(agentId);
+    if (!thread || thread.backendKind !== "app-server") return [];
+    const connection = store.threadConnections.get(thread.threadId);
+    const observation = dashboardRuntimeCaches.get(upstream)?.get(dashboardRuntimeCacheKey(thread));
+    const currentObservation=observation?.stamp===dashboardRuntimeStamp(agent,latest) ? observation : undefined;
+    if (agent.lifecycle==="idle" && connection?.phase==="released" && connection.evidence==="worker-exited" &&
+        store.hasEndedOrphanProof(agentId)) return [];
+    if (agent.lifecycle==="orphaned" && !agent.currentJobId && upstream.listLoadedBackgroundTerminals &&
+        !freshPositiveRuntime(currentObservation,dashboardRuntimeStamp(agent,latest)) &&
+        connection?.agentId===agentId && connection.scopeId===agent.scopeId && connection.phase==="released" &&
+        connection.evidence==="worker-exited" && !connection.handoffRequested && !store.threadConnections.hasUnfinishedWork(thread.threadId)) {
+      settlementDeferred.set(agentId,{scopeId:agent.scopeId,threadId:thread.threadId,connectionRevision:connection.revision,
+        controlJobId:store.latestControlJob(agentId)?.jobId});
+      // The controller serializes surveys; the current survey's marker is
+      // always newest. Bound remembered deferrals independently of registry size.
+      if (settlementDeferred.size>128) settlementDeferred.delete(settlementDeferred.keys().next().value!);
+      // Display/transport waits own a bounded pool reservation, never the
+      // global serial recovery sweep. Completion retains the same CAS fences.
+      if (!settling.has(agentId)) {
+        settling.add(agentId);
+        void settleReleasedOrphan(jobs,upstream,agentId).catch(()=>false).finally(()=>settling.delete(agentId));
+      }
+      return [];
     }
+    const releasableConnection = connection?.persistence === "persistent" &&
+      connection.lastJobId && !["released", "releasing"].includes(connection.phase)
+      ? connection : undefined;
+    const currentContext=hasCurrentRecheckContext(jobs,agent,thread,currentObservation?.observation,connection);
+    const unknown = currentObservation &&
+      (currentObservation.unavailable || currentObservation.observation.state === "unknown" || currentObservation.observation.backgroundProcessState === "unknown");
+    const unresolvedOrphan = agent.lifecycle === "orphaned" && !store.workHistory.runtimeResolution(
+      agent.agentId,dashboardRuntimeProblemIdentity(jobs,agent).revision);
+    const discover=Boolean(unknown || unresolvedOrphan) && currentContext;
+    const recheckIdentity = recheckRecoveryIdentity(jobs, agent,discover);
+    const couldRelease = releasableConnection &&
+      !store.automaticRecovery.isBlocked(automaticRecoveryKey("release",
+        [releasableConnection.threadId,releasableConnection.lastJobId]));
+    if (recheckIdentity && store.automaticRecovery.isBlockedRecheckIdentity(recheckIdentity.key) && !couldRelease &&
+        current?.status !== "termination-failed") return [];
     const result: AutomaticRecoveryCandidate[] = [];
-    for (const agent of listAllDashboardAgents(jobs)) {
-      const thread = jobs.listAgentThreads(agent.agentId).find(thread => thread.isCurrent);
-      if (!thread || thread.backendKind !== "app-server") continue;
-      const current = agent.currentJobId ? jobs.get(agent.currentJobId) : undefined;
-      const latest = latestByAgent.get(agent.agentId);
-      if (current?.status === "termination-failed" && current.cancellationIntentId) {
-        const intent = jobs.getCancellationIntent(current.cancellationIntentId);
-        if (intent?.status === "failed" && intent.targetJobId === current.jobId && intent.scopeId === agent.scopeId &&
+    if (current?.status === "termination-failed" && current.cancellationIntentId) {
+      const intent = jobs.getCancellationIntent(current.cancellationIntentId);
+      if (intent?.status === "failed" && intent.targetJobId === current.jobId && intent.scopeId === agent.scopeId &&
           intent.source !== "assignment-containment" && current.upstreamRequestId && current.workerId && current.workerGeneration !== undefined &&
           intent.targetTurnId === current.upstreamRequestId && intent.targetThreadId === current.threadId) {
-          result.push({key:automaticRecoveryKey("retry-stop",[current.jobId,current.workerId,current.workerGeneration,current.upstreamRequestId,current.cancelRequestedAt]),
-            scopeId:agent.scopeId,agentId:agent.agentId,jobId:current.jobId,kind:"retry-stop"});
-        }
-        continue;
+        const key = automaticRecoveryKey("retry-stop",
+          [current.jobId,current.workerId,current.workerGeneration,current.upstreamRequestId,current.cancelRequestedAt]);
+        if (!store.automaticRecovery.isBlocked(key)) result.push({key,
+          scopeId:agent.scopeId,agentId:agent.agentId,jobId:current.jobId,kind:"retry-stop"});
       }
-      const observation = dashboardRuntimeCaches.get(upstream)?.get(dashboardRuntimeCacheKey(thread));
-      const unknown = observation?.stamp === dashboardRuntimeStamp(agent,latest) &&
-        (observation.unavailable || observation.observation.state === "unknown" || observation.observation.backgroundProcessState === "unknown");
-      const identity = dashboardRuntimeProblemIdentity(jobs,agent);
-      const unresolvedOrphan = agent.lifecycle === "orphaned" && !store.workHistory.runtimeResolution(agent.agentId,identity.revision);
-      // A new incident opens only on a fresh failed inspection. Cached unknown
-      // state cannot reopen a verified incident or reset its attempt budget.
-      const recheck = store.automaticRecovery.recheckCandidate(recheckRecoveryIdentity(jobs,agent,latest),Boolean(unknown || unresolvedOrphan));
-      if (recheck) result.push(recheck);
-      const connection = store.threadConnections.get(thread.threadId);
-      const retained = store.workHistory.latestJob(agent.agentId);
-      if (!current && connection?.persistence === "persistent" && connection.lastJobId && !["released","releasing"].includes(connection.phase) &&
-        retained?.jobId === connection.lastJobId && ["failed","interrupted","cancelled"].includes(retained.status) &&
+      return result;
+    }
+    const recheck = recheckIdentity && store.automaticRecovery.recheckCandidate(recheckIdentity,discover);
+    if (recheck && !store.automaticRecovery.isBlocked(recheck.key)) result.push(recheck);
+    const retained = releasableConnection && !current ? store.workHistory.latestJob(agent.agentId) : undefined;
+    if (!current && releasableConnection?.lastJobId &&
+        retained?.jobId === releasableConnection.lastJobId && ["failed","interrupted","cancelled"].includes(retained.status) &&
         !store.threadConnections.hasUnfinishedWork(thread.threadId)) {
-        result.push({key:automaticRecoveryKey("release",[thread.threadId,connection.lastJobId]),
-          scopeId:agent.scopeId,agentId:agent.agentId,jobId:connection.lastJobId,kind:"release"});
-      }
+      const key = automaticRecoveryKey("release",[thread.threadId,releasableConnection.lastJobId]);
+      if (!store.automaticRecovery.isBlocked(key)) result.push({key,
+        scopeId:agent.scopeId,agentId:agent.agentId,jobId:releasableConnection.lastJobId,kind:"release"});
     }
     return result;
   };
   const attempt = async (candidate: AutomaticRecoveryCandidate): Promise<AutomaticRecoveryResult> => {
-    if (!candidates().some(current => current.key === candidate.key)) return {resolved:false,reason:"work-changed",retryable:false};
+    if (!(await candidates(candidate.agentId)).some(current => current.key === candidate.key)) {
+      return {resolved:false,reason:"work-changed",retryable:false};
+    }
     const agent = jobs.getAgent(candidate.agentId)!;
-    const thread = jobs.listAgentThreads(agent.agentId).find(thread => thread.isCurrent)!;
+    const thread = jobs.currentAgentThread(agent.agentId)!;
     if (candidate.kind === "retry-stop") {
       const job = candidate.jobId ? jobs.get(candidate.jobId) : undefined;
       const previous = job?.cancellationIntentId ? jobs.getCancellationIntent(job.cancellationIntentId) : undefined;
@@ -8819,7 +8976,7 @@ function configureAutomaticRecovery(jobs: CodexJobRegistry, upstream: CodexUpstr
     if (candidate.kind === "recheck") {
       const identity = dashboardRuntimeProblemIdentity(jobs,agent);
       const checked = await service.problemAction!({requestId:randomUUID(),action:"recheck",
-        targets:[{problemKey:problemKey("runtime",agent.agentId),expectedRevision:identity.revision}]},agent.scopeId);
+        targets:[{problemKey:problemKey("runtime",agent.agentId),expectedRevision:identity.revision}]},agent.scopeId,"automatic");
       const fresh = jobs.getAgent(agent.agentId);
       if (!fresh || fresh.version !== agent.version) return {resolved:false,reason:"work-changed",retryable:false};
       if (checked.changed > 0) return {resolved:true,reason:"runtime-confirmed",evidence:"not-loaded-no-background"};
@@ -8836,18 +8993,44 @@ function configureAutomaticRecovery(jobs: CodexJobRegistry, upstream: CodexUpstr
     if (!connection || connection.scopeId !== agent.scopeId || connection.persistence !== "persistent" || !upstream.releaseThreadConnection) {
       return {resolved:false,reason:"release-unavailable",retryable:false};
     }
-    const eligible = new Map(candidates().filter(item => item.kind === "release").flatMap(item => {
-      const owner = jobs.getAgent(item.agentId), currentThread = jobs.listAgentThreads(item.agentId).find(thread => thread.isCurrent);
-      const connection = currentThread ? store.threadConnections.get(currentThread.threadId) : undefined;
-      return owner && connection ? [[connection.threadId,{candidate:item,agent:owner,connection}] as const] : [];
-    }));
+    if (connection.lastJobId !== candidate.jobId ||
+        automaticRecoveryKey("release",[thread.threadId,connection.lastJobId]) !== candidate.key ||
+        ["released","releasing"].includes(connection.phase)) {
+      return {resolved:false,reason:"work-changed",retryable:false};
+    }
+    // The exact incident target is authoritative even when its thread ID is
+    // beyond the bounded worker peer page. Only the additional peers are paged.
+    const peers = connection.workerPid
+      ? store.threadConnections.listForWorker(connection.workerPid,31,connection.threadId)
+      : [];
+    const eligible = new Map<string, {candidate:AutomaticRecoveryCandidate;agent:BridgeAgent;connection:ThreadConnectionRecord}>([
+      [thread.threadId,{candidate,agent,connection}]
+    ]);
+    let visitedPeers = 0;
+    for (const peerConnection of peers) {
+      if (++visitedPeers % 8 === 0) await new Promise<void>(resolve => setImmediate(resolve));
+      // A peer without a terminal Job can never yield a release incident.
+      if (!peerConnection.agentId || !peerConnection.lastJobId) continue;
+      const key = automaticRecoveryKey("release",[peerConnection.threadId,peerConnection.lastJobId]);
+      if (store.automaticRecovery.isBlocked(key)) continue;
+      const owner = jobs.getAgent(peerConnection.agentId);
+      if (!owner || owner.scopeId !== peerConnection.scopeId || owner.currentJobId) continue;
+      const currentThread = jobs.currentAgentThread(owner.agentId);
+      if (currentThread?.threadId !== peerConnection.threadId || currentThread.backendKind !== "app-server") continue;
+      const retained = store.workHistory.latestJob(owner.agentId);
+      if (retained?.jobId !== peerConnection.lastJobId ||
+          !["failed","interrupted","cancelled"].includes(retained.status) ||
+          store.threadConnections.hasUnfinishedWork(peerConnection.threadId)) continue;
+      eligible.set(peerConnection.threadId,{candidate:{key,scopeId:owner.scopeId,agentId:owner.agentId,
+        jobId:retained.jobId,kind:"release"},agent:owner,connection:peerConnection});
+    }
     const releasing = store.threadConnections.update(thread.threadId,{phase:"releasing"},Date.now(),connection.revision);
     if (!releasing) return {resolved:false,reason:"work-changed",retryable:false};
     const canRelease = (id: string) => {
       const expected = eligible.get(id);
       if (!expected) return false;
       const currentAgent = jobs.getAgent(expected.agent.agentId), current = store.threadConnections.get(id);
-      return jobs.runtimeAdmission.acceptingNewJobs && jobs.runtimeAdmission.pendingAdmissions === 0 &&
+      return acceptingNewJobs() && jobs.runtimeAdmission.pendingAdmissions === 0 &&
         currentAgent?.version === expected.agent.version && !currentAgent.currentJobId &&
         current?.revision === (id === thread.threadId ? releasing.revision : expected.connection.revision) &&
         current.lastJobId === expected.candidate.jobId && !store.threadConnections.hasUnfinishedWork(id);
@@ -8869,7 +9052,24 @@ function configureAutomaticRecovery(jobs: CodexJobRegistry, upstream: CodexUpstr
       return {resolved:false,reason:"release-unconfirmed"};
     }
   };
-  jobs.configureAutomaticRecovery({candidates,attempt,enabled:() => jobs.runtimeAdmission.acceptingNewJobs && jobs.runtimeAdmission.pendingAdmissions === 0,
+  jobs.configureAutomaticRecovery({candidates,
+    preserveMissing:record=> {
+      if (record.kind!=="recheck") return false;
+      const agent=jobs.getAgent(record.agentId);
+      if (!agent || record.scopeId!==agent.scopeId) return false;
+      // Settlement changes current control state, not any of this Agent's
+      // past incident journals, including legacy records without lineage.
+      const deferred=settlementDeferred.get(agent.agentId),connection=deferred ? store.threadConnections.get(deferred.threadId) : undefined;
+      const sameDeferredGeneration=deferred && agent.lifecycle==="orphaned" && !agent.currentJobId &&
+        deferred.scopeId===agent.scopeId && deferred.threadId===agent.currentThreadId &&
+        connection?.agentId===agent.agentId && connection.scopeId===agent.scopeId &&
+        connection.revision===deferred.connectionRevision && connection.phase==="released" && connection.evidence==="worker-exited" &&
+        store.latestControlJob(agent.agentId)?.jobId===deferred.controlJobId && !store.threadConnections.hasUnfinishedWork(deferred.threadId);
+      return Boolean(sameDeferredGeneration) || store.hasEndedOrphanProof(agent.agentId);
+    },
+    pageAgents: (after, limit) => store.recoveryAgentIds(after, limit),
+    agentForJob: jobId => jobs.get(jobId)?.agentId,
+    attempt,enabled:() => acceptingNewJobs() && jobs.runtimeAdmission.pendingAdmissions === 0,
     changed:() => notifyCardObservation(upstream)});
 }
 
@@ -8891,24 +9091,32 @@ type CodexTaskAgentInput =
   | { mode: "new"; name?: string };
 
 type CodexTaskArgs = {
+  mcpPrincipal?: string;
+  completionDelivery?: "events";
+  /** Captured from the approved predecessor receipt, never supplied by callers. */
+  inheritedCompletionDeliveryPolicy?: CompletionDeliveryPolicy;
+  /** Recovered only from a persisted v1 receipt, never from public input. */
+  legacyFollowupIdentity?: { jobId: string; stepId: string };
+  approvedFollowups?: Array<{ prompt: string }>;
+  followup?: FollowupReference;
+  relayFollowup?: DynamicFollowupReference;
   scopeId?: string;
   requestId: string;
-  taskContractVersion?: typeof CODEX_TASK_INPUT_CONTRACT_VERSION;
-  executionEnvelopeRef?: string;
-  /** Legacy descriptor input; contract v2 stores the exact runtime ref internally instead. */
-  executionPolicyRef?: string;
+  taskContractVersion: typeof CODEX_TASK_INPUT_CONTRACT_VERSION;
+  executionEnvelopeRef: string;
+  /** Private admission snapshot; never part of the MCP input contract. */
   admittedExecutionPolicyRef?: string;
-  activityPresentationId?: string;
+  admittedRequestEnvelopeHash?: string;
   prompt: string;
-  project?: RuntimeProjectSelection;
-  projectLookup?: { name: string };
+  project?: ProjectSelection;
   activity?: CodexTaskActivityInput;
   agent?: CodexTaskAgentInput;
+  selection?: ModelChoice;
+  /** Normalized private fields derived solely from the current nested input. */
   activityId?: string;
   continuationOfActivityId?: string;
   activityTitle?: string;
   activityKind?: ActivityKind;
-  executionMode?: ActivityExecutionMode;
   handoffPolicy?: ActivityHandoffPolicy;
   completionTrigger?: ActivityCompletionTrigger;
   agentId?: string;
@@ -8916,15 +9124,6 @@ type CodexTaskArgs = {
   agentRole?: string;
   contextMode?: AgentContextMode;
   handoffSummary?: string;
-  // Retained only to reconstruct persisted v2/v3 request hashes. These fields
-  // are not accepted by the current runtime input schema.
-  sessionMode?: SessionMode;
-  threadId?: string;
-  adoptThread?: boolean;
-  cwd?: string;
-  sandbox?: SandboxMode;
-  modelPolicyRevision?: number;
-  selection?: ModelChoice;
 };
 
 function normalizeCodexTaskInput(
@@ -8955,6 +9154,54 @@ function normalizeCodexTaskInput(
 
   args.agentRole ||= "primary";
   return args;
+}
+
+function retainedFollowupReplay(jobs: CodexJobRegistry, scopeId: string, requestId: string): CodexJob | undefined {
+  const live = jobs.peekRequest(scopeId, requestId);
+  if (live) return live;
+  const retained = jobs.admissionStateStore.readRetainedJobDetail(scopeId, { kind: "request", requestId });
+  return retained ? { ...retained, promise: Promise.resolve() } as unknown as CodexJob : undefined;
+}
+
+function resolveApprovedFollowup(args: CodexTaskArgs, jobs: CodexJobRegistry, scopeId: string): CodexTaskArgs {
+  const reference = args.followup!;
+  const store = jobs.admissionStateStore;
+  const receipt = store.taskFollowups.get(reference.followupId);
+  if (!receipt || receipt.scopeId !== scopeId || receipt.mcpPrincipal !== args.mcpPrincipal || receipt.promptSha256 !== promptDigest(args.prompt)) {
+    throw new Error("FOLLOWUP_NOT_APPROVED: This exact step and prompt were not approved in the original conversation.");
+  }
+  if (args.approvedFollowups || args.project || args.selection || args.handoffSummary ||
+      args.completionDelivery && receipt.completionDeliveryPolicy !== "events" ||
+      args.activity && (args.activity.mode !== "existing" || args.activity.id !== receipt.activityId) ||
+      args.agent && (args.agent.mode !== "existing" || args.agent.id !== receipt.agentId ||
+        args.agent.context && args.agent.context !== "continue")) {
+    throw new Error("FOLLOWUP_SCOPE_CHANGED: Approved followups must continue the original Activity, Agent, project and model selection.");
+  }
+  if (!receipt.admittedJobId) {
+    if (receipt.completionDeliveryPolicy === "live-card" ||
+        receipt.completionDeliveryPolicy === "events" && !jobs.experimentalEventsEnabled) {
+      throw new Error("FOLLOWUP_DELIVERY_RETIRED: This unexecuted historical approval uses a retired delivery policy. Review the original result and obtain explicit reapproval as new logical work with a fresh requestId in the original Activity and Agent. The old approval and canonical requestId remain unchanged.");
+    }
+    if (jobs.peekRequest(scopeId, receipt.requestId)) {
+      throw new Error("FOLLOWUP_ADMISSION_CONFLICT: The approved step's canonical requestId is already occupied by different work.");
+    }
+    const parent = jobs.get(receipt.parentJobId) || store.readRetainedJobDetail(scopeId, { kind: "job", id: receipt.parentJobId });
+    const offered = store.getJobCompletionDelivery(receipt.parentJobId, scopeId);
+    if (receipt.expiresAt <= Date.now() || !parent || parent.scopeId !== scopeId ||
+        parent.status !== "completed" || parent.version !== reference.reviewedVersion ||
+        !offered?.directResultOfferedAt && !offered?.completionResultOfferedAt) {
+      throw new Error("FOLLOWUP_REVIEW_REQUIRED: Retrieve and review the current exact completed predecessor before admitting its approved step.");
+    }
+  } else if (!retainedFollowupReplay(jobs, scopeId, receipt.requestId)) {
+    throw new Error("TASK_RESULT_EXPIRED: The approved step already admitted a Job whose result is no longer retained. Its canonical requestId remains reserved.");
+  }
+  return normalizeCodexTaskInput({ ...args, requestId: receipt.requestId,
+    inheritedCompletionDeliveryPolicy: receipt.completionDeliveryPolicy,
+    completionDelivery: receipt.completionDeliveryPolicy === "events" ? "events" : args.completionDelivery,
+    legacyFollowupIdentity: receipt.stepId === undefined ? undefined : { jobId: receipt.parentJobId, stepId: receipt.stepId },
+    activity: { mode: "existing", id: receipt.activityId },
+    agent: { mode: "existing", id: receipt.agentId, context: "continue" },
+    agentName: undefined, contextMode: "continue" });
 }
 
 function resolveImplicitTaskAgent(
@@ -9063,8 +9310,8 @@ function resolveBackendHandoff(input: {
     }
     return undefined;
   }
-  const summary = input.args.handoffSummary?.trim();
-  if (!summary) {
+  const summary = input.args.handoffSummary;
+  if (!summary || !/\S/u.test(summary)) {
     throw new BackendHandoffContractError(
       "BACKEND_HANDOFF_SUMMARY_REQUIRED",
       `Agent ${input.resolution.agent.agentId} is pinned to ${sourceThread.backendKind}, while new threads use ${input.targetBackend}. ` +
@@ -9120,10 +9367,32 @@ class AgentThreadResumeError extends Error {
       ? "The backend reports that this Agent thread is missing or in a system-error state. Use contextMode='fresh' for an explicit replacement."
       : code === "AGENT_THREAD_BUSY"
         ? "The Agent thread already has an active App Server turn. Wait for that turn to finish, then retry."
-        : "The bridge could not verify the Agent thread because the App Server probe was unavailable. Retry without replacing the Agent thread."
+        : `The bridge could not verify the Agent thread because the App Server probe was unavailable (${probe.state === "unknown" ? probe.reason : "unavailable"}). Retry without replacing the Agent thread.`
     super(`${code}: ${message}`);
     this.name = "AgentThreadResumeError";
   }
+}
+
+type ScopedHandleKind = "job" | "activity" | "agent" | "thread";
+
+/**
+ * Do not reveal whether a copied handle exists outside the caller's scope.
+ * The recovery instruction remains useful for a stale or retained handle that
+ * belongs to the caller, while the same response is used for foreign handles.
+ */
+function scopedHandleUnavailable(kind: ScopedHandleKind): Error {
+  const label = {
+    job: "Codex job",
+    activity: "Activity",
+    agent: "Agent",
+    thread: "Codex thread"
+  }[kind];
+  return new Error(
+    `HANDLE_UNAVAILABLE: The requested ${label} is unavailable in this conversation scope. ` +
+    "Read codex_status({}) to obtain handles owned by this conversation. " +
+    "For handles copied into a nested Codex execution, the originating host must read its own exact state/results and provide a reviewed summary. " +
+    "An empty nested overview does not establish that the originating work is missing or unowned."
+  );
 }
 
 function validateTaskSelectionInput(
@@ -9164,19 +9433,9 @@ type ActivityTaskRequest = Pick<
   | "continuationOfActivityId"
   | "activityTitle"
   | "activityKind"
-  | "executionMode"
   | "handoffPolicy"
   | "completionTrigger"
 >;
-
-function resolveTaskExecutionMode(
-  request: ActivityTaskRequest,
-  jobs: CodexJobRegistry
-): ActivityExecutionMode {
-  if (request.executionMode) return request.executionMode;
-  if (!request.activityId) return "background";
-  return jobs.getActivity(request.activityId)?.executionMode || "background";
-}
 
 type AgentTaskResolution =
   | {
@@ -9204,9 +9463,7 @@ function resolveAgentForTask(
   let agent: BridgeAgent | undefined;
   if (args.agentId) {
     agent = jobs.getAgent(args.agentId);
-    if (!agent || agent.scopeId !== scopeId) {
-      throw new Error("The selected Agent belongs to another conversation scope or does not exist.");
-    }
+    if (!agent || agent.scopeId !== scopeId) throw scopedHandleUnavailable("agent");
   } else if (!args.agentName) {
     const sourceActivityId = activityRequest.activityId || activityRequest.continuationOfActivityId;
     if (sourceActivityId) {
@@ -9517,16 +9774,13 @@ function validateActivityTaskRequest(
     continuationOfActivityId: args.continuationOfActivityId,
     activityTitle: args.activityTitle,
     activityKind: args.activityKind,
-    executionMode: args.executionMode,
     handoffPolicy: args.handoffPolicy,
     completionTrigger: args.completionTrigger
   };
   if (!request.activityId) {
     if (request.continuationOfActivityId) {
       const source = jobs.getActivity(request.continuationOfActivityId);
-      if (!source || source.scopeId !== scopeId) {
-        throw new Error("The continuation Activity belongs to another conversation scope or does not exist.");
-      }
+      if (!source || source.scopeId !== scopeId) throw scopedHandleUnavailable("activity");
     }
     return request;
   }
@@ -9544,10 +9798,7 @@ function validateActivityTaskRequest(
     );
   }
   const activity = jobs.getActivity(request.activityId);
-  if (!activity) throw new Error("Unknown Activity id in this conversation scope.");
-  if (activity.scopeId !== scopeId) {
-    throw new Error("The requested Activity belongs to another conversation scope.");
-  }
+  if (!activity || activity.scopeId !== scopeId) throw scopedHandleUnavailable("activity");
   if (activity.lifecycle !== "open") {
     throw new Error("A new Codex job can be attached only to an open Activity.");
   }
@@ -9572,7 +9823,6 @@ function resolveActivityForTask(
     continuationOfActivityId: validated.continuationOfActivityId,
     title: validated.activityTitle,
     kind: validated.activityKind,
-    executionMode: validated.executionMode,
     handoffPolicy: validated.handoffPolicy,
     completionTrigger: validated.completionTrigger
   });
@@ -9581,33 +9831,37 @@ function resolveActivityForTask(
 function recordAdmittedThread(input: {
   sessions: SessionRegistry;
   jobs: CodexJobRegistry;
+  authBoundary?: string;
   sessionDecision: SessionDecision;
   agent: BridgeAgent;
   threadId: string;
   scopeId: string;
   cwd: string;
-  projectAdmission?: TaskProjectAdmission;
+  projectAdmission?: Pick<TaskProjectAdmission, "projectId" | "projectName">;
   sandbox: SandboxMode;
   selection: ExecutionDecision["effectiveSelection"];
   policyRevision: number;
   backendKind: CodexBackendKind;
   visibleInCodexApp: boolean;
+  persistence?: import("./threadConnections.js").ThreadPersistence;
   contextMode: AgentContextMode;
   sessionId?: string;
   forkedFromThreadId?: string;
 }): () => void {
-  const previousSession = input.sessions.get(input.threadId);
+  const previousSession = input.sessions.getForJob(input.threadId, input.authBoundary);
   const previousDecisionThreadId = input.sessionDecision.threadId;
+  const restoreSessions = input.sessions.captureInMemory();
+  let recorded = false;
   const restore = () => {
     if (previousDecisionThreadId) input.sessionDecision.threadId = previousDecisionThreadId;
     else delete input.sessionDecision.threadId;
-    input.sessions.restoreInMemory(input.threadId, previousSession);
+    if (recorded) restoreSessions();
   };
   try {
     input.jobs.activityTransaction(() => {
       input.sessionDecision.threadId = input.threadId;
       const now = Date.now();
-      input.sessions.record({
+      input.sessions.recordForJob({
         threadId: input.threadId,
         scopeId: input.scopeId,
         ...(input.sessionId ? { sessionId: input.sessionId } : {}),
@@ -9624,11 +9878,12 @@ function recordAdmittedThread(input: {
         policyRevision: input.policyRevision,
         backendKind: input.backendKind,
         visibleInCodexApp: input.visibleInCodexApp,
-        persistence: input.jobs.admissionStateStore.threadConnections.get(input.threadId)?.persistence || previousSession?.persistence || "unknown",
+        persistence: input.jobs.admissionStateStore.threadConnections.get(input.threadId)?.persistence || previousSession?.persistence || input.persistence || "unknown",
         updatedAt: now,
         createdAt: now,
         lastUsedAt: now
-      });
+      }, input.authBoundary);
+      recorded = true;
       input.jobs.linkAgentThread({
         agentId: input.agent.agentId,
         threadId: input.threadId,
@@ -9652,7 +9907,6 @@ function recordAdmittedThread(input: {
 async function startNewSession(input: {
   args: CodexTaskArgs;
   routing: CodexRouting;
-  executionMode: ActivityExecutionMode;
   requestedMode: SessionMode;
   reason: SessionDecision["reason"];
   config: BridgeConfig;
@@ -9683,17 +9937,18 @@ async function startNewSession(input: {
   const access = resolveExecutionPolicy(input.config, input.preferences, cwd, sandbox);
   if (!input.preflightDone) await enforceSensitiveFilePreflight(input.config, cwd, "run Codex");
 
-  const prompt = input.backendHandoff
+  const basePrompt = input.backendHandoff
     ? backendHandoffPrompt(input.backendHandoff, input.args.prompt)
     : input.args.prompt;
+  const prompt = basePrompt;
   const payload: Record<string, unknown> = {
     prompt,
     ...executionAccessArguments(access)
   };
   const ephemeralAppServerThread =
     backendSupports(input.config.defaultBackend, "supportsEphemeralThreads") &&
-    !input.preferences.showBridgeThreadsInCodexApp;
-  const storage = await input.config.codexService?.sessionPolicy(input.config.defaultBackend, input.preferences.showBridgeThreadsInCodexApp);
+    input.preferences.bridgeThreadPersistence === "ephemeral";
+  const storage = await input.config.codexService?.sessionPolicy(input.config.defaultBackend, input.preferences.showBridgeThreadsInCodexApp, undefined, input.preferences.bridgeThreadPersistence);
   if (backendSupports(input.config.defaultBackend, "supportsEphemeralThreads")) {
     payload.ephemeral = ephemeralAppServerThread;
   }
@@ -9706,6 +9961,8 @@ async function startNewSession(input: {
   };
   return runCodex({
     jobs: input.jobs,
+    modelCatalog: input.modelCatalog,
+    requestEnvelopeHash: input.args.admittedRequestEnvelopeHash,
     userSettings: input.userSettings,
     config: input.config,
     preferences: input.preferences,
@@ -9719,7 +9976,6 @@ async function startNewSession(input: {
     rejectIfSelectionActive: input.rejectIfSelectionActive,
     sessionDecision,
     activityRequest: input.activityRequest,
-    executionMode: input.executionMode,
     agent: input.agent,
     newAgentName: input.newAgentName,
     contextMode: input.contextMode,
@@ -9730,12 +9986,13 @@ async function startNewSession(input: {
     executionPolicyCatalogFingerprint:
       input.resolved.admissionCatalogFingerprint,
     sourceThreadId: input.backendHandoff?.sourceThreadId,
-    run: (onProgress, onAssigned) => input.upstream.startThread
+    run: (onProgress, onAssigned, executionContext) => input.upstream.startThread
       ? input.upstream.startThread(
           {
             backendKind: input.config.defaultBackend,
             ...(storage?.contextId ? { contextId: storage.contextId } : {}),
             prompt,
+            executionContext,
             ...access,
             selection: executionDecision.effectiveSelection,
             ...(backendSupports(input.config.defaultBackend, "supportsEphemeralThreads")
@@ -9745,8 +10002,8 @@ async function startNewSession(input: {
           onProgress,
           onAssigned
         )
-      : input.upstream.callTool("codex", payload, onProgress, onAssigned),
-    onAssigned: (assignment, agent) => {
+      : input.upstream.callTool("codex", { ...payload, executionContext }, onProgress, onAssigned),
+    onAssigned: (assignment, agent, job) => {
       if (!assignment.threadId) return;
       // A cross-backend handoff becomes current only after turn/start accepts
       // the summary-bearing turn. If the worker exits after thread/start but
@@ -9756,6 +10013,7 @@ async function startNewSession(input: {
       recordAdmittedThread({
         sessions: input.sessions,
         jobs: input.jobs,
+        authBoundary: job.authBoundary,
         sessionDecision,
         agent,
         threadId: assignment.threadId,
@@ -9766,21 +10024,23 @@ async function startNewSession(input: {
         selection: executionDecision.effectiveSelection,
         policyRevision: executionDecision.policyRevision,
         backendKind: assignment.backendKind,
+        persistence: storage?.persistence ?? input.preferences.bridgeThreadPersistence,
         visibleInCodexApp:
-          storage?.visibleInCodexApp ?? (backendSupports(assignment.backendKind, "supportsThreadInspection") && !ephemeralAppServerThread),
+          storage?.visibleInCodexApp ?? (backendSupports(assignment.backendKind, "supportsThreadInspection") && input.preferences.showBridgeThreadsInCodexApp && !ephemeralAppServerThread),
         contextMode: input.contextMode,
         sessionId: assignment.sessionId,
         forkedFromThreadId: assignment.forkedFromThreadId
       });
     },
     onAdmitted: input.onAdmitted,
-    onComplete: (result, agent) => {
+    onComplete: (result, agent, job) => {
       const threadId = extractThreadId(result);
       if (!threadId) return;
       const lineage = extractResultThreadLineage(result);
       return recordAdmittedThread({
         sessions: input.sessions,
         jobs: input.jobs,
+        authBoundary: job.authBoundary,
         sessionDecision,
         agent,
         threadId,
@@ -9791,8 +10051,10 @@ async function startNewSession(input: {
         selection: executionDecision.effectiveSelection,
         policyRevision: executionDecision.policyRevision,
         backendKind: extractResultBackendKind(result) || input.config.defaultBackend,
+        persistence: storage?.persistence ?? input.preferences.bridgeThreadPersistence,
         visibleInCodexApp:
           storage?.visibleInCodexApp ?? (backendSupports((extractResultBackendKind(result) || input.config.defaultBackend), "supportsThreadInspection") &&
+          input.preferences.showBridgeThreadsInCodexApp &&
           !ephemeralAppServerThread),
         sessionId: lineage.sessionId,
         forkedFromThreadId: lineage.forkedFromThreadId,
@@ -9828,9 +10090,9 @@ async function continueTrackedSession(input: {
   reason: SessionDecision["reason"];
   session: TrackedCodexSession;
   routing: CodexRouting;
-  executionMode: ActivityExecutionMode;
   config: BridgeConfig;
   upstream: CodexUpstream;
+  modelCatalog: CodexModelCatalogProvider;
   sessions: SessionRegistry;
   jobs: CodexJobRegistry;
   preferences: BridgeUserSettings;
@@ -9847,6 +10109,7 @@ async function continueTrackedSession(input: {
   executionPolicyRef?: string;
   executionPolicyCatalogFingerprint: string | null;
   projectRequest?: RuntimeProjectSelection;
+  requestEnvelopeHash?: string;
   onAdmitted?: () => void;
 }): Promise<ToolResult> {
   const access = resolveExecutionPolicy(input.config, input.preferences, input.session.cwd, input.session.sandbox);
@@ -9854,6 +10117,7 @@ async function continueTrackedSession(input: {
   if (!input.preflightDone) {
     await enforceSensitiveFilePreflight(input.config, currentCwd, "continue Codex");
   }
+  const prompt = input.prompt;
   const decision: SessionDecision = {
     requestedMode: input.requestedMode,
     action: "continue",
@@ -9863,6 +10127,8 @@ async function continueTrackedSession(input: {
   let executionStateApplied = false;
   return runCodex({
     jobs: input.jobs,
+    modelCatalog: input.modelCatalog,
+    requestEnvelopeHash: input.requestEnvelopeHash,
     config: input.config,
     preferences: input.preferences,
     operation: "continue",
@@ -9877,7 +10143,6 @@ async function continueTrackedSession(input: {
     rejectIfSelectionActive: input.rejectIfSelectionActive,
     sessionDecision: decision,
     activityRequest: input.activityRequest,
-    executionMode: input.executionMode,
     agent: input.agent,
     contextMode: input.contextMode,
     agentRole: input.agentRole,
@@ -9889,7 +10154,7 @@ async function continueTrackedSession(input: {
     sourceThreadId: input.session.threadId,
     onAdmitted: input.onAdmitted,
     exclusiveKeys: [threadExclusiveKey(input.session.threadId)],
-    run: (onProgress, onAssigned) => {
+    run: (onProgress, onAssigned, executionContext) => {
       const recordAssignment = (assignment: UpstreamWorkerAssignment) => {
         onAssigned(assignment);
         if (executionStateApplied || !backendSupports(input.session.backendKind, "supportsTurnSelection")) return;
@@ -9911,7 +10176,8 @@ async function continueTrackedSession(input: {
           {
             backendKind: input.session.backendKind,
             threadId: input.session.threadId,
-            prompt: input.prompt,
+            prompt,
+            executionContext,
             ...access,
             ...(backendSupports(input.session.backendKind, "supportsTurnSelection")
               ? { selection: input.executionDecision.effectiveSelection }
@@ -9923,7 +10189,8 @@ async function continueTrackedSession(input: {
       }
       const payload: Record<string, unknown> = {
         threadId: input.session.threadId,
-        prompt: input.prompt,
+        prompt,
+        executionContext,
         ...executionAccessArguments(access),
         ...backendRoutingArgument(input.session.backendKind)
       };
@@ -9932,42 +10199,52 @@ async function continueTrackedSession(input: {
       }
       return input.upstream.callTool("codex-reply", payload, onProgress, recordAssignment);
     },
-    onComplete: (result) => {
-      const previous = input.sessions.get(input.session.threadId);
+    onComplete: (result, _agent, job) => {
+      const restoreSessions = input.sessions.captureInMemory();
       const lineage = extractResultThreadLineage(result);
       const existingThread = input.jobs
         .listAgentThreads(input.agent.agentId)
         .find((thread) => thread.threadId === input.session.threadId);
-      input.sessions.record({
-        ...input.session,
-        ...lineage,
-        ...(input.projectAdmission
-          ? {
-              projectId: input.projectAdmission.projectId,
-              projectName: input.projectAdmission.projectName
-            }
-          : {}),
-        scopeId: input.adoptOnComplete ? input.routing.scopeId : input.session.scopeId,
-        selection: input.executionDecision.effectiveSelection,
-        policyRevision: input.executionDecision.policyRevision,
-        updatedAt: Date.now(),
-        lastUsedAt: Date.now()
-      });
-      input.jobs.linkAgentThread({
-        agentId: input.agent.agentId,
-        threadId: input.session.threadId,
-        sessionId: lineage.sessionId || existingThread?.sessionId || input.session.sessionId,
-        projectId: input.projectAdmission?.projectId,
-        projectName: input.projectAdmission?.projectName,
-        backendKind: input.session.backendKind,
-        cwd: input.session.cwd,
-        sandbox: input.session.sandbox,
-        // A continuation enriches legacy admission metadata; it does not
-        // rewrite how the existing thread originally entered the Agent.
-        contextMode: existingThread?.contextMode || "continue",
-        forkedFromThreadId: existingThread?.forkedFromThreadId
-      });
-      return () => input.sessions.restoreInMemory(input.session.threadId, previous);
+      let recorded = false;
+      const restore = () => {
+        if (recorded) restoreSessions();
+      };
+      try {
+        input.sessions.recordForJob({
+          ...input.session,
+          ...lineage,
+          ...(input.projectAdmission
+            ? {
+                projectId: input.projectAdmission.projectId,
+                projectName: input.projectAdmission.projectName
+              }
+            : {}),
+          scopeId: input.adoptOnComplete ? input.routing.scopeId : input.session.scopeId,
+          selection: input.executionDecision.effectiveSelection,
+          policyRevision: input.executionDecision.policyRevision,
+          updatedAt: Date.now(),
+          lastUsedAt: Date.now()
+        }, job.authBoundary);
+        recorded = true;
+        input.jobs.linkAgentThread({
+          agentId: input.agent.agentId,
+          threadId: input.session.threadId,
+          sessionId: lineage.sessionId || existingThread?.sessionId || input.session.sessionId,
+          projectId: input.projectAdmission?.projectId,
+          projectName: input.projectAdmission?.projectName,
+          backendKind: input.session.backendKind,
+          cwd: input.session.cwd,
+          sandbox: input.session.sandbox,
+          // A continuation enriches legacy admission metadata; it does not
+          // rewrite how the existing thread originally entered the Agent.
+          contextMode: existingThread?.contextMode || "continue",
+          forkedFromThreadId: existingThread?.forkedFromThreadId
+        });
+      } catch (error) {
+        restore();
+        throw error;
+      }
+      return restore;
     }
   });
 }
@@ -9976,9 +10253,9 @@ async function forkTrackedSession(input: {
   prompt: string;
   session: TrackedCodexSession;
   routing: CodexRouting;
-  executionMode: ActivityExecutionMode;
   config: BridgeConfig;
   upstream: CodexUpstream;
+  modelCatalog: CodexModelCatalogProvider;
   sessions: SessionRegistry;
   jobs: CodexJobRegistry;
   preferences: BridgeUserSettings;
@@ -9991,6 +10268,7 @@ async function forkTrackedSession(input: {
   executionPolicyRef?: string;
   executionPolicyCatalogFingerprint: string | null;
   projectRequest?: RuntimeProjectSelection;
+  requestEnvelopeHash?: string;
   onAdmitted?: () => void;
 }): Promise<ToolResult> {
   const access = resolveExecutionPolicy(input.config, input.preferences, input.session.cwd, input.session.sandbox);
@@ -9999,9 +10277,10 @@ async function forkTrackedSession(input: {
       `CONTEXT_MODE_UNSUPPORTED: Backend ${input.session.backendKind} does not support contextMode='fork'. Use continue or fresh.`
     );
   }
-  const storage = await input.config.codexService?.sessionPolicy(input.session.backendKind, input.preferences.showBridgeThreadsInCodexApp, input.session.threadId);
+  const storage = await input.config.codexService?.sessionPolicy(input.session.backendKind, input.preferences.showBridgeThreadsInCodexApp, input.session.threadId, input.preferences.bridgeThreadPersistence);
   const currentCwd = resolvePinnedAgentCwd(input);
   await enforceSensitiveFilePreflight(input.config, currentCwd, "fork Codex context");
+  const prompt = input.prompt;
   const sessionDecision: SessionDecision = {
     requestedMode: "new",
     action: "start",
@@ -10010,6 +10289,8 @@ async function forkTrackedSession(input: {
   };
   return runCodex({
     jobs: input.jobs,
+    modelCatalog: input.modelCatalog,
+    requestEnvelopeHash: input.requestEnvelopeHash,
     config: input.config,
     preferences: input.preferences,
     operation: "start",
@@ -10026,7 +10307,6 @@ async function forkTrackedSession(input: {
     executionDecision: input.executionDecision,
     sessionDecision,
     activityRequest: input.activityRequest,
-    executionMode: input.executionMode,
     agent: input.agent,
     contextMode: "fork",
     agentRole: input.agentRole,
@@ -10038,23 +10318,25 @@ async function forkTrackedSession(input: {
     sourceThreadId: input.session.threadId,
     onAdmitted: input.onAdmitted,
     exclusiveKeys: [threadExclusiveKey(input.session.threadId)],
-    run: (onProgress, onAssigned) => input.upstream.forkThread?.(
+    run: (onProgress, onAssigned, executionContext) => input.upstream.forkThread?.(
       {
         backendKind: input.session.backendKind,
         ...access,
         threadId: input.session.threadId,
-        prompt: input.prompt,
+        prompt,
+        executionContext,
         selection: input.executionDecision.effectiveSelection,
-        ephemeral: !input.preferences.showBridgeThreadsInCodexApp
+        ephemeral: input.preferences.bridgeThreadPersistence === "ephemeral"
       },
       onProgress,
       onAssigned
     ) as Promise<ToolResult>,
-    onAssigned: (assignment) => {
+    onAssigned: (assignment, _agent, job) => {
       if (!assignment.threadId) return;
       recordAdmittedThread({
         sessions: input.sessions,
         jobs: input.jobs,
+        authBoundary: job.authBoundary,
         sessionDecision,
         agent: input.agent,
         threadId: assignment.threadId,
@@ -10065,6 +10347,7 @@ async function forkTrackedSession(input: {
         selection: input.executionDecision.effectiveSelection,
         policyRevision: input.executionDecision.policyRevision,
         backendKind: input.session.backendKind,
+        persistence: storage?.persistence ?? input.preferences.bridgeThreadPersistence,
         visibleInCodexApp:
           storage?.visibleInCodexApp ?? (backendSupports(input.session.backendKind, "supportsThreadInspection") &&
           input.preferences.showBridgeThreadsInCodexApp),
@@ -10073,13 +10356,14 @@ async function forkTrackedSession(input: {
         forkedFromThreadId: assignment.forkedFromThreadId || input.session.threadId
       });
     },
-    onComplete: (result) => {
+    onComplete: (result, _agent, job) => {
       const threadId = extractThreadId(result);
       if (!threadId) return;
       const lineage = extractResultThreadLineage(result, input.session.threadId);
       return recordAdmittedThread({
         sessions: input.sessions,
         jobs: input.jobs,
+        authBoundary: job.authBoundary,
         sessionDecision,
         agent: input.agent,
         threadId,
@@ -10090,6 +10374,7 @@ async function forkTrackedSession(input: {
         selection: input.executionDecision.effectiveSelection,
         policyRevision: input.executionDecision.policyRevision,
         backendKind: input.session.backendKind,
+        persistence: storage?.persistence ?? input.preferences.bridgeThreadPersistence,
         visibleInCodexApp:
           storage?.visibleInCodexApp ?? (backendSupports(input.session.backendKind, "supportsThreadInspection") &&
           input.preferences.showBridgeThreadsInCodexApp),
@@ -10103,6 +10388,7 @@ async function forkTrackedSession(input: {
 
 async function runCodex(input: {
   jobs: CodexJobRegistry;
+  modelCatalog: CodexModelCatalogProvider;
   userSettings?: UserSettingsStore;
   config: BridgeConfig;
   preferences: BridgeUserSettings;
@@ -10113,7 +10399,6 @@ async function runCodex(input: {
   routing: CodexRouting;
   sessionDecision: SessionDecision;
   activityRequest: ActivityTaskRequest;
-  executionMode: ActivityExecutionMode;
   agent?: BridgeAgent;
   newAgentName?: string;
   contextMode: AgentContextMode;
@@ -10125,20 +10410,24 @@ async function runCodex(input: {
   sourceThreadId?: string;
   selectionKey: string;
   executionDecision: ExecutionDecision;
+  requestEnvelopeHash?: string;
   rejectIfSelectionActive?: boolean;
   onAdmitted?: () => void;
   exclusiveKeys?: string[];
   run: (
     onProgress: (progress: Progress) => void,
-    onAssigned: (assignment: UpstreamWorkerAssignment) => void
+    onAssigned: (assignment: UpstreamWorkerAssignment) => void,
+    executionContext: string
   ) => Promise<ToolResult>;
-  onAssigned?: (assignment: UpstreamWorkerAssignment, agent: BridgeAgent) => void;
-  onComplete?: (result: ToolResult, agent: BridgeAgent) => void | (() => void);
+  onAssigned?: (assignment: UpstreamWorkerAssignment, agent: BridgeAgent, job: CodexJob) => void;
+  onComplete?: (result: ToolResult, agent: BridgeAgent, job: CodexJob) => void | (() => void);
 }): Promise<ToolResult> {
   if (!input.agent && !input.newAgentName) {
     throw new Error("Codex task admission requires an existing Agent or a new Agent name.");
   }
   let job!: CodexJob;
+  let deferredAdmissionJobId: string | undefined;
+  let replayedDuringAdmission = false;
   const admit = () => input.jobs.activityTransaction(() => {
     const replay = input.jobs.findRequest(
       input.routing.scopeId,
@@ -10147,6 +10436,7 @@ async function runCodex(input: {
     );
     if (replay) {
       job = replay;
+      replayedDuringAdmission = true;
       return;
     }
     if (input.userSettings) {
@@ -10192,6 +10482,7 @@ async function runCodex(input: {
       contextMode: input.contextMode,
       role: input.agentRole
     });
+    const completionDeliveryPolicy: CompletionDeliveryPolicy = input.routing.completionDeliveryPolicy || "direct-wait";
     job = input.jobs.start(
       {
         operation: input.operation,
@@ -10202,14 +10493,18 @@ async function runCodex(input: {
         projectRequest: input.projectRequest,
         agentId: agent.agentId,
         contextMode: input.contextMode,
-        executionMode: input.executionMode,
         cwd: input.cwd,
         sandbox: input.sandbox,
         scopeId: input.routing.scopeId,
         requestId: input.routing.requestId,
-        activityPresentationId: input.routing.activityPresentationId,
         requestHash: input.routing.requestHash,
         requestHashVersion: input.routing.requestHashVersion,
+        requestEnvelopeHash: input.requestEnvelopeHash,
+        mcpPrincipal: input.routing.mcpPrincipal,
+        approvedFollowups: input.routing.approvedFollowups,
+        followup: input.routing.followup,
+        relayFollowup: input.routing.relayFollowup,
+        completionDeliveryPolicy,
         sourceThreadId: input.sourceThreadId,
         selectionKey: activitySelectionKey(activity.activityId, input.selectionKey),
         executionDecision: input.executionDecision,
@@ -10219,7 +10514,7 @@ async function runCodex(input: {
         ],
         sessionDecision: input.sessionDecision
       },
-      (onProgress, onAssigned) => {
+      async (onProgress, onAssigned) => {
         let canonicalCwd: string;
         try {
           canonicalCwd = resolveAllowedCwd(input.cwd, input.config.allowedRoots);
@@ -10233,41 +10528,69 @@ async function runCodex(input: {
             `${PROJECT_UNAVAILABLE}: The admitted project folder changed canonical identity before Codex started.`
           );
         }
-        return input.run(onProgress, onAssigned);
+        // Recheck support for the admitted choice without reading newer user
+        // settings or selecting a replacement. Running Jobs never enter here again.
+        const catalog = await input.modelCatalog.getCatalog({ backendKind: input.backendKind });
+        requireProcessingSpeedAccess(input.executionDecision.processingSpeed ||
+          (input.executionDecision.effectiveSelection.serviceTier === "ultrafast" ? "ultrafast" : "legacy"));
+        assertAdmittedSelectionSupported(input.executionDecision.effectiveSelection, catalog);
+        input.jobs.assertJobMayExecute(job.jobId);
+        return input.run(onProgress, onAssigned, bridgeExecutionContext(job));
       },
       input.onComplete
-        ? (result) => input.onComplete?.(result, agent)
+        ? (result, currentJob) => input.onComplete?.(result, agent, currentJob)
         : undefined,
       input.preferences.maxConcurrentJobs,
       input.rejectIfSelectionActive,
       input.onAssigned
-        ? (assignment) => input.onAssigned?.(assignment, agent)
-        : undefined
+        ? (assignment, currentJob) => input.onAssigned?.(assignment, agent, currentJob)
+        : undefined,
+      true,
+      true
     );
+    deferredAdmissionJobId = job.jobId;
+    if (shouldSealOneJobCompletionActivity(input.activityRequest, activity)) {
+      // A newly declared notify/sealed Activity represents one admitted
+      // asynchronous Job. Seal it after the Job exists so terminal settlement
+      // can atomically create the durable completion outbox record.
+      input.jobs.sealActivity(activity.activityId);
+    }
   });
-  if (input.userSettings && input.projectRequest) {
-    input.userSettings.admissionTransaction(admit);
-  } else {
-    admit();
+  try {
+    if (input.userSettings && input.projectRequest) {
+      input.userSettings.admissionTransaction(admit);
+    } else {
+      admit();
+    }
+  } catch (error) {
+    if (deferredAdmissionJobId) {
+      input.jobs.discardDeferredAdmission(deferredAdmissionJobId);
+    }
+    throw error;
+  }
+  if (deferredAdmissionJobId) {
+    input.jobs.activateDeferredExecution(deferredAdmissionJobId);
   }
   input.onAdmitted?.();
-  if (job.executionMode === "background") {
-    return taskResultForJob(
-      job,
-      input.config.jobStaleAfterMs,
-      input.preferences,
-      input.jobs,
-      false
-    );
-  }
-  await job.promise;
-  if (job.status === "completed" && job.result) {
-    return forwardResult(job.result, job, input.preferences, input.jobs, false);
-  }
-  if (job.status === "failed" && job.result?.isError) {
-    return forwardResult(job.result, job, input.preferences, input.jobs, false);
-  }
-  throw new Error(job.error || "Codex job failed.");
+  return taskResultForJob(
+    job,
+    input.config.jobStaleAfterMs,
+    input.preferences,
+    input.jobs,
+    replayedDuringAdmission
+  );
+}
+
+function shouldSealOneJobCompletionActivity(
+  request: ActivityTaskRequest,
+  activity: BridgeActivity
+): boolean {
+  return (
+    request.activityId === undefined &&
+    request.continuationOfActivityId === undefined &&
+    activity.handoffPolicy === "notify" &&
+    activity.completionTrigger === "sealed-jobs-terminal"
+  );
 }
 
 function resultForJob(
@@ -10277,6 +10600,9 @@ function resultForJob(
   jobs?: CodexJobRegistry,
   replay = true
 ): ToolResult {
+  if(jobs && isTerminalActivityJobStatus(job.status) && !jobs.admissionStateStore.retainedJobVisible(job.jobId)) {
+    return taskResultForJob(expiredJobPublication(job),staleAfterMs,preferences,jobs,replay);
+  }
   if (
     job.result &&
     (job.status === "completed" || (job.status === "failed" && job.result.isError))
@@ -10304,7 +10630,7 @@ function encodeActivityHistoryCursor(scopeVersion: number, offset: number): stri
 
 function decodeActivityHistoryCursor(cursor: string): ActivityHistoryCursor {
   try {
-    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as unknown;
+    const value = parseBase64UrlJson(cursor, "Activity history pagination cursor");
     if (
       !isRecord(value) ||
       value.v !== 1 ||
@@ -10351,7 +10677,7 @@ function encodePageCursor(kind: PageCursorKind, offset: number): string {
 
 function decodePageCursor(cursor: string, expectedKind: PageCursorKind): number {
   try {
-    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as unknown;
+    const value = parseBase64UrlJson(cursor, `${expectedKind} pagination cursor`);
     if (
       !isRecord(value) ||
       value.v !== 1 ||
@@ -10366,6 +10692,10 @@ function decodePageCursor(cursor: string, expectedKind: PageCursorKind): number 
   } catch {
     throw new Error(`Invalid or mismatched ${expectedKind} pagination cursor.`);
   }
+}
+
+function parseBase64UrlJson(value: string, field: string): unknown {
+  return parseJsonUtf8Strict(Buffer.from(value, "base64url"), field);
 }
 
 type PublicSteeringValidation =
@@ -10385,18 +10715,11 @@ function validatePublicSteeringTarget(
   expectedJobVersion: number
 ): PublicSteeringValidation {
   const job = jobs.get(jobId);
-  if (!job) {
+  if (!job || job.scopeId !== scopeId) {
     return {
       ok: false,
       code: "JOB_NOT_ACTIVE",
       message: "The exact Job does not exist or is no longer retained; no future Agent turn was queued."
-    };
-  }
-  if (job.scopeId !== scopeId) {
-    return {
-      ok: false,
-      code: "JOB_SCOPE_MISMATCH",
-      message: "The exact Job is not owned by this ChatGPT conversation scope."
     };
   }
 
@@ -10576,35 +10899,67 @@ function steeringFailureResult(
     warnings: code === "DELIVERY_UNCERTAIN"
       ? ["The bridge does not claim distributed exactly-once delivery across this crash boundary."]
       : [],
-    nextActions: nextActions[code]
+    nextActions: nextActions[code].map(guidance)
   });
+}
+
+function eventMonitoringStopGuidance(subscription: EventSubscriptionState | undefined): string | undefined {
+  if (subscription?.reason === "goal_ended") return "This goal has ended; its lifecycle receiver is closed. Preserve exact result reads and do not reissue monitoring or start late followups.";
+  if (subscription?.reason !== "revoked" && subscription?.reason !== "unsubscribed") return undefined;
+  return `Events monitoring was explicitly ${subscription.reason}. Resume it only when the user asks, by issuing a new subscriptionRef in the original conversation. Do not automatically issue, resubscribe or replace this Job; keep manual exact-result reads available without card, schedule or polling fallback.`;
+}
+
+function eventDeliveryFailureGuidance(subscription: EventSubscriptionState | undefined): string | undefined {
+  if (subscription?.delivery?.state !== "failed") return undefined;
+  const delivery = subscription.delivery;
+  return `Events delivery has permanently failed (${delivery.failureReason}${delivery.lastHttpStatus === null ? "" : `; HTTP ${delivery.lastHttpStatus}`}). Automatic webhook retries have stopped. Report this delivery failure separately from Codex execution; preserve the original Job and result for manual exact reads. Do not automatically reissue monitoring, rerun the Job, mount Dashboard, send ui/message, schedule tasks or repeatedly poll.`;
+}
+
+function jobStateErrorCode(status: string | undefined, message?: string): string {
+  if (message?.startsWith("BRIDGE_TERMINAL_COMMIT_FAILED:")) return "BRIDGE_TERMINAL_COMMIT_FAILED";
+  if (status === "cancelled") return "JOB_CANCELLED";
+  if (status === "interrupted") return "JOB_INTERRUPTED";
+  return "JOB_FAILED";
+}
+
+function normalizeJobError(status: string | undefined, message: string | undefined, retainedError: unknown) {
+  return normalizeStructuredError(isRecord(retainedError) ? retainedError : {
+    code: jobStateErrorCode(status, message),
+    message: message || (status === "interrupted"
+      ? "The Codex job was interrupted before completion."
+      : status === "cancelled"
+        ? "The Codex job was cancelled. Partial filesystem changes may remain."
+        : "Codex job failed.")
+  });
+}
+
+function expiredJobPublication(job:CodexJob):CodexJob {
+  return {...job,result:undefined,resultOmitted:true,error:undefined,publicEvents:[],inputEvents:[],pendingInteractions:[],
+    executionDecision:undefined,executionEvidence:undefined,lastProgress:undefined,approvedFollowups:undefined};
 }
 
 function formatJobStatus(
   job: CodexJob,
   staleAfterMs: number,
   wait?: CodexJobWaitResult,
-  preferences?: Pick<BridgeUserSettings, "activityCardVisibility">,
+  preferences?: BridgeUserSettings,
   registry?: CodexJobRegistry,
-  reserveActivityCard = false,
   replay = false
 ): Record<string, unknown> {
+  if(registry && isTerminalActivityJobStatus(job.status) && !registry.admissionStateStore.retainedJobVisible(job.jobId)) {
+    job=expiredJobPublication(job);
+  }
   const activity = formatJobActivity(job, staleAfterMs);
-  const activityTracking = registry
-    ? registry.activityCardRenderHint(
-      job.activityId,
-      job.executionMode,
-      preferences,
-      {
-        reserve: reserveActivityCard,
-        activityPresentationId: job.activityPresentationId,
-        reservationOwnerId: job.jobId
-      }
-    )
-    : activityCardRenderHint(job.executionMode, preferences, job.activityPresentationId);
+  const pendingTerminalCommit = registry?.pendingTerminalCommit(job);
+  const dashboard = dashboardPresentationHint(job, preferences, registry);
   const active = isActiveActivityJobStatus(job.status);
   const terminal = isTerminalActivityJobStatus(job.status);
-  const resultOmitted = job.resultOmitted || false;
+  // Stored originals can be hydrated after restart/archive, and the current
+  // response limit can be smaller than the admission-time preview limit.
+  // This is a response-only decision: never mutate or erase the retained Job.
+  const resultOmitted = Boolean(job.resultOmitted || (job.result &&
+    Buffer.byteLength(JSON.stringify(job.result), "utf8") >
+      (registry?.resultResponseByteLimit ?? 1024 * 1024)));
   const resultAvailability = active
     ? "pending"
     : job.status === "completed"
@@ -10623,22 +10978,7 @@ function formatJobStatus(
         : "none";
   const retainedError = retainedStructuredError(job.result);
   const error = job.status === "failed" || job.status === "interrupted" || job.status === "cancelled"
-    ? normalizeStructuredError(
-        retainedError || {
-          code: job.status === "cancelled"
-            ? "JOB_CANCELLED"
-            : job.status === "interrupted"
-              ? "JOB_INTERRUPTED"
-              : "JOB_FAILED",
-          message:
-            job.error ||
-            (job.status === "interrupted"
-              ? "The Codex job was interrupted before completion."
-              : job.status === "cancelled"
-                ? "The Codex job was cancelled. Partial filesystem changes may remain."
-                : "Codex job failed.")
-        }
-      )
+    ? normalizeJobError(job.status, job.error, retainedError)
     : undefined;
   const warnings = [
     ...(job.executionDecision?.fallbackWarning
@@ -10647,12 +10987,84 @@ function formatJobStatus(
     ...(activity.health === "no-progress-observed"
       ? ["No progress event has been observed within the configured window; process liveness is unknown."]
       : []),
+    ...(activity.health === "liveness-unknown"
+      ? ["The Bridge's last active Job record does not confirm that its original execution owner is currently reachable."]
+      : []),
     ...(job.status === "cancelled"
       ? ["Cancellation does not roll back partial filesystem changes."]
       : [])
   ];
-  const nextActions = active
-    ? [{ tool: "codex_status", arguments: { query: { kind: "input", jobId: job.jobId, waitMs: DEFAULT_CODEX_STATUS_WAIT_MS } } }]
+  const eventsAvailable = registry?.eventDeliveryAvailableFor(job);
+  let eventSubscription: EventSubscriptionState | undefined = registry?.experimentalEventsEnabled && job.completionDeliveryPolicy === "events"
+    ? registry?.admissionStateStore.mcpEventAccess.subscriptionState(job) || { state: "unavailable", reason: "runtime_unavailable" }
+    : undefined;
+  const monitoringStopped = eventMonitoringStopGuidance(eventSubscription);
+  if (eventSubscription && !eventsAvailable && !monitoringStopped) {
+    eventSubscription = { ...eventSubscription, state: "unavailable", reason: "runtime_unavailable" };
+  }
+  const deliveryFailed = eventDeliveryFailureGuidance(eventSubscription);
+  if (monitoringStopped) warnings.push(monitoringStopped);
+  if (deliveryFailed) warnings.push(deliveryFailed);
+  const canIssueEventAccess = eventsAvailable && !monitoringStopped && !deliveryFailed &&
+    (eventSubscription?.state === "pending" || eventSubscription?.reason === "expired");
+  const relayRecord = registry?.admissionStateStore.relay.registration(job.jobId);
+  const relayNotice = relayRecord?.event;
+  const relayGoal = relayRecord && registry?.admissionStateStore.relay.goal(relayRecord.activityId);
+  const relayEnded = relayGoal?.ended || (job.completionDeliveryPolicy === "relay-card" &&
+    registry?.admissionStateStore.isEventActivityEnded(job.activityId));
+  const relayDescription = (relayEnded
+    ? "This Activity has ended; automatic relay is closed and future followup admission is stopped."
+    : relayGoal?.monitoringStopped
+      ? "Automatic relay is stopped for this Activity. Existing Jobs may continue; use exact reads for their original results and current input. A remount or late completion does not resume notifications."
+      : !relayRecord || !relayGoal
+        ? "This Job has no active relay registration; recover this exact Job before relying on automatic notices."
+        : relayRecord.paused
+          ? "Automatic relay of the current input is paused while its original execution owner is unreachable. Preserve the same event and attempt until recovery."
+          : "Automatic relay is enabled for this Activity. The blank relay sends event references while its host connection is available, including across authorized followups.") +
+    (relayGoal?.followupsStopped && !relayEnded ? " Future followup admission is stopped." : "");
+  const followupReferences = registry?.admissionStateStore.taskFollowups.references(job);
+  const nextActions = job.completionDeliveryPolicy === "relay-card"
+    ? [{ tool: "codex_status", arguments: { query: relayNotice?.kind === "input"
+        ? { kind: "input", jobId: job.jobId } : { kind: "job", id: job.jobId } },
+        userPrompt: RELAY_GUIDANCE + " " + relayDescription + " Dashboard opens only on explicit display request." +
+          (relayNotice ? ` Current eventId: ${relayNotice.eventId}; reviewedVersion: ${job.version}.` : "") }]
+    : eventSubscription
+    ? !canIssueEventAccess ? [] : [{
+        tool: "codex_event_access",
+        arguments: { action: "issue", jobId: eventSubscription?.rootJobId || job.jobId,
+          event: eventSubscription?.rootJobId ? "codex.job.lifecycle" : registry!.admissionStateStore.mcpEventAccess.preferredEvent(job) },
+        userPrompt: "Obtain or recover this original receiver root's Bridge-issued subscriptionRef in the original conversation. Lifecycle consent connects later Events Jobs in the same Activity/Agent/project and current input without a B grant; exact terminal consent covers only one Job. Preserve the returned name and exact arguments through native subscribe, refresh and unsubscribe. Host OAuth renewal and native subscription refresh remain the host's responsibility; delegation reissue still requires original tool scope. If the root is no longer retained, inspect the exact live Job before deliberately selecting a new receiver root; never rerun the work. If subscription fails, report it and preserve the Job; do not mount Dashboard, send ui/message, schedule a task or repeatedly poll for completion."
+      }]
+    : active
+    ? job.completionDeliveryPolicy !== "events"
+      ? [
+          {
+            tool: "codex_status",
+            arguments: {
+              query: {
+                kind: "job",
+                id: job.jobId,
+                waitFor: "terminal",
+                waitMs: MAX_CODEX_STATUS_WAIT_MS
+              }
+            },
+            userPrompt:
+              "Wait for this exact Job in bounded intervals. After any non-terminal return, inspect the supplied exact-Job input action before repeating this same wait. A timeout or aborted read never authorizes a replacement Job. Review the terminal result before continuing within the original user goal and delegation through its declared receipt or ordinary codex_task continue; honor explicit stops and new user decision or approval boundaries."
+          },
+          {
+            tool: "codex_status",
+            arguments: {
+              query: {
+                kind: "input",
+                jobId: job.jobId,
+                waitMs: DEFAULT_CODEX_STATUS_WAIT_MS
+              }
+            },
+            userPrompt:
+              "Inspect current input before another terminal wait. Answer ordinary Codex questions within the original user goal using codex_answer and the exact current questionRef; ask the user only for a new decision. Stop at native approval boundaries, explicit stop intent and uncertain answer delivery; notifications never grant approval."
+          }
+        ]
+      : [{ tool: "codex_status", arguments: { query: { kind: "input", jobId: job.jobId, waitMs: DEFAULT_CODEX_STATUS_WAIT_MS } } }]
     : [];
   return {
     status: job.status,
@@ -10664,7 +11076,6 @@ function formatJobStatus(
     activityId: job.activityId,
     agentId: job.agentId || null,
     contextMode: job.contextMode || null,
-    executionMode: job.executionMode,
     backendKind: job.backendKind,
     ...(job.runtime ? { runtime: safeRuntimeMetadata(job.runtime) } : {}),
     threadId: job.threadId || job.sessionDecision.threadId || null,
@@ -10676,24 +11087,24 @@ function formatJobStatus(
     operation: job.operation,
     projectName: job.projectName || null,
     sandbox: job.sandbox,
+    completionDeliveryPolicy: job.completionDeliveryPolicy,
+    ...(eventSubscription ? { eventSubscription } : {}),
     executionAudit: formatExecutionAudit(job),
     scopeId: job.scopeId,
     requestId: job.requestId,
-    activityPresentationId: job.activityPresentationId || null,
+    ...(followupReferences?.length ? { approvedFollowups: followupReferences } : {}),
     bridgeSession: {
       ...job.sessionDecision,
       scopeId: job.scopeId,
       requestId: job.requestId,
-      projectName: job.projectName || null,
-      activityPresentationId: job.activityPresentationId || null
+      projectName: job.projectName || null
     },
     bridgeActivity: {
       activityId: job.activityId,
       jobId: job.jobId,
       agentId: job.agentId || null,
       projectName: job.projectName || null,
-      executionMode: job.executionMode,
-      ...activityTracking
+      dashboard
     },
     createdAt: new Date(job.createdAt).toISOString(),
     updatedAt: new Date(job.updatedAt).toISOString(),
@@ -10721,47 +11132,75 @@ function formatJobStatus(
     nextActions,
     message:
       active
-        ? job.status === "terminating"
+        ? pendingTerminalCommit
+          ? "The original execution owner reported a terminal result, but durable Job storage is still pending. Keep this exact Job and wait for its original result; do not start a replacement turn."
+          : job.status === "terminating"
           ? "Codex is terminating; refresh authoritative status until it reaches a terminal state."
           : job.status === "termination-failed"
             ? "Codex termination is unconfirmed; refresh status and retry the explicit cancellation if needed."
-            : "Codex is running. Keep this GPT response active through bounded input waits, handle ordinary questions, and retrieve the exact terminal Job result."
+            : job.trackingState === "liveness-unknown"
+              ? "This Job's last committed state is active, but current execution-owner liveness is unconfirmed. Recover the same Job and original result; do not start a replacement turn from this observation."
+            : job.completionDeliveryPolicy === "relay-card"
+              ? "Codex is running independently. " + relayDescription + " Retrieve the exact original result or current input and existing followup receipts before acting. Exact reads and bounded waits are optional observation tools; a timeout or aborted read never cancels this Job or authorizes a replacement."
+            : job.completionDeliveryPolicy !== "events"
+              ? "Codex is running independently with direct result delivery. Keep the current orchestration active with bounded terminal waits on this exact Job; a timeout or aborted read does not cancel it."
+              : job.completionDeliveryPolicy === "events"
+                ? monitoringStopped || deliveryFailed || (eventsAvailable
+                  ? "Codex is running with card-free Events intent. Ensure this exact Job's native subscription is active. Subscription or input failure requires an explicit report; never automatically fall back to Dashboard, ui/message, schedules or repeated polling."
+                  : "This Job retains its Events policy, but this runtime cannot deliver it. Preserve the original Job and result, report the unavailable connection, and use manual exact reads only when requested; do not restore card delivery or start replacement work.")
+              : "Codex is running independently. Query this exact Job when needed, handle any pending input, and retrieve its terminal result before reporting completion."
         : job.status === "completed"
           ? resultOmitted
-            ? "Codex completed, but the primary result exceeded the configured retention limit and was omitted."
+            ? "Codex completed, but the primary result is omitted from this bounded response. Retained originals follow the history policy."
             : "Codex completed; retrieve the exact Job result for its bounded model-authoritative answer."
           : error?.message || "Codex reached a terminal state."
   };
 }
 
-function activityCardRenderHint(
-  executionMode: ActivityExecutionMode,
-  preferences?: Pick<BridgeUserSettings, "activityCardVisibility">,
-  activityPresentationId?: string
+/** Exact status separates a committed Bridge record from owner and host evidence.
+ * The result-offer fields describe earlier completed responses; the current
+ * response is recorded only after its projection succeeds. */
+function exactJobCompletionEvidence(job: CodexJob, registry: CodexJobRegistry) {
+  const delivery = registry.admissionStateStore.getJobCompletionDelivery(job.jobId, job.scopeId);
+  const terminal = isTerminalActivityJobStatus(job.status);
+  const pendingTerminalCommit = registry.pendingTerminalCommit(job);
+  const direct = delivery?.directResultOfferedAt !== undefined;
+  const completion = delivery?.completionResultOfferedAt !== undefined;
+  return {
+    jobRecord: terminal
+      ? "terminal-committed" as const
+      : "active-last-known" as const,
+    // A terminal receipt is durable even after its owner exits. The saved
+    // trackingState is not a fresh liveness measurement of that old owner.
+    ownerObservation: terminal || pendingTerminalCommit ? null : job.trackingState,
+    ownerTerminalResult: pendingTerminalCommit ? {
+      origin: pendingTerminalCommit.origin,
+      observedAt: new Date(pendingTerminalCommit.observedAt).toISOString()
+    } : null,
+    terminalOrigin: job.terminalOrigin || null,
+    deliveryRecord: delivery?.state || null,
+    resultOffer: direct && completion ? "both" as const
+      : direct ? "direct-query" as const
+        : completion ? "completion-receipt" as const : "none" as const,
+    activityLifecycle: registry.getActivity(job.activityId)?.lifecycle || null
+  };
+}
+
+/** Display is explicit even when the stored Job used a historical policy. */
+function dashboardPresentationHint(
+  job: Pick<CodexJob, "activityId" | "completionDeliveryPolicy">,
+  _preferences?: BridgeUserSettings,
+  registry?: CodexJobRegistry
 ) {
-  const visibility = preferences?.activityCardVisibility || "always";
-  const shouldRenderActivityCard =
-    Boolean(activityPresentationId) &&
-    (visibility === "always" || (visibility === "background-only" && executionMode === "background"));
+  void registry;
+  const events = job.completionDeliveryPolicy === "events";
   return {
     statusTool: "codex_status",
-    automaticRenderTool: "codex_activity",
-    explicitRenderTool: "codex_activity",
-    followUpRenderRequired: false,
-    renderToolAvailable: true,
-    explicitRenderAllowed: true,
-    activityCardVisibility: visibility,
-    cardGeneration: 1,
-    presentationKind: "automatic",
-    ...(activityPresentationId ? { activityPresentationId } : {}),
-    shouldRenderActivityCard,
-    renderReason: shouldRenderActivityCard
-      ? "new-presentation"
-      : visibility === "never" ||
-          (visibility === "background-only" && executionMode !== "background")
-        ? "visibility-disabled"
-        : "presentation-unavailable",
-    renderTiming: executionMode === "background" ? "immediate" : "after-result-or-existing-mounted-card"
+    openTool: "codex_dashboard",
+    scope: "conversation",
+    automatic: false as const,
+    reason: events ? "events" as const : job.completionDeliveryPolicy === "relay-card" ? "relay-card" as const : "direct-wait" as const,
+    completionDeliveryRoute: events ? "events" as const : job.completionDeliveryPolicy === "relay-card" ? "relay-card" as const : "direct-wait" as const
   };
 }
 
@@ -10772,7 +11211,6 @@ function formatJobSummary(job: CodexJob, staleAfterMs: number): Record<string, u
     agentId: job.agentId || null,
     contextMode: job.contextMode || null,
     status: job.status,
-    executionMode: job.executionMode,
     backendKind: job.backendKind,
     threadId: job.threadId || job.sessionDecision.threadId || null,
     turnId: appServerTurnId(job) || null,
@@ -10780,12 +11218,12 @@ function formatJobSummary(job: CodexJob, staleAfterMs: number): Record<string, u
     projectName: job.projectName || null,
     workspaceLabel: job.projectName || "Pinned workspace",
     sandbox: job.sandbox,
+    completionDeliveryPolicy: job.completionDeliveryPolicy,
     executionDecision: job.executionDecision || null,
     executionAudit: formatExecutionAudit(job),
     upstreamError: retainedStructuredError(job.result) || null,
     scopeId: job.scopeId,
     requestId: job.requestId,
-    activityPresentationId: job.activityPresentationId || null,
     session: job.sessionDecision,
     createdAt: new Date(job.createdAt).toISOString(),
     updatedAt: new Date(job.updatedAt).toISOString(),
@@ -10860,7 +11298,6 @@ function formatActivitySummary(activity: BridgeActivity): Record<string, unknown
     cardGeneration: activity.cardGeneration,
     title: activity.title,
     kind: activity.kind,
-    executionMode: activity.executionMode,
     handoffPolicy: activity.handoffPolicy,
     completionTrigger: activity.completionTrigger,
     lifecycle: activity.lifecycle,
@@ -10877,61 +11314,8 @@ function formatActivitySummary(activity: BridgeActivity): Record<string, unknown
   };
 }
 
-function formatExecutionAudit(job: CodexJob): Record<string, unknown> | null {
-  const decision = job.executionDecision;
-  if (!decision) return null;
-  const acceptedTurn = [...job.publicEvents].reverse().find((event) =>
-    event.type === "turn" &&
-    event.phase === "started" &&
-    event.details?.evidence === "turn/start-accepted"
-  );
-  const reroute = [...job.publicEvents].reverse().find((event) =>
-    event.type === "model" &&
-    event.details?.kind === "rerouted" &&
-    typeof event.details.toModel === "string"
-  );
-  const reroutedModel = typeof reroute?.details?.toModel === "string"
-    ? reroute.details.toModel
-    : undefined;
-  const acceptedSelection = isRecord(acceptedTurn?.details?.selection)
-    ? acceptedTurn.details.selection
-    : undefined;
-  const acceptedModel = typeof acceptedSelection?.model === "string"
-    ? acceptedSelection.model
-    : decision.effectiveSelection.model;
-  const acceptedEffort = typeof acceptedSelection?.reasoningEffort === "string"
-    ? acceptedSelection.reasoningEffort
-    : decision.effectiveSelection.reasoningEffort;
-  const acceptedServiceTier = typeof acceptedSelection?.serviceTier === "string"
-    ? acceptedSelection.serviceTier
-    : decision.effectiveSelection.serviceTier;
-  return {
-    requested: decision.requestedSelection || null,
-    actual: {
-      model: reroutedModel || acceptedModel,
-      reasoningEffort: acceptedEffort,
-      ...(acceptedServiceTier ? { serviceTier: acceptedServiceTier } : {})
-    },
-    source: decision.source,
-    evidence: reroutedModel
-      ? "model/rerouted"
-      : acceptedTurn
-        ? "turn/start-accepted"
-        : "bridge-dispatch",
-    ...(reroute
-      ? {
-          reroute: {
-            fromModel: typeof reroute.details?.fromModel === "string"
-              ? reroute.details.fromModel
-              : acceptedModel,
-            toModel: reroutedModel,
-            reason: typeof reroute.details?.reason === "string"
-              ? reroute.details.reason
-              : "unspecified"
-          }
-        }
-      : {})
-  };
+function formatExecutionAudit(job: CodexJob) {
+  return executionAudit(job);
 }
 
 function formatSessionSummary(session: TrackedCodexSession): Record<string, unknown> {
@@ -10972,87 +11356,6 @@ function formatAgentThreadSummary(
   };
 }
 
-async function terminateAgentBackgroundProcess(input: {
-  jobs: CodexJobRegistry;
-  upstream: CodexUpstream;
-  scopeId: string;
-  agentId: string;
-  expectedAgentVersion?: number;
-  processId: string;
-}): Promise<Record<string, unknown>> {
-  const requireIdleOwner = () => {
-    const agent = input.jobs.getAgent(input.agentId);
-    if (!agent || agent.scopeId !== input.scopeId) {
-      throw new Error("The selected Agent belongs to another conversation scope or does not exist.");
-    }
-    if (input.expectedAgentVersion !== undefined && agent.version !== input.expectedAgentVersion) {
-      throw new Error(
-        `AGENT_VERSION_CHANGED: Agent version changed from ${input.expectedAgentVersion} to ${agent.version}. Refresh the Activity card before retrying process termination.`
-      );
-    }
-    if (agent.lifecycle === "active" || agent.lifecycle === "waiting-input" || agent.currentJobId) {
-      throw new Error(
-        `AGENT_BUSY: Refusing background process termination while Codex job ${agent.currentJobId || "unknown"} is active.`
-      );
-    }
-    const currentThread = input.jobs
-      .listAgentThreads(agent.agentId)
-      .find((thread) => thread.isCurrent);
-    return { agent, currentThread };
-  };
-
-  const initial = requireIdleOwner();
-  const currentThread = initial.currentThread;
-  if (
-    !currentThread ||
-    !backendSupports(currentThread.backendKind, "supportsBackgroundTerminals") ||
-    !input.upstream.listBackgroundTerminals ||
-    !input.upstream.terminateBackgroundTerminal
-  ) {
-    throw new Error("BACKGROUND_PROCESS_CONTROL_UNAVAILABLE: This Agent has no controllable App Server thread.");
-  }
-  const terminals = await input.upstream.listBackgroundTerminals(
-    currentThread.threadId,
-    currentThread.backendKind as CodexBackendKind
-  );
-  const terminal = terminals.find((entry) => entry.processId === input.processId);
-  if (!terminal) {
-    throw new Error(
-      "BACKGROUND_PROCESS_NOT_FOUND: The exact process is no longer a background terminal on this Agent thread."
-    );
-  }
-  // The upstream inventory lookup is asynchronous. Re-read bridge state after
-  // it returns so a turn or thread change that raced with the lookup cannot
-  // terminate a process under stale ownership assumptions. There is no await
-  // between this check and invoking the exact upstream terminate operation.
-  const authoritative = requireIdleOwner();
-  if (
-    !authoritative.currentThread ||
-    authoritative.currentThread.threadId !== currentThread.threadId ||
-    authoritative.currentThread.backendKind !== currentThread.backendKind
-  ) {
-    throw new Error(
-      "BACKGROUND_PROCESS_OWNERSHIP_CHANGED: The Agent's current App Server thread changed during validation."
-    );
-  }
-  const termination = await input.upstream.terminateBackgroundTerminal(
-    currentThread.threadId,
-    terminal.processId,
-    currentThread.backendKind as CodexBackendKind
-  );
-  return {
-    ok: termination.terminated,
-    action: "terminate-background-process",
-    agent: formatAgentSummary(authoritative.agent, input.jobs),
-    threadId: currentThread.threadId,
-    processId: terminal.processId,
-    terminated: termination.terminated,
-    historyPreserved: true,
-    deletionPerformed: false,
-    warning: "Background process termination does not roll back filesystem changes."
-  };
-}
-
 function formatAgentSummary(agent: BridgeAgent, jobs: CodexJobRegistry): Record<string, unknown> {
   const assignments = jobs.listActivityAgentAssignments(undefined, agent.agentId);
   const threads = jobs.listAgentThreads(agent.agentId);
@@ -11077,24 +11380,32 @@ function formatAgentSummary(agent: BridgeAgent, jobs: CodexJobRegistry): Record<
 type DashboardStatus = (typeof DASHBOARD_STATUSES)[number];
 type DashboardTurn = z.infer<typeof dashboardTurnOutputSchema>;
 type DashboardRow = z.infer<typeof dashboardRowOutputSchema>;
-type DashboardConversation = z.infer<typeof dashboardConversationOutputSchema>;
-type DashboardProject = z.infer<typeof dashboardProjectOutputSchema>;
 type DashboardPage = z.infer<typeof dashboardPageOutputSchema>;
-type DashboardConversationPage = z.infer<typeof dashboardConversationPageOutputSchema>;
-type DashboardProjectPage = z.infer<typeof dashboardProjectPageOutputSchema>;
 export type DashboardView = z.infer<typeof dashboardViewOutputSchema>;
+export type DashboardHistoryDetail = z.infer<typeof dashboardHistoryDetailOutputSchema>;
 
 export type BridgeDashboardSnapshotOptions = {
+  historyMode?: "agents"|"jobs";
+  backgroundOffset?: number;
   problems?: ProblemQuery;
   statusFilter?: DashboardStatusFilter;
   /** Internal resolved conversation filter. Native and retained clients omit it. */
   scopeId?: string;
   limit?: number;
   terminalOffset?: number;
+  statusOffset?: number;
   idleOffset?: number;
   inspectRuntime?: boolean;
   includeHistory?: boolean;
-  legacyGrouping?: { projectOffset: number; conversationOffset: number };
+  /** Internal display observations carried to an isolated read worker. */
+  cachedRuntime?: DashboardCachedRuntime;
+};
+
+export type BridgeDashboardHistoryDetailOptions = {
+  rowKey: string;
+  historyCursor?: string;
+  /** Internal resolved conversation filter. Native and retained clients omit it. */
+  scopeId?: string;
 };
 
 export type BridgeSettingsSnapshotOptions = {
@@ -11106,14 +11417,13 @@ export type BridgeSettingsPatchInput = {
   modelPolicy?: ModelPolicy;
   modelDescriptionOverrides?: ModelDescriptionOverrides;
   usePriorityServiceTier?: boolean;
+  processingSpeed?: string;
   historyRetentionDays?: HistoryRetentionDays;
   uiLocalePreference?: UiLocalePreference;
   maxConcurrentJobs?: number;
   showBridgeThreadsInCodexApp?: boolean;
-  activityCard?: {
-    visibility?: ActivityCardVisibility;
-    completionHandoff?: CompletionHandoffMode;
-  };
+  bridgeThreadPersistence?: "persistent" | "ephemeral";
+  experimentalDirectResultDelivery?: boolean;
   projectOperations?: ProjectRegistryOperation[];
 };
 
@@ -11125,20 +11435,101 @@ export type BridgeSettingsMutationInput = {
     | { kind: "patch"; settings: BridgeSettingsPatchInput };
 };
 
+export type BridgeStorageAdmissionError =
+  | "busy"
+  | "full"
+  | "io"
+  | "corrupt"
+  | "read-only";
+
 export type BridgeRuntimeAdmissionSnapshot = {
+  authConnection?: { source: "shared" | "bridge-chatgpt" | "bridge-api" | "disconnected";
+    mode: "chatgpt" | "api-key" | "unknown"; observedAt: number | null };
   acceptingNewJobs: boolean;
   activeJobs: number;
   pendingAdmissions: number;
   pendingInteractions?: number;
   memoryOnlyThreads?: number;
+  protectedMemoryOnlyThreads?: number;
+  discardableMemoryOnlyThreads?: number;
   backgroundProcessState: "confirmed" | "unknown";
   backgroundProcesses: number;
   backgroundProcessAgents: number;
   backgroundProcessUnknownAgents: number;
+  /** Memory-only supervisor observation; never a DB-derived claim. */
+  stateService?: {
+    status:
+      | "ready"
+      | "state-starting"
+      | "state-stale"
+      | "state-recovering"
+      | "state-incompatible"
+      | "state-capacity"
+      | "admission-draining";
+    generation?: string;
+    heartbeatAgeMs?: number;
+    activeOperation?: OperationalStateOperationObservation;
+    lastCommitAt?: number;
+    storageError?: BridgeStorageAdmissionError;
+    storageErrorObservedAt?: number;
+  };
+  /** Read-only projection worker; a degraded value does not imply write loss. */
+  readService?: {
+    status: "ready" | "read-starting" | "read-stale" | "read-recovering" | "read-capacity";
+    generation?: string;
+    heartbeatAgeMs?: number;
+    inFlight: number;
+    capacity: number;
+    lastSnapshotAt?: number;
+    activeOperation?: {
+      method: "dashboardSnapshot" | "dashboardHistoryDetail" | "dashboardExecutionDetail" | "settingsSnapshot";
+      phase: "queue-wait" | "read-snapshot" | "serializing" | "responding";
+      startedAt: number;
+      observedAt: number;
+    };
+  };
+  /** Best-effort diagnostics only; degradation never changes operational truth. */
+  telemetryService?: {
+    status: "ready" | "recovering" | "stale" | "memory-only";
+    queued: number;
+    inFlight: number;
+    retained: number;
+    dropped: number;
+    failed: number;
+    lastPersistedAt?: number;
+  };
+  /** Codex work executor; it has no SQLite connection or state authority. */
+  executionService?: {
+    journal?: import("./executionJournal.js").ExecutionJournalStatus;
+    pendingAcknowledgements?: number;
+    observationStatus?: "ready" | "degraded";
+    connectionStatus?: "connected" | "disconnected";
+    heartbeatStatus?: "fresh" | "delayed";
+    status: "idle" | "starting" | "ready" | "stale" | "recovering" | "capacity";
+    generation?: string;
+    heartbeatAgeMs?: number;
+    inFlight: number;
+    capacity: number;
+    supervisedWorkers?: number;
+    supervisedProcesses?: number;
+  };
+  /** Bounded project-fair persistence for disposable progress projections. */
+  progressPersistence?: ProgressPersistenceStatus;
 };
 
 export type BridgeRuntimeSnapshotOptions = {
   inspectBackgroundProcesses?: boolean;
+};
+export type BridgeRuntimeDrainOptions = BridgeRuntimeSnapshotOptions & { expectedRuntime?: RuntimeDrainTarget };
+
+export type BridgeNativeCompletionNotificationClaim = {
+  leaseOwner: string;
+  limit?: number;
+};
+
+export type BridgeNativeCompletionNotificationMutation = {
+  leaseOwner: string;
+  outboxIds: number[];
 };
 
 /**
@@ -11146,18 +11537,60 @@ export type BridgeRuntimeSnapshotOptions = {
  * It contains no mounted-widget authority and never exposes the SQLite store.
  */
 export type BridgeApplicationService = {
-  problemAction?(input: ProblemAction, scopeId?: string, source?: "operator" | "widget-control"): Promise<ProblemActionResult>;
+  problemAction?(input: ProblemAction, scopeId?: string, source?: "operator" | "widget-control" | "automatic"): Promise<ProblemActionResult>;
   historyAction?(input: DashboardHistoryActionInput): Promise<{ok: true}>;
   threadHandoff?(input: { rowKey: string; codexThreadUrl: string; action: "request" | "cancel" | "status" }): Promise<{ phase: string; reason?: string; requested: boolean; canOpen: boolean }>;
-  subscribeChanges?(listener: (topic: "dashboard" | "settings" | "enrichment") => void): () => void;
-  dashboardSnapshot(options?: BridgeDashboardSnapshotOptions): Promise<DashboardView>;
-  settingsSnapshot(options?: BridgeSettingsSnapshotOptions): Promise<SettingsView>;
+  subscribeChanges?(listener: (topic: "dashboard" | "settings" | "enrichment" | "completion-outbox-ready") => void): () => void;
+  dashboardSnapshot(options?: BridgeDashboardSnapshotOptions, context?: ReadObservationContext): Promise<DashboardView>;
+  dashboardExecutionDetail?(options:BridgeDashboardExecutionDetailOptions,context?:ReadObservationContext):Promise<DashboardExecutionDetail>;
+  dashboardHistoryDetail?(options: BridgeDashboardHistoryDetailOptions, context?: ReadObservationContext): Promise<DashboardHistoryDetail>;
+  /** Internal read-worker planning boundary; never registered as an MCP/native method. */
+  dashboardRuntimePlan?(options?: BridgeDashboardSnapshotOptions, context?: ReadObservationContext): Promise<BridgeDashboardRuntimePlan>;
+  /** Internal read-worker render boundary; enrichment contains no database authority. */
+  dashboardSnapshotWithEnrichment?(
+    options: BridgeDashboardSnapshotOptions,
+    enrichment: BridgeDashboardEnrichment, context?: ReadObservationContext
+  ): Promise<DashboardView>;
+  settingsSnapshot(options?: BridgeSettingsSnapshotOptions, context?: ReadObservationContext): Promise<SettingsView>;
+  modelDescriptionHistory(input: { modelId: string; beforeVersion?: number }): Promise<ModelDescriptionHistoryPage>;
   updateSettings(input: BridgeSettingsMutationInput): Promise<SettingsView>;
   runtimeSnapshot(options?: BridgeRuntimeSnapshotOptions): Promise<BridgeRuntimeAdmissionSnapshot>;
   runtimeHealth?(): BridgeRuntimeAdmissionSnapshot;
-  beginDrain(options?: BridgeRuntimeSnapshotOptions): Promise<BridgeRuntimeAdmissionSnapshot>;
-  cancelDrain(): Promise<BridgeRuntimeAdmissionSnapshot>;
+  beginDrain(options?: BridgeRuntimeDrainOptions): Promise<BridgeRuntimeAdmissionSnapshot>;
+  cancelDrain(options?: { expectedRuntime?: RuntimeDrainTarget }): Promise<BridgeRuntimeAdmissionSnapshot>;
+  /** Internal runtime gate; never registered as an MCP or native RPC method. */
+  setStorageAdmissionError?(error?: BridgeStorageAdmissionError): void;
+  /** Local native app only: opaque completion events, never task content. */
+  nativeCompletionAvailability?(): Promise<import("./completionDelivery.js").NativeCompletionAvailability>;
+  claimNativeCompletionNotifications?(input: BridgeNativeCompletionNotificationClaim): Promise<NativeCompletionNotification[]>;
+  markNativeCompletionNotificationsDelivered?(input: BridgeNativeCompletionNotificationMutation): Promise<void>;
+  releaseNativeCompletionNotifications?(input: BridgeNativeCompletionNotificationMutation): Promise<void>;
+  /** Native app access to the same bridge-owned, versioned source as MCP. */
+  skillLibrarySnapshot?(): Promise<SkillSearchResult>;
+  readBridgeSkill?(reference: SkillReference): Promise<BridgeSkill>;
+  readBridgeSkillFile?(reference: SkillReference, path: string): Promise<SkillFile>;
+  listBridgeSkillVersions?(input: { skillId: string }): Promise<SkillVersionList>;
+  createBridgeSkill?(input: CreateBridgeSkillInput): Promise<SkillSummary>;
+  createBridgeSkillFromPackage?(input: CreateBridgeSkillPackageInput): Promise<SkillSummary>;
+  updateBridgeSkill?(input: UpdateBridgeSkillInput): Promise<SkillSummary>;
+  updateBridgeSkillFromPackage?(input: UpdateBridgeSkillPackageInput): Promise<SkillSummary>;
+  restoreBridgeSkill?(input: RestoreBridgeSkillInput): Promise<SkillSummary>;
+  setBridgeSkillEnabled?(input: SetBridgeSkillEnabledInput): Promise<SkillSummary>;
+  deleteBridgeSkill?(input: DeleteBridgeSkillInput): Promise<DeletedBridgeSkill>;
+  beginBridgeSkillPackageUpload?(): Promise<{ uploadId: string; expiresAt: string; chunkMaxBytes: number }>;
+  appendBridgeSkillPackageUpload?(input: { uploadId: string; chunkIndex: number; data: string }): Promise<{ receivedBytes: number; nextChunk: number }>;
+  inspectBridgeSkillPackageUpload?(uploadId: string): Promise<import("./skillPackage.js").BridgeSkillPackageInspection>;
+  exportBridgeSkillPackage?(reference: SkillReference): Promise<{
+    fileName: string; mediaType: "application/zip"; bytes: number; contentDigest: string; data: string;
+  }>;
 };
+export type BridgeReadProjectionService = Pick<
+  BridgeApplicationService,
+  "dashboardSnapshot" | "settingsSnapshot"
+> & Required<Pick<
+  BridgeApplicationService,
+  "dashboardHistoryDetail" | "dashboardExecutionDetail" | "dashboardRuntimePlan" | "dashboardSnapshotWithEnrichment"
+>>;
 type CodexWeeklyUsageView = z.infer<typeof codexWeeklyUsageOutputSchema>;
 type CancellationDisplay = z.infer<typeof cancellationDisplayOutputSchema>;
 
@@ -11355,7 +11788,7 @@ async function readCodexWeeklyUsageBounded(
     : { value: result.value.value || fallback, timedOut: false, failed: result.value.failed };
 }
 
-type DashboardRuntimeObservation = {
+export type DashboardRuntimeObservation = {
   state: "confirmed" | "idle" | "not-loaded" | "busy" | "orphaned" | "unknown";
   backgroundProcessState: "confirmed" | "unknown";
   backgroundProcessCount: number;
@@ -11369,7 +11802,10 @@ type DashboardEnrichmentInput = {
   runtimeProbeSkippedAgents: number;
   weeklyUsage: CodexWeeklyUsageView | null;
   summary: CardEnrichmentSummary;
+  runtimeInventory?: DashboardRuntimeInventory;
 };
+
+type DashboardRuntimeInventory = { threadIds: string[]; unavailable: boolean; observedAt: number; pending?: boolean };
 
 type DashboardRuntimeCacheEntry = {
   stamp: string;
@@ -11384,11 +11820,33 @@ type DashboardRuntimeCacheEntry = {
   attemptedAt: number;
 };
 
-type DashboardRuntimeCandidate = {
+type DashboardCachedRuntimeEntry = Pick<DashboardRuntimeCacheEntry,
+  "stamp" | "retainUntil" | "observation" | "unavailable" | "observedAt">;
+type DashboardCachedRuntime = {
+  entries: Array<[string, DashboardCachedRuntimeEntry]>;
+  pendingKeys: string[];
+  inventory?: DashboardRuntimeInventory;
+};
+
+export type DashboardRuntimeCandidate = {
   agentId: string;
   thread: BridgeAgentThread;
   stamp: string;
   inspectLiveness: boolean;
+  revalidateLoadedForeground?: boolean;
+  changedAt?: number;
+};
+
+export type BridgeDashboardRuntimePlan = {
+  candidates: DashboardRuntimeCandidate[];
+};
+
+export type BridgeDashboardEnrichment = {
+  runtimeByAgent: Array<[string, DashboardRuntimeObservation]>;
+  runtimeProbeSkippedAgents: number;
+  weeklyUsage: CodexWeeklyUsageView | null;
+  summary: CardEnrichmentSummary;
+  runtimeInventory?: DashboardRuntimeInventory;
 };
 
 type BridgeBackgroundProcessImpact = {
@@ -11413,11 +11871,65 @@ const CARD_USAGE_CACHE_TTL_MS = 60_000;
 const CARD_USAGE_STALE_TTL_MS = 30 * 60_000;
 const CARD_RUNTIME_CACHE_MAX_ENTRIES = 512;
 const DASHBOARD_HISTORY_LIMIT_PER_AGENT = 12;
-const DASHBOARD_ARCHIVED_JOB_LIMIT = 10_000;
+const DASHBOARD_HISTORY_PREVIEW_LIMIT = 3;
 const dashboardRuntimeCaches = new WeakMap<
   CodexUpstream,
   Map<string, DashboardRuntimeCacheEntry>
 >();
+const dashboardRuntimeCacheLimits = new WeakMap<CodexUpstream, number>();
+const dashboardRuntimeInventories = new WeakMap<CodexUpstream, DashboardRuntimeInventory>();
+const dashboardInventoryReads = new WeakMap<CodexUpstream, DisplayReadPool<string[] | null>>();
+
+async function readDashboardRuntimeInventory(upstream: CodexUpstream): Promise<DashboardRuntimeInventory | undefined> {
+  if (!upstream.listLoadedThreadIds) return undefined;
+  const pool = dashboardInventoryReads.get(upstream) || new DisplayReadPool<string[] | null>(1);
+  dashboardInventoryReads.set(upstream, pool);
+  const observedAt = Date.now();
+  const read = pool.start("loaded-threads", async () => {
+    try {
+      const ids = await upstream.listLoadedThreadIds!();
+      return Array.isArray(ids) && ids.every(id => typeof id === "string") ? ids : null;
+    } catch { return null; }
+  }, (ids, deferred) => {
+    const previous = dashboardRuntimeInventories.get(upstream);
+    if (ids) {
+      const loaded = new Set(ids);
+      for (const threadId of previous?.threadIds || []) {
+        if (!loaded.has(threadId)) invalidateCardRuntimeCache(upstream, threadId);
+      }
+    }
+    dashboardRuntimeInventories.set(upstream, {
+      threadIds: ids ?? previous?.threadIds ?? [],
+      unavailable: ids === null,
+      observedAt: ids === null ? previous?.observedAt ?? 0 : observedAt
+    });
+    if (deferred) notifyCardObservation(upstream);
+  });
+  const result = read && await waitForDisplay(read, CARD_RUNTIME_PROBE_TIMEOUT_MS);
+  if (!result || result.pending) {
+    dashboardRuntimeInventories.set(upstream, {
+      threadIds: dashboardRuntimeInventories.get(upstream)?.threadIds ?? [], unavailable: true,
+      observedAt: dashboardRuntimeInventories.get(upstream)?.observedAt ?? 0
+    });
+  }
+  return dashboardRuntimeInventories.get(upstream);
+}
+
+function dashboardCachedRuntime(upstream: CodexUpstream): DashboardCachedRuntime {
+  const now = Date.now();
+  const entries: DashboardCachedRuntime["entries"] = [];
+  for (const [key, entry] of dashboardRuntimeCaches.get(upstream) || []) {
+    if (entry.retainUntil <= now) continue;
+    const { stamp, retainUntil, observation, unavailable, observedAt } = entry;
+    entries.push([key, { stamp, retainUntil, observation, unavailable, observedAt }]);
+  }
+  const pendingKeys: string[] = [];
+  dashboardRuntimeReads.get(upstream)?.observePending(key => { pendingKeys.push(key); return true; });
+  const inventory = dashboardRuntimeInventories.get(upstream);
+  return { entries, pendingKeys, inventory: inventory ? {
+    ...inventory, pending: (dashboardInventoryReads.get(upstream)?.observePending() || 0) > 0
+  } : undefined };
+}
 
 function invalidateCardRuntimeCache(upstream: CodexUpstream, threadId: string): void {
   dashboardRuntimeReads.get(upstream)?.invalidate(key => key.includes(`\0${threadId}\0`));
@@ -11447,6 +11959,10 @@ function dashboardSessionAlias(scopeId: string): string {
     .slice(0, 8)
     .toUpperCase();
   return `Session ${digest}`;
+}
+
+function dashboardThreadIdsEqual(left:string,right:string):boolean {
+  return left===right || (SCOPE_ID_PATTERN.test(left.trim()) && SCOPE_ID_PATTERN.test(right.trim()) && left.trim().toLowerCase()===right.trim().toLowerCase());
 }
 
 function dashboardCodexThreadUrl(
@@ -11496,11 +12012,162 @@ function dashboardActivityKey(
     .slice(0, 32);
 }
 
-function dashboardJobTokenUsage(jobs: CodexJobRegistry, jobId: string): { tokenUsage?: z.infer<typeof dashboardTokenUsageOutputSchema> } {
-  const usage = jobs.admissionStateStore.eventRetention.summary(jobId).usage;
+function dashboardJobTokenUsage(
+  jobId: string,
+  summaries: ReadonlyMap<string, Record<string, unknown>>
+): { tokenUsage?: z.infer<typeof dashboardTokenUsageOutputSchema> } {
+  const usage = summaries.get(jobId)?.usage;
   const tokens = isRecord(usage) && usage.basis === "cumulative-difference" ? usage.tokens : undefined;
   const parsed = dashboardTokenUsageOutputSchema.safeParse(tokens);
   return parsed.success ? { tokenUsage: parsed.data } : {};
+}
+
+function executionTurn(record:DashboardExecutionRecord):z.infer<typeof dashboardTurnOutputSchema> {
+  const text=(v:unknown,max:number):string|null=>typeof v==="string" && v.trim() ? redactSensitiveText(v).slice(0,max) : null;
+  const cancellationReason=text(record.cancellationReason,CANCELLATION_REASON_MAX_LENGTH);
+  const cancellation=cancellationReason && record.cancellationRequestedAt!==null ? {
+    targetKind:record.cancellationTargetKind==="activity" ? "activity" as const : "job" as const,
+    status:record.cancellationStatus==="failed" ? "failed" as const : ["completed","succeeded","no-op"].includes(record.cancellationStatus || "") ? "succeeded" as const : "requested" as const,
+    reason:cancellationReason,requestedAt:new Date(record.cancellationRequestedAt).toISOString()
+  } : undefined;
+  let status=record.status as DashboardStatus;
+  if(record.status==="running" && record.blockingKind) status=record.blockingKind.includes("approval") ? "approval-required" : "input-required";
+  const error=record.status==="cancelled" ? null : text(record.error,1000);
+  const executionName=text(record.executionName,200),summary=text(record.summary,500);
+  const executionRevision=problemRevision(["execution-display-v2",record.jobId,record.scopeId,record.activityId,status,
+    record.createdAt,record.endedAt,record.detailAvailability,record.activityTitle,executionName,summary,error,cancellation]);
+  return {executionKey:dashboardRowKey(undefined,record.jobId),jobId:record.jobId,scopeId:record.scopeId,activityId:record.activityId,agentId:record.agentId,
+    executionRevision,executionName,summary,error,reasonAvailability:(record.status==="cancelled" ? cancellation?.reason : error) ? "recorded" : "unrecorded",
+    activityKey:dashboardActivityKey(record.activityId,record.jobId),activityTitle:record.activityTitle,status,
+    startedAt:new Date(record.createdAt).toISOString(),updatedAt:new Date(record.updatedAt).toISOString(),
+    endedAt:record.endedAt===null ? null : new Date(record.endedAt).toISOString(),durationMs:record.endedAt===null ? null : Math.max(0,record.endedAt-record.createdAt),
+    endedAtSource:record.endedAtSource==="recorded" ? "recorded" : record.endedAtSource==="legacy-estimate" ? "legacy-estimate" : null,
+    detailAvailability:record.detailAvailability as "complete"|"legacy-partial"|"expired",...(cancellation ? {cancellation} : {})};
+}
+
+function buildDashboardExecutionDetail(store:BridgeStateStore,input:BridgeDashboardExecutionDetailOptions):DashboardExecutionDetail {
+  const options=dashboardExecutionDetailInputSchema.parse(input),policy=store.appliedHistoryPolicy();
+  if(options.expectedPolicyRevision && options.expectedPolicyRevision!==policy.policyRevision) throw new Error("EXECUTION_DETAIL_STALE: History policy changed.");
+  const record=store.dashboardExecutionRecords([options.jobId],options.scopeId)[0];
+  if(!record) throw new Error("EXECUTION_DETAIL_UNAVAILABLE: This exact scoped execution is unavailable or expired.");
+  const execution=executionTurn(record);
+  if(options.expectedExecutionRevision && options.expectedExecutionRevision!==execution.executionRevision) throw new Error("EXECUTION_DETAIL_STALE: Execution content changed.");
+  return dashboardExecutionDetailOutputSchema.parse({kind:"dashboard-execution",scopeId:record.scopeId,jobId:record.jobId,
+    executionRevision:execution.executionRevision!,policyRevision:policy.policyRevision,nextExpiryAt:policy.retentionDays===0 || record.endedAt===null ? null : new Date(record.endedAt+policy.retentionDays*86400000).toISOString(),execution});
+}
+
+const snapshotRuntimeOnlyRows=new WeakMap<DashboardView,DashboardRow[]>();
+const snapshotHandoffThreads=new WeakMap<DashboardView,Map<string,string>>();
+const snapshotActiveStatuses=new WeakMap<DashboardView,Map<string,DashboardStatus>>();
+const snapshotBackgroundOwners=new WeakMap<DashboardView,Array<{row:DashboardRow;jobId?:string}>>();
+
+function applyExecutionContract(view:DashboardView,store:BridgeStateStore,options:BridgeDashboardSnapshotOptions,modelCatalog:CodexModelCatalogProvider):void {
+  const now=Date.now(),counts=store.dashboardExecutionCounts(options.scopeId,now),policy=store.appliedHistoryPolicy(now);
+  view.executionContractVersion=2;view.historyModeApplied=options.historyMode || "agents";
+  view.counts.progressJobCount=counts.progress;view.counts.executionCount=counts.terminal;
+  const entries=view.problems?.rows || [];
+  const records=new Map(store.dashboardExecutionRecords(entries.flatMap(x=>x.jobId ? [x.jobId] : []),options.scopeId,now).map(x=>[x.jobId,x]));
+  for(const entry of entries) {
+    const record=entry.jobId ? records.get(entry.jobId) : undefined;
+    entry.executionAvailability=entry.jobId ? record && record.scopeId===entry.scopeId ? "retained" : "unavailable" : "not-linked";
+    if(record && record.scopeId===entry.scopeId) {
+      const turn=executionTurn(record);
+      Object.assign(entry,{executionKey:turn.executionKey,executionRevision:turn.executionRevision,executionName:turn.executionName,summary:turn.summary,error:turn.error,
+        reasonAvailability:turn.reasonAvailability});
+      if(entry.source==="execution") entry.reason=record.status==="cancelled" ? turn.cancellation?.reason || null : turn.error || null;
+      entry.row.latestTurn=turn;entry.row.nextExpiryAt=policy.retentionDays===0 || record.endedAt===null ? null : new Date(record.endedAt+policy.retentionDays*86400000).toISOString();Object.assign(entry.row,{jobId:record.jobId,scopeId:record.scopeId,activityId:record.activityId,agentId:record.agentId,status:turn.status});
+    } else Object.assign(entry,{executionKey:null,executionName:null,summary:null,error:null,reasonAvailability:entry.reason ? "recorded" : "unrecorded"});
+  }
+  if(view.problems && options.historyMode!=="jobs") {
+    const executionEvents=store.workHistory.problemJobs(options.scopeId),known=new Set(executionEvents.map(x=>x.jobId));
+    const eventRefs=[...executionEvents.map(x=>({jobId:x.jobId,scopeId:x.scopeId})),...store.automaticRecovery.listForDashboard(options.scopeId)
+      .filter(x=>!x.executionFailureJobId || !known.has(x.executionFailureJobId)).map(x=>({jobId:x.jobId,scopeId:x.scopeId}))];
+    const scopes=store.dashboardExecutionScopes(eventRefs.flatMap(x=>x.jobId ? [x.jobId] : []),options.scopeId,now);
+    view.problems.affectedExecutionCount=new Set(eventRefs.filter(x=>x.jobId && scopes.get(x.jobId)===x.scopeId).map(x=>x.jobId)).size;
+    view.problems.unavailableExecutionCount=new Set(eventRefs.filter(x=>x.jobId && scopes.get(x.jobId)!==x.scopeId).map(x=>x.jobId)).size;
+    view.problems.systemIncidentCount=eventRefs.filter(x=>!x.jobId).length;
+  }
+  if(options.historyMode!=="jobs") return;
+  if(view.problems) {
+    // The visible history, its count and its pages all use failed Jobs. Recovery
+    // attempts and system incidents remain diagnostics, not extra history rows.
+    view.problems.affectedExecutionCount=counts.failed+counts.interrupted+counts.cancelled;
+    view.counts.problems=view.problems.affectedExecutionCount;
+  }
+  view.historyIncluded=options.includeHistory!==false;
+  const page=(rows:DashboardRow[],total:number,offset:number,conversationTotal=0)=>({rows,page:{offset,limit:options.limit || 12,returned:rows.length,total,
+    returnedConversations:new Set(rows.map(x=>x.conversationKey)).size,conversationTotal,
+    hasPrevious:offset>0,hasNext:offset+rows.length<total}});
+  const templates=[...view.activeRows,...view.terminalRows,...view.idleRows,...(view.statusRows || [])];
+  const makeRow=(record:DashboardExecutionRecord,ownerTemplate?:DashboardRow):DashboardRow=> {
+    const template=ownerTemplate || templates.find(x=>x.latestTurn?.executionKey===dashboardRowKey(undefined,record.jobId));
+    const turn=executionTurn(record);
+    // Runtime health is transient presentation state; keep the durable exact-
+    // detail revision stable while preserving the canonical live status.
+    const runtimeStatus=snapshotActiveStatuses.get(view)?.get(record.jobId);
+    const status=runtimeStatus==="orphaned" || runtimeStatus==="liveness-unknown" ? runtimeStatus : turn.status;
+    const codexThreadUrl=template?.codexThreadUrl && record.threadId && template.codexThreadUrl===dashboardCodexThreadUrl(true,{threadId:record.threadId,...(record.sessionId ? {sessionId:record.sessionId} : {}),backendKind:"app-server"}) ? template.codexThreadUrl : undefined;
+    if(codexThreadUrl && record.threadId) {
+      const sourceThread=template && snapshotHandoffThreads.get(view)?.get(template.rowKey);
+      snapshotHandoffThreads.get(view)?.set(turn.executionKey!,sourceThread && dashboardThreadIdsEqual(sourceThread,record.threadId) ? sourceThread : record.threadId);
+    }
+    return {rowKey:turn.executionKey!,activityKey:turn.activityKey!,conversationKey:dashboardConversationKey(record.scopeId),sessionAlias:dashboardSessionAlias(record.scopeId),
+      ...(template?.conversationUrl ? {conversationUrl:template.conversationUrl} : {}),...(codexThreadUrl ? {codexThreadUrl} : {}),
+      bucket:isActiveActivityJobStatus(record.status) ? "active" : "recent",...dashboardProjectIdentity({projectId:record.projectId || undefined,projectName:record.projectName || undefined}),
+      agentName:dashboardAgentName(record.agentName || undefined),activityTitle:record.activityTitle,status,createdAt:turn.startedAt!,updatedAt:turn.updatedAt,
+      elapsedMs:turn.durationMs ?? Math.max(0,now-record.createdAt),backgroundProcessCount:isActiveActivityJobStatus(record.status) ? template?.backgroundProcessCount || 0 : 0,controlKind:template?.controlKind || null,latestTurn:{...turn,status,
+        ...(template?.latestTurn?.execution ? {execution:template.latestTurn.execution} : {}),...(template?.latestTurn?.tokenUsage ? {tokenUsage:template.latestTurn.tokenUsage} : {})},
+      history:[],historyCount:0,historyHasMore:false,historyRevision:turn.executionRevision,policyRevision:policy.policyRevision,representativeExecutionKey:turn.executionKey,
+      nextExpiryAt:policy.retentionDays===0 || record.endedAt===null ? null : new Date(record.endedAt+policy.retentionDays*86400000).toISOString(),
+      jobId:record.jobId,scopeId:record.scopeId,activityId:record.activityId,agentId:record.agentId,executionRevision:turn.executionRevision,
+      executionName:turn.executionName,summary:turn.summary,error:turn.error,reasonAvailability:turn.reasonAvailability};
+  };
+  const offset=options.statusOffset ?? options.terminalOffset ?? 0,limit=options.limit || 12;
+  const progress=store.dashboardExecutionPage(options.scopeId,["running","terminating","termination-failed"],options.statusFilter==="running" ? offset : 0,limit,now);
+  const terminal=store.dashboardExecutionPage(options.scopeId,["completed","failed","interrupted","cancelled"],offset,limit,now);
+  view.progressRevision=progress.revision;view.executionHistoryRevision=terminal.revision;
+  const progressRows=progress.jobs.map(record=>makeRow(record)),runtimeOnly=snapshotRuntimeOnlyRows.get(view) || [];
+  const activeTotal=progress.total+runtimeOnly.length;
+  const activeOffset=options.statusFilter==="running" ? Math.min(offset,activeTotal ? Math.floor((activeTotal-1)/limit)*limit : 0) : 0;
+  const actualProgressRows=activeOffset>=progress.total ? [] : (activeOffset===progress.offset ? progressRows : store.dashboardExecutionPage(options.scopeId,["running","terminating","termination-failed"],activeOffset,limit,now).jobs.map(record=>makeRow(record)));
+  const runtimeOffset=Math.max(0,activeOffset-progress.total);
+  const active=page([...actualProgressRows,...runtimeOnly.slice(runtimeOffset,runtimeOffset+Math.max(0,limit-actualProgressRows.length))],activeTotal,activeOffset,new Set([...progress.scopeIds.map(dashboardConversationKey),...runtimeOnly.map(x=>x.conversationKey)]).size);
+  const history=page(options.includeHistory===false ? [] : terminal.jobs.map(record=>makeRow(record)),terminal.total,terminal.offset,terminal.scopeIds.length);
+  const owners=snapshotBackgroundOwners.get(view) || [];
+  const backgroundAt=Math.min(Math.max(0,options.backgroundOffset || 0),owners.length ? Math.floor((owners.length-1)/limit)*limit : 0);
+  const visibleOwners=owners.slice(backgroundAt,backgroundAt+limit);
+  const backgroundJobs=new Map(store.dashboardExecutionRecords(visibleOwners.flatMap(owner=>owner.jobId ? [owner.jobId] : []),options.scopeId,now).map(record=>[record.jobId,record]));
+  const background=page(visibleOwners.flatMap(owner=> {
+    if(!owner.jobId) return [owner.row];
+    const record=backgroundJobs.get(owner.jobId);return record && isActiveActivityJobStatus(record.status) ? [makeRow(record,owner.row)] : [owner.row];
+  }),owners.length,backgroundAt,new Set(owners.map(owner=>owner.row.conversationKey)).size);
+  view.backgroundRows=JSON.parse(JSON.stringify(background.rows)) as DashboardRow[];
+  view.backgroundPagination=background.page;
+  view.backgroundRevision=problemRevision([policy.policyRevision,owners.map(owner=>[owner.row.rowKey,owner.jobId || null,owner.row.codexThreadUrl || null,owner.row.projectKey,owner.row.agentName,owner.row.status,owner.row.controlKind || null,owner.row.backgroundProcessCount])]);
+  view.activeRows=active.rows;view.terminalRows=history.rows;view.idleRows=[];view.pagination.active=active.page;view.pagination.terminal=history.page;
+  view.pagination.idle=page([],0,0).page;
+  const selected=options.statusFilter==="running" || options.statusFilter==="background" ? active : history;
+  if(!options.statusFilter || options.statusFilter==="all") {
+    // The overview spans independently paged progress and history buckets.
+    // Do not advertise a single terminal-only status page as the whole view.
+    view.statusRows=[...active.rows,...history.rows];delete view.statusPagination;
+    view.statusRowsComplete=![active.page,history.page].some(page=>page.hasNext || page.hasPrevious);
+  } else {
+    view.statusRows=options.statusFilter==="problems" ? [] : selected.rows;view.statusPagination=selected.page;view.statusRowsComplete=!selected.page.hasNext && !selected.page.hasPrevious;
+  }
+  // Older executions may no longer be an Agent's representative row. Restore
+  // their own saved model and usage instead of borrowing the latest Job's data.
+  const rows=[...view.activeRows,...view.terminalRows,...background.rows,...entries.map(entry=>entry.row)];
+  const summaries=store.dashboardJobSummaries(rows.flatMap(row=>row.jobId ? [row.jobId] : []));
+  for(const row of rows) {
+    if(!row.jobId || !row.latestTurn) continue;
+    const saved=summaries.get(row.jobId)?.execution;
+    const parsed=dashboardExecutionOutputSchema.safeParse(isRecord(saved) ? {...saved,isCurrent:false} : undefined);
+    if(parsed.success) row.latestTurn.execution={...dashboardExecutionForSelection(parsed.data,undefined,modelCatalog,false,parsed.data.reroutedModel),
+      requestState:parsed.data.requestState,processingSpeed:parsed.data.processingSpeed};
+    Object.assign(row.latestTurn,dashboardJobTokenUsage(row.jobId,summaries));
+  }
+  view.backgroundRows=JSON.parse(JSON.stringify(background.rows)) as DashboardRow[];
 }
 
 function dashboardRowKey(agentId: string | undefined, jobId?: string): string {
@@ -11516,6 +12183,29 @@ function dashboardHistoryRevision(agent: Pick<BridgeAgent, "agentId" | "version"
   job?: {jobId:string;status:string;updatedAt:number}): string {
   return createHash("sha256").update(JSON.stringify([agent.agentId,agent.version,
     job?.jobId || null,job?.status || null,job?.updatedAt || null])).digest("hex");
+}
+
+function projectDashboardHandoffs(view: DashboardView, jobs: CodexJobRegistry): void {
+  const rows = [...view.activeRows, ...view.terminalRows, ...view.idleRows, ...(view.statusRows || []), ...(view.backgroundRows || [])];
+  // Canonical routes may use a session alias or normalized UUID. Durable intent
+  // belongs to the actual stored thread captured from each row's source.
+  const threadIds=snapshotHandoffThreads.get(view);
+  const connections = new Map(jobs.admissionStateStore.threadConnections.listByThreadIds(rows.flatMap(row => {
+    const threadId=threadIds?.get(row.rowKey);return row.codexThreadUrl && threadId ? [threadId] : [];
+  })).map(connection => [connection.threadId, connection]));
+  for (const row of rows) {
+    const threadId=threadIds?.get(row.rowKey);
+    const connection = row.codexThreadUrl && threadId ? connections.get(threadId) : undefined;
+    if (connection) row.handoff = { phase: connection.phase,
+      ...(connection.reason !== undefined ? { reason: connection.reason } : {}),
+      requested: connection.handoffRequested, canOpen: connection.phase === "released" && Boolean(connection.evidence) };
+  }
+}
+
+/** Resolve the opaque row identity from fresh Agent rows, never a cwd lookup. */
+export function dashboardAgentForDetail(store: BridgeStateStore, options: BridgeDashboardHistoryDetailOptions): BridgeAgent | undefined {
+  const id = store.listDashboardAgentIds(options.scopeId).find(id => dashboardRowKey(id) === options.rowKey);
+  return id ? store.getAgent(id) : undefined;
 }
 
 function dashboardRuntimeProblemIdentity(jobs: CodexJobRegistry, agent: BridgeAgent) {
@@ -11709,186 +12399,6 @@ function dashboardStatusPriority(status: DashboardStatus): number {
   return 5;
 }
 
-/** Compatibility projection for already-mounted generation 4–6 cards only. */
-function dashboardConversationGroups(
-  rows: readonly DashboardRow[]
-): DashboardConversation[] {
-  const grouped = new Map<string, DashboardRow[]>();
-  for (const row of rows) {
-    const retained = grouped.get(row.conversationKey) || [];
-    retained.push(row);
-    grouped.set(row.conversationKey, retained);
-  }
-  return [...grouped].map(([conversationKey, retained]) => {
-    const sorted = [...retained].sort(
-      (left, right) =>
-        dashboardStatusPriority(left.status) - dashboardStatusPriority(right.status) ||
-        Date.parse(right.updatedAt) - Date.parse(left.updatedAt) ||
-        left.agentName.localeCompare(right.agentName)
-    );
-    const representative = sorted[0]!;
-    const updatedAt = sorted.reduce(
-      (latest, row) => Date.parse(row.updatedAt) > Date.parse(latest) ? row.updatedAt : latest,
-      representative.updatedAt
-    );
-    const projectNames = [...new Set(
-      sorted.flatMap((row) => row.projectName ? [row.projectName] : [])
-    )];
-    const conversationUrl = sorted.find((row) => row.conversationUrl)?.conversationUrl;
-    return {
-      conversationKey,
-      ...(conversationUrl ? { conversationUrl } : {}),
-      projectNames,
-      status: representative.status,
-      updatedAt,
-      agentCount: sorted.length,
-      idleOnly: sorted.every((row) => row.bucket === "idle"),
-      rows: sorted
-    };
-  }).sort(
-    (left, right) =>
-      dashboardStatusPriority(left.status) - dashboardStatusPriority(right.status) ||
-      Date.parse(right.updatedAt) - Date.parse(left.updatedAt) ||
-      left.conversationKey.localeCompare(right.conversationKey)
-  );
-}
-
-function dashboardConversationPage(
-  rows: readonly DashboardRow[],
-  requestedOffset: number,
-  limit: number
-): { conversations: DashboardConversation[]; page: DashboardConversationPage } {
-  const conversations = dashboardConversationGroups(rows);
-  const flattened = conversations.flatMap((conversation) =>
-    conversation.rows.map((row) => ({ conversation, row }))
-  );
-  const totalAgents = flattened.length;
-  const maximumOffset = totalAgents === 0
-    ? 0
-    : Math.floor((totalAgents - 1) / limit) * limit;
-  const offset = Math.min(Math.max(0, requestedOffset), maximumOffset);
-  const visibleEntries = flattened.slice(offset, offset + limit);
-  const visibleByConversation = new Map<string, DashboardConversation>();
-  for (const { conversation, row } of visibleEntries) {
-    const visible = visibleByConversation.get(conversation.conversationKey);
-    if (visible) visible.rows.push(row);
-    else visibleByConversation.set(conversation.conversationKey, {
-      ...conversation,
-      rows: [row]
-    });
-  }
-  return {
-    conversations: [...visibleByConversation.values()],
-    page: {
-      offset,
-      limit,
-      returned: visibleByConversation.size,
-      total: conversations.length,
-      activeOrRecentTotal: conversations.filter((entry) => !entry.idleOnly).length,
-      idleTotal: conversations.filter((entry) => entry.idleOnly).length,
-      returnedAgents: visibleEntries.length,
-      totalAgents,
-      hasPrevious: offset > 0,
-      hasNext: offset + visibleEntries.length < totalAgents
-    }
-  };
-}
-
-function dashboardProjectPage(
-  rows: readonly DashboardRow[],
-  requestedOffset: number,
-  limit: number
-): { projects: DashboardProject[]; page: DashboardProjectPage } {
-  const grouped = new Map<string, DashboardRow[]>();
-  for (const row of rows) {
-    const retained = grouped.get(row.projectKey) || [];
-    retained.push(row);
-    grouped.set(row.projectKey, retained);
-  }
-  const projects = [...grouped].map(([projectKey, retained]) => {
-    const sorted = [...retained].sort(
-      (left, right) =>
-        dashboardStatusPriority(left.status) - dashboardStatusPriority(right.status) ||
-        Date.parse(right.updatedAt) - Date.parse(left.updatedAt) ||
-        left.agentName.localeCompare(right.agentName)
-    );
-    const representative = sorted[0]!;
-    const updatedAt = sorted.reduce(
-      (latest, row) => Date.parse(row.updatedAt) > Date.parse(latest) ? row.updatedAt : latest,
-      representative.updatedAt
-    );
-    const projectName = [...sorted]
-      .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
-      .find((row) => row.projectName)?.projectName || null;
-    const conversations = dashboardConversationGroups(sorted);
-    return {
-      projectKey,
-      projectName,
-      status: representative.status,
-      updatedAt,
-      agentCount: sorted.length,
-      conversationCount: conversations.length,
-      attentionCount: sorted.filter((row) => DASHBOARD_ATTENTION_STATUSES.has(row.status)).length,
-      activeAgentCount: sorted.filter((row) => row.bucket === "active").length,
-      recentAgentCount: sorted.filter((row) => row.bucket === "recent").length,
-      idleAgentCount: sorted.filter((row) => row.bucket === "idle").length,
-      idleOnly: sorted.every((row) => row.bucket === "idle"),
-      conversations
-    };
-  }).sort(
-    (left, right) =>
-      dashboardStatusPriority(left.status) - dashboardStatusPriority(right.status) ||
-      Date.parse(right.updatedAt) - Date.parse(left.updatedAt) ||
-      right.activeAgentCount - left.activeAgentCount ||
-      (left.projectName || "").localeCompare(right.projectName || "") ||
-      left.projectKey.localeCompare(right.projectKey)
-  );
-  const flattened = projects.flatMap((project) =>
-    project.conversations.flatMap((conversation) =>
-      conversation.rows.map((row) => ({ project, conversation, row }))
-    )
-  );
-  const totalAgents = flattened.length;
-  const maximumOffset = totalAgents === 0
-    ? 0
-    : Math.floor((totalAgents - 1) / limit) * limit;
-  const offset = Math.min(Math.max(0, requestedOffset), maximumOffset);
-  const visibleEntries = flattened.slice(offset, offset + limit);
-  const visibleByProject = new Map<string, DashboardProject>();
-  const visibleConversations = new Map<string, Map<string, DashboardConversation>>();
-  for (const { project, conversation, row } of visibleEntries) {
-    let visibleProject = visibleByProject.get(project.projectKey);
-    if (!visibleProject) {
-      visibleProject = { ...project, conversations: [] };
-      visibleByProject.set(project.projectKey, visibleProject);
-      visibleConversations.set(project.projectKey, new Map());
-    }
-    const byConversation = visibleConversations.get(project.projectKey)!;
-    const visibleConversation = byConversation.get(conversation.conversationKey);
-    if (visibleConversation) visibleConversation.rows.push(row);
-    else {
-      const nextConversation = { ...conversation, rows: [row] };
-      byConversation.set(conversation.conversationKey, nextConversation);
-      visibleProject.conversations.push(nextConversation);
-    }
-  }
-  return {
-    projects: [...visibleByProject.values()],
-    page: {
-      offset,
-      limit,
-      returned: visibleByProject.size,
-      total: projects.length,
-      activeOrRecentTotal: projects.filter((entry) => !entry.idleOnly).length,
-      idleTotal: projects.filter((entry) => entry.idleOnly).length,
-      returnedAgents: visibleEntries.length,
-      totalAgents,
-      hasPrevious: offset > 0,
-      hasNext: offset + visibleEntries.length < totalAgents
-    }
-  };
-}
-
 function listAllDashboardAgents(jobs: CodexJobRegistry, scopeId?: string): BridgeAgent[] {
   const total = jobs.agentCount(scopeId);
   const agents: BridgeAgent[] = [];
@@ -11901,6 +12411,9 @@ function listAllDashboardAgents(jobs: CodexJobRegistry, scopeId?: string): Bridg
   }
   return agents;
 }
+
+type BackgroundInspection = { state: "loaded"; count: number } | { state: "unloaded" } | { state: "unknown" };
+const backgroundImpactReads = new WeakMap<CodexUpstream, DisplayReadPool<BackgroundInspection>>();
 
 async function inspectBridgeBackgroundProcessImpact(
   jobs: CodexJobRegistry,
@@ -11930,39 +12443,27 @@ async function inspectBridgeBackgroundProcessImpact(
   let processes = 0;
   let agents = 0;
   let unknownAgents = 0;
-  type InspectionResult =
-    | { state: "loaded"; count: number }
-    | { state: "unloaded" }
-    | { state: "unknown" };
-  const inspect = (
+  const pool = backgroundImpactReads.get(upstream) || new DisplayReadPool<BackgroundInspection>(DASHBOARD_RUNTIME_PROBE_CONCURRENCY);
+  backgroundImpactReads.set(upstream, pool);
+  const inspect = async (
     thread: Pick<BridgeAgentThread, "threadId" | "backendKind">,
     timeoutMs: number
-  ): Promise<InspectionResult> => {
+  ): Promise<BackgroundInspection> => {
     if (!backendSupports(thread.backendKind, "supportsBackgroundTerminals")) {
       return Promise.resolve(upstream.canResumeThread?.(thread.threadId, thread.backendKind as CodexBackendKind) === true
         ? { state: "unknown" } : { state: "unloaded" });
     }
-    return new Promise((resolve) => {
-      let settled = false;
-      const finish = (value: InspectionResult): void => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve(value);
-      };
-      const timer = setTimeout(() => finish({ state: "unknown" }), timeoutMs);
-      void upstream.listLoadedBackgroundTerminals!(
-        thread.threadId,
-        thread.backendKind as CodexBackendKind
-      ).then(
-        (terminals) => finish(
-          terminals === null
-            ? { state: "unloaded" }
-            : { state: "loaded", count: terminals.length }
-        ),
-        () => finish({ state: "unknown" })
-      );
-    });
+    // A display timeout ends this wait, not the underlying read. Share its
+    // physical reservation across repeated/native snapshot requests.
+    const read = pool.start(`${thread.backendKind}\0${thread.threadId}`, async () => {
+      try {
+        const terminals = await upstream.listLoadedBackgroundTerminals!(thread.threadId, thread.backendKind as CodexBackendKind);
+        return terminals === null ? { state: "unloaded" } : { state: "loaded", count: terminals.length };
+      } catch { return { state: "unknown" }; }
+    }, () => {});
+    if (!read) return { state: "unknown" };
+    const waited = await waitForDisplay(read, timeoutMs);
+    return waited.pending ? { state: "unknown" } : waited.value;
   };
   const worker = async (): Promise<void> => {
     while (nextIndex < candidates.length) {
@@ -12010,23 +12511,13 @@ async function inspectDashboardRuntime(
   const backendKind = thread.backendKind as CodexBackendKind;
   let state: DashboardRuntimeObservation["state"] = "confirmed";
   let requests = 0;
-  const coverage = inspectLiveness ? "liveness" as const : "background" as const;
+  let coverage: DashboardRuntimeCacheEntry["coverage"] = inspectLiveness ? "liveness" : "background";
   if (inspectLiveness && upstream.probeThread) {
-    let probe: CodexThreadResumeProbe;
+    let probe: CodexThreadResumeProbe | undefined;
     try {
       requests += 1;
       probe = await upstream.probeThread(thread.threadId, backendKind);
-    } catch {
-      return {
-        observation: {
-          state: "unknown",
-          backgroundProcessState: "unknown",
-          backgroundProcessCount: 0
-        },
-        requests,
-        coverage
-      };
-    }
+    } catch { /* A failed liveness read does not prevent a non-loading process read. */ }
     if (!shouldContinue()) {
       return {
         observation: {
@@ -12038,29 +12529,7 @@ async function inspectDashboardRuntime(
         coverage
       };
     }
-    if (probe.state === "orphaned") {
-      return {
-        observation: {
-          state: "orphaned",
-          backgroundProcessState: "unknown",
-          backgroundProcessCount: 0
-        },
-        requests,
-        coverage
-      };
-    }
-    if (probe.state === "unknown") {
-      return {
-        observation: {
-          state: "unknown",
-          backgroundProcessState: "unknown",
-          backgroundProcessCount: 0
-        },
-        requests,
-        coverage
-      };
-    }
-    if (probe.state === "resumable" && probe.runtimeStatus === "notLoaded") {
+    if (probe?.state === "resumable" && probe.runtimeStatus === "notLoaded") {
       return {
         observation: {
           state: "not-loaded",
@@ -12071,7 +12540,7 @@ async function inspectDashboardRuntime(
         coverage
       };
     }
-    state = probe.state === "busy" ? "busy" : "idle";
+    state = probe?.state === "busy" ? "busy" : probe?.state === "resumable" ? "idle" : probe?.state ?? "unknown";
   }
   if (!upstream.listLoadedBackgroundTerminals) {
     return {
@@ -12082,7 +12551,7 @@ async function inspectDashboardRuntime(
   }
   try {
     requests += 1;
-    const terminals = await upstream.listLoadedBackgroundTerminals(thread.threadId, backendKind);
+    let terminals = await upstream.listLoadedBackgroundTerminals(thread.threadId, backendKind);
     if (terminals === null) {
       return {
         observation: {
@@ -12094,12 +12563,30 @@ async function inspectDashboardRuntime(
         coverage
       };
     }
+    if (candidate.revalidateLoadedForeground && terminals.length===0) {
+      // A proof describes a past ended generation. A subsequently loaded
+      // Thread with no background terminals can still have a foreground turn.
+      state="unknown";
+      if (shouldContinue() && upstream.probeThread) {
+        requests++;
+        coverage="liveness";
+        const probe=await upstream.probeThread(thread.threadId,backendKind);
+        if (shouldContinue() && probe.state==="busy") state="busy";
+        else if (shouldContinue() && probe.state==="resumable" && ["idle","notLoaded"].includes(probe.runtimeStatus || "")) {
+          state=probe.runtimeStatus==="notLoaded" ? "not-loaded" : "idle";
+          requests++;
+          terminals=await upstream.listLoadedBackgroundTerminals(thread.threadId,backendKind);
+          if (terminals===null) state="not-loaded";
+          if (!shouldContinue()) state="unknown";
+        }
+      }
+    }
     return {
       observation: {
         state,
         backgroundProcessState: "confirmed",
-        backgroundProcessCount: terminals.length,
-        backgroundProcessIds: terminals.map((terminal) => terminal.processId)
+        backgroundProcessCount: terminals?.length || 0,
+        backgroundProcessIds: terminals?.map((terminal) => terminal.processId) || []
       },
       requests,
       coverage
@@ -12126,17 +12613,24 @@ function dashboardRuntimeStamp(
 
 function cachedDashboardRuntimes(
   upstream: CodexUpstream,
-  candidates: ReadonlyArray<DashboardRuntimeCandidate>
+  candidates: ReadonlyArray<DashboardRuntimeCandidate>,
+  cache: Map<string, DashboardCachedRuntimeEntry> | undefined = dashboardRuntimeCaches.get(upstream),
+  inventory: DashboardRuntimeInventory | undefined = dashboardRuntimeInventories.get(upstream)
 ): Map<string, DashboardRuntimeObservation> {
   const observations = new Map<string, DashboardRuntimeObservation>();
-  const cache = dashboardRuntimeCaches.get(upstream);
-  if (!cache) return observations;
+  const loaded = inventory && new Set(inventory.threadIds);
   const now = Date.now();
-  for (const [key, entry] of cache) {
-    if (entry.retainUntil <= now) cache.delete(key);
+  for (const [key, entry] of cache || []) {
+    if (entry.retainUntil <= now) cache?.delete(key);
   }
   for (const candidate of candidates) {
-    const cached = cache.get(dashboardRuntimeCacheKey(candidate.thread));
+    if (loaded && !loaded.has(candidate.thread.threadId)) {
+      if (!inventory!.unavailable && (candidate.changedAt ?? 0) <= inventory!.observedAt) observations.set(candidate.agentId, {
+        state: "not-loaded", backgroundProcessState: "confirmed", backgroundProcessCount: 0
+      });
+      continue;
+    }
+    const cached = cache?.get(dashboardRuntimeCacheKey(candidate.thread));
     if (cached?.stamp === candidate.stamp && cached.retainUntil > now) {
       observations.set(candidate.agentId, cached.observation);
     }
@@ -12146,30 +12640,43 @@ function cachedDashboardRuntimes(
 
 function cachedDashboardEnrichment(
   upstream: CodexUpstream,
-  candidates: ReadonlyArray<DashboardRuntimeCandidate>
+  candidates: ReadonlyArray<DashboardRuntimeCandidate>,
+  cache: Map<string, DashboardCachedRuntimeEntry> | undefined = dashboardRuntimeCaches.get(upstream),
+  pendingKeys?: string[],
+  inventory: DashboardRuntimeInventory | undefined = dashboardRuntimeInventories.get(upstream)
 ): CardEnrichmentSummary {
   const now = Date.now();
-  const cache = dashboardRuntimeCaches.get(upstream);
+  const loaded = inventory && new Set(inventory.threadIds);
+  if (loaded) candidates = candidates.filter(candidate => loaded.has(candidate.thread.threadId));
   const entries = candidates.flatMap(candidate => {
     const entry = cache?.get(dashboardRuntimeCacheKey(candidate.thread));
     return entry?.stamp === candidate.stamp && entry.retainUntil > now ? [entry] : [];
   });
   const prefixes = candidates.map(candidate => `${dashboardRuntimeCacheKey(candidate.thread)}\0${candidate.stamp}\0`);
-  const runtimePending = dashboardRuntimeReads.get(upstream)?.observePending(key => prefixes.some(prefix => key.startsWith(prefix))) || 0;
+  const matches = (key: string) => prefixes.some(prefix => key.startsWith(prefix));
+  const runtimePending = pendingKeys
+    ? pendingKeys.filter(matches).length
+    : dashboardRuntimeReads.get(upstream)?.observePending(matches) || 0;
   const revision = upstream.accountRevision?.();
   const usagePending = cardUsageReads.get(upstream)?.observePending(key => key === (revision || "default")) || 0;
   const usageCompletion = cardUsageCompletions.get(upstream);
   const dates = entries.map(entry => new Date(entry.observedAt).toISOString());
   const usage = cachedCodexWeeklyUsage(upstream);
   if (usage) dates.push(usage.observedAt);
+  const oldestObservationAt = earliestObservationAt(dates);
   return {
     state: "structural", runtimeRequests: 0, cacheHits: entries.length,
     timeouts: 0, durationMs: 0, usageTimedOut: false,
-    pendingReads: runtimePending + usagePending,
+    pendingReads: runtimePending + usagePending + (inventory?.pending ? 1 : dashboardInventoryReads.get(upstream)?.observePending() || 0),
+    ...(inventory?.unavailable ? { backgroundInventoryUnavailable: true } : {}),
     runtimeUnavailable: entries.filter(entry => entry.unavailable).length,
     usageUnavailable: !!(usageCompletion && usageCompletion.revision === revision && usageCompletion.failed),
-    oldestObservationAt: dates.sort()[0]
+    ...(oldestObservationAt ? { oldestObservationAt } : {})
   };
+}
+
+function earliestObservationAt(values: ReadonlyArray<string | undefined>): string | undefined {
+  return values.filter((value): value is string => Boolean(value)).sort()[0];
 }
 
 type DashboardRuntimeResult = Awaited<ReturnType<typeof inspectDashboardRuntime>>;
@@ -12182,15 +12689,19 @@ function runtimeReadPool(upstream: CodexUpstream): DisplayReadPool<DashboardRunt
 }
 
 function cacheDashboardRuntime(
+  upstream: CodexUpstream,
   cache: Map<string, DashboardRuntimeCacheEntry>,
   candidate: DashboardRuntimeCandidate,
   result: DashboardRuntimeResult,
   deferred: boolean,
-  jobs: CodexJobRegistry
+  jobs?: CodexJobRegistry
 ): void {
   const cacheKey = dashboardRuntimeCacheKey(candidate.thread);
   const previous = cache.get(cacheKey);
+  const conclusiveUnloaded=result.observation.state==="not-loaded" &&
+    result.observation.backgroundProcessState==="confirmed" && result.observation.backgroundProcessCount===0;
   const canRetainLiveness =
+    !conclusiveUnloaded &&
     result.coverage === "background" &&
     previous?.stamp === candidate.stamp &&
     previous.coverage === "liveness" &&
@@ -12207,7 +12718,13 @@ function cacheDashboardRuntime(
     // cannot monopolize every inspection batch.
     const keepPrevious = !stable && observation.state !== "orphaned" && previous?.stamp === candidate.stamp && previous.retainUntil > Date.now();
     const retained = keepPrevious
-      ? {...previous.observation, ...(result.coverage === "liveness" && ["idle","busy","not-loaded"].includes(observation.state)
+      ? {...previous.observation,
+        ...(observation.backgroundProcessState === "confirmed" ? {
+          backgroundProcessState: observation.backgroundProcessState,
+          backgroundProcessCount: observation.backgroundProcessCount,
+          backgroundProcessIds: observation.backgroundProcessIds
+        } : {}),
+        ...(result.coverage === "liveness" && ["idle","busy","not-loaded"].includes(observation.state)
         ? {state:observation.state} : {})} : observation;
     cache.delete(cacheKey);
     cache.set(cacheKey, {
@@ -12226,16 +12743,20 @@ function cacheDashboardRuntime(
       unavailable: !stable || !!(canRetainLiveness && previous.unavailable),
       observedAt: keepPrevious || canRetainLiveness ? previous!.observedAt : Date.now()
     });
-    const agent = jobs.getAgent(candidate.agentId);
-    const latest = jobs.observedLatestJobForAgent(candidate.agentId);
-    if (agent && dashboardRuntimeStamp(agent,latest) === candidate.stamp) {
+    const agent = jobs?.getAgent(candidate.agentId);
+    const latest = jobs?.observedLatestJobForAgent(candidate.agentId);
+    if (jobs && agent && dashboardRuntimeStamp(agent,latest) === candidate.stamp) {
       const current = cache.get(cacheKey)!;
       const confirmed = !current.unavailable && current.observation.backgroundProcessState === "confirmed" &&
         ["confirmed","idle","not-loaded","busy"].includes(current.observation.state);
-      jobs.admissionStateStore.automaticRecovery.observeRecheck(recheckRecoveryIdentity(jobs,agent,latest),!confirmed,Date.now(),
-        confirmed ? current.observation.state === "busy" ? "active-turn-observed" : "runtime-observed" : undefined);
+      const currentContext=hasCurrentRecheckContext(jobs,agent,candidate.thread,current.observation);
+      if ((confirmed || currentContext) && !jobs.admissionStateStore.hasEndedOrphanProof(agent.agentId)) {
+        const identity=recheckRecoveryIdentity(jobs,agent,confirmed || currentContext);
+        if(identity) jobs.admissionStateStore.automaticRecovery.observeRecheck(identity,!confirmed,Date.now(),
+          confirmed ? current.observation.state === "busy" ? "active-turn-observed" : "runtime-observed" : undefined);
+      }
     }
-    while (cache.size > CARD_RUNTIME_CACHE_MAX_ENTRIES) {
+    while (cache.size > (dashboardRuntimeCacheLimits.get(upstream) || CARD_RUNTIME_CACHE_MAX_ENTRIES)) {
       const oldestKey = cache.keys().next().value;
       if (typeof oldestKey !== "string") break;
       cache.delete(oldestKey);
@@ -12244,9 +12765,9 @@ function cacheDashboardRuntime(
 }
 
 async function inspectDashboardRuntimes(
-  jobs: CodexJobRegistry,
   upstream: CodexUpstream,
-  candidates: ReadonlyArray<DashboardRuntimeCandidate>
+  candidates: ReadonlyArray<DashboardRuntimeCandidate>,
+  jobs?: CodexJobRegistry
 ): Promise<{
   observations: Map<string, DashboardRuntimeObservation>;
   skipped: number;
@@ -12309,14 +12830,14 @@ async function inspectDashboardRuntimes(
           : 0;
       let started = false;
       const request = pool.start(
-        `${dashboardRuntimeCacheKey(candidate.thread)}\0${candidate.stamp}\0${candidate.inspectLiveness}`,
+        `${dashboardRuntimeCacheKey(candidate.thread)}\0${candidate.stamp}\0${candidate.inspectLiveness}\0${Boolean(candidate.revalidateLoadedForeground)}`,
         isCurrent => {
           started = true;
           requests += initiallyCountedRequests;
           return inspectDashboardRuntime(upstream, candidate, isCurrent);
         },
         (value, deferred) => {
-          cacheDashboardRuntime(cache, candidate, value, deferred, jobs);
+          cacheDashboardRuntime(upstream, cache, candidate, value, deferred, jobs);
           if (deferred) notifyCardObservation(upstream);
         }
       );
@@ -12426,6 +12947,236 @@ function projectionModelCatalog(provider: CodexModelCatalogProvider): CodexModel
   };
 }
 
+function buildDashboardHistoryDetail(
+  jobs: CodexJobRegistry,
+  modelCatalog: CodexModelCatalogProvider,
+  options: BridgeDashboardHistoryDetailOptions
+): DashboardHistoryDetail {
+  const agent = dashboardAgentForDetail(jobs.admissionStateStore, options);
+  if (!agent) {
+    throw new Error("DASHBOARD_HISTORY_TARGET_CHANGED: Refresh the selected execution.");
+  }
+
+  const now=Date.now(),store=jobs.admissionStateStore,policy=store.appliedHistoryPolicy(now);
+  const metadata=store.historyCacheMetadata([agent.agentId],now).get(agent.agentId)!;
+  const scopeKey=createHash("sha256").update(JSON.stringify([agent.scopeId,agent.agentId])).digest("hex");
+  let cursor:{at:number;id:string}|undefined;
+  if(options.historyCursor) {
+    let saved:any;
+    try {saved=JSON.parse(Buffer.from(options.historyCursor,"base64url").toString("utf8"));} catch {throw new Error("DASHBOARD_HISTORY_CURSOR_INVALID");}
+    if(saved.scope!==scopeKey || saved.policy!==policy.policyRevision || saved.history!==metadata.historyRevision ||
+      !Number.isSafeInteger(saved.at) || typeof saved.id!=="string") throw new Error("DASHBOARD_HISTORY_TARGET_CHANGED: Refresh this history.");
+    cursor={at:saved.at,id:saved.id};
+  }
+  const page=store.readAgentHistoryPage(agent.scopeId,agent.agentId,cursor,DASHBOARD_HISTORY_LIMIT_PER_AGENT,now);
+  const catalog=projectionModelCatalog(modelCatalog),cancellations=buildCancellationDisplayIndex(jobs,agent.scopeId).byJobId;
+  const titles=store.dashboardActivityTitles(page.history.map(job=>job.activityId));
+  const summaries=store.dashboardJobSummaries(page.history.map(job=>job.jobId));
+  const history=page.history.map(job=>{
+    const cancellation=cancellations.get(job.jobId),execution=dashboardExecutionForRetainedJob(job,catalog);
+    return {executionKey:dashboardRowKey(undefined,job.jobId),activityKey:dashboardActivityKey(job.activityId,job.jobId),
+      activityTitle:titles.get(job.activityId)||null,...(execution?{execution}:{}),...dashboardJobTokenUsage(job.jobId,summaries),
+      status:job.status as DashboardStatus,startedAt:job.createdAt==null?null:new Date(job.createdAt).toISOString(),
+      updatedAt:new Date(job.updatedAt).toISOString(),endedAt:new Date(job.endedAt??job.updatedAt).toISOString(),
+      endedAtSource:job.endedAtSource as "recorded"|"legacy-estimate"|undefined,
+      detailAvailability:job.detailAvailability as "complete"|"legacy-partial"|"expired"|undefined,
+      durationMs:job.createdAt==null?null:Math.max(0,(job.endedAt??job.updatedAt)-job.createdAt),...(cancellation?{cancellation}:{})};
+  });
+  const last=page.history.at(-1);
+  return dashboardHistoryDetailOutputSchema.parse({kind:"dashboard-history",rowKey:options.rowKey,history,historyCount:page.total,
+    ...metadata,policyRevision:policy.policyRevision,representativeExecutionKey:page.representative ? dashboardRowKey(undefined,page.representative) : null,
+    historyHasMore:page.hasMore,nextCursor:page.hasMore&&last ? Buffer.from(JSON.stringify({scope:scopeKey,
+      policy:policy.policyRevision,history:metadata.historyRevision,at:last.createdAt,id:last.jobId})).toString("base64url") : null});
+}
+
+async function buildDashboardRuntimePlan(
+  jobs: CodexJobRegistry,
+  upstream: CodexUpstream,
+  modelCatalog: CodexModelCatalogProvider,
+  sessions: SessionRegistry,
+  scopeResolver: ScopeResolver,
+  config: BridgeConfig,
+  preferences: BridgeUserSettings,
+  limit: number,
+  terminalOffset: number,
+  idleOffset: number,
+  scopeId?: string,
+  statusFilter?: DashboardStatusFilter,
+  problemQuery?: ProblemQuery,
+  includeHistory = true
+): Promise<BridgeDashboardRuntimePlan> {
+  if (problemQuery && statusFilter === undefined) statusFilter = "all";
+  const visibleAgentIds = new Set<string>();
+  await buildDashboardView(
+    jobs,
+    upstream,
+    modelCatalog,
+    sessions,
+    scopeResolver,
+    config,
+    preferences,
+    limit,
+    terminalOffset,
+    idleOffset,
+    false,
+    visibleAgentIds,
+    undefined,
+    scopeId,
+    statusFilter,
+    problemQuery,
+    includeHistory
+  );
+  const inScope = (row: { scopeId: string }): boolean => !scopeId || row.scopeId === scopeId;
+  const allAgents = listAllDashboardAgents(jobs, scopeId);
+  const currentThreads = new Map(
+    jobs.listCurrentAgentThreads().map(thread => [thread.agentId, thread])
+  );
+  const latestJobs = new Map<string, CodexJob>();
+  for (const job of jobs.list(Math.max(jobs.size, config.maxRetainedJobs)).filter(inScope)) {
+    if (!job.agentId) continue;
+    const previous = latestJobs.get(job.agentId);
+    if (!previous || previous.createdAt < job.createdAt) latestJobs.set(job.agentId, job);
+  }
+  const endedOrphans=jobs.admissionStateStore.endedOrphanProofAgentIds(allAgents.map(agent=>agent.agentId));
+  const candidates = allAgents.flatMap((agent) => {
+    const thread = currentThreads.get(agent.agentId);
+    if (!thread || !backendSupports(thread.backendKind, "supportsThreadInspection")) return [];
+    // Keep non-loading background reads after settlement. Only historical
+    // orphan liveness probes are suppressed by the ended-generation proof.
+    const endedOrphan=endedOrphans.has(agent.agentId);
+    const latestJob = latestJobs.get(agent.agentId);
+    const resolvedOrphan = agent.lifecycle === "orphaned" && !agent.currentJobId &&
+      jobs.admissionStateStore.workHistory.runtimeResolution(
+        agent.agentId,
+        dashboardRuntimeProblemIdentity(jobs, agent).revision
+      );
+    return [{
+      candidate: {
+        agentId: agent.agentId,
+        thread,
+        stamp: dashboardRuntimeStamp(agent, latestJob),
+        changedAt: Math.max(agent.updatedAt, latestJob?.updatedAt || 0, thread.linkedAt),
+        revalidateLoadedForeground:endedOrphan,
+        inspectLiveness: !endedOrphan && !resolvedOrphan && (
+          statusFilter === undefined && visibleAgentIds.has(agent.agentId) ||
+          agent.lifecycle === "active" ||
+          agent.lifecycle === "waiting-input" ||
+          agent.lifecycle === "orphaned" ||
+          Boolean(agent.currentJobId)
+        )
+      } satisfies DashboardRuntimeCandidate,
+      changedAt: Math.max(agent.updatedAt, latestJob?.updatedAt || 0)
+    }];
+  }).sort((left, right) => right.changedAt - left.changedAt)
+    .map(entry => entry.candidate);
+  return { candidates };
+}
+
+async function enrichDashboardRuntimePlan(
+  upstream: CodexUpstream,
+  plan: BridgeDashboardRuntimePlan,
+  jobs?: CodexJobRegistry,
+  readUpstreamUsage = true
+): Promise<BridgeDashboardEnrichment> {
+  const startedAt = Date.now();
+  const inventory = await readDashboardRuntimeInventory(upstream);
+  const loaded = inventory && new Set(inventory.threadIds);
+  // Historical identities are not runtime work. Inspect only threads already
+  // materialized in live workers, including background work after a Job ended.
+  const rankedCandidates = loaded
+    ? plan.candidates.filter(candidate => loaded.has(candidate.thread.threadId)) : plan.candidates;
+  // Retain one observation per current Thread. A fixed 512-entry LRU never
+  // completed coverage once a bridge had more current Agents than that.
+  dashboardRuntimeCacheLimits.set(upstream, Math.max(
+    CARD_RUNTIME_CACHE_MAX_ENTRIES, rankedCandidates.length,
+    dashboardRuntimeCacheLimits.get(upstream) || 0
+  ));
+  const cache = dashboardRuntimeCaches.get(upstream);
+  const checkedAt = (candidate: DashboardRuntimeCandidate): number => {
+    const entry = cache?.get(dashboardRuntimeCacheKey(candidate.thread));
+    return entry?.stamp === candidate.stamp ? entry.attemptedAt : 0;
+  };
+  // Rank the complete candidate set before limiting it. Limiting by recency
+  // first permanently starved Agent 201 and beyond on every refresh.
+  const fairCandidates = [...rankedCandidates].sort((left, right) =>
+    checkedAt(left) - checkedAt(right)
+  );
+  const livenessCandidates = fairCandidates.filter(candidate => candidate.inspectLiveness);
+  const backgroundCandidates = fairCandidates.filter(candidate => !candidate.inspectLiveness);
+  const backgroundReserve = backgroundCandidates.length === 0
+    ? 0
+    : Math.min(
+        backgroundCandidates.length,
+        Math.max(CARD_RUNTIME_PROBE_CONCURRENCY, Math.floor(CARD_RUNTIME_PROBE_LIMIT / 4))
+      );
+  const selectedLivenessCandidates = livenessCandidates.slice(
+    0,
+    CARD_RUNTIME_PROBE_LIMIT - backgroundReserve
+  );
+  const selectedBackgroundCandidates = backgroundCandidates.slice(
+    0,
+    CARD_RUNTIME_PROBE_LIMIT - selectedLivenessCandidates.length
+  );
+  const candidates: DashboardRuntimeCandidate[] = [
+    ...selectedLivenessCandidates,
+    ...selectedBackgroundCandidates
+  ];
+  const [runtimeInspection, usage] = await Promise.all([
+    inspectDashboardRuntimes(upstream, candidates, jobs),
+    readUpstreamUsage ? readCodexWeeklyUsageBounded(upstream)
+      : Promise.resolve({ value: null, timedOut: false, failed: false })
+  ]);
+  const observations = cachedDashboardRuntimes(upstream, plan.candidates, undefined, inventory);
+  for (const [agentId, observation] of runtimeInspection.observations) {
+    observations.set(agentId, observation);
+  }
+  const selectedIds = new Set(candidates.map(candidate => candidate.agentId));
+  const uncheckedOutsideBatch = rankedCandidates.filter(candidate =>
+    !selectedIds.has(candidate.agentId) && !observations.has(candidate.agentId)
+  ).length;
+  const oldestObservationAt = earliestObservationAt([
+    runtimeInspection.oldestObservationAt,
+    usage.value?.observedAt
+  ]);
+  return {
+    runtimeByAgent: [...observations.entries()],
+    ...(inventory ? { runtimeInventory: inventory } : {}),
+    runtimeProbeSkippedAgents: uncheckedOutsideBatch + runtimeInspection.skipped,
+    weeklyUsage: usage.value,
+    summary: {
+      state: "enriched",
+      runtimeRequests: runtimeInspection.requests,
+      cacheHits: runtimeInspection.cacheHits,
+      timeouts: runtimeInspection.timeouts,
+      ...(runtimeInspection.unavailable > 0
+        ? { runtimeUnavailable: runtimeInspection.unavailable }
+        : {}),
+      durationMs: Math.max(0, Date.now() - startedAt),
+      usageTimedOut: usage.timedOut,
+      pendingReads: runtimeInspection.timeouts + (usage.timedOut ? 1 : 0) + (dashboardInventoryReads.get(upstream)?.observePending() || 0),
+      ...(inventory?.unavailable ? { backgroundInventoryUnavailable: true } : {}),
+      usageUnavailable: usage.failed,
+      ...(oldestObservationAt ? { oldestObservationAt } : {})
+    }
+  };
+}
+
+function dashboardEnrichmentInput(
+  enrichment: BridgeDashboardEnrichment
+): DashboardEnrichmentInput {
+  return {
+    runtimeByAgent: new Map(enrichment.runtimeByAgent),
+    runtimeProbeSkippedAgents: enrichment.runtimeProbeSkippedAgents,
+    weeklyUsage: enrichment.weeklyUsage,
+    summary: enrichment.summary,
+    runtimeInventory: enrichment.runtimeInventory
+  };
+}
+
+function dashboardTerminalTime(row: DashboardRow): number {
+  return Date.parse(row.latestTurn?.endedAt || row.updatedAt);
+}
+
 async function buildDashboardView(
   jobs: CodexJobRegistry,
   upstream: CodexUpstream,
@@ -12438,19 +13189,20 @@ async function buildDashboardView(
   terminalOffset: number,
   idleOffset: number,
   inspectRuntime: boolean,
-  legacyGrouping?: { projectOffset: number; conversationOffset: number },
   visibleAgentIdsOut?: Set<string>,
   enrichment?: DashboardEnrichmentInput,
   scopeId?: string,
   statusFilter?: DashboardStatusFilter,
   problemQuery?: ProblemQuery,
-  includeHistory = true
+  includeHistory = true,
+  backgroundOffset = 0,
+  jobMode = false,
+  cachedRuntime?: DashboardCachedRuntime
 ): Promise<DashboardView> {
   if (problemQuery && statusFilter === undefined) statusFilter = "all";
   const inScope = (row: { scopeId: string }): boolean => !scopeId || row.scopeId === scopeId;
   if (inspectRuntime && !enrichment) {
-    const visibleAgentIds = new Set<string>();
-    await buildDashboardView(
+    const plan = await buildDashboardRuntimePlan(
       jobs,
       upstream,
       modelCatalog,
@@ -12461,84 +13213,13 @@ async function buildDashboardView(
       limit,
       terminalOffset,
       idleOffset,
-      false,
-      legacyGrouping,
-      visibleAgentIds,
-      undefined,
       scopeId,
       statusFilter,
       problemQuery,
       includeHistory
     );
-    const allAgents = listAllDashboardAgents(jobs, scopeId);
-    const currentThreads = new Map(jobs.listCurrentAgentThreads().map(thread => [thread.agentId, thread]));
-    const latestJobs = new Map<string, CodexJob>();
-    for (const job of jobs.list(Math.max(jobs.size, config.maxRetainedJobs)).filter(inScope)) {
-      if (!job.agentId) continue;
-      const previous = latestJobs.get(job.agentId);
-      if (!previous || previous.createdAt < job.createdAt) latestJobs.set(job.agentId, job);
-    }
-    const appServerAgents = allAgents.flatMap((agent) => {
-      const thread = currentThreads.get(agent.agentId);
-      return thread && backendSupports(thread.backendKind, "supportsThreadInspection") ? [{ agent, thread }] : [];
-    });
-    const rankedCandidates = appServerAgents
-      .map(({ agent, thread }) => {
-        const latestJob = latestJobs.get(agent.agentId);
-        const resolvedOrphan = agent.lifecycle === "orphaned" && !agent.currentJobId &&
-          jobs.admissionStateStore.workHistory.runtimeResolution(agent.agentId,dashboardRuntimeProblemIdentity(jobs,agent).revision);
-        return {
-          agentId: agent.agentId,
-          thread,
-          stamp: dashboardRuntimeStamp(agent, latestJob),
-          inspectLiveness: !resolvedOrphan && (
-            statusFilter === undefined && visibleAgentIds.has(agent.agentId) ||
-            agent.lifecycle === "active" ||
-            agent.lifecycle === "waiting-input" ||
-            agent.lifecycle === "orphaned" ||
-            Boolean(agent.currentJobId)),
-          changedAt: Math.max(agent.updatedAt, latestJob?.updatedAt || 0)
-        };
-      })
-      .sort((left, right) => right.changedAt - left.changedAt);
-    const cache = dashboardRuntimeCaches.get(upstream);
-    const checkedAt = (candidate: DashboardRuntimeCandidate): number => {
-      const entry = cache?.get(dashboardRuntimeCacheKey(candidate.thread));
-      return entry?.stamp === candidate.stamp ? entry.attemptedAt : 0;
-    };
-    // Rank the complete candidate set before limiting it. Limiting by recency
-    // first permanently starved Agent 201 and beyond on every refresh.
-    const fairCandidates = [...rankedCandidates].sort((left,right) => checkedAt(left)-checkedAt(right));
-    const livenessCandidates = fairCandidates.filter((candidate) => candidate.inspectLiveness);
-    const backgroundCandidates = fairCandidates.filter((candidate) => !candidate.inspectLiveness);
-    const backgroundReserve = backgroundCandidates.length === 0
-      ? 0
-      : Math.min(
-          backgroundCandidates.length,
-          Math.max(CARD_RUNTIME_PROBE_CONCURRENCY, Math.floor(CARD_RUNTIME_PROBE_LIMIT / 4))
-        );
-    const selectedLivenessCandidates = livenessCandidates.slice(
-      0,
-      CARD_RUNTIME_PROBE_LIMIT - backgroundReserve
-    );
-    const selectedBackgroundCandidates = backgroundCandidates.slice(
-      0,
-      CARD_RUNTIME_PROBE_LIMIT - selectedLivenessCandidates.length
-    );
-    const candidates: DashboardRuntimeCandidate[] = [
-      ...selectedLivenessCandidates,
-      ...selectedBackgroundCandidates
-    ];
-    const startedAt = Date.now();
-    const [runtimeInspection, usage] = await Promise.all([
-      inspectDashboardRuntimes(jobs, upstream, candidates),
-      readCodexWeeklyUsageBounded(upstream)
-    ]);
-    const observations = cachedDashboardRuntimes(upstream, rankedCandidates);
-    for (const [agentId, observation] of runtimeInspection.observations) observations.set(agentId, observation);
-    const selectedIds = new Set(candidates.map(candidate => candidate.agentId));
-    const uncheckedOutsideBatch = rankedCandidates.filter(candidate =>
-      !selectedIds.has(candidate.agentId) && !observations.has(candidate.agentId)).length;
+    const projectedEnrichment = await enrichDashboardRuntimePlan(upstream, plan, jobs,
+      !config.codexService);
     return buildDashboardView(
       jobs,
       upstream,
@@ -12551,36 +13232,23 @@ async function buildDashboardView(
       terminalOffset,
       idleOffset,
       true,
-      legacyGrouping,
       visibleAgentIdsOut,
-      {
-        runtimeByAgent: observations,
-        runtimeProbeSkippedAgents: uncheckedOutsideBatch + runtimeInspection.skipped,
-        weeklyUsage: usage.value,
-        summary: {
-          state: "enriched",
-          runtimeRequests: runtimeInspection.requests,
-          cacheHits: runtimeInspection.cacheHits,
-          timeouts: runtimeInspection.timeouts,
-          ...(runtimeInspection.unavailable > 0 ? { runtimeUnavailable: runtimeInspection.unavailable } : {}),
-          durationMs: Math.max(0, Date.now() - startedAt),
-          usageTimedOut: usage.timedOut,
-          pendingReads: runtimeInspection.timeouts + (usage.timedOut ? 1 : 0),
-          usageUnavailable: usage.failed,
-          oldestObservationAt: [runtimeInspection.oldestObservationAt, usage.value?.observedAt].filter((value): value is string => !!value).sort()[0]
-        }
-      },
+      dashboardEnrichmentInput(projectedEnrichment),
       scopeId,
       statusFilter,
       problemQuery,
-      includeHistory
+      includeHistory,
+      backgroundOffset,
+      jobMode
     );
   }
   // Read expensive contextual catalog metadata once per backend for this
   // synchronous projection. A later request/enrichment gets its own fresh read.
   modelCatalog = projectionModelCatalog(modelCatalog);
   const now = Date.now();
-  const allJobs = jobs.list(Math.max(jobs.size, config.maxRetainedJobs), 0).filter(inScope);
+  const memoryJobs=jobs.list(Math.max(jobs.size,config.maxRetainedJobs),0).filter(inScope);
+  const visibleJobIds=jobs.admissionStateStore.retainedJobIds(memoryJobs.map(job=>job.jobId),now);
+  const allJobs=memoryJobs.filter(job=>visibleJobIds.has(job.jobId));
   const cancellationDisplays = buildCancellationDisplayIndex(jobs, scopeId);
   const displayedCancellationJobIds = new Set<string>();
   const cancellationForDashboardJob = (jobId: string): CancellationDisplay | undefined => {
@@ -12593,20 +13261,32 @@ async function buildDashboardView(
     displayedCancellationJobIds.add(jobId);
     return cancellation;
   };
-  const archivedJobs = jobs.admissionStateStore.listDashboardRetainedJobs(
-    DASHBOARD_ARCHIVED_JOB_LIMIT,
-    scopeId
+  const problemJobRecords = problemQuery
+    ? jobs.admissionStateStore.workHistory.problemJobs(scopeId)
+    : [];
+  const automaticRecords = problemQuery
+    ? jobs.admissionStateStore.automaticRecovery.listForDashboard(scopeId)
+    : [];
+  const archivedProjection = jobs.admissionStateStore.listDashboardArchivedJobsByAgent(
+    scopeId,
+    1,
+    "created"
   );
+  const archivedJobs = archivedProjection.jobs;
+  const archivedCounts = jobs.admissionStateStore.dashboardArchivedCounts(scopeId);
+  const summaryCache = jobs.admissionStateStore.dashboardJobSummaries([
+    ...allJobs.map((job) => job.jobId),
+    ...archivedJobs.map((job) => job.jobId)
+  ]);
   const allAgents = listAllDashboardAgents(jobs, scopeId);
   const allSessions = sessions.list(1_000_000, 0).filter(inScope);
   const agentById = new Map(allAgents.map((agent) => [agent.agentId, agent]));
   const currentThreadByAgent = new Map(jobs.listCurrentAgentThreads().map(thread => [thread.agentId, thread]));
   const sessionById = new Map(allSessions.map(session => [session.threadId, session]));
-  const activityById = new Map<string, ReturnType<CodexJobRegistry["getActivity"]>>();
-  const activityFor = (id: string) => {
-    if (!activityById.has(id)) activityById.set(id, jobs.getActivity(id));
-    return activityById.get(id);
-  };
+  const activityTitles = jobs.admissionStateStore.dashboardReadModel.activityTitles([
+    ...allJobs.map(job => job.activityId), ...archivedJobs.map(job => job.activityId),
+    ...problemJobRecords.map(job => job.activityId)
+  ]);
   const currentThreadFor = (agentId: string | undefined): BridgeAgentThread | undefined => {
     if (!agentId) return undefined;
     return currentThreadByAgent.get(agentId);
@@ -12667,7 +13347,7 @@ async function buildDashboardView(
       (left, right) =>
         (statusFilter === undefined ? 0 :
           (right.createdAt ?? right.updatedAt) - (left.createdAt ?? left.updatedAt)) ||
-        right.updatedAt - left.updatedAt || right.jobId.localeCompare(left.jobId)
+        (right.createdAt ?? right.updatedAt) - (left.createdAt ?? left.updatedAt) || right.jobId.localeCompare(left.jobId)
     );
   }
   const latestArchivedJobByAgent = new Map<string, DashboardRetainedJobSummary>();
@@ -12700,14 +13380,19 @@ async function buildDashboardView(
         thread,
         stamp: dashboardRuntimeStamp(agent, latestJob),
         inspectLiveness: false,
-        changedAt: Math.max(agent.updatedAt, latestJob?.updatedAt || 0)
+        changedAt: Math.max(agent.updatedAt, latestJob?.updatedAt || 0, thread.linkedAt)
       };
     })
     .sort((left, right) => right.changedAt - left.changedAt);
+  const runtimeCache = cachedRuntime ? new Map(cachedRuntime.entries) : dashboardRuntimeCaches.get(upstream);
+  const runtimeInventory = enrichment?.runtimeInventory ?? cachedRuntime?.inventory ?? dashboardRuntimeInventories.get(upstream);
+  const loadedRuntimeThreads = runtimeInventory && new Set(runtimeInventory.threadIds);
   const runtimeByAgent = enrichment?.runtimeByAgent ||
-    cachedDashboardRuntimes(upstream, runtimeCacheCandidates);
+    cachedDashboardRuntimes(upstream, runtimeCacheCandidates, runtimeCache, runtimeInventory);
   const runtimeProbeSkippedAgents = enrichment?.runtimeProbeSkippedAgents ??
-    Math.max(0, appServerAgents.length - runtimeByAgent.size);
+    runtimeCacheCandidates.filter(candidate => !runtimeByAgent.has(candidate.agentId) &&
+      (!loadedRuntimeThreads || loadedRuntimeThreads.has(candidate.thread.threadId) ||
+        candidate.changedAt > runtimeInventory!.observedAt)).length;
 
   const statusForJob = (job: CodexJob): DashboardStatus => {
     const status = dashboardStatusForJob(job);
@@ -12722,69 +13407,61 @@ async function buildDashboardView(
 
   const turnForJob = (job: CodexJob): DashboardTurn => {
     const terminal = isTerminalActivityJobStatus(job.status);
-    const execution = activityCardExecution(job, modelCatalog);
+    const execution = dashboardExecutionForJob(job, modelCatalog);
     const cancellation = cancellationForDashboardJob(job.jobId);
     return {
+      executionKey: dashboardRowKey(undefined,job.jobId),
       activityKey: dashboardActivityKey(job.activityId, job.jobId),
-      activityTitle: activityFor(job.activityId)?.title || null,
+      activityTitle: activityTitles.get(job.activityId) || null,
       ...(execution ? { execution } : {}),
-      ...dashboardJobTokenUsage(jobs, job.jobId),
+      ...dashboardJobTokenUsage(job.jobId, summaryCache),
       status: statusForJob(job),
       startedAt: new Date(job.createdAt).toISOString(),
       updatedAt: new Date(job.updatedAt).toISOString(),
-      endedAt: terminal ? new Date(job.updatedAt).toISOString() : null,
-      durationMs: Math.max(0, (terminal ? job.updatedAt : now) - job.createdAt),
+      endedAt: terminal ? new Date(job.endedAt ?? job.updatedAt).toISOString() : null,
+      durationMs: Math.max(0, (terminal ? job.endedAt ?? job.updatedAt : now) - job.createdAt),
       ...(cancellation ? { cancellation } : {})
     };
   };
 
   const turnForArchivedJob = (job: DashboardRetainedJobSummary): DashboardTurn => {
-    const execution = job.execution
-      ? dashboardExecutionForSelection(
-          job.execution,
-          job.backendKind,
-          modelCatalog,
-          false,
-          job.execution.reroutedModel
-        )
-      : undefined;
+    const execution = dashboardExecutionForRetainedJob(job, modelCatalog);
     const cancellation = cancellationForDashboardJob(job.jobId);
     return {
+      executionKey: dashboardRowKey(undefined,job.jobId),
       activityKey: dashboardActivityKey(job.activityId, job.jobId),
-      activityTitle: activityFor(job.activityId)?.title || null,
+      activityTitle: activityTitles.get(job.activityId) || null,
       ...(execution ? { execution } : {}),
-      ...dashboardJobTokenUsage(jobs, job.jobId),
+      ...dashboardJobTokenUsage(job.jobId, summaryCache),
       status: job.status as DashboardStatus,
       startedAt: job.createdAt === undefined ? null : new Date(job.createdAt).toISOString(),
       updatedAt: new Date(job.updatedAt).toISOString(),
-      endedAt: new Date(job.updatedAt).toISOString(),
+      endedAt: new Date(job.endedAt ?? job.updatedAt).toISOString(),
+      endedAtSource: job.endedAtSource as "recorded"|"legacy-estimate"|undefined,
+      detailAvailability: job.detailAvailability as "complete"|"legacy-partial"|"expired"|undefined,
       durationMs: job.createdAt === undefined
         ? null
-        : Math.max(0, job.updatedAt - job.createdAt),
+        : Math.max(0, (job.endedAt ?? job.updatedAt) - job.createdAt),
       ...(cancellation ? { cancellation } : {})
     };
   };
 
   const currentExecutionForAgent = (
     agentId: string | undefined
-  ): ActivityCardExecution | undefined => {
+  ): DashboardExecution | undefined => {
     const session = currentSessionFor(agentId);
     if (!session?.selection) return undefined;
-    let selection = session.selection;
-    if (backendCapabilities(upstream, session.backendKind).supportsServiceTierOverrideOnContinue) {
-      const catalog = modelCatalog.getCachedCatalog?.({ backendKind: session.backendKind });
-      const serviceTier = preferences.usePriorityServiceTier && catalog
-        ? priorityServiceTierForModel(catalog, selection.model)
-        : undefined;
-      // Only preview a supported next-run override; retained turns keep their
-      // admission-time selection even when the saved preference changes.
-      if (preferences.usePriorityServiceTier && !serviceTier) return undefined;
-      selection = {
-        model: selection.model,
-        reasoningEffort: selection.reasoningEffort,
-        ...(serviceTier ? { serviceTier } : {})
-      };
-    }
+    const catalog = modelCatalog.getCachedCatalog?.({ backendKind: session.backendKind });
+    if (!catalog) return undefined;
+    let selection: ModelSelection;
+    try {
+      const capabilities = backendCapabilities(upstream, session.backendKind);
+      selection = resolveModelPolicy({ policyRevision: preferences.revision, policy: preferences.modelPolicy, catalog,
+        operatorCeiling: config.operatorModelCeiling, backendKind: session.backendKind, backendCapabilities: capabilities,
+        operation: "continue", currentSelection: session.selection }).effectiveSelection;
+      selection = preferences.processingSpeed === "legacy" ? internalServiceTierSelection(selection, catalog, preferences.usePriorityServiceTier,
+        "continue", capabilities, session.selection, preferences.revision) : resolveTurnSpeed(selection, preferences.processingSpeed, catalog, capabilities);
+    } catch { return undefined; }
     return dashboardExecutionForSelection(
       selection,
       session.backendKind,
@@ -12793,6 +13470,7 @@ async function buildDashboardView(
     );
   };
 
+  const deferredHistories = new Map<DashboardTurn[], () => DashboardTurn[]>();
   const historyForAgent = (
     agentId: string | undefined,
     representativeJobId: string | undefined
@@ -12802,30 +13480,39 @@ async function buildDashboardView(
       ...(jobsByAgent.get(agentId) || []).map((job) => ({
         jobId: job.jobId,
         updatedAt: job.updatedAt,
+        createdAt: job.createdAt,
         turn: () => turnForJob(job)
       })),
       ...(archivedJobsByAgent.get(agentId) || []).map((job) => ({
         jobId: job.jobId,
         updatedAt: job.updatedAt,
+        createdAt: job.createdAt ?? job.updatedAt,
         turn: () => turnForArchivedJob(job)
       }))
     ]
       .filter((entry) => entry.jobId !== representativeJobId)
       .sort(
         (left, right) =>
-          right.updatedAt - left.updatedAt || right.jobId.localeCompare(left.jobId)
+          (right.createdAt ?? right.updatedAt) - (left.createdAt ?? left.updatedAt) || right.jobId.localeCompare(left.jobId)
       );
+    const turns: DashboardTurn[] = [];
+    deferredHistories.set(turns, () =>
+      retained.slice(0, DASHBOARD_HISTORY_PREVIEW_LIMIT).map(entry => entry.turn()));
     return {
-      turns: includeHistory
-        ? retained.slice(0, DASHBOARD_HISTORY_LIMIT_PER_AGENT).map((entry) => entry.turn())
-        : [],
-      total: retained.length
+      turns,
+      total: Math.max(
+        retained.length,
+        (jobsByAgent.get(agentId)?.length || 0) +
+          (archivedProjection.totalsByAgent.get(agentId) || 0) -
+          (representativeJobId ? 1 : 0)
+      )
     };
   };
 
   const agentIdByRowKey = new Map<string, string>();
+  const handoffThreadByRowKey = new Map<string,string>();
 
-  // Advertise only actionable review requests that readControl can open.
+  // Advertise only controls that the current Dashboard detail read can sign.
   const controlKindForAgent = (
     agentId: string | undefined
   ): DashboardRow["controlKind"] => {
@@ -12834,9 +13521,8 @@ async function buildDashboardView(
     const job = agent.currentJobId
       ? jobs.get(agent.currentJobId)
       : latestJobByAgent.get(agent.agentId);
-    if (!job || !activityFor(job.activityId)) return null;
-    if (job.pendingInteractions.some(interaction => !ordinaryCodexQuestion(interaction))) return "request";
-    return null;
+    if (!job || !activityTitles.has(job.activityId)) return null;
+    return job.pendingInteractions.some(interaction => !ordinaryCodexQuestion(interaction)) ? "request" : null;
   };
 
   const jobRow = (job: CodexJob, bucket: DashboardRow["bucket"]): DashboardRow => {
@@ -12855,15 +13541,14 @@ async function buildDashboardView(
     const nextExecution = shouldShowDashboardNextExecution(currentExecution, latestTurn.execution)
       ? currentExecution
       : undefined;
-    const usage = jobs.admissionStateStore.eventRetention.summary(job.jobId).usage;
-    const observed = isRecord(usage) && usage.basis === "cumulative-difference" ? usage.tokens : undefined;
-    const tokenUsage = isRecord(observed) && ["inputTokens", "cachedInputTokens", "outputTokens", "totalTokens"].every(key => typeof observed[key] === "number" && Number.isSafeInteger(observed[key]) && observed[key] >= 0)
-      ? { inputTokens: observed.inputTokens as number, cachedInputTokens: observed.cachedInputTokens as number, outputTokens: observed.outputTokens as number, totalTokens: observed.totalTokens as number } : undefined;
+    const tokenUsage = dashboardJobTokenUsage(job.jobId, summaryCache).tokenUsage;
     const history = historyForAgent(job.agentId, job.jobId);
     const conversationUrl = scopeResolver.conversationUrl(job.scopeId);
     const codexThreadUrl = codexThreadUrlFor(thread, currentSession, trackedSession);
     const project = dashboardProjectIdentity(job, trackedSession, thread);
     const rowKey = dashboardRowKey(job.agentId, job.jobId);
+    const routeThread=thread || currentSession || trackedSession;
+    if(codexThreadUrl && routeThread) handoffThreadByRowKey.set(rowKey,routeThread.threadId);
     if (job.agentId) agentIdByRowKey.set(rowKey, job.agentId);
     return {
       rowKey,
@@ -12886,7 +13571,8 @@ async function buildDashboardView(
       controlKind: controlKindForAgent(job.agentId),
       latestTurn,
       history: history.turns,
-      historyCount: history.total
+      historyCount: history.total,
+      ...(agent ? { historyRevision: dashboardHistoryRevision(agent, job) } : {})
     };
   };
 
@@ -12974,9 +13660,13 @@ async function buildDashboardView(
       controlKind: controlKindForAgent(agent.agentId),
       latestTurn,
       history: history.turns,
-      historyCount: history.total
+      historyCount: history.total,
+      ...(latestJob || latestArchivedJob
+        ? { historyRevision: dashboardHistoryRevision(agent, latestJob || latestArchivedJob) }
+        : {})
     };
     agentIdByRowKey.set(recoveryRow.rowKey, agent.agentId);
+    if(codexThreadUrl && thread) handoffThreadByRowKey.set(recoveryRow.rowKey,thread.threadId);
     recoveryRows.push({ agentId: agent.agentId, row: recoveryRow });
     activeRows.push(recoveryRow);
   }
@@ -12984,8 +13674,7 @@ async function buildDashboardView(
   // Progress and usage updates must not move active work within its status priority.
   activeRows.sort(
     (left, right) =>
-      dashboardStatusPriority(left.status) - dashboardStatusPriority(right.status) ||
-      Date.parse(left.createdAt) - Date.parse(right.createdAt) ||
+      Date.parse(right.latestTurn?.startedAt || right.createdAt) - Date.parse(left.latestTurn?.startedAt || left.createdAt) ||
       left.rowKey.localeCompare(right.rowKey)
   );
 
@@ -13003,7 +13692,7 @@ async function buildDashboardView(
     terminalRows.push(jobRow(job, "recent"));
   }
   terminalRows.sort(
-    (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
+    (left, right) => dashboardTerminalTime(right) - dashboardTerminalTime(left)
   );
   const idleRows = allAgents
     .filter(
@@ -13057,12 +13746,16 @@ async function buildDashboardView(
         controlKind: controlKindForAgent(agent.agentId),
         latestTurn,
         history: history.turns,
-        historyCount: history.total
+        historyCount: history.total,
+        ...(latestJob || latestArchivedJob
+          ? { historyRevision: dashboardHistoryRevision(agent, latestJob || latestArchivedJob) }
+          : {})
       };
       agentIdByRowKey.set(row.rowKey, agent.agentId);
+      if(codexThreadUrl && thread) handoffThreadByRowKey.set(row.rowKey,thread.threadId);
       return row;
     })
-    .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+    .sort((left, right) => dashboardTerminalTime(right) - dashboardTerminalTime(left));
 
   const scopeIds = new Set<string>(scopeId ? [] : jobs.admissionStateStore.listActivityScopeIds());
   if (scopeId && jobs.admissionStateStore.hasDashboardWork(scopeId)) scopeIds.add(scopeId);
@@ -13093,6 +13786,8 @@ async function buildDashboardView(
     .reduce((total, observation) => total + observation.backgroundProcessCount, 0);
   const backgroundProcessAgents = [...runtimeByAgent.values()]
     .filter((observation) => observation.backgroundProcessCount > 0).length;
+  const backgroundProcessUnknownAgents = [...runtimeByAgent.values()]
+    .filter(observation => observation.backgroundProcessState === "unknown").length;
   const runtimeUnknownAgentIds = new Set([...runtimeByAgent]
     .filter(
       ([,observation]) =>
@@ -13101,7 +13796,7 @@ async function buildDashboardView(
     ).map(([agentId]) => agentId));
   if (problemQuery?.view) for (const agent of allAgents) {
     const thread = currentThreadFor(agent.agentId);
-    const cached = thread ? dashboardRuntimeCaches.get(upstream)?.get(dashboardRuntimeCacheKey(thread)) : undefined;
+    const cached = thread ? runtimeCache?.get(dashboardRuntimeCacheKey(thread)) : undefined;
     if (cached?.stamp === dashboardRuntimeStamp(agent,jobs.observedLatestJobForAgent(agent.agentId)) &&
       cached.unavailable && cached.observation.state !== "orphaned") runtimeUnknownAgentIds.add(agent.agentId);
   }
@@ -13121,137 +13816,121 @@ async function buildDashboardView(
     }
     if (!overviewRows.has(row.rowKey)) overviewRows.set(row.rowKey, normalized);
   }
-  const acknowledgedJobs = jobs.admissionStateStore.workHistory.acknowledgedJobIds(scopeId);
-  const categoryFor = (row: DashboardRow) => {
-    const agentId = agentIdByRowKey.get(row.rowKey);
-    if (row.status === "failed" || row.status === "interrupted") {
-      const latest = agentId ? latestJobByAgent.get(agentId) || latestArchivedJobByAgent.get(agentId) : undefined;
-      if (Date.parse(row.latestTurn?.endedAt || row.updatedAt) < now - ISSUE_ATTENTION_DAYS * 86400_000 ||
-          latest && acknowledgedJobs.has(latest.jobId)) return null;
-    }
-    return dashboardSummaryCategory(row.status);
-  };
+  const categoryFor=(row:DashboardRow)=>row.bucket==="active" ? "running" as const : dashboardSummaryCategory(row.status);
   const responseRequired = [...overviewRows.values()]
-    .filter(row => categoryFor(row) === "response-required").length;
+    .filter(row => ["input-required","approval-required"].includes(row.status)).length;
   const legacyProblems = [...overviewRows.values()]
     .filter(row => categoryFor(row) === "problems").length;
   let problemCollection: z.infer<typeof dashboardProblemsOutputSchema> | undefined;
   if (problemQuery) {
-    type Entry = Omit<z.infer<typeof dashboardProblemOutputSchema>, "row"> & {projectRow:()=>DashboardRow};
-    const entries: Entry[] = [];
-    const fullJobs = new Map(allJobs.map(job => [job.jobId,job]));
-    const archivedById = new Map(archivedJobs.map(job => [job.jobId,job]));
-    const automaticRecords = jobs.admissionStateStore.automaticRecovery.list(scopeId);
-    const automaticSummary = (record: (typeof automaticRecords)[number] | undefined) => record
-      ? {kind:record.kind,state:record.state,attempts:record.attempts,reason:record.reason,...(record.evidence ? {evidence:record.evidence} : {})} : undefined;
-    const retainedProblemRow = (retained: DashboardRetainedJobSummary): DashboardRow => {
-      const agent = retained.agentId ? agentById.get(retained.agentId) : undefined;
-      const thread = currentThreadFor(retained.agentId);
-      const session = currentSessionFor(retained.agentId);
-      const turn = turnForArchivedJob(retained);
-      return {rowKey:dashboardRowKey(retained.agentId,retained.jobId),activityKey:turn.activityKey!,
-        conversationKey:dashboardConversationKey(retained.scopeId),sessionAlias:dashboardSessionAlias(retained.scopeId),
-        conversationUrl:scopeResolver.conversationUrl(retained.scopeId),codexThreadUrl:codexThreadUrlFor(thread,session),
-        bucket:"recent",...dashboardProjectIdentity(thread),agentName:dashboardAgentName(agent?.agentName),
-        activityTitle:turn.activityTitle,status:turn.status,createdAt:turn.startedAt || turn.updatedAt,updatedAt:turn.updatedAt,
-        elapsedMs:turn.durationMs || 0,backgroundProcessCount:0,controlKind:null,latestTurn:turn,history:[],historyCount:0};
+    type Problem = z.infer<typeof dashboardProblemOutputSchema>;
+    type Entry={value:Omit<Problem,"row">;recoveryKeys?:string[];jobId?:string;activityId?:string;row:()=>DashboardRow};
+    const entries:Entry[]=[];
+    const fullJobs=new Map(allJobs.map(job=>[job.jobId,job]));
+    const failedJobs=new Set(problemJobRecords.map(record=>record.jobId));
+    const recoveriesByJob=new Map<string,typeof automaticRecords>();
+    for(const record of automaticRecords) if(record.executionFailureJobId) {
+      const records=recoveriesByJob.get(record.executionFailureJobId)||[];
+      records.push(record);recoveriesByJob.set(record.executionFailureJobId,records);
+    }
+    const currentControls=jobs.admissionStateStore.latestControlJobs(automaticRecords.map(record=>record.agentId));
+    const endedProofs=jobs.admissionStateStore.endedOrphanProofAgentIds(automaticRecords.map(record=>record.agentId));
+    const retainedById=new Map<string,DashboardRetainedJobSummary>();
+    const projectsByActivity=new Map<string,{projectId?:string;projectName?:string}>();
+    const automaticSummary=(record:typeof automaticRecords[number]|undefined)=>record ? {
+      kind:record.kind,state:record.state,attempts:record.attempts,reason:redactSensitiveText(record.reason).slice(0,1000),
+      ...(record.evidence ? {evidence:redactSensitiveText(record.evidence).slice(0,1000)} : {})} : undefined;
+    const endedProofFor=(agentId:string):boolean=> {
+      return endedProofs.has(agentId);
     };
-    for (const record of jobs.admissionStateStore.workHistory.problemJobs(scopeId)) {
-      const job = fullJobs.get(record.jobId);
-      const acknowledgedAt = record.acknowledgedAt ? new Date(record.acknowledgedAt).toISOString() : null;
-      entries.push({problemKey:record.problemKey,revision:record.revision,kind:"failed",source:"execution",
-        review:acknowledgedAt ? "acknowledged" : "pending",acknowledgedAt,observedAt:new Date(record.updatedAt).toISOString(),
-        reason:job?.error ? redactSensitiveText(job.error).slice(0,1000) : null,
-        automatic:automaticSummary(automaticRecords.find(automatic => automatic.jobId === record.jobId)),
-        canAcknowledge:!acknowledgedAt,canUnacknowledge:Boolean(acknowledgedAt),canRecheck:false,canRetryStop:false,
-        projectRow:() => {
-          if (job) return {...jobRow(job,"recent"),controlKind:null,history:[],historyCount:0,historyControls:undefined};
-          const retained: DashboardRetainedJobSummary = archivedById.get(record.jobId) || {
-            jobId:record.jobId,scopeId:record.scopeId,activityId:record.activityId,agentId:record.agentId || undefined,
-            status:record.status,updatedAt:record.updatedAt
-          };
-          return retainedProblemRow(retained);
-        }});
+    const positiveRuntimeAfterSettlement=(record:typeof automaticRecords[number]):boolean=> {
+      const agent=agentById.get(record.agentId),runtime=runtimeByAgent.get(record.agentId);
+      return Boolean(agent && endedProofFor(agent.agentId) && record.threadId===agent.currentThreadId &&
+        (!record.jobId || record.jobId===(agent.currentJobId || currentControls.get(agent.agentId)?.jobId)) &&
+        (runtime?.state==="busy" || (runtime?.backgroundProcessCount || 0)>0));
+    };
+    const sourceRow=(jobId:string|undefined,agentId:string,scope:string,at:number,activityId?:string,projectId?:string):DashboardRow=>{
+      const job=jobId ? fullJobs.get(jobId) : undefined;
+      if(job) return {...jobRow(job,"recent"),controlKind:null,history:[],historyCount:0};
+      const retained=jobId ? retainedById.get(jobId) : undefined;
+      const agent=agentById.get(agentId);
+      const turn=retained ? turnForArchivedJob(retained) : null;
+      const sourceActivity=activityId || retained?.activityId;
+      const project=sourceActivity ? projectsByActivity.get(sourceActivity) : undefined;
+      const conversationUrl=scopeResolver.conversationUrl(scope);
+      return {rowKey:dashboardRowKey(agentId,jobId),activityKey:sourceActivity ? dashboardActivityKey(sourceActivity,jobId || agentId) : dashboardActivityKey(undefined,agentId),
+        conversationKey:dashboardConversationKey(scope),sessionAlias:dashboardSessionAlias(scope),
+        ...(conversationUrl ? {conversationUrl} : {}),bucket:"recent",
+        ...dashboardProjectIdentity(project || (projectId ? {projectId} : undefined)),
+        agentName:dashboardAgentName(agent?.agentName),activityTitle:sourceActivity ? activityTitles.get(sourceActivity) || null : null,
+        status:turn?.status || "liveness-unknown",createdAt:turn?.startedAt || new Date(at).toISOString(),updatedAt:new Date(at).toISOString(),
+        elapsedMs:turn?.durationMs || 0,backgroundProcessCount:0,controlKind:null,latestTurn:turn,history:[],historyCount:0};
+    };
+    for(const record of problemJobRecords) {
+      const recoveries=recoveriesByJob.get(record.jobId)||[];
+      const recovery=recoveries[0];
+      entries.push({recoveryKeys:recoveries.slice(0,12).map(x=>x.key),jobId:record.jobId,activityId:record.activityId,
+        row:()=>sourceRow(record.jobId,record.agentId || "",record.scopeId,record.occurredAt,record.activityId),value:{problemKey:record.problemKey,
+        scopeId:record.scopeId,jobId:record.jobId,activityId:record.activityId,agentId:record.agentId,revision:problemRevision([record.jobId,record.status,record.occurredAt,record.reason,recoveries]),kind:record.status==="cancelled" ? "cancelled" : record.status==="interrupted" ? "interrupted" : "failed",source:"execution",
+        review:"automatic",acknowledgedAt:null,occurredAt:new Date(record.occurredAt).toISOString(),observedAt:new Date(record.occurredAt).toISOString(),
+        currentImpact:recoveries.some(positiveRuntimeAfterSettlement) ? "confirmed" : "none",reason:record.reason ? redactSensitiveText(record.reason).slice(0,1000) : null,
+        canAcknowledge:false,canUnacknowledge:false,canRecheck:false,canRetryStop:false,
+        ...(recovery ? {automatic:automaticSummary(recovery)} : {})}});
     }
-    const rowByAgent = new Map([...activeRows,...terminalRows,...idleRows].map(row => [row.rowKey,row]));
-    for (const agent of allAgents) {
-      let row = rowByAgent.get(dashboardRowKey(agent.agentId));
-      const runtime = runtimeByAgent.get(agent.agentId);
-      const thread = currentThreadFor(agent.agentId);
-      const cachedRuntime = thread ? dashboardRuntimeCaches.get(upstream)?.get(dashboardRuntimeCacheKey(thread)) : undefined;
-      const runtimeProblem = row && ["liveness-unknown","orphaned","termination-failed"].includes(row.status);
-      // Last-good display details may be retained through an outage. A fresh
-      // failed inspection still makes the current incident actionable now.
-      const inspectionFailed = runtime && (runtime.state === "unknown" || runtime.backgroundProcessState === "unknown") ||
-        cachedRuntime?.stamp === dashboardRuntimeStamp(agent,jobs.observedLatestJobForAgent(agent.agentId)) && cachedRuntime.unavailable;
-      if (!runtimeProblem && !inspectionFailed) continue;
-      if (!row) {
-        const thread = currentThreadFor(agent.agentId);
-        row = {rowKey:dashboardRowKey(agent.agentId),activityKey:dashboardActivityKey(undefined,agent.agentId),
-          conversationKey:dashboardConversationKey(agent.scopeId),sessionAlias:dashboardSessionAlias(agent.scopeId),
-          conversationUrl:scopeResolver.conversationUrl(agent.scopeId),bucket:"active",...dashboardProjectIdentity(thread),
-          agentName:dashboardAgentName(agent.agentName),activityTitle:null,status:"liveness-unknown",
-          createdAt:new Date(agent.createdAt).toISOString(),updatedAt:new Date(agent.updatedAt).toISOString(),
-          elapsedMs:0,backgroundProcessCount:runtime?.backgroundProcessCount || 0,controlKind:null};
-      }
-      const identity = dashboardRuntimeProblemIdentity(jobs,agent);
-      const resolvedAt = agent.lifecycle === "orphaned" && !agent.currentJobId && !inspectionFailed && runtime?.state !== "busy" && !(runtime?.backgroundProcessCount || 0)
-        ? jobs.admissionStateStore.workHistory.runtimeResolution(agent.agentId,identity.revision) : null;
-      const kind = row.status === "termination-failed" ? "termination-failed" as const
-        : row.status === "orphaned" ? "orphaned" as const : "unknown" as const;
-      const currentJob = agent.currentJobId ? jobs.get(agent.currentJobId) : undefined;
-      const observed = inspectionFailed ? cachedRuntime?.attemptedAt : cachedRuntime?.observedAt;
-      const runtimeRow = {...row,controlKind:null,status:kind === "unknown" ? "liveness-unknown" as const : row.status,
-        history:[],historyCount:0,historyControls:undefined};
-      entries.push({problemKey:problemKey("runtime",agent.agentId),revision:identity.revision,kind,source:"runtime",
-        review:resolvedAt ? "acknowledged" : "pending",acknowledgedAt:resolvedAt ? new Date(resolvedAt).toISOString() : null,
-        observedAt:new Date(observed || agent.updatedAt).toISOString(),
-        reason:currentJob?.error ? redactSensitiveText(currentJob.error).slice(0,1000) : null,
-        automatic:automaticSummary(automaticRecords.find(automatic => automatic.key === (kind === "termination-failed" && currentJob
-          ? automaticRecoveryKey("retry-stop",[currentJob.jobId,currentJob.workerId,currentJob.workerGeneration,currentJob.upstreamRequestId,currentJob.cancelRequestedAt])
-          : jobs.admissionStateStore.automaticRecovery.recheckCandidate(recheckRecoveryIdentity(jobs,agent))?.key))),
-        canAcknowledge:false,canUnacknowledge:false,canRecheck:!resolvedAt && Boolean(thread && backendSupports(thread.backendKind,"supportsThreadInspection")),
-        canRetryStop:currentJob?.status === "termination-failed" && Boolean(identity.stopImpact),
-        ...(identity.stopImpact ? {stopImpact:identity.stopImpact} : {}),projectRow:()=>runtimeRow});
+    for(const record of automaticRecords) {
+      if(jobMode) continue;
+      // Only the exact initial incident/direct recovery belongs to a failure.
+      // A new incident key after confirmed recovery remains a distinct occurrence.
+      if(record.executionFailureJobId && failedJobs.has(record.executionFailureJobId)) continue;
+      const agent=agentById.get(record.agentId),runtime=runtimeByAgent.get(record.agentId);
+      const control=currentControls.get(record.agentId);
+      const sameThread=(record.threadId || null)===(agent?.currentThreadId || null);
+      const sameExecution=Boolean(agent && sameThread && (record.jobId
+        ? record.jobId===(agent.currentJobId || control?.jobId) : !agent.currentJobId));
+      const current=record.jobId ? fullJobs.get(record.jobId) : undefined;
+      const ended=agent && endedProofFor(agent.agentId);
+      const impact: "none"|"confirmed"|"unknown"=record.state==="resolved"||!sameExecution ? "none"
+        : current?.status==="termination-failed" || runtime?.state==="busy" || (runtime?.backgroundProcessCount || 0)>0 ? "confirmed"
+        : ended ? "none" : runtime?.state==="unknown" || agent?.lifecycle==="orphaned" || record.kind==="recheck" && !runtime ? "unknown" : "none";
+      entries.push({recoveryKeys:[record.key],jobId:record.jobId,activityId:record.activityId,
+        row:()=>sourceRow(record.jobId,record.agentId,record.scopeId,record.occurredAt,record.activityId,record.projectId),value:{scopeId:record.scopeId,jobId:record.jobId,activityId:record.activityId,agentId:record.agentId,problemKey:problemKey("automatic",record.key),revision:problemRevision(record),
+        kind:record.kind==="retry-stop" ? "termination-failed" : "unknown",source:record.kind==="recheck" ? "runtime" : "recovery",
+        review:"automatic",acknowledgedAt:null,occurredAt:new Date(record.occurredAt).toISOString(),observedAt:new Date(record.occurredAt).toISOString(),
+        currentImpact:impact,reason:redactSensitiveText(record.reason).slice(0,1000),automatic:automaticSummary(record),
+        canAcknowledge:false,canUnacknowledge:false,canRecheck:false,canRetryStop:false}});
     }
-    if (problemQuery.view) for (const record of automaticRecords) {
-      const agent = agentById.get(record.agentId);
-      if (!agent) continue;
-      const job = record.jobId ? fullJobs.get(record.jobId) : undefined;
-      const retained = record.jobId ? archivedById.get(record.jobId) : undefined;
-      if (record.jobId && !job && !retained) continue;
-      const fallback = rowByAgent.get(dashboardRowKey(record.agentId));
-      if (!job && !retained && !fallback) continue;
-      entries.push({problemKey:problemKey("automatic",record.key),revision:problemRevision(record),
-        kind:record.kind === "retry-stop" ? "termination-failed" : record.kind === "recheck" ? "unknown" : "failed",
-        source:"recovery",review:"automatic",acknowledgedAt:null,observedAt:new Date(record.updatedAt).toISOString(),reason:null,
-        automatic:automaticSummary(record),canAcknowledge:false,canUnacknowledge:false,canRecheck:false,canRetryStop:false,
-        projectRow:()=>job ? {...jobRow(job,"recent"),controlKind:null,history:[],historyCount:0,historyControls:undefined}
-          : retained ? retainedProblemRow(retained) : {...fallback!,controlKind:null,history:[],historyCount:0,historyControls:undefined}});
-    }
-    entries.sort((a,b) => Date.parse(b.observedAt)-Date.parse(a.observedAt) || a.problemKey.localeCompare(b.problemKey));
-    const filtered = entries.filter(entry => (problemQuery.view === "actionable" ? entry.source === "runtime" && entry.review === "pending"
-      : problemQuery.view === "history" ? entry.source === "execution"
-      : problemQuery.view === "automatic" ? entry.source === "recovery" : entry.review === problemQuery.review) &&
-      (problemQuery.kind === "all" || entry.kind === problemQuery.kind));
-    const maximumOffset = filtered.length ? Math.floor((filtered.length-1)/limit)*limit : 0;
-    const offset = Math.min(problemQuery.offset,maximumOffset);
-    const page = filtered.slice(offset,offset+limit).map(({projectRow,...entry}) => ({...entry,row:projectRow()}));
-    problemCollection = {query:{...problemQuery,offset},revision:problemRevision(filtered.map(entry => [entry.problemKey,entry.revision,entry.review])),
-      reviewableCount:entries.filter(entry => entry.canAcknowledge).length,
-      pendingCount:entries.filter(entry => entry.review === "pending" && (!problemQuery.view || entry.source === "runtime")).length,
-      acknowledgedCount:entries.filter(entry => entry.review === "acknowledged").length,rows:page,
-      ...(problemQuery.view ? {historyCount:entries.filter(entry => entry.source === "execution").length,
-        automaticCount:entries.filter(entry => entry.source === "recovery").length} : {}),
+    entries.sort((a,b)=>Date.parse(b.value.occurredAt!)-Date.parse(a.value.occurredAt!)||a.value.problemKey.localeCompare(b.value.problemKey));
+    const filtered=entries.filter(x=>problemQuery.kind==="all"||x.value.kind===problemQuery.kind);
+    const maximumOffset=filtered.length ? Math.floor((filtered.length-1)/limit)*limit : 0;
+    const offset=Math.min(problemQuery.offset,maximumOffset);
+    const selected=filtered.slice(offset,offset+limit);
+    const selectedJobIds=selected.flatMap(x=>x.jobId ? [x.jobId] : []);
+    const selectedRetained=jobs.admissionStateStore.listDashboardRetainedJobsByIds(selectedJobIds,scopeId);
+    for(const job of selectedRetained) retainedById.set(job.jobId,job);
+    const selectedActivityIds=[...selectedRetained.map(job=>job.activityId),...selected.flatMap(x=>x.activityId ? [x.activityId] : [])];
+    for(const [id,project] of jobs.admissionStateStore.dashboardActivityProjects(selectedActivityIds)) projectsByActivity.set(id,project);
+    for(const [id,title] of jobs.admissionStateStore.dashboardActivityTitles(selectedActivityIds.filter(id=>!activityTitles.has(id)))) activityTitles.set(id,title);
+    for(const [id,summary] of jobs.admissionStateStore.dashboardJobSummaries(selectedJobIds)) summaryCache.set(id,summary);
+    const steps=jobs.admissionStateStore.automaticRecovery.stepsMany(selected.flatMap(x=>x.recoveryKeys || []));
+    const page=selected.map(({value,recoveryKeys,row})=>({...value,row:row(),
+      progress:(recoveryKeys || []).flatMap(key=>steps.get(key) || []).sort((a,b)=>Date.parse(a.at)-Date.parse(b.at)).slice(-12)
+        .map(step=>({at:step.at,step:step.step,
+        reason:typeof step.details.reason==="string" ? redactSensitiveText(step.details.reason).slice(0,1000) : null,
+        evidence:typeof step.details.evidence==="string" ? redactSensitiveText(step.details.evidence).slice(0,1000) : null,
+        attempt:typeof step.details.attempt==="number" ? step.details.attempt : typeof step.details.attempts==="number" ? step.details.attempts : null}))}));
+    problemCollection={query:{...problemQuery,offset},revision:problemRevision(filtered.map(x=>[x.value.problemKey,x.value.revision])),
+      incidentCount:entries.length,currentImpactCount:entries.filter(x=>x.value.currentImpact!=="none").length,
+      pendingCount:0,reviewableCount:0,acknowledgedCount:0,rows:page,
+      historyCount:entries.length,automaticCount:automaticRecords.length,
       page:{offset,limit,total:filtered.length,returned:page.length,hasPrevious:offset>0,hasNext:offset+page.length<filtered.length}};
   }
-  const problems = problemCollection?.pendingCount ?? legacyProblems;
-  const currentRows = problemQuery ? activeRows.filter(row => dashboardSummaryCategory(row.status) !== "problems") : activeRows;
+  const problems = problemCollection?.incidentCount ?? legacyProblems;
+  const currentRows = activeRows;
   const overviewActive: DashboardRow[] = [];
   const overviewTerminal: DashboardRow[] = [];
   for (const row of overviewRows.values()) {
     const category = categoryFor(row);
-    if (problemQuery && (statusFilter === "problems" || row.bucket === "active" && dashboardSummaryCategory(row.status) === "problems")) continue;
+    if (statusFilter === "problems") continue;
     if (statusFilter && statusFilter !== "all" &&
       (statusFilter === "background" ? row.backgroundProcessCount <= 0 : category !== statusFilter)) continue;
     if (row.bucket === "active") {
@@ -13261,11 +13940,10 @@ async function buildDashboardView(
     }
   }
   overviewActive.sort((left, right) =>
-    dashboardStatusPriority(left.status) - dashboardStatusPriority(right.status) ||
-    Date.parse(left.createdAt) - Date.parse(right.createdAt) || left.rowKey.localeCompare(right.rowKey));
+    Date.parse(right.latestTurn?.startedAt || right.createdAt) - Date.parse(left.latestTurn?.startedAt || left.createdAt) || left.rowKey.localeCompare(right.rowKey));
   overviewTerminal.sort((left, right) =>
-    Date.parse(right.updatedAt) - Date.parse(left.updatedAt) || left.rowKey.localeCompare(right.rowKey));
-  const statusRows = [...overviewRows.values()]
+    dashboardTerminalTime(right) - dashboardTerminalTime(left) || left.rowKey.localeCompare(right.rowKey));
+  const allStatusRows = [...overviewRows.values()]
     .filter((row) => {
       const category = categoryFor(row);
       if (statusFilter && statusFilter !== "all") {
@@ -13273,60 +13951,64 @@ async function buildDashboardView(
           ? row.backgroundProcessCount > 0
           : category === statusFilter;
       }
-      return category !== null || row.backgroundProcessCount > 0;
+      return row.bucket !== "idle" || Boolean(row.latestTurn) || row.backgroundProcessCount > 0;
     })
     .sort((left, right) => {
       const bucketOrder = left.bucket === "active" ? 0 : 1;
       const rightBucketOrder = right.bucket === "active" ? 0 : 1;
       return bucketOrder - rightBucketOrder ||
         (left.bucket === "active"
-          ? dashboardStatusPriority(left.status) - dashboardStatusPriority(right.status) ||
-            Date.parse(left.createdAt) - Date.parse(right.createdAt)
-          : Date.parse(right.updatedAt) - Date.parse(left.updatedAt)) ||
+          ? Date.parse(right.latestTurn?.startedAt || right.createdAt) - Date.parse(left.latestTurn?.startedAt || left.createdAt)
+          : dashboardTerminalTime(right) - dashboardTerminalTime(left)) ||
         left.rowKey.localeCompare(right.rowKey);
     })
-    .map((row) => ({ ...row, history: [], historyCount: row.historyCount || 0 }));
-  const legacyProjectPage = legacyGrouping
-    ? dashboardProjectPage(dashboardRows, legacyGrouping.projectOffset, limit)
-    : undefined;
-  const legacyConversationPage = legacyGrouping
-    ? dashboardConversationPage(dashboardRows, legacyGrouping.conversationOffset, limit)
-    : undefined;
+    .map((row) => ({ ...row, historyCount: row.historyCount || 0 }));
+  const statusPage=dashboardActivityPage(allStatusRows,terminalOffset,limit);
+  const statusRows=statusPage.rows;
   const activePage = dashboardActivityPage(
-    includeHistory ? statusFilter === undefined ? activeRows : overviewActive : [],
-    0,
-    100
+    statusFilter === undefined ? activeRows : overviewActive,
+    statusFilter==="running" ? terminalOffset : 0,
+    limit
   );
   const terminalPage = dashboardActivityPage(
-    includeHistory ? statusFilter === undefined ? terminalRows : overviewTerminal : [],
+    statusFilter === undefined ? terminalRows : overviewTerminal,
     terminalOffset,
     limit
   );
   const idlePage = dashboardActivityPage(
-    includeHistory ? statusFilter === undefined ? idleRows : [] : [],
+    statusFilter === undefined ? idleRows : [],
     idleOffset,
     limit
   );
-  for (const row of [...activePage.rows, ...terminalPage.rows, ...idlePage.rows, ...statusRows]) {
+  const backgroundCandidates=activeRows.filter(row=>row.backgroundProcessCount>0);
+  const backgroundPreviewOffset=Math.min(Math.max(0,backgroundOffset),backgroundCandidates.length ? Math.floor((backgroundCandidates.length-1)/limit)*limit : 0);
+  const backgroundCacheRows=jobMode ? backgroundCandidates.slice(backgroundPreviewOffset,backgroundPreviewOffset+limit) : [];
+  const cacheRows=[...activePage.rows,...terminalPage.rows,...idlePage.rows,...statusRows,...backgroundCacheRows];
+  const previewAgentIds=[...new Set(cacheRows.flatMap(row=>{const id=agentIdByRowKey.get(row.rowKey);return id ? [id] : [];}))];
+  const preview=jobs.admissionStateStore.listDashboardArchivedJobsByAgent(scopeId,DASHBOARD_HISTORY_PREVIEW_LIMIT+1,"created",previewAgentIds);
+  for(const id of previewAgentIds) archivedJobsByAgent.set(id,[]);
+  for(const job of preview.jobs) if(job.agentId) archivedJobsByAgent.get(job.agentId)?.push(job);
+  for(const [id,summary] of jobs.admissionStateStore.dashboardJobSummaries(preview.jobs.map(job=>job.jobId))) summaryCache.set(id,summary);
+  for(const [id,title] of jobs.admissionStateStore.dashboardActivityTitles(preview.jobs.map(job=>job.activityId))) activityTitles.set(id,title);
+  const cacheMetadata=jobs.admissionStateStore.historyCacheMetadata([...new Set(cacheRows.flatMap(row=> {
+    const id=agentIdByRowKey.get(row.rowKey);return id ? [id] : [];
+  }))],now);
+  const policyRevision=jobs.admissionStateStore.appliedHistoryPolicy(now).policyRevision;
+  for (const row of cacheRows) {
+    // Counts and ordering use lightweight rows; format history only after paging.
     const agentId = agentIdByRowKey.get(row.rowKey);
-    if (agentId) visibleAgentIdsOut?.add(agentId);
-    const agent = agentId ? agentById.get(agentId) : undefined;
-    if (statusFilter !== undefined && agent) {
-      const latest = jobs.admissionStateStore.workHistory.latestJob(agent.agentId);
-      const canAcknowledge = Boolean(
-        !problemQuery && latest &&
-        ["failed", "interrupted"].includes(row.status) &&
-        ["failed", "interrupted"].includes(latest.status) &&
-        !acknowledgedJobs.has(latest.jobId) &&
-        latest.updatedAt >= now - ISSUE_ATTENTION_DAYS * 86400_000
-      );
-      if (canAcknowledge) {
-        row.historyControls = {
-          revision: dashboardHistoryRevision(agent, latest),
-          canAcknowledge: true
-        };
-      }
+    const representative=agentId ? latestJobByAgent.get(agentId)?.jobId || latestArchivedJobByAgent.get(agentId)?.jobId : undefined;
+    const initial=historyForAgent(agentId,representative);
+    row.history=deferredHistories.get(initial.turns)?.() || [];
+    row.historyCount=initial.total;
+    if (agentId) {
+      visibleAgentIdsOut?.add(agentId);
+      const metadata=cacheMetadata.get(agentId);
+      if(metadata) Object.assign(row,metadata);
     }
+    row.policyRevision=policyRevision;
+    row.representativeExecutionKey=row.latestTurn?.executionKey ?? null;
+    row.historyHasMore=(row.historyCount || 0)>(row.history?.length || 0);
   }
   const weeklyUsage = enrichment?.weeklyUsage || cachedCodexWeeklyUsage(upstream);
   const scopedProjectIds = scopeId ? new Set([
@@ -13337,11 +14019,11 @@ async function buildDashboardView(
   const trackedProjects = jobs.admissionStateStore
     .getProjectRegistrySnapshot()
     .projects
-    .filter((project) => project.archivedAt === undefined &&
+    .filter((project) => (project.archiveState === undefined || project.archiveState === "active") && project.archivedAt === undefined &&
       (!scopedProjectIds || scopedProjectIds.has(project.id)))
     .length;
 
-  return dashboardViewOutputSchema.parse({
+  const parsedView=dashboardViewOutputSchema.parse({
     kind: "dashboard",
     ...(problemCollection ? {problems:problemCollection} : {}),
     historyPolicy: jobs.admissionStateStore.workHistory.policy(preferences.historyRetentionDays),
@@ -13350,59 +14032,56 @@ async function buildDashboardView(
     ...(statusFilter !== undefined ? { statusFilter } : {}),
     statusSource: "codex-runtime-only",
     coverage: "bridge-known-retained",
-    enrichment: enrichment?.summary || cachedDashboardEnrichment(upstream, runtimeCacheCandidates),
+    enrichment: enrichment?.summary || cachedDashboardEnrichment(upstream, runtimeCacheCandidates, runtimeCache, cachedRuntime?.pendingKeys, runtimeInventory),
     weeklyUsage,
     counts: {
       trackedProjects,
       trackedConversations: scopeIds.size,
-      retainedJobs: allJobs.length + archivedJobs.length,
+      retainedJobs: allJobs.length + archivedCounts.total,
       active: currentRows.length,
       running: activeRows.filter((row) => row.status === "running").length,
       inputRequired: activeRows.filter((row) => row.status === "input-required").length,
       approvalRequired: activeRows.filter((row) => row.status === "approval-required").length,
       terminating: activeRows.filter((row) => row.status === "terminating").length,
-      needsAttention: statusFilter === undefined ? attentionKeys.size : responseRequired + problems,
+      needsAttention: statusFilter === undefined ? attentionKeys.size : responseRequired + (problemCollection?.currentImpactCount ?? legacyProblems),
       responseRequired,
       problems,
       backgroundProcesses,
       backgroundProcessAgents,
+      backgroundProcessUnknownAgents,
       runtimeUnknownAgents,
       runtimeProbeSkippedAgents,
-      completed: [...allJobs, ...archivedJobs].filter((job) => job.status === "completed").length,
-      failed: [...allJobs, ...archivedJobs].filter((job) => job.status === "failed").length,
-      interrupted: [...allJobs, ...archivedJobs].filter((job) => job.status === "interrupted").length,
-      cancelled: [...allJobs, ...archivedJobs].filter((job) => job.status === "cancelled").length,
+      completed: allJobs.filter((job) => job.status === "completed").length + archivedCounts.completed,
+      failed: allJobs.filter((job) => job.status === "failed").length + archivedCounts.failed,
+      interrupted: allJobs.filter((job) => job.status === "interrupted").length + archivedCounts.interrupted,
+      cancelled: allJobs.filter((job) => job.status === "cancelled").length + archivedCounts.cancelled,
       idleAgents: idleRows.length,
       orphanedAgents: allAgents.filter(
         (agent) =>
           agent.lifecycle === "orphaned" || runtimeByAgent.get(agent.agentId)?.state === "orphaned"
       ).length
     },
-    ...(legacyProjectPage && legacyConversationPage
-      ? {
-          projects: legacyProjectPage.projects,
-          conversations: legacyConversationPage.conversations
-        }
-      : {}),
     activeRows: activePage.rows,
     terminalRows: terminalPage.rows,
     idleRows: idlePage.rows,
     statusRows,
-    statusRowsComplete: true,
-    historyIncluded: includeHistory,
+    statusRowsComplete: !statusPage.page.hasNext && !statusPage.page.hasPrevious,
+    statusPagination:statusPage.page,
+    historyIncluded: true,
     pagination: {
-      ...(legacyProjectPage && legacyConversationPage
-        ? {
-            projects: legacyProjectPage.page,
-            conversations: legacyConversationPage.page
-          }
-        : {}),
       active: activePage.page,
       terminal: terminalPage.page,
       idle: idlePage.page
     },
     uiLocalePreference: preferences.uiLocalePreference
   });
+  snapshotRuntimeOnlyRows.set(parsedView,recoveryRows.map(x=>x.row));
+  snapshotHandoffThreads.set(parsedView,handoffThreadByRowKey);
+  snapshotActiveStatuses.set(parsedView,new Map(allJobs.filter(job=>isActiveActivityJobStatus(job.status)).map(job=>[job.jobId,statusForJob(job)])));
+  const activeJobByExecutionKey=new Map(allJobs.filter(job=>isActiveActivityJobStatus(job.status)).map(job=>[dashboardRowKey(undefined,job.jobId),job.jobId]));
+  snapshotBackgroundOwners.set(parsedView,activeRows.filter(row=>row.backgroundProcessCount>0).map(row=>({row,
+    jobId:agentById.get(agentIdByRowKey.get(row.rowKey) || "")?.currentJobId || (row.latestTurn?.executionKey ? activeJobByExecutionKey.get(row.latestTurn.executionKey) : undefined)})));
+  return parsedView;
 }
 
 function dashboardViewResult(
@@ -13479,317 +14158,7 @@ function listAllScopedActivities(jobs: CodexJobRegistry, scopeId: string): Bridg
   return activities;
 }
 
-function listAllScopedAgents(jobs: CodexJobRegistry, scopeId: string): BridgeAgent[] {
-  const total = jobs.agentCount(scopeId);
-  const agents: BridgeAgent[] = [];
-  while (agents.length < total) {
-    const page = jobs.listAgents(scopeId, 1_000, agents.length);
-    if (page.length === 0) break;
-    agents.push(...page);
-  }
-  return agents;
-}
-
-async function buildLegacyActivityView(
-  jobs: CodexJobRegistry,
-  upstream: CodexUpstream,
-  modelCatalog: CodexModelCatalogProvider,
-  _config: BridgeConfig,
-  preferences: BridgeUserSettings,
-  scopeId: string,
-  limit: number,
-  selectedActivityId?: string,
-  wait?: ActivityScopeWatchResult,
-  presentation: ActivityViewPresentationContext = { kind: "explicit" },
-  lease?: ActivityCardLeaseTouchResult,
-  inspectRuntime = false
-) {
-  const now = Date.now();
-  const allAgents = listAllScopedAgents(jobs, scopeId);
-  const agentById = new Map(allAgents.map((agent) => [agent.agentId, agent]));
-  const latestJobByAgent = new Map<string, CodexJob>();
-  const controlRows: Array<Record<string, unknown>> = [];
-  const currentThreads = new Map<string, BridgeAgentThread>();
-  const agentRows = allAgents.map((agent) => {
-    const agentJobs = jobs.listForAgent(agent.agentId);
-    const latestJob = agentJobs.at(-1);
-    if (latestJob) latestJobByAgent.set(agent.agentId, latestJob);
-    const activeJob = agent.currentJobId
-      ? jobs.get(agent.currentJobId)
-      : [...agentJobs].reverse().find((job) => isActiveActivityJobStatus(job.status));
-    const assignments = jobs.listActivityAgentAssignments(undefined, agent.agentId);
-    const currentThread = jobs.listAgentThreads(agent.agentId).find((thread) => thread.isCurrent);
-    if (currentThread) currentThreads.set(agent.agentId, currentThread);
-    const assignment = [...assignments].reverse().find((entry) => entry.releasedAt === undefined) || assignments.at(-1);
-    const activityId = activeJob?.activityId || assignment?.activityId || latestJob?.activityId;
-    const activity = activityId ? jobs.getActivity(activityId) : undefined;
-    const pending = activeJob?.pendingInteractions || [];
-    const hasInput = pending.some((entry) => entry.isBlocking !== false && isInputInteraction(entry));
-    const hasApproval = pending.some((entry) => entry.isBlocking !== false && !isInputInteraction(entry));
-    const displayState = hasInput
-      ? "input-required"
-      : hasApproval
-        ? "approval-required"
-        : activeJob?.status === "termination-failed"
-          ? "termination-failed"
-          : activeJob?.status === "terminating"
-            ? "terminating"
-            : activeJob && isActiveActivityJobStatus(activeJob.status)
-              ? "running"
-              : latestJob?.status === "failed"
-                ? "failed"
-                : latestJob?.status === "interrupted" || latestJob?.status === "cancelled"
-                  ? "interrupted"
-                  : agent.lifecycle === "orphaned"
-                    ? "orphaned"
-                    : activity?.verification === "pending" || activity?.verification === "verifying"
-                      ? "verification"
-                      : latestJob?.status === "completed"
-                        ? "completed"
-                        : "idle";
-    if (activeJob || pending.length > 0) {
-      controlRows.push({
-        agentId: agent.agentId,
-        agentVersion: agent.version,
-        jobId: activeJob?.jobId || null,
-        jobVersion: activeJob?.version || null,
-        canForceStop: Boolean(activeJob && isActiveActivityJobStatus(activeJob.status)),
-        affectedJobIds: activeJob && isActiveActivityJobStatus(activeJob.status)
-          ? jobs.terminationImpact(activeJob.jobId).affectedJobIds
-          : [],
-        pendingInteractions: pending.map(interaction => ({
-          ...interaction,
-          ...(interaction.elicitation ? { elicitation: {
-            ...interaction.elicitation, ...jobs.interactionInput(interaction.interactionId)
-          } } : {})
-        }))
-      });
-    }
-    const changedAt = Math.max(agent.updatedAt, latestJob?.updatedAt || 0, activity?.updatedAt || 0);
-    const execution = activityCardExecution(activeJob || latestJob, modelCatalog);
-    return {
-      agentId: agent.agentId,
-      shortAgentId: agent.agentId.slice(0, 8),
-      agentName: agent.agentName,
-      lifecycle: agent.lifecycle,
-      displayState,
-      activityId: activity?.activityId || null,
-      activityTitle: activity?.title || null,
-      activityLifecycle: activity?.lifecycle || null,
-      verification: activity?.verification || null,
-      updatedAt: new Date(changedAt).toISOString(),
-      elapsedMs: Math.max(0, now - (activeJob?.createdAt || latestJob?.createdAt || agent.createdAt)),
-      canForceStop: Boolean(activeJob && isActiveActivityJobStatus(activeJob.status)),
-      backgroundProcessState: "none" as "none" | "running" | "unavailable",
-      backgroundProcessCount: 0,
-      orphanedReason: agent.orphanedReason || null,
-      ...(execution ? { execution } : {})
-    };
-  });
-  const agentPriority = (row: (typeof agentRows)[number]): number => {
-    if (row.displayState === "input-required" || row.displayState === "approval-required") return 0;
-    if (row.backgroundProcessState !== "none") return 1;
-    if (["failed", "interrupted", "termination-failed", "orphaned"].includes(row.displayState)) return 1;
-    if (row.displayState === "running" || row.displayState === "terminating") return 2;
-    if (row.displayState === "verification") return 3;
-    if (row.displayState === "completed") return 4;
-    if (row.displayState === "idle") return 5;
-    return 6;
-  };
-  agentRows.sort((left, right) =>
-    agentPriority(left) - agentPriority(right) || Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
-  );
-  const runtimeCandidates = agentRows
-    .flatMap((row) => {
-      const thread = currentThreads.get(row.agentId);
-      const agent = agentById.get(row.agentId);
-      if (!thread || !backendSupports(thread.backendKind, "supportsThreadInspection") || !agent) return [];
-      return [{
-        agentId: row.agentId,
-        thread,
-        stamp: dashboardRuntimeStamp(agent, latestJobByAgent.get(row.agentId)),
-        inspectLiveness: false
-      }];
-    })
-    .slice(0, CARD_RUNTIME_PROBE_LIMIT);
-  const runtimeInspection = inspectRuntime
-    ? await inspectDashboardRuntimes(jobs, upstream, runtimeCandidates)
-    : {
-        unavailable: 0,
-        observations: cachedDashboardRuntimes(upstream, runtimeCandidates),
-        skipped: 0,
-        requests: 0,
-        cacheHits: 0,
-        timeouts: 0
-      };
-  if (!inspectRuntime) {
-    runtimeInspection.cacheHits = runtimeInspection.observations.size;
-    runtimeInspection.skipped = Math.max(
-      0,
-      agentRows.length - runtimeInspection.observations.size
-    );
-  }
-  for (const row of agentRows) {
-    const observation = runtimeInspection.observations.get(row.agentId);
-    if (!observation) continue;
-    if (observation.backgroundProcessState === "unknown") {
-      row.backgroundProcessState = "unavailable";
-      continue;
-    }
-    if (observation.backgroundProcessCount === 0) continue;
-    row.backgroundProcessState = "running";
-    row.backgroundProcessCount = observation.backgroundProcessCount;
-    const agent = agentById.get(row.agentId);
-    let control = controlRows.find((entry) => entry.agentId === row.agentId);
-    if (!control) {
-      control = {
-        agentId: row.agentId,
-        agentVersion: agent?.version || null
-      };
-      controlRows.push(control);
-    }
-    control.agentVersion ??= agent?.version || null;
-    const agentBusy = agent?.lifecycle === "active" ||
-      agent?.lifecycle === "waiting-input" ||
-      Boolean(agent?.currentJobId);
-    if (!agentBusy && observation.backgroundProcessIds) {
-      control.backgroundProcesses = observation.backgroundProcessIds.map(
-        (processId) => ({ processId })
-      );
-    }
-  }
-  agentRows.sort((left, right) =>
-    agentPriority(left) - agentPriority(right) || Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
-  );
-  const visibleAgents = agentRows.slice(0, limit);
-  const visibleAgentTotal = agentRows.length;
-  const allActivities = jobs.listActivities(scopeId, limit + 1, 0);
-  const activities = allActivities.slice(0, limit).map((activity) => ({
-    activityId: activity.activityId,
-    continuationOfActivityId: activity.continuationOfActivityId || null,
-    cardGeneration: activity.cardGeneration,
-    title: activity.title,
-    lifecycle: activity.lifecycle,
-    waitingOn: activity.waitingOn,
-    verification: activity.verification,
-    counts: activity.counts,
-    agentIds: [...new Set(
-      jobs.listActivityAgentAssignments(activity.activityId).map((assignment) => assignment.agentId)
-    )],
-    updatedAt: new Date(activity.updatedAt).toISOString()
-  }));
-  const unassignedJobs = jobs.listForScope(scopeId, limit, 0)
-    .filter((job) => !job.agentId)
-    .map((job) => ({
-      temporaryId: job.jobId.slice(0, 8),
-      activityId: job.activityId,
-      activityTitle: jobs.getActivity(job.activityId)?.title || null,
-      displayState: isActiveActivityJobStatus(job.status) ? "running" : job.status,
-      updatedAt: new Date(job.updatedAt).toISOString()
-    }));
-  const aggregates = {
-    running: agentRows.filter((row) => row.displayState === "running" || row.displayState === "terminating").length,
-    needsAttention: agentRows.filter((row) => agentPriority(row) <= 1).length,
-    readyForVerification: agentRows.filter((row) => row.displayState === "verification").length,
-    failed: agentRows.filter((row) => row.displayState === "failed").length,
-    idle: agentRows.filter((row) => row.displayState === "idle").length
-  };
-  const basePresentationPolicy = jobs.activityPresentationWatcherPolicy(scopeId, presentation);
-  const presentationPolicy = lease?.stopped
-    ? {
-        ...basePresentationPolicy,
-        live: false,
-        stopped: true,
-        stopReason: lease.stopReason,
-        ownsCompletionHandoff: false
-      }
-    : basePresentationPolicy;
-  const pendingHandoffs =
-    preferences.completionHandoff !== "auto-handoff" ||
-    !presentationPolicy.ownsCompletionHandoff
-    ? []
-    : jobs.listPendingCompletionOutbox(scopeId, 20).map((record) => ({
-        outboxId: record.outboxId,
-        activityId: record.activityId,
-        completionVersion: record.completionVersion,
-        channel: record.channel,
-        createdAt: new Date(record.createdAt).toISOString(),
-        jobIds: jobs.listForActivity(record.activityId).map((job) => job.jobId)
-      }));
-  const selectedActivity = selectedActivityId ? jobs.getActivity(selectedActivityId) : undefined;
-  return {
-    structured: {
-      scopeVersion: jobs.getScopeVersion(scopeId),
-      generatedAt: new Date().toISOString(),
-      aggregates,
-      agents: visibleAgents,
-      agentPagination: {
-        limit,
-        returned: visibleAgents.length,
-        total: visibleAgentTotal,
-        hasMore: visibleAgents.length < visibleAgentTotal
-      },
-      unassignedJobs,
-      activities,
-      activityPagination: {
-        limit,
-        returned: activities.length,
-        total: jobs.activityCount(scopeId),
-        hasMore: allActivities.length > limit
-      },
-      pendingHandoffs,
-      completionHandoff: preferences.completionHandoff,
-      activityCardVisibility: preferences.activityCardVisibility,
-      mountedActivity: selectedActivity
-        ? {
-            activityId: selectedActivity.activityId,
-            cardGeneration: selectedActivity.cardGeneration,
-            version: selectedActivity.version
-          }
-        : null,
-      mountedPresentation: {
-        kind: presentation.kind,
-        ...(presentation.kind === "automatic"
-          ? {
-              activityPresentationId: presentation.activityPresentationId,
-              ...(presentation.reservationOwnerId
-                ? { reservationOwnerId: presentation.reservationOwnerId }
-                : {})
-            }
-          : presentation.kind === "historical"
-            ? {
-                jobId: presentation.jobId,
-                requestId: presentation.requestId
-              }
-            : presentation.kind === "restored-explicit"
-              ? {
-                  mode: presentation.mode,
-                  ...(presentation.activityId ? { activityId: presentation.activityId } : {}),
-                  ...(presentation.activityVersion
-                    ? { activityVersion: presentation.activityVersion }
-                    : {})
-                }
-          : {})
-      },
-      uiLocalePreference: preferences.uiLocalePreference,
-      watcherPolicy: {
-        mode: "scope-version-long-poll",
-        maxWaitMs: MAX_CODEX_STATUS_WAIT_MS,
-        suggestedWaitMs: DEFAULT_CODEX_STATUS_WAIT_MS,
-        separateFromJobLimit: true,
-        ...presentationPolicy
-      },
-      ...(wait ? { wait } : {})
-    },
-    interactionControls: {
-      agents: controlRows
-    },
-    allAgentRows: agentRows,
-    enrichmentStats: runtimeInspection
-  };
-}
-
-type ActivityCardExecution = {
+type DashboardExecution = {
   model: string;
   modelDisplayName?: string;
   reasoningEffort: string;
@@ -13797,36 +14166,37 @@ type ActivityCardExecution = {
   reroutedModel?: string;
   reroutedModelDisplayName?: string;
   isCurrent: boolean;
+  processingSpeed?: string;
+  serviceTierScope?: "turn";
+  requestState?: "requested" | "accepted";
 };
 
-function activityCardExecution(
+function dashboardExecutionForJob(
   job: CodexJob | undefined,
   modelCatalog: CodexModelCatalogProvider
-): ActivityCardExecution | undefined {
+): DashboardExecution | undefined {
   const selection = job?.executionDecision?.effectiveSelection;
   if (!job || !selection) return undefined;
-  const reroutedModel = [...job.publicEvents].reverse().find((event) =>
-    event.type === "model" &&
-    event.details?.kind === "rerouted" &&
-    typeof event.details.toModel === "string" &&
-    event.details.toModel.trim()
-  )?.details?.toModel;
-  return dashboardExecutionForSelection(
-    selection,
-    job.backendKind,
-    modelCatalog,
-    isActiveActivityJobStatus(job.status),
-    typeof reroutedModel === "string" ? reroutedModel : undefined
-  );
+  const audit = executionAudit(job)!;
+  return { ...dashboardExecutionForSelection(selection, job.backendKind, modelCatalog, isActiveActivityJobStatus(job.status), audit.actual.model || undefined),
+    requestState: audit.acceptance ? "accepted" : "requested", processingSpeed: audit.intent.processingSpeed };
+
+}
+
+function dashboardExecutionForRetainedJob(job: DashboardRetainedJobSummary, modelCatalog: CodexModelCatalogProvider): DashboardExecution | undefined {
+  if (!job.execution) return undefined;
+  return { ...dashboardExecutionForSelection(job.execution, job.backendKind, modelCatalog, false, job.execution.reroutedModel),
+    requestState: job.execution.requestState || "requested",
+    ...(job.execution.processingSpeed ? { processingSpeed: job.execution.processingSpeed } : {}) };
 }
 
 function dashboardExecutionForSelection(
-  selection: Pick<ModelSelection, "model" | "reasoningEffort" | "serviceTier">,
+  selection: ModelSelection,
   backendKind: string | undefined,
   modelCatalog: CodexModelCatalogProvider,
   isCurrent: boolean,
   reroutedModel?: string
-): ActivityCardExecution {
+): DashboardExecution {
   const catalog = modelCatalog.getCachedCatalog?.({
     backendKind: isCodexBackendKind(backendKind) ? backendKind : "mcp-server"
   });
@@ -13846,6 +14216,7 @@ function dashboardExecutionForSelection(
     ...(modelDisplayName !== selection.model ? { modelDisplayName } : {}),
     reasoningEffort,
     ...(selection.serviceTier ? { serviceTier: selection.serviceTier } : {}),
+    ...(selection.serviceTierScope ? { serviceTierScope: selection.serviceTierScope } : {}),
     ...(normalizedReroutedModel ? { reroutedModel: normalizedReroutedModel } : {}),
     ...(reroutedModelDisplayName && reroutedModelDisplayName !== normalizedReroutedModel
       ? { reroutedModelDisplayName }
@@ -13854,759 +14225,18 @@ function dashboardExecutionForSelection(
   };
 }
 
-async function buildActivityView(
-  jobs: CodexJobRegistry,
-  upstream: CodexUpstream,
-  modelCatalog: CodexModelCatalogProvider,
-  config: BridgeConfig,
-  preferences: BridgeUserSettings,
-  scopeId: string,
-  limit: number,
-  selectedActivityId?: string,
-  wait?: ActivityScopeWatchResult,
-  presentation: ActivityViewPresentationContext = { kind: "explicit" },
-  lease?: ActivityCardLeaseTouchResult,
-  historyCursor?: string,
-  focusSelectedActivityPage = true,
-  inspectRuntime = false
-) {
-  const compactHistoryLimit = 3;
-  const feedMode =
-    presentation.kind === "explicit" || presentation.kind === "restored-explicit"
-      ? "full" as const
-      : "compact" as const;
-  const enrichmentStartedAt = Date.now();
-  const [legacy, usage] = await Promise.all([
-    buildLegacyActivityView(
-      jobs,
-      upstream,
-      modelCatalog,
-      config,
-      preferences,
-      scopeId,
-      limit,
-      selectedActivityId,
-      wait,
-      presentation,
-      lease,
-      inspectRuntime
-    ),
-    inspectRuntime
-      ? readCodexWeeklyUsageBounded(upstream)
-      : Promise.resolve({ value: cachedCodexWeeklyUsage(upstream), timedOut: false, failed: false })
-  ]);
-  modelCatalog = projectionModelCatalog(modelCatalog);
-  const weeklyUsage = usage.value;
-  const now = Date.now();
-  const scopeVersion = jobs.getScopeVersion(scopeId);
-  const allActivities = listAllScopedActivities(jobs, scopeId);
-  const allAgents = listAllScopedAgents(jobs, scopeId);
-  const cancellationDisplays = buildCancellationDisplayIndex(jobs, scopeId);
-  const activityById = new Map(allActivities.map((activity) => [activity.activityId, activity]));
-  const agentById = new Map(allAgents.map((agent) => [agent.agentId, agent]));
-  const scopeJobs = jobs.listForScope(scopeId, config.maxRetainedJobs, 0);
-  const jobsByActivity = new Map<string, CodexJob[]>();
-  for (const job of scopeJobs) {
-    const entries = jobsByActivity.get(job.activityId) || [];
-    entries.push(job);
-    jobsByActivity.set(job.activityId, entries);
-  }
-  for (const entries of jobsByActivity.values()) {
-    entries.sort((left, right) => left.createdAt - right.createdAt);
-  }
-
-  const assignments = jobs
-    .listScopeActivityAgentAssignments(scopeId)
-    .filter((assignment) => activityById.has(assignment.activityId) && agentById.has(assignment.agentId));
-  const assignmentsByActivity = new Map<string, ActivityAgentAssignment[]>();
-  const assignmentsByAgent = new Map<string, ActivityAgentAssignment[]>();
-  for (const assignment of assignments) {
-    const activityEntries = assignmentsByActivity.get(assignment.activityId) || [];
-    activityEntries.push(assignment);
-    assignmentsByActivity.set(assignment.activityId, activityEntries);
-    const agentEntries = assignmentsByAgent.get(assignment.agentId) || [];
-    agentEntries.push(assignment);
-    assignmentsByAgent.set(assignment.agentId, agentEntries);
-  }
-
-  const legacyAgents = legacy.allAgentRows;
-  const legacyAgentById = new Map(legacyAgents.map((agent) => [agent.agentId, agent]));
-  const pendingHandoffActivityIds = new Set(jobs.listPendingCompletionActivityIds(scopeId));
-
-  const assignmentFor = (activityId: string, agentId: string): ActivityAgentAssignment | undefined =>
-    [...(assignmentsByActivity.get(activityId) || [])]
-      .reverse()
-      .find((assignment) => assignment.agentId === agentId);
-  const workspacesFor = (activityId: string): string[] => {
-    const activity = activityById.get(activityId);
-    if (activity?.projectName) return [activity.projectName];
-    return [...new Set((jobsByActivity.get(activityId) || []).map((job) =>
-      path.basename(job.cwd)
-    ))];
-  };
-
-  const activityRows = allActivities.map((activity) => {
-    const activityJobs = jobsByActivity.get(activity.activityId) || [];
-    const activeJobs = activityJobs.filter((job) => isActiveActivityJobStatus(job.status));
-    const latestJob = activityJobs.at(-1);
-    const activityAssignments = assignmentsByActivity.get(activity.activityId) || [];
-    const hasOpenAssignment = activityAssignments.some(
-      (assignment) => assignment.releasedAt === undefined
-    );
-    const participantIds = [...new Set(activityAssignments.map((assignment) => assignment.agentId))];
-    const relevantAgentRows = participantIds
-      .map((agentId) => legacyAgentById.get(agentId))
-      .filter((agent): agent is NonNullable<typeof agent> =>
-        Boolean(agent && agent.activityId === activity.activityId)
-      );
-    const activeInteractions = activeJobs.flatMap((job) => job.pendingInteractions || []);
-    const hasInput = activeInteractions.some((interaction) => interaction.isBlocking !== false && isInputInteraction(interaction));
-    const hasApproval = activeInteractions.some((interaction) => interaction.isBlocking !== false && !isInputInteraction(interaction));
-    const relevantStates = new Set(relevantAgentRows.map((agent) => agent.displayState));
-    const hasBackgroundProcesses = relevantAgentRows.some(
-      (agent) => agent.backgroundProcessState === "running"
-    );
-    const hasUnknownBackgroundProcesses = relevantAgentRows.some(
-      (agent) => agent.backgroundProcessState === "unavailable"
-    );
-    const pendingHandoff = pendingHandoffActivityIds.has(activity.activityId);
-    const hasTerminatingJob = activeJobs.some((job) => job.status === "terminating");
-    const hasFailedWork =
-      activity.verification === "failed" ||
-      activity.counts.failed > 0 ||
-      relevantStates.has("failed");
-    const hasInterruptedWork =
-      activity.counts.interrupted + activity.counts.cancelled > 0 ||
-      relevantStates.has("interrupted");
-    const verificationComplete =
-      activity.verification === "verified" || activity.verification === "not-required";
-    const canFoldCompletedActivity =
-      activity.lifecycle === "completed" &&
-      activeJobs.length === 0 &&
-      activeInteractions.length === 0 &&
-      verificationComplete &&
-      !pendingHandoff &&
-      !hasOpenAssignment &&
-      !hasBackgroundProcesses &&
-      !hasUnknownBackgroundProcesses;
-    const canFoldEndedActivity =
-      (activity.lifecycle === "cancelled" || activity.lifecycle === "abandoned") &&
-      activeJobs.length === 0 &&
-      activeInteractions.length === 0 &&
-      !pendingHandoff &&
-      !hasOpenAssignment &&
-      !hasBackgroundProcesses &&
-      !hasUnknownBackgroundProcesses;
-    let displayState: string;
-    if (hasInput) displayState = "input-required";
-    else if (hasApproval) displayState = "approval-required";
-    else if (activity.waitingOn === "user") displayState = "input-required";
-    else if (relevantStates.has("termination-failed")) displayState = "termination-failed";
-    else if (relevantStates.has("orphaned")) displayState = "orphaned";
-    else if (hasUnknownBackgroundProcesses) displayState = "background-unavailable";
-    else if (canFoldCompletedActivity) displayState = "completed";
-    else if (canFoldEndedActivity) displayState = "ended";
-    else if (
-      activity.verification === "pending" ||
-      activity.verification === "verifying" ||
-      activity.waitingOn === "verification"
-    ) displayState = "verification";
-    else if (pendingHandoff) displayState = "waiting-gpt";
-    else if (hasTerminatingJob) displayState = "terminating";
-    else if (activeJobs.length > 0 || hasBackgroundProcesses || activity.waitingOn === "codex") {
-      displayState = "running";
-    }
-    else if (hasFailedWork) displayState = "failed";
-    else if (hasInterruptedWork) displayState = "interrupted";
-    else if (hasOpenAssignment || activity.waitingOn === "orchestrator") {
-      displayState = "waiting-gpt";
-    }
-    else displayState = "idle";
-
-    const participants = participantIds.map((agentId) => {
-      const agent = agentById.get(agentId) as BridgeAgent;
-      const current = legacyAgentById.get(agentId);
-      const assignment = assignmentFor(activity.activityId, agentId);
-      const currentForActivity = current?.activityId === activity.activityId;
-      const agentActivityJobs = activityJobs.filter((job) => job.agentId === agentId);
-      const activeAgentJob = [...agentActivityJobs]
-        .reverse()
-        .find((job) => isActiveActivityJobStatus(job.status));
-      const representativeJob = activeAgentJob || agentActivityJobs.at(-1);
-      const execution = activityCardExecution(representativeJob, modelCatalog);
-      const participantDisplayState = activityParticipantDisplayState(
-        activity,
-        assignment,
-        agentActivityJobs
-      );
-      const terminal = representativeJob
-        ? isTerminalActivityJobStatus(representativeJob.status)
-        : false;
-      return {
-        agentId,
-        agentName: agent.agentName,
-        role: assignment?.role && assignment.role !== "primary" ? assignment.role : null,
-        contextMode: assignment?.contextMode || null,
-        displayState: participantDisplayState,
-        canForceStop: Boolean(currentForActivity && current.canForceStop),
-        backgroundProcessState: currentForActivity ? current.backgroundProcessState : "none",
-        backgroundProcessCount: currentForActivity ? current.backgroundProcessCount : 0,
-        ...(representativeJob
-          ? {
-              durationMs: Math.max(
-                0,
-                (terminal ? representativeJob.updatedAt : now) - representativeJob.createdAt
-              ),
-              updatedAt: new Date(representativeJob.updatedAt).toISOString(),
-              endedAt: terminal ? new Date(representativeJob.updatedAt).toISOString() : null
-            }
-          : {}),
-        ...(execution ? { execution } : {})
-      };
-    });
-    const activeStartedAt = activeJobs.length > 0
-      ? Math.min(...activeJobs.map((job) => job.createdAt))
-      : latestJob?.createdAt || activity.createdAt;
-    return {
-      rowType: "activity" as const,
-      activityId: activity.activityId,
-      projectName: activity.projectName || null,
-      title: activity.title,
-      kind: activity.kind,
-      lifecycle: activity.lifecycle,
-      waitingOn: activity.waitingOn,
-      verification: activity.verification,
-      displayState,
-      counts: activity.counts,
-      agents: participants,
-      cancellations: cancellationDisplays.byActivityId.get(activity.activityId) || [],
-      workspaceLabels: workspacesFor(activity.activityId),
-      continued: Boolean(activity.continuationOfActivityId),
-      pendingHandoff,
-      canRequestVerification: displayState === "verification",
-      canRetry: displayState === "failed" || displayState === "interrupted" || displayState === "termination-failed",
-      elapsedMs: Math.max(0, now - activeStartedAt),
-      createdAt: new Date(activity.createdAt).toISOString(),
-      updatedAt: new Date(activity.updatedAt).toISOString(),
-      completedAt: activity.completedAt ? new Date(activity.completedAt).toISOString() : null
-    };
-  });
-  const hasMultipleWorkspaces = new Set(
-    activityRows.flatMap((row) => row.projectName
-      ? [`project-name:${row.projectName}`]
-      : row.workspaceLabels.map((label) => `legacy:${label}`))
-  ).size > 1;
-  if (!hasMultipleWorkspaces) {
-    for (const row of activityRows) {
-      row.projectName = null;
-      row.workspaceLabels = [];
-    }
-  }
-
-  const activityPriority = (row: (typeof activityRows)[number]): number => {
-    if (["input-required", "approval-required"].includes(row.displayState)) return 0;
-    if (["failed", "interrupted", "termination-failed", "orphaned", "background-unavailable"].includes(row.displayState)) return 1;
-    if (["verification", "waiting-gpt"].includes(row.displayState)) return 2;
-    if (["terminating", "running"].includes(row.displayState)) return 3;
-    if (row.displayState === "idle") return 4;
-    return 5;
-  };
-  const activeRows = activityRows
-    .filter((row) => !["completed", "ended", "idle"].includes(row.displayState))
-    .sort((left, right) =>
-      activityPriority(left) - activityPriority(right) ||
-      Date.parse(right.updatedAt) - Date.parse(left.updatedAt) ||
-      left.activityId.localeCompare(right.activityId)
-    );
-  const historyRows = activityRows
-    .filter((row) => ["completed", "ended", "idle"].includes(row.displayState))
-    .sort((left, right) =>
-      Date.parse(right.completedAt || right.updatedAt) - Date.parse(left.completedAt || left.updatedAt) ||
-      left.activityId.localeCompare(right.activityId)
-    );
-  const activeAgentIds = new Set(activeRows.flatMap((row) => row.agents.map((agent) => agent.agentId)));
-  for (const agent of legacyAgents) {
-    if ([
-      "input-required",
-      "approval-required",
-      "termination-failed",
-      "failed",
-      "interrupted",
-      "orphaned",
-      "terminating",
-      "running",
-      "verification"
-    ].includes(agent.displayState) || agent.backgroundProcessState !== "none") {
-      activeAgentIds.add(agent.agentId);
-    }
-  }
-
-  const completedActivityRows = new Map(
-    activityRows
-      .filter((row) => row.displayState === "completed" && !row.pendingHandoff)
-      .map((row) => [row.activityId, row])
-  );
-  const endedActivityRows = new Map(
-    activityRows.filter((row) => row.displayState === "ended").map((row) => [row.activityId, row])
-  );
-  const completedAgentRows: Array<{
-    agentId: string;
-    agentName: string;
-    role: string | null;
-    latestActivityId: string;
-    latestActivityTitle: string;
-    latestActivityKind: ActivityKind;
-    activityCount: number;
-    activityIds: string[];
-    workspaceLabels: string[];
-    verification: string;
-    execution?: ActivityCardExecution;
-    updatedAt: string;
-  }> = [];
-  const idleAgentRows: Array<Record<string, unknown>> = [];
-  const legacyIdleAgentRows: Array<Record<string, unknown>> = [];
-  const endedAgentRows: Array<Record<string, unknown>> = [];
-
-  for (const agent of allAgents) {
-    if (activeAgentIds.has(agent.agentId)) continue;
-    const agentAssignments = assignmentsByAgent.get(agent.agentId) || [];
-    const assignedActivities = [...new Set(agentAssignments.map((assignment) => assignment.activityId))]
-      .map((activityId) => activityById.get(activityId))
-      .filter((activity): activity is BridgeActivity => Boolean(activity))
-      .sort((left, right) => right.updatedAt - left.updatedAt);
-    const latestActivity = assignedActivities[0];
-    const completedActivities = assignedActivities.filter((activity) =>
-      completedActivityRows.has(activity.activityId)
-    );
-    const latestActivityJob = latestActivity
-      ? [...(jobsByActivity.get(latestActivity.activityId) || [])]
-          .reverse()
-          .find((job) => job.agentId === agent.agentId)
-      : jobs.listForAgent(agent.agentId).at(-1);
-    const execution = activityCardExecution(latestActivityJob, modelCatalog);
-    const assignment = latestActivity
-      ? assignmentFor(latestActivity.activityId, agent.agentId)
-      : undefined;
-    const idleAgentRow = {
-      agentId: agent.agentId,
-      agentName: agent.agentName,
-      role: assignment?.role && assignment.role !== "primary" ? assignment.role : null,
-      latestActivityId: latestActivity?.activityId || null,
-      latestActivityTitle: latestActivity?.title || null,
-      workspaceLabels: hasMultipleWorkspaces && latestActivity
-        ? workspacesFor(latestActivity.activityId)
-        : [],
-      ...(latestActivityJob
-        ? {
-            durationMs: Math.max(0, latestActivityJob.updatedAt - latestActivityJob.createdAt),
-            endedAt: isTerminalActivityJobStatus(latestActivityJob.status)
-              ? new Date(latestActivityJob.updatedAt).toISOString()
-              : null
-          }
-        : {}),
-      ...(execution ? { execution } : {}),
-      updatedAt: new Date(latestActivity?.updatedAt || agent.updatedAt).toISOString()
-    };
-    if (agent.lifecycle === "idle") idleAgentRows.push(idleAgentRow);
-    if (latestActivity && completedActivityRows.has(latestActivity.activityId)) {
-      completedAgentRows.push({
-        agentId: agent.agentId,
-        agentName: agent.agentName,
-        role: assignment?.role && assignment.role !== "primary" ? assignment.role : null,
-        latestActivityId: latestActivity.activityId,
-        latestActivityTitle: latestActivity.title,
-        latestActivityKind: latestActivity.kind,
-        activityCount: completedActivities.length,
-        activityIds: completedActivities.map((activity) => activity.activityId),
-        workspaceLabels: hasMultipleWorkspaces ? workspacesFor(latestActivity.activityId) : [],
-        verification: latestActivity.verification,
-        ...(execution ? { execution } : {}),
-        updatedAt: new Date(latestActivity.completedAt || latestActivity.updatedAt).toISOString()
-      });
-      continue;
-    }
-    if (latestActivity && endedActivityRows.has(latestActivity.activityId)) {
-      endedAgentRows.push({
-        agentId: agent.agentId,
-        agentName: agent.agentName,
-        role: assignment?.role && assignment.role !== "primary" ? assignment.role : null,
-        latestActivityId: latestActivity?.activityId || null,
-        latestActivityTitle: latestActivity?.title || null,
-        workspaceLabels: hasMultipleWorkspaces && latestActivity
-          ? workspacesFor(latestActivity.activityId)
-          : [],
-        displayState: latestActivity.lifecycle,
-        ...(execution ? { execution } : {}),
-        updatedAt: new Date(latestActivity?.updatedAt || agent.updatedAt).toISOString()
-      });
-      continue;
-    }
-    if (agent.lifecycle === "idle") legacyIdleAgentRows.push(idleAgentRow);
-  }
-
-  completedAgentRows.sort((left, right) =>
-    Date.parse(right.updatedAt) - Date.parse(left.updatedAt) || left.agentId.localeCompare(right.agentId)
-  );
-  idleAgentRows.sort((left, right) =>
-    Date.parse(String(right.updatedAt)) - Date.parse(String(left.updatedAt)) ||
-    String(left.agentId).localeCompare(String(right.agentId))
-  );
-  endedAgentRows.sort((left, right) =>
-    Date.parse(String(right.updatedAt)) - Date.parse(String(left.updatedAt)) ||
-    String(left.agentId).localeCompare(String(right.agentId))
-  );
-  const completedActivityCount = completedActivityRows.size;
-  const endedActivityCount = endedActivityRows.size;
-  const visibleCompletedAgents = feedMode === "full"
-    ? completedAgentRows.slice(0, limit).map(({ activityIds: _ids, ...row }) => row)
-    : [];
-  const fullActivityRows = [...activeRows, ...historyRows];
-  const visibleLegacyIdleAgents = feedMode === "full"
-    ? legacyIdleAgentRows.slice(0, limit)
-    : [];
-  const visibleEndedAgents = feedMode === "full" ? endedAgentRows.slice(0, limit) : [];
-
-  let pageOffset = 0;
-  let pageReset = false;
-  if (feedMode === "full" && historyCursor) {
-    const decoded = decodeActivityHistoryCursor(historyCursor);
-    if (decoded.scopeVersion === scopeVersion) {
-      pageOffset = decoded.offset;
-    } else {
-      pageReset = true;
-    }
-  } else if (feedMode === "full" && focusSelectedActivityPage && selectedActivityId) {
-    const selectedActivityIndex = fullActivityRows.findIndex(
-      (row) => row.activityId === selectedActivityId
-    );
-    if (selectedActivityIndex >= 0) {
-      pageOffset = Math.floor(selectedActivityIndex / limit) * limit;
-    }
-  }
-  const maximumPageRowCount = Math.max(fullActivityRows.length, idleAgentRows.length);
-  const maximumPageOffset = maximumPageRowCount > 0
-    ? Math.floor((maximumPageRowCount - 1) / limit) * limit
-    : 0;
-  if (pageOffset > maximumPageOffset) {
-    pageOffset = maximumPageOffset;
-    pageReset = true;
-  }
-  const visibleFullActivityRows = feedMode === "full"
-    ? fullActivityRows.slice(pageOffset, pageOffset + limit)
-    : [];
-  const compactHistoryRows = (() => {
-    const recent = historyRows.slice(0, compactHistoryLimit);
-    if (!selectedActivityId) return recent;
-    const selected = historyRows.find((row) => row.activityId === selectedActivityId);
-    if (!selected || recent.some((row) => row.activityId === selected.activityId)) return recent;
-    return [selected, ...recent].slice(0, compactHistoryLimit);
-  })();
-  const visibleActiveRows = feedMode === "full"
-    ? visibleFullActivityRows.filter((row) => !["completed", "ended", "idle"].includes(row.displayState))
-    : activeRows.slice(0, limit);
-  const visibleHistoryRows = feedMode === "full"
-    ? visibleFullActivityRows.filter((row) => ["completed", "ended", "idle"].includes(row.displayState))
-    : compactHistoryRows;
-  const compactVisibleActivityIds = new Set(
-    compactHistoryRows.map((row) => row.activityId)
-  );
-  const compactIdleAgentRows = idleAgentRows.filter(
-    (row) => !compactVisibleActivityIds.has(String(row.latestActivityId || ""))
-  );
-  const visibleIdleAgents = feedMode === "full"
-    ? idleAgentRows.slice(pageOffset, pageOffset + limit)
-    : compactIdleAgentRows.slice(0, compactHistoryLimit);
-  const nextPageOffset = feedMode === "full" && pageOffset + limit < maximumPageRowCount
-    ? pageOffset + limit
-    : null;
-  const currentHistoryCursor = feedMode === "full"
-    ? encodeActivityHistoryCursor(scopeVersion, pageOffset)
-    : null;
-  const previousHistoryCursor = feedMode === "full" && pageOffset > 0
-    ? encodeActivityHistoryCursor(scopeVersion, Math.max(0, pageOffset - limit))
-    : null;
-  const nextHistoryCursor = feedMode === "full" && nextPageOffset !== null
-    ? encodeActivityHistoryCursor(scopeVersion, nextPageOffset)
-    : null;
-  const hasMore =
-    activeRows.length > visibleActiveRows.length ||
-    (feedMode === "full" && (
-      nextHistoryCursor !== null ||
-      completedAgentRows.length > visibleCompletedAgents.length ||
-      idleAgentRows.length > visibleIdleAgents.length ||
-      endedAgentRows.length > visibleEndedAgents.length
-    ));
-
-  const projectedLegacy = feedMode === "compact"
-    ? {
-        ...legacy.structured,
-        agents: [],
-        agentPagination: {
-          ...legacy.structured.agentPagination,
-          returned: 0
-        },
-        unassignedJobs: [],
-        activities: [],
-        activityPagination: {
-          ...legacy.structured.activityPagination,
-          returned: 0,
-          hasMore: legacy.structured.activityPagination.total > 0
-        }
-      }
-    : legacy.structured;
-
-  return {
-    scopeId,
-    interactionControls: legacy.interactionControls,
-    structured: {
-      ...projectedLegacy,
-      enrichment: {
-        state: inspectRuntime ? "enriched" as const : "structural" as const,
-        runtimeRequests: legacy.enrichmentStats.requests,
-        cacheHits: legacy.enrichmentStats.cacheHits,
-        timeouts: legacy.enrichmentStats.timeouts,
-        ...((legacy.enrichmentStats.unavailable || 0) > 0 ? { runtimeUnavailable: legacy.enrichmentStats.unavailable } : {}),
-        durationMs: inspectRuntime ? Math.max(0, Date.now() - enrichmentStartedAt) : 0,
-        usageTimedOut: usage.timedOut,
-        pendingReads: legacy.enrichmentStats.timeouts + (usage.timedOut ? 1 : 0),
-        usageUnavailable: usage.failed,
-        oldestObservationAt: [legacy.enrichmentStats.oldestObservationAt, usage.value?.observedAt].filter((value): value is string => !!value).sort()[0]
-      },
-      weeklyUsage,
-      feed: {
-        mode: feedMode,
-        showWorkspaceLabels: hasMultipleWorkspaces,
-        activityTotal: activityRows.length,
-        activeCount: activeRows.length,
-        active: visibleActiveRows,
-        activeHasMore: activeRows.length > visibleActiveRows.length,
-        historySummary: {
-          completedActivities: completedActivityCount,
-          endedActivities: endedActivityCount,
-          idleAgents: idleAgentRows.length
-        },
-        history: {
-          rows: visibleHistoryRows,
-          pagination: {
-            offset: feedMode === "full" ? pageOffset : 0,
-            limit: feedMode === "full" ? limit : compactHistoryLimit,
-            returned: feedMode === "full" ? visibleFullActivityRows.length : visibleHistoryRows.length,
-            total: feedMode === "full" ? fullActivityRows.length : historyRows.length,
-            hasPrevious: feedMode === "full" && pageOffset > 0,
-            hasMore: feedMode === "full"
-              ? nextHistoryCursor !== null
-              : historyRows.length > visibleHistoryRows.length,
-            currentCursor: currentHistoryCursor,
-            previousCursor: previousHistoryCursor,
-            nextCursor: nextHistoryCursor,
-            reset: pageReset
-          }
-        },
-        idleAgents: {
-          agentCount: idleAgentRows.length,
-          rows: visibleIdleAgents,
-          hasMore: feedMode === "full"
-            ? pageOffset + visibleIdleAgents.length < idleAgentRows.length
-            : compactIdleAgentRows.length > visibleIdleAgents.length,
-          pagination: {
-            offset: feedMode === "full" ? pageOffset : 0,
-            limit: feedMode === "full" ? limit : compactHistoryLimit,
-            returned: visibleIdleAgents.length,
-            total: feedMode === "full" ? idleAgentRows.length : compactIdleAgentRows.length,
-            hasPrevious: feedMode === "full" && pageOffset > 0,
-            hasMore: feedMode === "full"
-              ? pageOffset + visibleIdleAgents.length < idleAgentRows.length
-              : compactIdleAgentRows.length > visibleIdleAgents.length
-          }
-        },
-        completed: {
-          agentCount: feedMode === "full" ? completedAgentRows.length : 0,
-          activityCount: completedActivityCount,
-          rows: visibleCompletedAgents,
-          hasMore: feedMode === "full" && completedAgentRows.length > visibleCompletedAgents.length
-        },
-        idle: {
-          agentCount: feedMode === "full" ? legacyIdleAgentRows.length : 0,
-          rows: visibleLegacyIdleAgents,
-          hasMore: feedMode === "full" &&
-            legacyIdleAgentRows.length > visibleLegacyIdleAgents.length
-        },
-        ended: {
-          agentCount: feedMode === "full" ? endedAgentRows.length : 0,
-          activityCount: endedActivityCount,
-          rows: visibleEndedAgents,
-          hasMore: feedMode === "full" && endedAgentRows.length > visibleEndedAgents.length
-        },
-        pagination: {
-          limit,
-          hasMore
-        }
-      }
-    }
-  };
-}
-
-function activityViewResult(
-  view: Awaited<ReturnType<typeof buildActivityView>>,
-  locale: string | undefined,
-  contract:
-    | typeof activityModelResultContract
-    | typeof activityAppResultContract
-    | typeof activityRehydrateResultContract
-): ToolResult {
-  const effectiveLocale = resolvePreferredUiLocale(view.structured.uiLocalePreference, locale);
-  const mountedActivityRecord = isRecord(view.structured.mountedActivity)
-    ? view.structured.mountedActivity
-    : null;
-  const mountedActivity = mountedActivityRecord
-    ? {
-        activityId: mountedActivityRecord.activityId,
-        cardGeneration: mountedActivityRecord.cardGeneration
-      }
-    : null;
-  const mountedPresentationRecord: Record<string, unknown> = isRecord(
-    view.structured.mountedPresentation
-  )
-    ? view.structured.mountedPresentation
-    : {};
-  const mountedPresentation = mountedPresentationRecord.kind === "automatic"
-    ? {
-        kind: "automatic" as const,
-        activityPresentationId: mountedPresentationRecord.activityPresentationId,
-        ...(typeof mountedPresentationRecord.reservationOwnerId === "string"
-          ? { reservationOwnerId: mountedPresentationRecord.reservationOwnerId }
-          : {})
-      }
-    : mountedPresentationRecord.kind === "historical"
-      ? {
-          kind: "historical" as const,
-          jobId: mountedPresentationRecord.jobId,
-          requestId: mountedPresentationRecord.requestId
-        }
-      : mountedPresentationRecord.kind === "restored-explicit"
-        ? {
-            kind: "restored-explicit" as const,
-            mode: "full-history" as const,
-            ...(typeof mountedPresentationRecord.activityId === "string"
-              ? { activityId: mountedPresentationRecord.activityId }
-              : {}),
-            ...(Number.isInteger(mountedPresentationRecord.activityVersion)
-              ? { activityVersion: mountedPresentationRecord.activityVersion as number }
-              : {})
-          }
-      : { kind: "explicit" as const };
-  const source = contract === activityModelResultContract
-    ? "codex_activity" as const
-    : contract === activityRehydrateResultContract
-      ? "codex_activity_rehydrate" as const
-      : "codex_activity_snapshot" as const;
-  const privateView = validateActivityViewPrivateMetadata({
-    kind: "codex/activityView",
-    version: ACTIVITY_PRIVATE_METADATA_CONTRACT_VERSION,
-    purpose: "presentation-hydration-only",
-    source,
-    correlation: {
-      scopeVersion: view.structured.scopeVersion,
-      activity: mountedActivity,
-      presentation: mountedPresentation
-    },
-    view: view.structured
-  });
-  const summary = {
-    scopeVersion: view.structured.scopeVersion,
-    mode: view.structured.feed.mode,
-    active: view.structured.feed.activeCount,
-    completedActivities: view.structured.feed.historySummary.completedActivities,
-    endedActivities: view.structured.feed.historySummary.endedActivities,
-    idleAgents: view.structured.feed.historySummary.idleAgents,
-    attention: view.structured.aggregates.needsAttention
-  };
-  const appHydration = {
-    // Keep compatibility routing out of the closed public and app output
-    // schemas so immutable cards can continue using their cached descriptors.
-    [ACTIVITY_SCOPE_METADATA_KEY]: view.scopeId,
-    [ACTIVITY_VIEW_METADATA_KEY]: privateView,
-    interactionControls: contract === activityRehydrateResultContract
-      ? { agents: [] }
-      : view.interactionControls,
-    "openai/locale": effectiveLocale,
-    hostLocale: locale || null
-  };
-  if (contract === activityModelResultContract) {
-    const selected = mountedActivity
-      ? view.structured.activities.find((entry) =>
-          isRecord(entry) && entry.activityId === mountedActivity.activityId
-        )
-      : undefined;
-    const selectedRecord: Record<string, unknown> | undefined = selected
-      ? { ...selected }
-      : undefined;
-    const structured = activityModelOutputSchema.parse({
-      kind: "activity",
-      mode: view.structured.feed.mode === "full" ? "full-history" : "compact-monitor",
-      scopeVersion: view.structured.scopeVersion,
-      ...(mountedActivity ? { activityId: mountedActivity.activityId } : {}),
-      ...(mountedActivityRecord && Number.isInteger(mountedActivityRecord.version)
-        ? { activityVersion: mountedActivityRecord.version }
-        : selectedRecord && Number.isInteger(selectedRecord.version)
-          ? { activityVersion: selectedRecord.version }
-        : {}),
-      counts: {
-        activities: view.structured.feed.activityTotal,
-        agents: view.structured.agentPagination.total,
-        active: view.structured.feed.activeCount,
-        needsAttention: view.structured.aggregates.needsAttention
-      }
-    });
-    return contractedToolResult(
-      activityModelResultContract,
-      view,
-      structured,
-      {
-        text:
-          `Activity view opened at scope version ${structured.scopeVersion}: ` +
-          `${structured.counts.active} active, ${structured.counts.needsAttention} needing attention.`
-      },
-      { appHydration }
-    );
-  }
-  if (contract === activityRehydrateResultContract) {
-    return contractedToolResult(
-      activityRehydrateResultContract,
-      view,
-      view.structured,
-      { text: JSON.stringify(summary) },
-      { appHydration }
-    );
-  }
-  return contractedToolResult(
-    activityAppResultContract,
-    view,
-    view.structured,
-    { text: JSON.stringify(summary) },
-    { appHydration }
-  );
-}
-
 function appServerTurnId(job: CodexJob): string | undefined {
   return backendSupports(job.backendKind, "supportsPreciseCancellation") ? job.upstreamRequestId : undefined;
 }
 
-function cancellationTargetForJob(
-  job: CodexJob,
-  presentation?: ActivityCardPresentationContext
-): BeginCancellationOperationInput["target"] {
-  const presentationId = presentation?.kind === "automatic"
-    ? presentation.activityPresentationId
-    : job.activityPresentationId;
+function cancellationTargetForJob(job: CodexJob): BeginCancellationOperationInput["target"] {
   return {
     kind: "job",
     jobId: job.jobId,
     activityId: job.activityId,
     ...(job.agentId ? { agentId: job.agentId } : {}),
     ...(job.threadId ? { threadId: job.threadId } : {}),
-    ...(appServerTurnId(job) ? { turnId: appServerTurnId(job) } : {}),
-    ...(presentationId ? { presentationId } : {})
+    ...(appServerTurnId(job) ? { turnId: appServerTurnId(job) } : {})
   };
 }
 
@@ -14614,18 +14244,6 @@ function metadataString(meta: unknown, key: string): string | undefined {
   if (!isRecord(meta)) return undefined;
   const value = meta[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function callerPresentationFromMetadata(meta: unknown): ActivityCardPresentationContext | undefined {
-  const presentationId = metadataString(meta, "codex/activityPresentationId");
-  if (!presentationId) return undefined;
-  if (!SCOPE_ID_PATTERN.test(presentationId.toLowerCase())) {
-    throw new Error("Host Activity presentation metadata must be UUID-formatted.");
-  }
-  return {
-    kind: "automatic",
-    activityPresentationId: presentationId.toLowerCase()
-  };
 }
 
 function correlationDigest(domain: string, value: unknown): string | undefined {
@@ -14651,7 +14269,7 @@ function formatJobActivity(
   job: CodexJob,
   staleAfterMs: number
 ): {
-  health: "running" | "no-progress-observed" | "terminating" | "termination-failed" | "terminal" | "worker-lost" | "orphaned";
+  health: "running" | "no-progress-observed" | "liveness-unknown" | "terminating" | "termination-failed" | "terminal" | "worker-lost" | "orphaned";
   processLiveness: CodexJob["trackingState"] | "terminating" | "termination-unconfirmed";
   lastProgressAt: string;
   idleMs: number;
@@ -14669,8 +14287,10 @@ function formatJobActivity(
       ? "terminal"
       : job.status === "terminating"
         ? "terminating"
-        : job.status === "termination-failed"
+      : job.status === "termination-failed"
           ? "termination-failed"
+          : job.trackingState === "liveness-unknown"
+            ? "liveness-unknown"
           : idleMs >= staleAfterMs
             ? "no-progress-observed"
             : "running",
@@ -14710,7 +14330,8 @@ function selectionKeyFor(
         sandbox,
         model: selection.model || null,
         reasoningEffort: selection.reasoningEffort || null,
-        serviceTier: selection.serviceTier || null
+        serviceTier: selection.serviceTier || null,
+        ...selection.serviceTierScope ? { serviceTierScope: selection.serviceTierScope } : {}
       })
     )
     .digest("hex");
@@ -14776,6 +14397,21 @@ function editableModelPolicyZod() {
   ]);
 }
 
+function verbatimInput(maxCharacters: number, field: string) {
+  return z.string().refine((value) => {
+    try {
+      verbatimText(value, {
+        field,
+        maxCharacters,
+        rejectControlCharacters: false
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }, `${field} must contain at most ${maxCharacters} Unicode characters.`);
+}
+
 function codexTaskInputSchema(
   config: BridgeConfig,
   executionEnvelopeRefValue: string
@@ -14810,7 +14446,7 @@ function codexTaskInputSchema(
       context: z.enum(AGENT_CONTEXT_MODES).optional().describe(
         "Continue the current thread, fork it, or deliberately start fresh. Defaults to continue when resumable."
       ),
-      handoffSummary: z.string().trim().min(1).max(4_000).optional().describe(
+      handoffSummary: verbatimInput(4_000, "Handoff summary").optional().describe(
         "Required only when context='fresh' moves an existing Agent from its pinned backend to the configured backend. This explicit bounded summary is the only context copied; the transcript and backend state are not migrated."
       )
     }),
@@ -14824,47 +14460,48 @@ function codexTaskInputSchema(
     "Choose an exact existing Agent or create one. Omission creates an Agent for new Activities and reuses the sole candidate for existing Activities."
   );
   const requestId = scopeIdSchema().describe(
-    "Unique idempotency UUID for one logical Codex call. Reuse it only for an exact retry. Never reuse it to group different tasks or multiple calls in one GPT response."
+    "Unique idempotency UUID for one logical Codex call. Keep it through response loss or parent-result replay; reuse it only for an exact retry. Never reuse it to group different tasks or multiple calls in one GPT response."
   );
-  const prompt = z.string().min(1).max(config.maxPromptChars).describe("Instruction for Codex.");
-  const executionMode = z.enum(ACTIVITY_EXECUTION_MODES).optional()
-    .describe("Controls Codex execution timing, not Activity-card visibility. Use background for an immediate tracked job or foreground to wait for the terminal result. Omit it to retain an existing Activity mode or default a new Activity to background.");
+  const prompt = verbatimInput(config.maxPromptChars, "Codex prompt").describe("Instruction for Codex.");
   const project = currentProjectSelectionZod().optional().describe(
     "Exact current selector for new/fresh work. Omit for continue/fork; never send a path or private project ID."
   );
-  const projectLookup = z.strictObject({
-    name: projectNameInput().describe(
-      "Exact user-visible project name to resolve without admitting work."
-    )
-  }).optional().describe(
-    "Retained no-work lookup for cached callers. Current callers use codex_status query kind=project."
-  );
-  const runtimeCommon = {
+  const publicCommon = {
     scopeId: scopeIdSchema()
       .optional()
-      .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
-    requestId,
-    taskContractVersion: z.literal(CODEX_TASK_INPUT_CONTRACT_VERSION).optional(),
-    executionEnvelopeRef: z.string().regex(/^[0-9a-f]{64}$/).optional(),
-    executionPolicyRef: z.string().regex(/^[0-9a-f]{64}$/).optional(),
-    prompt,
-    activity: activity.optional(),
-    agent: agent.optional(),
-    executionMode
-  };
-  const publicCommon = {
+      .describe("Conversation UUID for hosts that do not supply scoped MCP metadata."),
     taskContractVersion: z.literal(CODEX_TASK_INPUT_CONTRACT_VERSION).describe(
       "Stable codex_task input contract generation."
     ),
     executionEnvelopeRef: z.literal(executionEnvelopeRefValue).describe(
       "Opaque installation/operator envelope. Settings, catalog, and project changes do not change this value."
     ),
+    ...(config.experimentalProfile === "events" && config.eventsEnabled ? {
+    completionDelivery: z.literal("events").optional().describe(
+      "Card-free completion for this Job and its preapproved followups. Requires enabled Events, OAuth and original host conversation metadata. Obtain its subscriptionRef with codex_event_access and subscribe through native Events; never mount Dashboard or fall back to cards, scheduled tasks or repeated polling. Omit for the existing card-free direct-wait admission in this explicit experimental profile."
+    ),
+    } : {}),
     requestId,
     prompt,
     project,
     activity: activity.optional(),
     agent: agent.optional(),
-    executionMode,
+    approvedFollowups: z.array(z.strictObject({
+      prompt: verbatimInput(config.maxPromptChars, "Approved followup prompt")
+    })).min(1).max(8).optional().describe(
+      "Optional exact prompts authorized before this Job. The bridge issues opaque followupIds and canonical requestIds, returned in declaration order by admission and exact status reads. Each may continue this Activity/Agent once after result review; never name or recreate an ID or infer authority from output. In the default server profile, B defined after result review uses relayFollowup to bind its dynamic logical step without requiring a new approval within the original user goal."
+    ),
+    relayFollowup: z.strictObject({
+      eventId: z.string().regex(/^rle_[a-f0-9]{96}$/),
+      step: z.string().trim().min(1).max(80),
+      reviewedVersion: z.number().int().positive()
+    }).optional().describe("Default server profile only. Bind a dynamic next step after exact result review. Keep the returned eventId and one stable logical step name, original Activity, and identical payload through retries. The bridge atomically issues a followupId and canonical requestId; different parallel steps remain separate, changed payload conflicts. This grants no new approval; normal Agent, context, project, permission and model checks still apply."),
+    followup: z.strictObject({
+      followupId: z.string().regex(FOLLOWUP_ID_PATTERN),
+      reviewedVersion: z.number().int().positive()
+    }).optional().describe(
+      "Reference the bridge-issued followupId after reviewing its exact predecessor result. Supply the exact approved prompt and current reviewedVersion, and reuse the returned canonical requestId; other caller requestIds also converge to that same Job. Never invent an ID. Scope, project, permission, model and context changes are forbidden."
+    ),
     selection: modelChoiceZod().optional().describe(
       "Exact model/reasoning choice discovered through codex_models. Required at runtime for automatic-policy new Activity, new Agent, and fresh context; automatic continue/fork may omit it to inherit the thread selection. Fixed policy must omit it."
     )
@@ -14878,28 +14515,7 @@ function codexTaskInputSchema(
       `CODEX_TASK_DESCRIPTOR_TOO_LARGE: ${projectedContractBytes} bytes exceeds the ${CODEX_TASK_DESCRIPTOR_MAX_JSON_BYTES}-byte bounded contract.`
     );
   }
-  // Runtime parsing additionally accepts cached pre-v2 descriptors. Those
-  // calls remain bound to their exact executionPolicyRef and legacy project
-  // selector; they never inherit contract-v2's stable-envelope semantics.
-  const runtime = z.strictObject({
-    ...runtimeCommon,
-    project: runtimeProjectSelectionZod().optional(),
-    projectLookup,
-    activityPresentationId: scopeIdSchema().optional().describe(
-      "Retired compatibility-only input for exact calls issued from an older cached descriptor. Current callers must omit it; codex_task never presents UI."
-    ),
-    sandbox: sandboxSchema(config).optional(),
-    selection: modelChoiceZod().optional()
-  });
-  return withJsonSchemaProjection(runtime, projectedJsonSchema) as z.ZodType<CodexTaskArgs>;
-}
-
-function runtimeProjectSelectionZod(): z.ZodType<RuntimeProjectSelection> {
-  const legacy = z.strictObject({
-    name: projectNameInput(),
-    registryRevision: z.number().int().min(0)
-  });
-  return z.union([currentProjectSelectionZod(), legacy]) as z.ZodType<RuntimeProjectSelection>;
+  return projected as z.ZodType<CodexTaskArgs>;
 }
 
 function currentProjectSelectionZod() {
@@ -14932,197 +14548,27 @@ function projectNameInput(): z.ZodType<string> {
   }, `Use 1-${PROJECT_NAME_MAX_LENGTH} visible Unicode characters.`);
 }
 
-function withJsonSchemaProjection<T extends z.ZodType>(
-  runtime: T,
-  projected: z.ZodType | Record<string, unknown>
-): T {
-  const jsonSchema = "_zod" in projected
-    ? z.toJSONSchema(projected as z.ZodType, { target: "draft-7", io: "input" })
-    : projected;
-  const internals = runtime._zod as typeof runtime._zod & {
-    toJSONSchema?: () => Record<string, unknown>;
-  };
-  // Zod's JSON Schema converter and the MCP SDK may annotate the returned
-  // object while assembling a tools/list response. Return a fresh projection
-  // for every serialization so later static descriptor snapshots cannot see a
-  // projection that was mutated by an earlier response.
-  internals.toJSONSchema = () => structuredClone(jsonSchema) as Record<string, unknown>;
-  return runtime;
-}
-
-function installCompactPublishedOutputSchema<T extends z.ZodType>(
-  runtime: T,
-  reuseDefinitions: boolean
-): T {
-  const projected = z.toJSONSchema(runtime, {
-    target: "draft-07",
-    io: "output",
-    reused: reuseDefinitions ? "ref" : "inline"
-  });
-  const projectionTarget = (runtime._zod.parent || runtime) as T;
-  withJsonSchemaProjection(
-    projectionTarget,
-    compactPublishedJsonSchema(projected) as Record<string, unknown>
-  );
-  return runtime;
-}
-
-function compactPublishedJsonSchema(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(compactPublishedJsonSchema);
-  if (!isRecord(value)) return value;
-  if (Array.isArray(value.anyOf) && value.anyOf.length === 2) {
-    const nullBranch = value.anyOf.find(
-      (entry) => isRecord(entry) && entry.type === "null" && Object.keys(entry).length === 1
-    );
-    const valueBranch = value.anyOf.find((entry) => entry !== nullBranch);
-    if (
-      nullBranch &&
-      isRecord(valueBranch) &&
-      typeof valueBranch.type === "string" &&
-      valueBranch.type !== "null" &&
-      !Object.prototype.hasOwnProperty.call(valueBranch, "const")
-    ) {
-      const compacted = compactPublishedJsonSchema(valueBranch) as Record<string, unknown>;
-      const nullable: Record<string, unknown> = {
-        ...compacted,
-        type: [valueBranch.type, "null"]
-      };
-      if (Array.isArray(compacted.enum)) nullable.enum = [...compacted.enum, null];
-      for (const [key, entry] of Object.entries(value)) {
-        if (key !== "anyOf") nullable[key] = compactPublishedJsonSchema(entry);
-      }
-      return nullable;
-    }
-  }
-  const output: Record<string, unknown> = {};
-  for (const [key, entry] of Object.entries(value)) {
-    if (
-      key === "$schema" ||
-      key === "maximum" && entry === Number.MAX_SAFE_INTEGER ||
-      key === "minimum" ||
-      key === "exclusiveMinimum"
-    ) continue;
-    output[key] = compactPublishedJsonSchema(entry);
-  }
-  return output;
-}
-
 function jsonSchemaBody(
   schema: z.ZodType,
   io: "input" | "output" = "input"
 ): Record<string, unknown> {
   const { $schema: _schema, ...body } = z.toJSONSchema(schema, {
-    target: "draft-7",
+    target: "draft-2020-12",
     io
   });
   return body;
 }
 
-function assertCodexTaskDescriptorBudget(
-  snapshot: SdkToolDescriptorSnapshotInput
-): void {
-  const serialized = {
-    name: "codex_task",
-    ...(snapshot.title === undefined ? {} : { title: snapshot.title }),
-    ...(snapshot.description === undefined ? {} : { description: snapshot.description }),
-    ...(snapshot.inputSchema === undefined
-      ? {}
-      : { inputSchema: jsonSchemaBody(snapshot.inputSchema, "input") }),
-    ...(snapshot.outputSchema === undefined
-      ? {}
-      : { outputSchema: jsonSchemaBody(snapshot.outputSchema, "output") }),
-    ...(snapshot.annotations === undefined ? {} : { annotations: snapshot.annotations }),
-    ...(snapshot.execution === undefined ? {} : { execution: snapshot.execution }),
-    ...(snapshot._meta === undefined ? {} : { _meta: snapshot._meta }),
-    // The SDK represents both reversible presence and disablement as tool
-    // absence rather than wire fields. Retaining these sentinels keeps the
-    // internal complete-snapshot budget conservative and covers both distinct
-    // coordinator dimensions.
-    present: snapshot.present ?? true,
-    enabled: snapshot.enabled ?? true
-  };
-  const bytes = Buffer.byteLength(JSON.stringify(serialized), "utf8");
-  if (bytes > CODEX_TASK_DESCRIPTOR_MAX_JSON_BYTES) {
-    throw new Error(
-      `CODEX_TASK_DESCRIPTOR_TOO_LARGE: ${bytes} bytes exceeds the ${CODEX_TASK_DESCRIPTOR_MAX_JSON_BYTES}-byte complete descriptor limit.`
-    );
-  }
-}
-
-function sandboxSchema(config: BridgeConfig) {
-  const allowed: [SandboxMode, ...SandboxMode[]] = ["read-only"];
-  if (config.allowWorkspaceWrite) allowed.push("workspace-write");
-  if (config.allowDangerFullAccess) allowed.push("danger-full-access");
-  return z.enum(allowed);
-}
-
-function resolveTaskRouting(
-  args: CodexTaskArgs,
-  scopeId: string,
-  effectiveProjectId: string | undefined,
-  requestHashVersion: 2 | 3
-): CodexRouting {
-  const hasActivityArguments =
-    args.activityId !== undefined ||
-    args.continuationOfActivityId !== undefined ||
-    args.activityTitle !== undefined ||
-    args.activityKind !== undefined ||
-    args.executionMode !== undefined ||
-    args.handoffPolicy !== undefined ||
-    args.completionTrigger !== undefined;
-  const requestHash = createHash("sha256")
-    .update(
-      JSON.stringify({
-        scopeId,
-        activityPresentationId: args.activityPresentationId || null,
-        sessionMode: args.sessionMode || null,
-        prompt: args.prompt,
-        threadId: args.threadId || null,
-        adoptThread: args.adoptThread || false,
-        cwd: args.cwd || null,
-        sandbox: args.sandbox || null,
-        modelPolicyRevision: args.modelPolicyRevision ?? null,
-        selection: args.selection || null,
-        ...(requestHashVersion >= 3
-          ? { projectId: effectiveProjectId || null }
-          : {}),
-        agentId: args.agentId || null,
-        agentName: args.agentName || null,
-        agentRole: args.agentRole || null,
-        contextMode: args.contextMode || null,
-        ...(hasActivityArguments
-          ? {
-              activityId: args.activityId || null,
-              continuationOfActivityId: args.continuationOfActivityId || null,
-              activityTitle: args.activityTitle || null,
-              activityKind: args.activityKind || null,
-              executionMode: args.executionMode || null,
-              handoffPolicy: args.handoffPolicy || null,
-              completionTrigger: args.completionTrigger || null
-            }
-          : {})
-      })
-    )
-    .digest("hex");
-  return {
-    scopeId,
-    requestId: args.requestId,
-    activityPresentationId: args.activityPresentationId,
-    requestHash,
-    requestHashVersion
-  };
-}
-
-type TaskRequestHashV4Input = {
+type TaskRequestHashInput = {
   args: CodexTaskArgs;
+  activityRequest: ActivityTaskRequest;
   scopeId: string;
-  projectRequest?: RuntimeProjectSelection;
+  projectRequest?: ProjectSelection;
   projectId?: string;
   cwd: string;
   sandbox: SandboxMode;
   operation: CodexJobOperation;
   backendKind: CodexBackendKind;
-  executionMode: ActivityExecutionMode;
   effectiveSelection: ModelSelection;
   agentId?: string;
   contextMode: AgentContextMode;
@@ -15130,51 +14576,56 @@ type TaskRequestHashV4Input = {
   backendHandoff?: BackendHandoff | BackendHandoffAudit;
 };
 
-/**
- * Hash v7 commits stable contract/envelope identity plus admission-time
- * execution semantics. Cached pre-v2 calls retain the frozen v6 shape with an
- * exact mutable executionPolicyRef. Both exclude Activity-card presentation,
- * watches, leases, and mutable UI-only state.
- */
-function resolveTaskRoutingV4(input: TaskRequestHashV4Input): CodexRouting {
-  const stableContract =
-    input.args.taskContractVersion === CODEX_TASK_INPUT_CONTRACT_VERSION;
-  const requestHashVersion = stableContract ? CURRENT_TASK_REQUEST_HASH_VERSION : 6;
+function taskRequestEnvelopeHash(args: CodexTaskArgs, scopeId: string): string {
+  return createHash("sha256").update(canonicalJson({
+    version: 1, scopeId, prompt: args.prompt, taskContractVersion: args.taskContractVersion,
+    executionEnvelopeRef: args.executionEnvelopeRef,
+    project: args.project ? currentProjectSelectionForRequestHash(args.project) : null,
+    activity: args.activity || null, agent: args.agent || null, selection: args.selection || null,
+    handoffSummary: args.handoffSummary || null, completionDelivery: args.completionDelivery || null,
+    approvedFollowups: approvedFollowupDigests(args.approvedFollowups) || null,
+    ...(args.relayFollowup ? { relayFollowup: { eventId: args.relayFollowup.eventId, step: args.relayFollowup.step } } : {})
+  })).digest("hex");
+}
+
+/** Current request identity commits the public task envelope and admission-time
+ * execution semantics. It deliberately excludes independent Bridge skill
+ * library state, card presentation, and other mutable UI state. */
+function resolveTaskRouting(input: TaskRequestHashInput): CodexRouting {
   const activityCreation = input.args.activityId
     ? null
     : {
-        title: normalizeActivityTitle(input.args.activityTitle || "Codex activity"),
-        kind: input.args.activityKind || "other",
-        executionMode: input.executionMode,
-        handoffPolicy: input.args.handoffPolicy || "none",
-        completionTrigger: input.args.completionTrigger || "manual"
+        title: canonicalActivityTitle(input.activityRequest.activityTitle || "Codex activity"),
+        kind: input.activityRequest.activityKind || "other",
+        handoffPolicy: input.activityRequest.handoffPolicy || "none",
+        completionTrigger: input.activityRequest.completionTrigger || "manual"
       };
   const agentCreation = input.args.agentName
-    ? { name: normalizeAgentName(input.args.agentName).agentName }
+    ? { name: canonicalAgentName(input.args.agentName).agentName }
     : null;
   const requestHash = createHash("sha256")
     .update(
       canonicalJson({
-        version: requestHashVersion,
+        version: CURRENT_TASK_REQUEST_HASH_VERSION,
         scopeId: input.scopeId,
         prompt: input.args.prompt,
-        ...(stableContract
-          ? {
-              taskContractVersion: CODEX_TASK_INPUT_CONTRACT_VERSION,
-              executionEnvelopeRef: input.args.executionEnvelopeRef || null
-            }
-          : { executionPolicyRef: input.args.executionPolicyRef || null }),
+        ...(input.args.completionDelivery ? { completionDelivery: input.args.completionDelivery } : {}),
+        ...(input.args.approvedFollowups ? { approvedFollowups: approvedFollowupDigests(input.args.approvedFollowups) } : {}),
+        ...(input.args.relayFollowup ? { relayFollowup: input.args.relayFollowup } : {}),
+        ...(input.args.followup ? { followup: input.args.legacyFollowupIdentity || { followupId: input.args.followup.followupId } } : {}),
+        taskContractVersion: CODEX_TASK_INPUT_CONTRACT_VERSION,
+        executionEnvelopeRef: input.args.executionEnvelopeRef,
         backendHandoff: input.backendHandoff
           ? backendHandoffAuditForHash(input.backendHandoff, input.args.handoffSummary)
           : input.args.handoffSummary
             ? {
                 unadmittedSummarySha256: createHash("sha256")
-                  .update(input.args.handoffSummary.trim())
+                  .update(input.args.handoffSummary)
                   .digest("hex")
               }
             : null,
         projectRequest: input.projectRequest
-          ? projectSelectionForRequestHash(input.projectRequest)
+          ? currentProjectSelectionForRequestHash(input.projectRequest)
           : null,
         admittedProject: input.projectId
           ? { projectId: input.projectId, cwd: input.cwd }
@@ -15204,11 +14655,11 @@ function resolveTaskRoutingV4(input: TaskRequestHashV4Input): CodexRouting {
           backendKind: input.backendKind,
           cwd: input.cwd,
           sandbox: input.sandbox,
-          executionMode: input.executionMode,
           modelSelection: {
             model: input.effectiveSelection.model,
             reasoningEffort: input.effectiveSelection.reasoningEffort,
-            serviceTier: input.effectiveSelection.serviceTier || null
+            serviceTier: input.effectiveSelection.serviceTier || null,
+            ...input.effectiveSelection.serviceTierScope ? { serviceTierScope: input.effectiveSelection.serviceTierScope } : {}
           }
         },
         creation: {
@@ -15222,188 +14673,15 @@ function resolveTaskRoutingV4(input: TaskRequestHashV4Input): CodexRouting {
   return {
     scopeId: input.scopeId,
     requestId: input.args.requestId,
-    activityPresentationId: input.args.activityPresentationId,
     requestHash,
-    requestHashVersion
+    requestHashVersion: CURRENT_TASK_REQUEST_HASH_VERSION,
+    mcpPrincipal: input.args.mcpPrincipal,
+    completionDeliveryPolicy: input.args.inheritedCompletionDeliveryPolicy ||
+      (input.args.completionDelivery === "events" ? "events" : "relay-card"),
+    approvedFollowups: approvedFollowupDigests(input.args.approvedFollowups),
+    followup: input.args.followup,
+    relayFollowup: input.args.relayFollowup
   };
-}
-
-function resolveTaskReplayRoutingV4(
-  args: CodexTaskArgs,
-  scopeId: string,
-  job: CodexJob
-): CodexRouting {
-  if (
-    (job.requestHashVersion !== 6 &&
-      job.requestHashVersion !== CURRENT_TASK_REQUEST_HASH_VERSION) ||
-    !job.agentId ||
-    !job.contextMode ||
-    !job.executionDecision
-  ) {
-    throw new Error("Persisted Codex task replay identity is incomplete.");
-  }
-  const contextMode = args.contextMode || job.contextMode;
-  const routing = resolveTaskRoutingV4({
-    args,
-    scopeId,
-    projectRequest: args.project,
-    projectId: job.projectId,
-    cwd: job.cwd,
-    sandbox: contextMode === "fresh" ? args.sandbox || job.sandbox : job.sandbox,
-    operation: contextMode === "continue" ? "continue" : "start",
-    backendKind: job.executionDecision.backendKind,
-    executionMode: args.executionMode || job.executionMode,
-    effectiveSelection: replayEffectiveSelection(
-      args.selection,
-      job.executionDecision.effectiveSelection
-    ),
-    agentId: args.agentId || job.agentId,
-    contextMode,
-    sourceThreadId: contextMode === "fresh" ? undefined : job.sourceThreadId,
-    backendHandoff: replayBackendHandoff(args, job)
-  });
-  if (routing.requestHashVersion !== job.requestHashVersion) {
-    throw new Error(
-      "TASK_REPLAY_INPUT_CHANGED: The requestId belongs to a different task contract generation."
-    );
-  }
-  return routing;
-}
-
-/**
- * Frozen request-hash v5 implementation. It exists only so an exact requestId
- * admitted before the project-selector/execution-policy migration can replay
- * its retained result. New admissions must never use this path.
- */
-function resolveTaskRoutingV5Frozen(input: TaskRequestHashV4Input): CodexRouting {
-  if (input.args.executionPolicyRef !== undefined) {
-    throw new Error(
-      "TASK_REPLAY_INPUT_CHANGED: A v5 request retry must omit executionPolicyRef exactly as originally admitted."
-    );
-  }
-  if (input.projectRequest && "projectRef" in input.projectRequest) {
-    throw new Error(
-      "TASK_REPLAY_INPUT_CHANGED: A v5 request retry must use its original legacy project selector."
-    );
-  }
-  const activityCreation = input.args.activityId
-    ? null
-    : {
-        title: normalizeActivityTitle(input.args.activityTitle || "Codex activity"),
-        kind: input.args.activityKind || "other",
-        executionMode: input.executionMode,
-        handoffPolicy: input.args.handoffPolicy || "none",
-        completionTrigger: input.args.completionTrigger || "manual"
-      };
-  const agentCreation = input.args.agentName
-    ? { name: normalizeAgentName(input.args.agentName).agentName }
-    : null;
-  const requestHash = createHash("sha256")
-    .update(
-      canonicalJson({
-        version: 5,
-        scopeId: input.scopeId,
-        prompt: input.args.prompt,
-        backendHandoff: input.backendHandoff
-          ? backendHandoffAuditForHash(input.backendHandoff, input.args.handoffSummary)
-          : input.args.handoffSummary
-            ? {
-                unadmittedSummarySha256: createHash("sha256")
-                  .update(input.args.handoffSummary.trim())
-                  .digest("hex")
-              }
-            : null,
-        projectRequest: input.projectRequest
-          ? {
-              name: normalizeProjectName(input.projectRequest.name),
-              registryRevision: input.projectRequest.registryRevision
-            }
-          : null,
-        admittedProject: input.projectId
-          ? { projectId: input.projectId, cwd: input.cwd }
-          : null,
-        routing: {
-          activity: input.args.activityId
-            ? { mode: "existing", activityId: input.args.activityId }
-            : {
-                mode: "new",
-                continuationOfActivityId: input.args.continuationOfActivityId || null
-              },
-          agent: input.args.agentName
-            ? {
-                mode: "new",
-                contextMode: input.contextMode,
-                sourceThreadId: input.sourceThreadId || null
-              }
-            : {
-                mode: "existing",
-                agentId: requireTaskHashAgentId(input.agentId),
-                contextMode: input.contextMode,
-                sourceThreadId: input.sourceThreadId || null
-              }
-        },
-        execution: {
-          operation: input.operation,
-          backendKind: input.backendKind,
-          cwd: input.cwd,
-          sandbox: input.sandbox,
-          executionMode: input.executionMode,
-          modelSelection: {
-            model: input.effectiveSelection.model,
-            reasoningEffort: input.effectiveSelection.reasoningEffort,
-            serviceTier: input.effectiveSelection.serviceTier || null
-          }
-        },
-        creation: {
-          activity: activityCreation,
-          agent: agentCreation,
-          assignmentRole: normalizeTaskAssignmentRole(input.args.agentRole)
-        }
-      })
-    )
-    .digest("hex");
-  return {
-    scopeId: input.scopeId,
-    requestId: input.args.requestId,
-    activityPresentationId: input.args.activityPresentationId,
-    requestHash,
-    requestHashVersion: 5
-  };
-}
-
-function resolveTaskReplayRoutingV5(
-  args: CodexTaskArgs,
-  scopeId: string,
-  job: CodexJob
-): CodexRouting {
-  if (
-    job.requestHashVersion !== 5 ||
-    !job.agentId ||
-    !job.contextMode ||
-    !job.executionDecision
-  ) {
-    throw new Error("Persisted Codex task v5 replay identity is incomplete.");
-  }
-  const contextMode = args.contextMode || job.contextMode;
-  return resolveTaskRoutingV5Frozen({
-    args,
-    scopeId,
-    projectRequest: args.project,
-    projectId: job.projectId,
-    cwd: job.cwd,
-    sandbox: contextMode === "fresh" ? args.sandbox || job.sandbox : job.sandbox,
-    operation: contextMode === "continue" ? "continue" : "start",
-    backendKind: job.executionDecision.backendKind,
-    executionMode: args.executionMode || job.executionMode,
-    effectiveSelection: replayEffectiveSelection(
-      args.selection,
-      job.executionDecision.effectiveSelection
-    ),
-    agentId: args.agentId || job.agentId,
-    contextMode,
-    sourceThreadId: contextMode === "fresh" ? undefined : job.sourceThreadId,
-    backendHandoff: replayBackendHandoff(args, job)
-  });
 }
 
 function backendHandoffAuditForHash(
@@ -15412,7 +14690,7 @@ function backendHandoffAuditForHash(
 ): BackendHandoffAudit {
   const summarySha256 = suppliedSummary === undefined
     ? handoff.summarySha256
-    : createHash("sha256").update(suppliedSummary.trim()).digest("hex");
+    : createHash("sha256").update(suppliedSummary).digest("hex");
   return {
     sourceBackend: handoff.sourceBackend,
     targetBackend: handoff.targetBackend,
@@ -15422,47 +14700,14 @@ function backendHandoffAuditForHash(
   };
 }
 
-function replayBackendHandoff(
-  args: CodexTaskArgs,
-  job: CodexJob
-): BackendHandoffAudit | undefined {
-  const handoff = job.sessionDecision.handoff;
-  if (!handoff) return undefined;
-  return backendHandoffAuditForHash(handoff, args.handoffSummary);
-}
-
-function replayEffectiveSelection(
-  requested: ModelChoice | undefined,
-  admitted: ModelSelection
-): ModelSelection {
-  if (
-    !requested ||
-    (requested.model === admitted.model &&
-      requested.reasoningEffort === admitted.reasoningEffort)
-  ) {
-    return admitted;
-  }
-  return {
-    ...requested,
-    ...(admitted.serviceTier ? { serviceTier: admitted.serviceTier } : {})
-  };
-}
-
-function projectSelectionForRequestHash(
-  selection: RuntimeProjectSelection
+function currentProjectSelectionForRequestHash(
+  selection: ProjectSelection
 ): Record<string, unknown> {
-  if ("projectRef" in selection) {
-    return {
-      contract: 2,
-      name: normalizeProjectName(selection.name),
-      projectRef: normalizeProjectRef(selection.projectRef),
-      projectRevision: selection.projectRevision
-    };
-  }
-  // Preserve the exact v5 hash shape for already admitted legacy requests.
   return {
+    contract: 3,
     name: normalizeProjectName(selection.name),
-    registryRevision: selection.registryRevision
+    projectRef: normalizeProjectRef(selection.projectRef),
+    projectRevision: selection.projectRevision
   };
 }
 
@@ -15510,8 +14755,10 @@ async function buildSettingsView(
   modelCatalog: CodexModelCatalogProvider,
   refreshModels = false,
   descriptorProjectionUpdated = false,
-  developerModeRefreshRequired = false
+  developerModeRefreshRequired = false,
+  getCapabilities?: () => BackendCapabilities
 ): Promise<SettingsView> {
+  const capabilities = await settingsBackendCapabilities(config, getCapabilities);
   let catalog: CodexModelCatalogSnapshot | undefined;
   let catalogError: string | undefined;
   try {
@@ -15531,15 +14778,15 @@ async function buildSettingsView(
         config.operatorModelCeiling,
         userSettings.current.revision
       );
-      assertPriorityCompatibility(
+      if (userSettings.current.processingSpeed === "legacy") assertPriorityCompatibility(
         userSettings.current.modelPolicy,
         catalog,
         config.operatorModelCeiling,
         userSettings.current.usePriorityServiceTier,
         userSettings.current.revision
       );
-      if (isModelPolicySuspended(userSettings.current.modelPolicy, catalog,
-        effectiveModelCeiling(catalog, config.operatorModelCeiling, userSettings.current.usePriorityServiceTier))) {
+      modelPolicyWarning = processingSpeedWarning(userSettings.current, catalog, config.operatorModelCeiling, capabilities);
+      if (isModelPolicySuspended(userSettings.current.modelPolicy, catalog, config.operatorModelCeiling)) {
         modelPolicyWarning = ULTRA_DISABLED_NO_SELECTION_WARNING;
       }
     } catch (error) {
@@ -15558,13 +14805,19 @@ async function buildSettingsView(
   }
   return {
     historyPolicy: userSettings.historyPolicy,
+    modelDescriptionHistoryModelIds: userSettings.modelDescriptionHistoryIds,
     settings: userSettings.current,
     operatorDefaults: userSettings.defaults,
     capabilities: {
+      availableProcessingSpeeds: ["legacy", ...(capabilities?.supportsPerTurnServiceTier ? ["inherit", "standard", ...["fast"].filter(mode => catalog &&
+        listAllowedModelSelections(userSettings.current.modelPolicy, catalog, config.operatorModelCeiling).some(selection => {
+          const tier = speedTierForModel(catalog!, selection.model, mode as "fast" | "ultrafast");
+          return tier && capabilities?.supportedPerTurnServiceTiers?.includes(tier);
+        }))] : [])] as typeof PROCESSING_SPEED_MODES[number][],
+      processingSpeedSupport: { protocol: capabilities?.supportsPerTurnServiceTier ? "supported" : "unverified", account: "unverified", workspace: "unverified" },
       availableAccessStrategies,
       availableUiLocalePreferences: [...UI_LOCALE_PREFERENCES],
-      availableActivityCardVisibilities: [...ACTIVITY_CARD_VISIBILITIES],
-      availableCompletionHandoffs: [...COMPLETION_HANDOFF_MODES],
+      recoverableProjects: userSettings.recoverableProjects,
       projectAvailability: userSettings.projectRegistry.availability.map(
         ({ project, available }) => ({
           projectId: project.id,
@@ -15602,6 +14855,7 @@ async function buildSettingsView(
     warnings: [
       ...config.startupWarnings,
       ...userSettings.loadWarnings,
+      ...(capabilities?.supportsPerTurnServiceTier ? [] : ["PROCESSING_SPEED_UNSUPPORTED: Choose a compatible Codex installation to enable per-Job speed choices."]),
       ...(modelPolicyWarning ? [modelPolicyWarning] : [])
     ],
     scopeNotice:
@@ -15669,23 +14923,12 @@ function admitTaskContractForNewCall(input: {
   executionEnvelopeRef: string;
   executionPolicyRef: string;
 }): void {
-  if (input.args.taskContractVersion === CODEX_TASK_INPUT_CONTRACT_VERSION) {
-    if (input.args.executionEnvelopeRef !== input.executionEnvelopeRef) {
-      throw new ExecutionEnvelopeChangedError();
-    }
-    // The public v2 descriptor intentionally carries no mutable policy ref.
-    // Capture an exact private admission snapshot so every later async and DB
-    // boundary still detects a settings/catalog race before side effects.
-    input.args.admittedExecutionPolicyRef = input.executionPolicyRef;
-    return;
-  }
-  if (input.args.executionEnvelopeRef !== undefined) {
+  if (input.args.executionEnvelopeRef !== input.executionEnvelopeRef) {
     throw new ExecutionEnvelopeChangedError();
   }
-  assertExecutionPolicyAdmission({
-    advertisedRef: input.args.executionPolicyRef,
-    currentRef: input.executionPolicyRef
-  });
+  // This value is captured after public input validation and never accepted
+  // from the caller. It protects every later asynchronous admission boundary.
+  input.args.admittedExecutionPolicyRef = input.executionPolicyRef;
 }
 
 function refreshStableTaskAdmissionRef(
@@ -15694,7 +14937,6 @@ function refreshStableTaskAdmissionRef(
   admissionCatalogFingerprint: string | null,
   userSettings: UserSettingsStore
 ): void {
-  if (args.taskContractVersion !== CODEX_TASK_INPUT_CONTRACT_VERSION) return;
   args.admittedExecutionPolicyRef = userSettings.executionPolicyRef(
     preferences,
     admissionCatalogFingerprint
@@ -15702,9 +14944,7 @@ function refreshStableTaskAdmissionRef(
 }
 
 function taskAdmissionPolicyRef(args: CodexTaskArgs): string | undefined {
-  return args.taskContractVersion === CODEX_TASK_INPUT_CONTRACT_VERSION
-    ? args.admittedExecutionPolicyRef
-    : args.executionPolicyRef;
+  return args.admittedExecutionPolicyRef;
 }
 
 function assertExecutionPolicyAdmission(input: {
@@ -15719,6 +14959,33 @@ type ResolvedExecutionDecision = {
   decision: ExecutionDecision;
   admissionCatalogFingerprint: string;
 };
+
+function assertAdmittedSelectionSupported(selection: ModelSelection, catalog: CodexModelCatalogSnapshot): void {
+  const model = catalog.models.find(entry => entry.id === selection.model && !entry.hidden);
+  if (!model?.supportedReasoningEfforts.some(entry => entry.effort === selection.reasoningEffort)) {
+    throw new Error("MODEL_UNAVAILABLE: The admitted model or reasoning effort is no longer supported. The Job was not executed or replaced; review the saved choice before admitting new work.");
+  }
+  const tier = selection.serviceTier;
+  if (tier && !(selection.serviceTierScope === "turn" && tier === "default") &&
+      model.defaultServiceTier !== tier && !model.serviceTiers.some(entry => entry.id === tier)) {
+    throw new Error("PROCESSING_SPEED_UNAVAILABLE: The admitted speed is no longer advertised for this model. The Job was not executed with another speed.");
+  }
+}
+
+function processingSpeedWarning(preferences: BridgeUserSettings, catalog: CodexModelCatalogSnapshot,
+  operatorCeiling: ModelChoice[] | undefined, capabilities?: BackendCapabilities): string | undefined {
+  const mode = preferences.processingSpeed;
+  if (mode === "legacy") return undefined;
+  if (mode === "ultrafast") return ULTRAFAST_ACCESS_UNVERIFIED;
+  if (!isProcessingSpeedMode(mode)) return `PROCESSING_SPEED_UNRECOGNIZED: Saved speed '${mode}' is preserved. Choose a supported speed before starting new work.`;
+  if (capabilities?.supportsPerTurnServiceTier !== true) return "PROCESSING_SPEED_UNSUPPORTED: Per-turn speed support is unverified for the selected CLI.";
+  const choices = listAllowedModelSelections(preferences.modelPolicy, catalog, operatorCeiling);
+  const available = choices.some(choice => {
+    try { resolveTurnSpeed(choice, mode, catalog, capabilities); return true; }
+    catch { return false; }
+  });
+  return choices.length && !available ? `PROCESSING_SPEED_UNAVAILABLE: No allowed model supports '${mode}' with the selected CLI.` : undefined;
+}
 
 async function resolveExecutionDecision(input: {
   config: BridgeConfig;
@@ -15743,7 +15010,9 @@ async function resolveExecutionDecision(input: {
   // this resolved catalog fingerprint privately, and rechecks the saved policy
   // against that same fingerprint before admission.
   input.onCatalog?.(catalog);
-  assertPriorityCompatibility(
+  if (!isProcessingSpeedMode(input.preferences.processingSpeed)) throw new Error(`PROCESSING_SPEED_UNRECOGNIZED: Saved speed '${input.preferences.processingSpeed}' is preserved. Choose a supported speed before starting new work.`);
+  requireProcessingSpeedAccess(input.preferences.processingSpeed);
+  if (input.preferences.processingSpeed === "legacy") assertPriorityCompatibility(
     input.preferences.modelPolicy,
     catalog,
     input.config.operatorModelCeiling,
@@ -15756,10 +15025,11 @@ async function resolveExecutionDecision(input: {
     policyRevision: input.preferences.revision,
     policy: input.preferences.modelPolicy,
     catalog,
-    operatorCeiling: effectiveModelCeiling(
+    operatorCeiling: input.preferences.processingSpeed !== "legacy" ? input.config.operatorModelCeiling : effectiveModelCeiling(
       catalog,
       input.config.operatorModelCeiling,
-      input.preferences.usePriorityServiceTier
+      input.preferences.usePriorityServiceTier,
+      input.preferences.processingSpeed
     ),
     backendKind: input.backendKind,
     backendCapabilities: capabilities,
@@ -15768,7 +15038,7 @@ async function resolveExecutionDecision(input: {
     requestedPolicyRevision: input.requestedPolicyRevision,
     currentSelection: input.currentSelection
   });
-  const effectiveSelection = internalServiceTierSelection(
+  const effectiveSelection = input.preferences.processingSpeed === "legacy" ? internalServiceTierSelection(
     decision.effectiveSelection,
     catalog,
     input.preferences.usePriorityServiceTier,
@@ -15776,15 +15046,15 @@ async function resolveExecutionDecision(input: {
     capabilities,
     input.currentSelection,
     input.preferences.revision
-  );
+  ) : resolveTurnSpeed(decision.effectiveSelection, input.preferences.processingSpeed, catalog, capabilities);
   return {
     admissionCatalogFingerprint: modelCatalogAdmissionFingerprint(catalog.models),
     decision: {
       ...decision,
+      processingSpeed: input.preferences.processingSpeed,
       effectiveSelection,
-      reason: `${decision.reason} ${effectiveSelection.serviceTier
-        ? `The bridge privately applied service tier '${effectiveSelection.serviceTier}'.`
-        : "No service-tier override was requested."}`
+      reason: `${decision.reason} ${effectiveSelection.serviceTierScope === "turn" ? "This Job requests a turn-only speed override; the conversation setting is retained." :
+        effectiveSelection.serviceTier ? `This Job requests persistent tier '${effectiveSelection.serviceTier}', retaining the legacy scope.` : "This Job clears the persistent conversation tier, retaining the legacy wire behavior."}`
     }
   };
 }
@@ -15829,8 +15099,15 @@ function priorityUnavailable(policyRevision: number, model?: string): ModelPolic
 function effectiveModelCeiling(
   catalog: CodexModelCatalogSnapshot,
   operatorCeiling: ModelChoice[] | undefined,
-  usePriorityServiceTier: boolean
+  usePriorityServiceTier: boolean,
+  processingSpeed = "legacy"
 ): ModelChoice[] | undefined {
+  if (processingSpeed !== "legacy") {
+    if (!isProcessingSpeedMode(processingSpeed)) return [];
+    if (processingSpeed === "fast" || processingSpeed === "ultrafast") return catalog.models.filter(model => speedTierForModel(catalog, model.id, processingSpeed)).flatMap(model =>
+      model.supportedReasoningEfforts.map(({ effort }) => ({ model: model.id, reasoningEffort: effort })).filter(choice => !operatorCeiling || operatorCeiling.some(ceiling => modelChoiceKey(ceiling) === modelChoiceKey(choice))));
+    return operatorCeiling;
+  }
   if (!usePriorityServiceTier) return operatorCeiling;
   const operatorKeys = operatorCeiling
     ? new Set(operatorCeiling.map(modelChoiceKey))
@@ -15916,6 +15193,15 @@ function backendCapabilities(
       });
 }
 
+async function settingsBackendCapabilities(
+  config: BridgeConfig,
+  fallback?: () => BackendCapabilities
+): Promise<BackendCapabilities> {
+  if (!config.codexService) return fallback?.() || UNVERIFIED_APP_SERVER_CAPABILITIES;
+  try { return await config.codexService.readCapabilities() || UNVERIFIED_APP_SERVER_CAPABILITIES; }
+  catch { return UNVERIFIED_APP_SERVER_CAPABILITIES; }
+}
+
 function applyModelSelection(
   payload: Record<string, unknown>,
   selection: ModelSelection,
@@ -15925,9 +15211,7 @@ function applyModelSelection(
   payload.config = {
     model_reasoning_effort: selection.reasoningEffort,
   };
-  if (backendSupports(backendKind, "supportsTurnSelection") && selection.serviceTier) {
-    payload.serviceTier = selection.serviceTier;
-  }
+  if (backendSupports(backendKind, "supportsTurnSelection")) Object.assign(payload, selectionSpeedArguments(selection));
 }
 
 async function enforceSensitiveFilePreflight(
@@ -15938,8 +15222,9 @@ async function enforceSensitiveFilePreflight(
   if (!config.secretScan) return;
   const sensitiveFiles = await findSensitiveFiles(cwd);
   if (sensitiveFiles.length > 0) {
+    const findings = formatSensitiveFileFindings(cwd, sensitiveFiles);
     throw new Error(
-      `Refusing to ${operation} because ${sensitiveFiles.length} sensitive-looking file(s) were found in the project folder. Move them outside the project or set CODEX_MCP_BRIDGE_DISABLE_SECRET_SCAN=1 if you accept the risk.`
+      `Refusing to ${operation} because ${sensitiveFiles.length} sensitive-looking file(s) were found in the project folder. Project-relative path(s): ${findings}. Move them outside the project or set CODEX_MCP_BRIDGE_DISABLE_SECRET_SCAN=1 if you accept the risk.`
     );
   }
 }
@@ -16268,19 +15553,16 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
   const requestId = value.requestId;
   const requestHash = value.requestHash;
   const requestHashVersion = value.requestHashVersion;
-  const activityPresentationId =
-    typeof value.activityPresentationId === "string" &&
-    SCOPE_ID_PATTERN.test(value.activityPresentationId)
-      ? value.activityPresentationId.toLowerCase()
-      : undefined;
+  const completionDeliveryPolicy: CompletionDeliveryPolicy | undefined =
+    value.completionDeliveryPolicy === undefined
+      ? "live-card"
+      : value.completionDeliveryPolicy === "live-card" || value.completionDeliveryPolicy === "direct-wait" || value.completionDeliveryPolicy === "relay-card" || value.completionDeliveryPolicy === "events"
+        ? value.completionDeliveryPolicy
+        : undefined;
   const activityId =
     typeof value.activityId === "string" && SCOPE_ID_PATTERN.test(value.activityId)
       ? value.activityId.toLowerCase()
       : undefined;
-  const executionMode =
-    value.executionMode === "foreground" || value.executionMode === "background"
-      ? value.executionMode
-      : "background";
   const backendKind =
     typeof value.backendKind === "string" && value.backendKind ? value.backendKind : "mcp-server";
   const trackingState = readTrackingState(value.trackingState) ||
@@ -16318,6 +15600,7 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
         .slice(-20)
     : [];
   const executionDecision = readExecutionDecision(value.executionDecision);
+  const executionEvidence = readExecutionEvidence(value.executionEvidence);
   let project: { projectId: string; projectName: string } | undefined;
   let projectRequest: RuntimeProjectSelection | undefined;
   try {
@@ -16379,16 +15662,20 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
     !SCOPE_ID_PATTERN.test(scopeId) ||
     typeof requestId !== "string" ||
     !requestId ||
-    (value.activityPresentationId !== undefined && !activityPresentationId) ||
     typeof requestHash !== "string" ||
     !/^[0-9a-f]{64}$/i.test(requestHash) ||
+    !completionDeliveryPolicy ||
     (requestHashVersion !== 1 &&
       requestHashVersion !== 2 &&
       requestHashVersion !== 3 &&
       requestHashVersion !== 4 &&
       requestHashVersion !== 5 &&
       requestHashVersion !== 6 &&
-      requestHashVersion !== 7) ||
+      requestHashVersion !== 7 &&
+      requestHashVersion !== 8 &&
+      requestHashVersion !== 9 &&
+      requestHashVersion !== 10 &&
+      requestHashVersion !== 11) ||
     !isOptionalString(value.selectionKey) ||
     !Array.isArray(value.exclusiveKeys) ||
     !value.exclusiveKeys.every((entry) => typeof entry === "string") ||
@@ -16416,7 +15703,11 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
     !isOptionalString(value.upstreamRequestId) ||
     !isOptionalPositiveInteger(value.terminalVersion) ||
     !isOptionalString(value.agentId) ||
+    (value.authBoundary !== undefined &&
+      (typeof value.authBoundary !== "string" || !/^[a-f0-9]{64}$/.test(value.authBoundary))) ||
     !isOptionalString(value.sourceThreadId) ||
+    (value.requestEnvelopeHash !== undefined &&
+      (typeof value.requestEnvelopeHash !== "string" || !/^[a-f0-9]{64}$/.test(value.requestEnvelopeHash))) ||
     (value.contextMode !== undefined && !AGENT_CONTEXT_MODES.includes(value.contextMode as AgentContextMode)) ||
     (value.result !== undefined && !isRecord(value.result)) ||
     (value.lastProgress !== undefined && !lastProgress) ||
@@ -16426,13 +15717,17 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
   }
   return {
     jobId,
+    executionName:typeof value.executionName==="string" ? value.executionName : undefined,
+    summary:typeof value.summary==="string" ? value.summary : undefined,
+    authBoundary: value.authBoundary as string | undefined,
+    executionReceipt: value.executionReceipt === true,
+    executionDispatched: typeof value.executionDispatched === "boolean" ? value.executionDispatched : undefined,
     activityId,
     ...(project || {}),
     ...(projectRequest ? { projectRequest } : {}),
     agentId: value.agentId,
     contextMode: value.contextMode as AgentContextMode | undefined,
     threadId: value.threadId || sessionDecision.threadId,
-    executionMode,
     backendKind,
     trackingState,
     runtime: safeRuntimeMetadata(value.runtime),
@@ -16447,18 +15742,25 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
     operation,
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
+    endedAt: typeof value.endedAt === "number" ? value.endedAt : undefined,
     lastProgressAt: value.lastProgressAt,
     version: value.version as number,
     cwd: value.cwd,
     sandbox,
     scopeId: scopeId.toLowerCase(),
     requestId,
-    activityPresentationId,
     requestHash,
     requestHashVersion,
+    requestEnvelopeHash: value.requestEnvelopeHash as string | undefined,
+    completionDeliveryPolicy,
     sourceThreadId: value.sourceThreadId,
+    ...(typeof value.mcpPrincipal === "string" ? { mcpPrincipal: value.mcpPrincipal } : {}),
+    ...(Array.isArray(value.approvedFollowups) ? { approvedFollowups: issueApprovedFollowups(jobId, value.approvedFollowups as ApprovedFollowup[]) } : {}),
+    ...(value.followup ? { followup: readFollowupReference(value.followup as FollowupReference) } : {}),
+    ...(value.relayFollowup ? { relayFollowup: value.relayFollowup as DynamicFollowupReference } : {}),
     selectionKey: value.selectionKey,
     ...(executionDecision ? { executionDecision } : {}),
+    ...(executionEvidence ? { executionEvidence } : {}),
     exclusiveKeys: [...value.exclusiveKeys],
     sessionDecision,
     status,
@@ -16576,6 +15878,7 @@ function readExecutionDecision(value: unknown): ExecutionDecision | undefined {
       catalogValidation,
       backendKind,
       ...(requestedSelection ? { requestedSelection } : {}),
+      ...(typeof value.processingSpeed === "string" ? { processingSpeed: value.processingSpeed } : {}),
       effectiveSelection,
       effectiveReasoningEffort:
         typeof value.effectiveReasoningEffort === "string"
@@ -16651,11 +15954,13 @@ function extractResultBackendKind(result: ToolResult): CodexBackendKind | undefi
   return value === "mcp-server" || value === "app-server" || value === "codex-sdk" ? value : undefined;
 }
 
+const runtimeMetadataSchema = z.object({ codex: z.string().regex(/^\d+\.\d+\.\d+$/),
+  sdk: z.string().regex(/^\d+\.\d+\.\d+$/).optional(), python: z.string().regex(/^\d+\.\d+\.\d+$/).optional(),
+  channel: z.literal("stable").optional(), requestedAuthMode: z.enum(["chatgpt", "api-key"]).optional(), resolvedAuthMode: z.enum(["chatgpt", "api-key"]).optional()
+});
 function safeRuntimeMetadata(value: unknown): UpstreamWorkerAssignment["runtime"] | undefined {
-  const parsed = z.object({ codex: z.string().regex(/^\d+\.\d+\.\d+$/),
-    sdk: z.string().regex(/^\d+\.\d+\.\d+$/).optional(), python: z.string().regex(/^\d+\.\d+\.\d+$/).optional(),
-    channel: z.literal("stable").optional(), requestedAuthMode: z.enum(["chatgpt", "api-key"]).optional(), resolvedAuthMode: z.enum(["chatgpt", "api-key"]).optional()
-  }).safeParse(value);
+  if (value === undefined) return undefined;
+  const parsed = runtimeMetadataSchema.safeParse(value);
   return parsed.success ? parsed.data : undefined;
 }
 
@@ -16692,7 +15997,7 @@ function retainBoundedResult(
   cwd: string,
   allowedRoots: string[],
   steeringPrompts: readonly string[] = []
-): { result: ToolResult; originalBytes: number; omitted: boolean } {
+): { result: ToolResult; body: ToolResult; originalBytes: number; omitted: boolean } {
   const sanitized = sanitizeRetainedToolResult(
     result,
     cwd,
@@ -16707,26 +16012,13 @@ function retainBoundedResult(
   }
   const originalBytes = serialized === undefined ? -1 : Buffer.byteLength(serialized, "utf8");
   if (originalBytes >= 0 && originalBytes <= maxBytes) {
-    return { result: sanitized, originalBytes, omitted: false };
+    return { result: sanitized, body:sanitized, originalBytes, omitted: false };
   }
 
-  const threadId = extractThreadId(result) || session.threadId;
-  const summary = {
-    status: "completed",
-    resultOmitted: true,
-    originalBytes: originalBytes >= 0 ? originalBytes : null,
-    maxRetainedBytes: maxBytes,
-    threadId: threadId || null,
-    message: "Codex completed, but its result exceeded the bridge retention limit and was omitted. Retry with a narrower prompt or raise CODEX_MCP_BRIDGE_MAX_JOB_RESULT_BYTES."
-  };
-  return {
-    result: {
-      content: [{ type: "text", text: JSON.stringify(summary, null, 2) }],
-      structuredContent: summary
-    },
-    originalBytes,
-    omitted: true
-  };
+  if (serialized === undefined) throw new Error("RESULT_STORAGE_INVALID: Sanitized result is not serializable.");
+  return {body:sanitized,originalBytes,omitted:true,result:{content:[{type:"text",text:
+    "The complete sanitized result is preserved in durable history. Read the exact Job for its bounded response."}],
+    structuredContent:{resultOmitted:true,originalBytes,maxResponseBytes:maxBytes}}};
 }
 
 function sanitizeRetainedToolResult(
@@ -16824,15 +16116,6 @@ function redactSteeringPromptText(
   return redacted;
 }
 
-function activityCardToolMetadata(): Record<string, unknown> {
-  return {
-    ui: { resourceUri: ACTIVITY_CARD_URI, visibility: ["model", "app"] },
-    "openai/outputTemplate": ACTIVITY_CARD_URI,
-    "openai/widgetAccessible": true,
-    "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
-  };
-}
-
 function dashboardCardToolMetadata(): Record<string, unknown> {
   return {
     ui: { resourceUri: DASHBOARD_CARD_URI, visibility: ["model", "app"] },
@@ -16859,10 +16142,13 @@ function codexTaskEnvelopeAnnotations(config: BridgeConfig) {
 function forwardResult(
   result: ToolResult,
   job: CodexJob,
-  preferences: Pick<BridgeUserSettings, "activityCardVisibility">,
+  preferences: BridgeUserSettings,
   registry?: CodexJobRegistry,
   replay = false
 ): ToolResult {
+  if(registry && isTerminalActivityJobStatus(job.status) && !registry.admissionStateStore.retainedJobVisible(job.jobId)) {
+    return taskResultForJob(expiredJobPublication(job),0,preferences,registry,replay);
+  }
   const projection = taskProjectionForJob(job, preferences, registry, replay);
   const semantic = projection.structured;
   if (result.isError || job.status === "failed") {
@@ -16906,15 +16192,11 @@ function forwardResult(
       ? [...semantic.warnings, MODEL_PRIMARY_ANSWER_TRUNCATION_WARNING]
       : semantic.warnings
   });
-  const primaryBytes = primaryContent.reduce(
-    (total, item) => total + (item.type === "text" ? Buffer.byteLength(item.text, "utf8") : 0),
-    0
-  );
   const primaryContract = toolOutputContract(
     "codex_task",
     "model-orchestrator-semantic",
     codexTaskOutputSchema,
-    Math.max(1, primaryBytes, job.resultBytes || 0),
+    registry?.resultResponseByteLimit ?? 1024 * 1024,
     "primary-payload"
   );
   return contractedToolResult(
@@ -16928,7 +16210,7 @@ function forwardResult(
 function taskResultForJob(
   job: CodexJob,
   staleAfterMs: number,
-  preferences: Pick<BridgeUserSettings, "activityCardVisibility">,
+  preferences: BridgeUserSettings,
   registry: CodexJobRegistry | undefined,
   replay: boolean
 ): ToolResult {
@@ -16951,7 +16233,7 @@ function taskResultForJob(
 
 function taskProjectionForJob(
   job: CodexJob,
-  preferences: Pick<BridgeUserSettings, "activityCardVisibility">,
+  preferences: BridgeUserSettings,
   registry: CodexJobRegistry | undefined,
   replay: boolean,
   staleAfterMs = registry?.staleThresholdMs || 1
@@ -16965,12 +16247,14 @@ function taskProjectionForJob(
       undefined,
       preferences,
       registry,
-      false,
       replay
     )
   );
+  const retainedAnswer = semantic.result.availability === "delivered" && job.result
+    ? modelPrimaryAnswer(job.result)
+    : undefined;
   const structured = codexTaskOutputSchema.parse({
-    contractVersion: "1",
+    contractVersion: "4",
     kind: "task",
     state: semantic.status,
     terminal: semantic.terminal,
@@ -16982,25 +16266,48 @@ function taskProjectionForJob(
     threadId: semantic.threadId,
     projectName: semantic.projectName,
     requestId: semantic.requestId,
+    approvedFollowups: semantic.approvedFollowups || null,
     jobVersion: semantic.versions.job,
     activityVersion: semantic.versions.activity ?? null,
-    executionMode: semantic.executionMode,
     backend: semantic.backendKind,
     sandbox: semantic.sandbox,
+    completionDeliveryPolicy: semantic.completionDeliveryPolicy,
+    ...(semantic.eventSubscription ? { eventSubscription: semantic.eventSubscription } : {}),
     requestedModel: semantic.executionAudit?.requested?.model ?? null,
     requestedReasoningEffort: semantic.executionAudit?.requested?.reasoningEffort ?? null,
     actualModel: semantic.executionAudit?.actual.model ?? null,
     actualReasoningEffort: semantic.executionAudit?.actual.reasoningEffort ?? null,
+    processingSpeed: job.executionDecision?.processingSpeed || (job.executionDecision ? "legacy" : null),
+    requestedServiceTier: job.executionDecision?.effectiveSelection.serviceTier || null,
+    actualServiceTier: semantic.executionAudit?.actual.serviceTier ?? null,
+    serviceTierScope: job.executionDecision ? job.executionDecision.effectiveSelection.serviceTierScope || "conversation" : null,
+    executionConfirmation: { accepted: Boolean(semantic.executionAudit?.acceptance), model: semantic.executionAudit?.confirmed.model.confirmed === true,
+      reasoningEffort: semantic.executionAudit?.confirmed.reasoningEffort.confirmed === true, serviceTier: semantic.executionAudit?.confirmed.serviceTier.confirmed === true },
     rerouted: Boolean(semantic.executionAudit?.reroute),
     rerouteReason: semantic.executionAudit?.reroute?.reason ?? null,
     resultAvailability: semantic.result.availability,
     resultOmitted: semantic.result.omitted,
-    answer: null,
+    answer: retainedAnswer?.text || null,
     error: semantic.error ? taskStructuredErrorProjection(semantic.error) : null,
-    warnings: semantic.warnings,
+    warnings: retainedAnswer?.truncated
+      ? [...semantic.warnings, MODEL_PRIMARY_ANSWER_TRUNCATION_WARNING]
+      : semantic.warnings,
     nextActions: [
-      ...semantic.nextActions.map(modelNextActionProjection),
-      ...(semantic.terminal ? [] : ["Keep this GPT response active while Codex works. Use bounded input waits, answer questions, then retrieve each exact terminal Job result before reporting completion."])
+      ...semantic.nextActions.map(projectMonitoringNextAction),
+      ...(semantic.terminal
+        ? []
+        : [guidance(
+            semantic.completionDeliveryPolicy === "relay-card"
+              ? RELAY_GUIDANCE + " The blank relay is automatically attached; keep this Activity for authorized followups and explicitly finish it after the whole goal is reviewed. If its iframe is torn down, retained events recover on the next valid connection; automatic GPT resumption while the app is closed is not guaranteed."
+              : semantic.completionDeliveryPolicy !== "events"
+              ? "Direct result delivery applies to this Job. After every non-terminal return, inspect the supplied exact-Job input action before repeating a bounded terminal wait on this same Job. Review the terminal result before continuing within the original user goal and delegation through its declared receipt or ordinary codex_task continue; honor explicit stops and new user decision or approval boundaries. After response loss, query the same requestId before an identical retry. If the GPT run ends without automatic continuation, recover the exact Job in the originating conversation; no UI-free host resumption contract is established here."
+              : semantic.completionDeliveryPolicy === "events" && semantic.eventSubscription
+                ? eventMonitoringStopGuidance(semantic.eventSubscription) || eventDeliveryFailureGuidance(semantic.eventSubscription) ||
+                  (semantic.eventSubscription?.state === "unavailable" && semantic.eventSubscription.reason !== "expired"
+                    ? "This Job's Events monitoring is unavailable. Report that state and preserve the original Job for manual exact reads; do not automatically issue access, restore card delivery, schedule tasks or repeatedly poll."
+                    : "This exact Job uses card-free native Events. Complete its exact Events subscription before ending orchestration. An event ACK is receipt only, not result review: resumed ordinary tools must retain the original conversation scope. Retrieve and review this Job's exact original result before continuing within the original user goal and delegation through its declared receipt or ordinary codex_task continue. A dynamic B needs explicit Events opt-in; the same authorized lifecycle root connects it without another subscription. Native OAuth/subscription renewal belongs to the host; Bridge delegation reissue still requires original tool scope. Honor explicit stops and new user decision or approval boundaries; B admission is not overall completion. Do not call Dashboard for completion, send ui/message, schedule tasks or repeatedly poll. Surface subscription or input failures without fallback.")
+              : "This Job continues independently of the current GPT response. Query the exact Job when needed, answer pending questions, and retrieve its terminal result before reporting completion."
+          )])
     ]
   });
   return { structured };
@@ -17036,15 +16343,11 @@ function statusToolResult(
         ? [...structured.warnings, MODEL_PRIMARY_ANSWER_TRUNCATION_WARNING]
         : structured.warnings
     });
-    const contentBytes = primaryContent.reduce(
-      (total, item) => total + (item.type === "text" ? Buffer.byteLength(item.text, "utf8") : 0),
-      0
-    );
     const contract = toolOutputContract(
       "codex_status",
       "model-orchestrator-semantic",
       codexStatusOutputSchema,
-      Math.max(1, contentBytes, maxPrimaryBytes),
+      maxPrimaryBytes,
       "primary-payload"
     );
     return contractedToolResult(contract, job, answeredStructured, { content: primaryContent });
@@ -17153,8 +16456,11 @@ function compactStatusProjection(
   });
 }
 
-function exactJobAnswerRetrievalAction(jobId: string): string {
-  return `Call codex_status with query {kind:\"job\",id:\"${jobId}\"} to retrieve this Job's answer.`;
+function exactJobAnswerRetrievalAction(jobId: string): z.infer<typeof modelNextActionOutputSchema> {
+  return statusAction(
+    { query: { kind: "job", id: jobId } },
+    "Retrieve this exact Job answer before reporting its result."
+  );
 }
 
 function integerAtLeast(value: unknown, minimum: number): number {
@@ -17192,11 +16498,9 @@ function statusItemProjection(
           : undefined
       }
     : undefined;
-  const execution = typeof input.executionMode === "string" &&
-    typeof input.backendKind === "string" &&
+  const execution = typeof input.backendKind === "string" &&
     typeof input.sandbox === "string"
     ? {
-        mode: input.executionMode,
         backend: input.backendKind,
         sandbox: input.sandbox
       }
@@ -17214,13 +16518,20 @@ function statusItemProjection(
         omitted: input.resultOmitted === true
       }
     : undefined;
-  const error = isRecord(input.error)
-    ? normalizeStructuredError(input.error)
-    : typeof input.error === "string" && input.error
-      ? normalizeStructuredError({ code: "JOB_FAILED", message: input.error })
-      : undefined;
+  const retainedError = isRecord(input.upstreamError) ? input.upstreamError : input.error;
+  const errorMessage = typeof input.error === "string" && input.error ? input.error : undefined;
+  const error = type === "job"
+    ? isRecord(retainedError) || errorMessage || state === "failed" || state === "interrupted" || state === "cancelled"
+      ? normalizeJobError(state, errorMessage, retainedError)
+      : undefined
+    : isRecord(input.error)
+      ? normalizeStructuredError(input.error)
+      : errorMessage
+        ? normalizeStructuredError({ code: "JOB_FAILED", message: errorMessage })
+        : undefined;
   const wait = jobWaitOutputSchema.safeParse(input.wait);
   return statusItemOutputSchema.parse({
+    ...(Array.isArray(input.approvedFollowups) ? { approvedFollowups: input.approvedFollowups } : {}),
     ...(isRecord(input.inputs) ? { inputs: input.inputs } : {}),
     type,
     id,
@@ -17234,6 +16545,13 @@ function statusItemProjection(
     ...(typeof input.threadId === "string" ? { threadId: input.threadId } : {}),
     ...(typeof input.terminal === "boolean" ? { terminal: input.terminal } : {}),
     ...(typeof input.delivery === "string" ? { delivery: input.delivery } : {}),
+    ...(input.completionDeliveryPolicy === "live-card" || input.completionDeliveryPolicy === "direct-wait" || input.completionDeliveryPolicy === "relay-card" || input.completionDeliveryPolicy === "events"
+      ? { completionDeliveryPolicy: input.completionDeliveryPolicy }
+      : {}),
+    ...(isRecord(input.eventSubscription) ? { eventSubscription: input.eventSubscription } : {}),
+    ...(isRecord(input.completionEvidence)
+      ? { completionEvidence: input.completionEvidence }
+      : {}),
     ...(typeof input.replay === "boolean" ? { replay: input.replay } : {}),
     ...(versions ? { versions } : {}),
     ...(execution ? { execution } : {}),
@@ -17247,7 +16565,7 @@ function statusItemProjection(
     ...(wait.success ? { wait: wait.data } : {}),
     ...(() => {
       const actions = Array.isArray(input.nextActions)
-        ? input.nextActions.map(modelNextActionProjection)
+        ? input.nextActions.map(projectMonitoringNextAction)
         : structuredErrorNextActions(input.error);
       return actions.length ? { nextActions: actions } : {};
     })(),
@@ -17350,7 +16668,7 @@ function statusCompatibilityText(value: Record<string, unknown>): string {
 function taskCompatibilityText(value: z.infer<typeof codexTaskOutputSchema>): string {
   if (value.error) {
     const actions = value.nextActions.length
-      ? ` Next: ${value.nextActions.join(" ")}`
+      ? ` Next: ${value.nextActions.map(nextActionSummary).join(" ")}`
       : "";
     return `${value.error.code}: ${value.error.message}${actions}`;
   }
@@ -17362,13 +16680,26 @@ function taskCompatibilityText(value: z.infer<typeof codexTaskOutputSchema>): st
   if (value.state === "cancelled") {
     return "Codex was cancelled. Partial filesystem changes may remain.";
   }
+  const directWaitAction = value.nextActions.find(
+    (action) => action.kind === "tool" &&
+      action.tool === "codex_status" &&
+      action.arguments.query?.kind === "job" &&
+      action.arguments.query.waitFor === "terminal"
+  );
+  if (directWaitAction) {
+    return (
+      `Codex job ${value.jobId || "unassigned"} is ${value.state}. ` +
+      `Required before replying: ${nextActionSummary(directWaitAction)} ` +
+      "If this GPT run ends, later recovery requires a user request in the originating conversation; no automatic card fallback is sent."
+    );
+  }
   return `Codex job ${value.jobId || "unassigned"} is ${value.state}.`;
 }
 
 function modelNextActionProjection(
   value: unknown
 ): z.infer<typeof modelNextActionOutputSchema> {
-  return modelNextActionOutputSchema.parse(modelActionGuidance(value));
+  return projectModelNextAction(value);
 }
 
 function modelResultAvailabilityProjection(
@@ -17380,14 +16711,14 @@ function modelResultAvailabilityProjection(
   });
 }
 
-function structuredErrorNextActions(value: unknown): string[] {
+function structuredErrorNextActions(value: unknown): z.infer<typeof modelNextActionOutputSchema>[] {
   const input = isRecord(value) ? value : {};
   const nextAction = isRecord(input.nextAction) && typeof input.nextAction.tool === "string"
     ? modelNextActionProjection(input.nextAction)
     : undefined;
   const nextActions = Array.isArray(input.nextActions)
     ? input.nextActions
-        .filter((entry): entry is string => typeof entry === "string")
+        .map(modelNextActionProjection)
         .slice(0, 10)
     : [];
   return [...nextActions, ...(nextAction ? [nextAction] : [])].slice(0, 10);
@@ -17437,7 +16768,14 @@ function errorFromException(error: unknown): z.infer<typeof structuredErrorOutpu
   const code = codeMatch?.[1] || "CODEX_TASK_FAILED";
   return normalizeStructuredError({
     code,
-    message: codeMatch ? rawMessage.slice(codeMatch[0].length) : rawMessage
+    message: codeMatch ? rawMessage.slice(codeMatch[0].length) : rawMessage,
+    ...(
+      code === "JOB_RETENTION_CAPACITY" || code === "STATE_STORAGE_UNAVAILABLE" ||
+      code === "EXECUTION_UNAVAILABLE" || code === "CODEX_AUTH_UNAVAILABLE" ||
+      code === "CODEX_AUTH_POLICY_UNAVAILABLE"
+        ? { retryable: true }
+        : {}
+    )
   });
 }
 
@@ -17603,6 +16941,20 @@ function contractedToolResult<Schema extends z.ZodType>(
   });
 }
 
+/**
+ * `bridge_skill` is a model-facing read surface. Its compatibility channel is
+ * intentionally a complete compact JSON mirror of the validated structured
+ * result, so MCP hosts that consume `content` rather than `structuredContent`
+ * receive the exact Markdown skill content, version metadata, and warnings.
+ */
+function bridgeSkillPrimaryContent(value: unknown): ToolResult["content"] {
+  const text = JSON.stringify(value);
+  if (text === undefined) {
+    throw new Error("bridge_skill cannot serialize its primary compatibility payload.");
+  }
+  return [{ type: "text", text }];
+}
+
 function stripInternalProjectData(value: unknown, depth = 0): unknown {
   if (depth > 20 || value === null || value === undefined) return value;
   if (Array.isArray(value)) {
@@ -17631,36 +16983,21 @@ function stripInternalProjectData(value: unknown, depth = 0): unknown {
   return output;
 }
 
-function modelPolicyErrorResult(
-  error: ModelPolicyError,
-  stableContract: boolean
-): ToolResult {
+function modelPolicyErrorResult(error: ModelPolicyError): ToolResult {
   return taskPreflightErrorResult({
     code: error.code,
     message: error.message.replace(`${error.code}: `, ""),
     policyRevision: error.policyRevision,
-    nextActions: stableContract ? modelPolicyRecoveryActions(error) : error.nextActions
+    nextActions: modelPolicyRecoveryActions(error)
   });
 }
 
-function executionPolicyChangedResult(
-  error: ExecutionPolicyChangedError,
-  descriptorRefreshRequired: boolean
-): ToolResult {
+function executionPolicyChangedResult(error: ExecutionPolicyChangedError): ToolResult {
   return taskPreflightErrorResult({
     code: error.code,
-    message: descriptorRefreshRequired
-      ? error.message.replace(`${error.code}: `, "")
-      : "The saved execution policy changed during admission. No work was admitted; retry this same stable task contract.",
+    message: error.message.replace(`${error.code}: `, ""),
     retryable: true,
-    nextActions: descriptorRefreshRequired
-      ? [
-          "This call came from a cached pre-v2 descriptor. Refresh the Codex developer-mode connection once so codex_task exposes stable contract v2.",
-          "Retry the logical task with the refreshed descriptor and a new requestId; do not reuse a requestId that was not admitted."
-        ]
-      : [
-          "The saved execution policy changed during admission. Retry the same codex_task contract with a new requestId; no connection Refresh is required."
-        ]
+    nextActions: [guidance("The saved execution policy changed during admission. Retry the same codex_task contract with a new requestId.")]
   });
 }
 
@@ -17678,37 +17015,26 @@ function executionEnvelopeChangedResult(error: ExecutionEnvelopeChangedError): T
 
 function projectSelectionChangedResult(
   message: string,
-  stableContract: boolean,
   userSettings: UserSettingsStore,
-  requested?: RuntimeProjectSelection
+  requested?: ProjectSelection
 ): ToolResult {
   return taskPreflightErrorResult({
     code: PROJECT_REGISTRY_CHANGED,
-    message: stableContract
-      ? "The selected project changed before admission. No work was admitted; resolve it through codex_status query kind=project and retry."
-      : message.replace(`${PROJECT_REGISTRY_CHANGED}: `, ""),
+    message: "The selected project changed before admission. No work was admitted; resolve it through codex_status query kind=project and retry.",
     retryable: true,
-    nextActions: stableContract
-      ? projectRecoveryActions(userSettings, requested)
-      : [
-          "This call came from a cached pre-v2 descriptor. Refresh the Codex developer-mode connection once so codex_task exposes stable contract v2.",
-          "Retry the logical task with its exact current project selector and a new requestId."
-        ]
+    nextActions: projectRecoveryActions(userSettings, requested)
   });
 }
 
 function projectSelectionRequiredResult(
   message: string,
-  stableContract: boolean,
   userSettings: UserSettingsStore
 ): ToolResult {
   return taskPreflightErrorResult({
     code: "PROJECT_REQUIRED",
     message: message.replace("PROJECT_REQUIRED: ", ""),
     retryable: true,
-    nextActions: stableContract
-      ? projectRecoveryActions(userSettings)
-      : ["Refresh the Codex developer-mode connection and choose an exact advertised project selector."]
+    nextActions: projectRecoveryActions(userSettings)
   });
 }
 
@@ -17718,7 +17044,7 @@ function projectStatusResult(name: string, userSettings: UserSettingsStore): Too
   const registry = userSettings.projectRegistry;
   const project = registry.selectableProjects.find(candidate => candidate.nameKey === key);
   const matches = registry.projects.filter(candidate => candidate.nameKey === key);
-  const registered = matches.find(candidate => candidate.archivedAt === undefined) ?? matches[0];
+  const registered = matches.find(candidate => candidate.archivedAt === undefined && (!candidate.archiveState || candidate.archiveState === "active")) ?? matches[0];
   const code = registry.projects.length === 0 ? PROJECT_SETUP_REQUIRED
     : registered ? PROJECT_UNAVAILABLE : "PROJECT_NOT_FOUND";
   const result = {
@@ -17727,6 +17053,8 @@ function projectStatusResult(name: string, userSettings: UserSettingsStore): Too
     ...(!project ? { error: {
       code, message: registry.projects.length === 0
         ? "No project is registered. No work was admitted."
+        : registered?.archiveState === "processing" || registered?.archiveState === "unresolved"
+          ? `Project use is ending (${registered.archiveState}). Retry cleanup in Settings. ${registered.archiveReasons?.join("; ") || "Termination confirmation is pending."} No work was admitted.`
         : registered?.archivedAt !== undefined
           ? `The requested project ${JSON.stringify(normalized)} is archived. No work was admitted.`
           : registered
@@ -17734,7 +17062,7 @@ function projectStatusResult(name: string, userSettings: UserSettingsStore): Too
             : `No registered project has the exact name ${JSON.stringify(normalized)}. No work was admitted.`, retryable: true
     } } : {}),
     nextActions: project
-      ? [projectSelectorRetryAction(project), "Task permissions are determined by the bridge settings; do not send permission fields."]
+      ? [projectSelectorRetryAction(project), guidance("Task permissions are determined by the bridge settings; do not send permission fields.")]
       : projectRecoveryActions(userSettings, { name: normalized }, registry)
   };
   return contractedToolResult(projectStatusResultContract, result, result,
@@ -17742,42 +17070,17 @@ function projectStatusResult(name: string, userSettings: UserSettingsStore): Too
     { isError: !project });
 }
 
-function projectLookupResult(name: string, userSettings: UserSettingsStore): ToolResult {
-  const normalized = normalizeProjectName(name);
-  const key = projectNameKey(normalized);
-  const registry = userSettings.projectRegistry;
-  if (!registry.projects.length) return projectSetupRequiredResult("No project is registered. No work was admitted.");
-  const selectable = registry.selectableProjects;
-  const project = selectable.find((candidate) => candidate.nameKey === key);
-  if (!project) {
-    const matches = registry.projects.filter(candidate => candidate.nameKey === key);
-    const registered = matches.find(candidate => candidate.archivedAt === undefined) ?? matches[0];
-    return taskPreflightErrorResult({
-      code: registered ? PROJECT_UNAVAILABLE : "PROJECT_NOT_FOUND",
-      message: registered
-        ? `Project ${JSON.stringify(normalized)} is archived or its folder is unavailable; no work was admitted.`
-        : `No selectable project has the exact name ${JSON.stringify(normalized)}; no work was admitted.`,
-      retryable: true,
-      nextActions: projectRecoveryActions(userSettings, { name: normalized }, registry)
-    });
-  }
-  return taskPreflightErrorResult({
-    code: "PROJECT_SELECTION_REQUIRED",
-    message: "Project discovery completed without creating an Activity, Agent, Job, filesystem mutation, or upstream Codex turn.",
-    retryable: true,
-    nextActions: [projectSelectorRetryAction(project)]
-  });
-}
-
 function projectRecoveryActions(
   userSettings: UserSettingsStore,
   requested?: RequestedProjectIdentity,
   registry = userSettings.projectRegistry
-): string[] {
+): z.infer<typeof modelNextActionOutputSchema>[] {
   return projectRecoveryGuidance(registry, requested, (names, remaining) =>
-    `Look up the project intended by the user with codex_status using query={"kind":"project","name":<exact name>}. ` +
-    `Selectable names include ${JSON.stringify(names)}${remaining ? ` (${remaining} more registered projects)` : ""}. ` +
-    "Do not choose a first or sole project without an intended target. The lookup admits no work; no connection Refresh is required."
+    guidance(
+      `Look up the project intended by the user with codex_status query kind=project and the exact name. ` +
+      `Selectable names include ${JSON.stringify(names)}${remaining ? ` (${remaining} more registered projects)` : ""}. ` +
+      "Do not choose a first or sole project without an intended target."
+    )
   );
 }
 
@@ -17789,10 +17092,10 @@ function backendHandoffContractErrorResult(error: BackendHandoffContractError): 
     contextContinuity: "not-migrated",
     nextActions: error.code === "BACKEND_HANDOFF_SUMMARY_REQUIRED"
       ? [
-          "Retry the existing Agent with context='fresh' and a concise explicit handoffSummary.",
-          "State clearly that only the summary is transferred; the original transcript, approvals, and backend state remain on the pinned Agent thread."
+          guidance("Retry the existing Agent with context='fresh' and a concise explicit handoffSummary."),
+          guidance("Only the summary is transferred; the original transcript, approvals, and backend state remain on the pinned Agent thread.")
         ]
-      : ["Remove handoffSummary unless this is an explicit existing-Agent backend change."]
+      : [guidance("Remove handoffSummary unless this is an explicit existing-Agent backend change.")]
   });
 }
 
@@ -17801,11 +17104,7 @@ function projectSetupRequiredResult(message: string): ToolResult {
     {
       code: PROJECT_SETUP_REQUIRED,
       message: message.replace(`${PROJECT_SETUP_REQUIRED}: `, ""),
-      nextAction: {
-        tool: "codex_settings",
-        arguments: {},
-        userPrompt: "Open settings and register the folder where Codex should work."
-      }
+      nextActions: [settingsAction("Open settings and register the folder where Codex should work.")]
     },
     "setup-required"
   );
@@ -17818,10 +17117,10 @@ function agentThreadResumeErrorResult(error: AgentThreadResumeError): ToolResult
     retryable: error.retryable,
     probe: error.probe,
     nextActions: error.code === "AGENT_ORPHANED"
-      ? ["Start an explicit fresh context for this Agent after reviewing the lost thread continuity."]
+      ? [guidance("Start an explicit fresh context for this Agent after reviewing the lost thread continuity.")]
       : error.code === "AGENT_THREAD_BUSY"
-        ? ["Wait for the active turn to finish and retry the same logical request."]
-        : ["Retry the same logical request; do not replace or detach the Agent thread."]
+        ? [guidance("Wait for the active turn to finish and retry the same logical request.")]
+        : [guidance("Retry the same logical request; do not replace or detach the Agent thread.")]
   });
 }
 
@@ -17832,7 +17131,7 @@ function taskPreflightErrorResult(
   const nextActions = structuredErrorNextActions(errorValue);
   const error = normalizeStructuredError(errorValue);
   const structured = codexTaskOutputSchema.parse({
-    contractVersion: "1",
+    contractVersion: "4",
     kind: "task",
     state: status,
     terminal: true,
@@ -17844,11 +17143,12 @@ function taskPreflightErrorResult(
     threadId: null,
     projectName: null,
     requestId: null,
+    approvedFollowups: null,
     jobVersion: null,
     activityVersion: null,
-    executionMode: null,
     backend: null,
     sandbox: null,
+    completionDeliveryPolicy: null,
     requestedModel: null,
     requestedReasoningEffort: null,
     actualModel: null,
@@ -17877,4 +17177,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isInputInteraction(interaction: CodexPendingInteraction): boolean {
   return interaction.kind === "user-input" || interaction.kind === "mcp-elicitation";
+}
+
+export function retiredTaskDeliveryError(code: string, message: string): ToolResult {
+  return taskPreflightErrorResult({ code, message, retryable: false });
 }

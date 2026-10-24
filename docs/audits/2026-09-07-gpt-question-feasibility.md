@@ -149,3 +149,7 @@ npx tsx scripts/probe-question-card-browser.ts
 ```
 
 `scripts/probe-gpt-question-feasibility.ts`는 구조화된 요청만을 기대했던 최초 가설의 검사기다. 현재 계정의 메시지형 동작에서는 제한 시간으로 종료되며, 그 실패를 포함해 증거를 보존했다. 실제 로그인 검사는 명시적 `--run-authenticated` 옵션이 필요하다. 모든 검사기는 운영 CLI 파일·설정·서비스를 변경하지 않는다.
+
+> 2026-09-29 정정: 과거 검사는 운영 `auth.json`을 임시 홈에 복제했다.
+> 원본 파일이 그대로여도 복제본의 토큰 갱신은 원래 로그인 세션에 영향을
+> 줄 수 있다. 현재 실 인증 스크립트는 [독립 시험 인증](../codex-auth-connections.md#live-test-credentials)을 요구한다.

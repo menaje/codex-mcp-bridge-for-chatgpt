@@ -3,6 +3,21 @@ import XCTest
 @testable import CodexBridgeKit
 
 final class RemoteConnectionTests: XCTestCase {
+    func testConfigurationGuardEncodesUnconfiguredEndpointAsNullAndLegacyRequestsOmitTheGuard() throws {
+        let expected = try JSONDecoder().decode(RemoteManagementConfiguration.self, from: Data(#"{"serverId":"11111111-1111-4111-8111-111111111111","enabled":false,"endpoint":null,"displayName":"fixture"}"#.utf8))
+        let guarded = RemoteManagementConfigureParameters(enabled: true, endpoint: "https://fixture.example", displayName: "draft", expectedConfiguration: expected)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(guarded)) as? [String: Any])
+        let guardObject = try XCTUnwrap(object["expectedConfiguration"] as? [String: Any])
+        XCTAssertTrue(guardObject["endpoint"] is NSNull)
+        let legacy = RemoteManagementConfigureParameters(enabled: true, endpoint: "https://fixture.example", displayName: "draft")
+        let legacyObject = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy)) as? [String: Any])
+        XCTAssertNil(legacyObject["expectedConfiguration"])
+    }
+
+    func testRemoteTransportUsesTheBridgeSkillEnvelopeLimit() {
+        XCTAssertEqual(remoteCompanionMaximumResponseBytes, bridgeSkillTransportEnvelopeMaxBytes)
+    }
+
     func testLivePinnedPairingWhenRequested() async throws {
         guard let invitation = ProcessInfo.processInfo.environment[
             "CODEX_MCP_BRIDGE_LIVE_REMOTE_INVITATION"
@@ -130,6 +145,23 @@ final class RemoteConnectionTests: XCTestCase {
             serverId: hello.server.id,
             certificateSha256: hello.server.certificateSha256
         ))
+        let previousProtocol = RemoteCompanionHello(
+            protocol: RemoteServerProtocolInfo(
+                name: remoteCompanionProtocolName,
+                version: remoteCompanionProtocolVersion - 1
+            ),
+            server: hello.server,
+            bridge: hello.bridge,
+            capabilities: hello.capabilities
+        )
+        XCTAssertThrowsError(try previousProtocol.validate(
+            serverId: hello.server.id,
+            certificateSha256: hello.server.certificateSha256
+        )) { error in
+            guard case RemoteCompanionError.incompatibleProtocol = error else {
+                return XCTFail("Expected incompatibleProtocol, got \(error)")
+            }
+        }
         XCTAssertThrowsError(try hello.validate(
             serverId: "22222222-2222-4222-8222-222222222222",
             certificateSha256: hello.server.certificateSha256

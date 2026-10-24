@@ -1,9 +1,12 @@
 import { existsSync, lstatSync, mkdtempSync } from "node:fs";
 import { createConnection } from "node:net";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  COMPANION_MAX_REQUEST_BYTES,
+  COMPANION_MAX_RESPONSE_BYTES,
   COMPANION_PROTOCOL_NAME,
   COMPANION_PROTOCOL_VERSION,
   REMOTE_COMPANION_APPLICATION_METHODS,
@@ -11,6 +14,8 @@ import {
   type BridgeCompanionServer,
   type RemoteCompanionControl
 } from "../src/companionServer.js";
+import { BRIDGE_SKILL_LIMITS } from "../src/skillLibrary.js";
+import { RuntimeDrainGate, type RuntimeDrainTarget } from "../src/runtimeDrain.js";
 import type {
   BridgeApplicationService,
   DashboardView,
@@ -24,6 +29,92 @@ afterEach(async () => {
 });
 
 describe("native companion server", () => {
+  it("keeps opaque completion notification delivery on the local socket", async () => {
+    const socketPath = temporarySocketPath();
+    const service = fakeApplicationService();
+    const leaseOwner = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    service.claimNativeCompletionNotifications = vi.fn(async () => [{
+      eventId: "completion-" + "a".repeat(64),
+      outboxId: 7
+    }]);
+    service.markNativeCompletionNotificationsDelivered = vi.fn(async () => undefined);
+    service.releaseNativeCompletionNotifications = vi.fn(async () => undefined);
+    service.nativeCompletionAvailability = vi.fn(async () => ({ available: false, nextAvailableAt: 123_000 }));
+    servers.push(await startBridgeCompanionServer({ socketPath, applicationService: service }));
+
+    const hello = await request(socketPath, {
+      jsonrpc: "2.0", id: "completion-hello", method: "companion.hello", params: {}
+    });
+    expect(hello.result.capabilities).toContain("completion-notifications.local-delivery");
+    expect(await request(socketPath, {
+      jsonrpc: "2.0", id: "availability", method: "completion.availability", params: {}
+    })).toMatchObject({ result: { available: false, nextAvailableAt: 123_000 } });
+    expect(REMOTE_COMPANION_APPLICATION_METHODS.has("completion.availability")).toBe(false);
+
+    const claimed = await request(socketPath, {
+      jsonrpc: "2.0", id: "completion-claim", method: "completion.claim",
+      params: { leaseOwner, limit: 2 }
+    });
+    expect(claimed).toMatchObject({
+      result: { events: [{ eventId: "completion-" + "a".repeat(64), outboxId: 7 }] }
+    });
+    expect(Object.keys(claimed.result.events[0]).sort()).toEqual(["eventId", "outboxId"]);
+    expect(service.claimNativeCompletionNotifications).toHaveBeenCalledWith({ leaseOwner, limit: 2 });
+
+    const mutation = { leaseOwner, outboxIds: [7] };
+    expect(await request(socketPath, {
+      jsonrpc: "2.0", id: "completion-delivered", method: "completion.delivered", params: mutation
+    })).toMatchObject({ result: { ok: true } });
+    expect(service.markNativeCompletionNotificationsDelivered).toHaveBeenCalledWith(mutation);
+    expect(await request(socketPath, {
+      jsonrpc: "2.0", id: "completion-release", method: "completion.release", params: mutation
+    })).toMatchObject({ result: { ok: true } });
+    expect(service.releaseNativeCompletionNotifications).toHaveBeenCalledWith(mutation);
+    expect(REMOTE_COMPANION_APPLICATION_METHODS.has("completion.claim")).toBe(false);
+
+    expect(await request(socketPath, {
+      jsonrpc: "2.0", id: "completion-invalid", method: "completion.claim",
+      params: { leaseOwner: "not-a-uuid" }
+    })).toHaveProperty("error");
+    expect(service.claimNativeCompletionNotifications).toHaveBeenCalledTimes(1);
+  });
+
+  it("reserves native completion control while ordinary socket requests are stalled", async () => {
+    const socketPath = temporarySocketPath();
+    const service = fakeApplicationService();
+    const snapshot = await service.dashboardSnapshot();
+    const releases: Array<() => void> = [];
+    service.dashboardSnapshot = vi.fn(() => new Promise<DashboardView>(resolve => {
+      releases.push(() => resolve(snapshot));
+    }));
+    service.markNativeCompletionNotificationsDelivered = vi.fn(async () => undefined);
+    servers.push(await startBridgeCompanionServer({ socketPath, applicationService: service }));
+    const ordinary = Array.from({ length: 8 }, (_, index) => request(socketPath, {
+      jsonrpc: "2.0", id: `held-${index}`, method: "dashboard.snapshot", params: {}
+    }));
+    try {
+      const deadline = Date.now() + 3_000;
+      while (releases.length < 8 && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      expect(releases).toHaveLength(8);
+      expect(await request(socketPath, {
+        jsonrpc: "2.0", id: "ordinary-overflow", method: "settings.snapshot", params: {}
+      })).toMatchObject({ error: { message: expect.stringContaining("COMPANION_CAPACITY") } });
+      const leaseOwner = randomUUID();
+      expect(await request(socketPath, {
+        jsonrpc: "2.0", id: "native-control", method: "completion.delivered",
+        params: { leaseOwner, outboxIds: [7] }
+      })).toMatchObject({ result: { ok: true } });
+      expect(service.markNativeCompletionNotificationsDelivered).toHaveBeenCalledWith({
+        leaseOwner, outboxIds: [7]
+      });
+    } finally {
+      for (const release of releases) release();
+      await Promise.allSettled(ordinary);
+    }
+  }, 12_000);
+
   it("keeps exact-target conversation handoff on the private local socket", async () => {
     const socketPath=temporarySocketPath(),service=fakeApplicationService();
     service.threadHandoff=vi.fn(async () => ({phase:"unsubscribed",reason:"upstream-unload-grace",requested:true,canOpen:false}));
@@ -35,6 +126,248 @@ describe("native companion server", () => {
     expect(await request(socketPath,{jsonrpc:"2.0",id:2,method:"thread.handoff",params:{...params,codexThreadUrl:"https://example.com"}})).toHaveProperty("error");
     expect(service.threadHandoff).toHaveBeenCalledTimes(1);
   });
+  it("uses one free-form Bridge Markdown skill contract on the native socket", async () => {
+    const socketPath = temporarySocketPath();
+    const service = fakeApplicationService();
+    const first = {
+      skillId: `bridge_${"a".repeat(32)}`,
+      source: "bridge" as const,
+      version: "1",
+      name: "Report review",
+      description: "Review reports.",
+      contentDigest: "b".repeat(64),
+      enabled: true,
+      availability: "available" as const
+    };
+    service.skillLibrarySnapshot = vi.fn(async () => ({ skills: [first] }));
+    service.readBridgeSkill = vi.fn(async () => ({
+      skill: first,
+      content: "# Review\n\nCheck every claim.",
+      files: [{ path: "references/evidence.md", format: "markdown" as const, bytes: 21, contentDigest: "c".repeat(64) }],
+      format: "markdown" as const,
+      legacy: false,
+      sourceSnapshot: "versioned-bridge-record" as const,
+      warnings: []
+    }));
+    service.readBridgeSkillFile = vi.fn(async (_reference, filePath) => ({
+      kind: "skill-file" as const,
+      skill: first,
+      path: filePath,
+      content: "# Supporting evidence",
+      format: "markdown" as const,
+      bytes: 21,
+      contentDigest: "c".repeat(64)
+    }));
+    service.listBridgeSkillVersions = vi.fn(async () => ({
+      skillId: first.skillId,
+      source: "bridge" as const,
+      currentVersion: "1",
+      enabled: true,
+      versions: [{
+        skillId: first.skillId,
+        source: "bridge" as const,
+        version: "1",
+        name: first.name,
+        description: first.description,
+        contentDigest: first.contentDigest,
+        createdAt: "2026-09-15T00:00:00.000Z",
+        format: "markdown" as const,
+        legacy: false
+      }]
+    }));
+    service.createBridgeSkill = vi.fn(async () => first);
+    service.updateBridgeSkill = vi.fn(async () => ({ ...first, version: "2" }));
+    service.restoreBridgeSkill = vi.fn(async () => ({ ...first, version: "3" }));
+    service.setBridgeSkillEnabled = vi.fn(async () => ({ ...first, enabled: false, availability: "disabled" as const }));
+    service.deleteBridgeSkill = vi.fn(async () => ({
+      skillId: first.skillId,
+      source: "bridge" as const,
+      deletedAt: "2026-09-15T00:00:00.000Z"
+    }));
+    const uploadId = "11111111-1111-4111-8111-111111111111";
+    service.beginBridgeSkillPackageUpload = vi.fn(async () => ({
+      uploadId, expiresAt: "2026-09-15T00:10:00.000Z", chunkMaxBytes: 524_288
+    }));
+    service.appendBridgeSkillPackageUpload = vi.fn(async () => ({ receivedBytes: 3, nextChunk: 1 }));
+    service.inspectBridgeSkillPackageUpload = vi.fn(async () => ({
+      uploadId,
+      expiresAt: "2026-09-15T00:10:00.000Z",
+      files: [{ path: "document.md", format: "markdown" as const, bytes: 8, contentDigest: "d".repeat(64) }],
+      suggestedMainPath: "document.md",
+      ignored: [],
+      strippedWrapper: null
+    }));
+    service.createBridgeSkillFromPackage = vi.fn(async () => first);
+    service.updateBridgeSkillFromPackage = vi.fn(async () => ({ ...first, version: "2" }));
+    service.exportBridgeSkillPackage = vi.fn(async () => ({
+      fileName: `${first.skillId}-v1.zip`, mediaType: "application/zip" as const,
+      bytes: 3, contentDigest: "e".repeat(64), data: "emlw"
+    }));
+    servers.push(await startBridgeCompanionServer({ socketPath, applicationService: service }));
+
+    const hello = await request(socketPath, {
+      jsonrpc: "2.0", id: "skills-hello", method: "companion.hello", params: {}
+    });
+    expect(hello.result.capabilities).toEqual(expect.arrayContaining(["skills.read", "skills.write", "skills.package"]));
+    await expect(request(socketPath, {
+      jsonrpc: "2.0", id: "skills-snapshot", method: "skills.snapshot", params: {}
+    })).resolves.toMatchObject({ result: { skills: [first] } });
+    await expect(request(socketPath, {
+      jsonrpc: "2.0", id: "skills-read", method: "skills.read",
+      params: { skillId: first.skillId, source: "bridge", version: "1" }
+    })).resolves.toMatchObject({ result: {
+      content: "# Review\n\nCheck every claim.", format: "markdown",
+      files: [{ path: "references/evidence.md" }]
+    } });
+    await expect(request(socketPath, {
+      jsonrpc: "2.0", id: "skills-read-file", method: "skills.read-file",
+      params: { skillId: first.skillId, source: "bridge", version: "1", path: "references/evidence.md" }
+    })).resolves.toMatchObject({ result: { kind: "skill-file", path: "references/evidence.md" } });
+    expect(service.readBridgeSkillFile).toHaveBeenCalledWith(
+      expect.objectContaining({ skillId: first.skillId, version: "1" }), "references/evidence.md"
+    );
+    await expect(request(socketPath, {
+      jsonrpc: "2.0", id: "skills-reference-removed", method: "skills.reference", params: {}
+    })).resolves.toHaveProperty("error");
+
+    const create = {
+      requestId: randomUUID(), name: "Report review", description: "Review reports.", content: "# Review",
+      files: [{ path: "references/evidence.md", content: "# Evidence" }]
+    };
+    await request(socketPath, { jsonrpc: "2.0", id: "skills-create", method: "skills.create", params: create });
+    expect(service.createBridgeSkill).toHaveBeenCalledWith(create);
+
+    const scalarBoundedCreate = {
+      requestId: randomUUID(), name: "😀".repeat(BRIDGE_SKILL_LIMITS.nameMaxCharacters), content: "# Unicode"
+    };
+    await expect(request(socketPath, {
+      jsonrpc: "2.0", id: "skills-create-scalar-bound", method: "skills.create", params: scalarBoundedCreate
+    })).resolves.toMatchObject({ result: { skillId: first.skillId } });
+    expect(service.createBridgeSkill).toHaveBeenLastCalledWith(scalarBoundedCreate);
+    const createCalls = vi.mocked(service.createBridgeSkill).mock.calls.length;
+    await expect(request(socketPath, {
+      jsonrpc: "2.0", id: "skills-create-scalar-overflow", method: "skills.create",
+      params: { ...scalarBoundedCreate, requestId: randomUUID(), name: `${scalarBoundedCreate.name}😀` }
+    })).resolves.toHaveProperty("error");
+    expect(service.createBridgeSkill).toHaveBeenCalledTimes(createCalls);
+
+    const update = {
+      requestId: randomUUID(), skillId: first.skillId, expectedVersion: "1", content: "# Check evidence",
+      files: { remove: ["references/evidence.md"] }
+    };
+    await request(socketPath, { jsonrpc: "2.0", id: "skills-update", method: "skills.update", params: update });
+    expect(service.updateBridgeSkill).toHaveBeenCalledWith(update);
+
+    const setEnabled = { requestId: randomUUID(), skillId: first.skillId, expectedVersion: "3", enabled: false };
+    await request(socketPath, { jsonrpc: "2.0", id: "skills-disable", method: "skills.set-enabled", params: setEnabled });
+    expect(service.setBridgeSkillEnabled).toHaveBeenCalledWith(setEnabled);
+
+    const deletion = { requestId: randomUUID(), skillId: first.skillId, expectedVersion: "3" };
+    const deleted = await request(socketPath, {
+      jsonrpc: "2.0", id: "skills-delete", method: "skills.delete", params: deletion
+    });
+    expect(deleted).toMatchObject({ result: { skillId: first.skillId, source: "bridge" } });
+    expect(Object.keys(deleted.result).sort()).toEqual(["deletedAt", "skillId", "source"]);
+    expect(service.deleteBridgeSkill).toHaveBeenCalledWith(deletion);
+
+    expect(await request(socketPath, {
+      jsonrpc: "2.0", id: "package-begin", method: "skills.package-upload.begin", params: {}
+    })).toMatchObject({ result: { uploadId, chunkMaxBytes: 524_288 } });
+    expect(await request(socketPath, {
+      jsonrpc: "2.0", id: "package-chunk", method: "skills.package-upload.chunk",
+      params: { uploadId, chunkIndex: 0, data: "emlw" }
+    })).toMatchObject({ result: { receivedBytes: 3, nextChunk: 1 } });
+    expect(await request(socketPath, {
+      jsonrpc: "2.0", id: "package-inspect", method: "skills.package-upload.inspect", params: { uploadId }
+    })).toMatchObject({ result: { suggestedMainPath: "document.md" } });
+    const packageCreate = { requestId: randomUUID(), name: "Imported", uploadId, mainPath: "document.md" };
+    await request(socketPath, { jsonrpc: "2.0", id: "package-create", method: "skills.package.create", params: packageCreate });
+    expect(service.createBridgeSkillFromPackage).toHaveBeenCalledWith(packageCreate);
+    const packageUpdate = {
+      requestId: randomUUID(), skillId: first.skillId, expectedVersion: "1", uploadId,
+      mainPath: null, includePaths: ["references/evidence.md"]
+    };
+    await request(socketPath, { jsonrpc: "2.0", id: "package-update", method: "skills.package.update", params: packageUpdate });
+    expect(service.updateBridgeSkillFromPackage).toHaveBeenCalledWith(packageUpdate);
+    expect(await request(socketPath, {
+      jsonrpc: "2.0", id: "package-export", method: "skills.package.export",
+      params: { skillId: first.skillId, source: "bridge", version: "1" }
+    })).toMatchObject({ result: { mediaType: "application/zip", data: "emlw" } });
+
+    const wrongSource = await request(socketPath, {
+      jsonrpc: "2.0", id: "skills-wrong-source", method: "skills.read",
+      params: { skillId: first.skillId, source: "codex", version: "1" }
+    });
+    expect(wrongSource).toHaveProperty("error");
+  });
+
+  it("carries the full worst-case JSON-escaped Bridge skill content over the native socket", async () => {
+    const socketPath = temporarySocketPath();
+    const service = fakeApplicationService();
+    const content = "\u0001".repeat(BRIDGE_SKILL_LIMITS.contentMaxBytes);
+    const skill = {
+      skillId: `bridge_${"c".repeat(32)}`,
+      source: "bridge" as const,
+      version: "1",
+      name: "Maximum skill",
+      description: "",
+      contentDigest: "d".repeat(64),
+      enabled: true,
+      availability: "available" as const
+    };
+    service.skillLibrarySnapshot = vi.fn(async () => ({ skills: [skill] }));
+    service.createBridgeSkill = vi.fn(async () => skill);
+    service.readBridgeSkill = vi.fn(async () => ({
+      skill,
+      content,
+      files: [],
+      format: "markdown" as const,
+      legacy: false,
+      sourceSnapshot: "versioned-bridge-record" as const,
+      warnings: []
+    }));
+    service.readBridgeSkillFile = vi.fn(async (_reference, filePath) => ({
+      kind: "skill-file" as const,
+      skill,
+      path: filePath,
+      content: "",
+      format: "markdown" as const,
+      bytes: 0,
+      contentDigest: "e".repeat(64)
+    }));
+    service.listBridgeSkillVersions = vi.fn(async () => ({
+      skillId: skill.skillId,
+      source: "bridge" as const,
+      currentVersion: skill.version,
+      enabled: true,
+      versions: []
+    }));
+    service.updateBridgeSkill = vi.fn(async () => skill);
+    service.restoreBridgeSkill = vi.fn(async () => skill);
+    service.setBridgeSkillEnabled = vi.fn(async () => skill);
+    service.deleteBridgeSkill = vi.fn(async () => ({
+      skillId: skill.skillId,
+      source: "bridge" as const,
+      deletedAt: "2026-09-15T00:00:00.000Z"
+    }));
+    servers.push(await startBridgeCompanionServer({ socketPath, applicationService: service }));
+
+    expect(COMPANION_MAX_REQUEST_BYTES).toBe(BRIDGE_SKILL_LIMITS.mutationWireMaxBytes);
+    expect(COMPANION_MAX_RESPONSE_BYTES).toBe(BRIDGE_SKILL_LIMITS.mutationWireMaxBytes);
+    const create = await request(socketPath, {
+      jsonrpc: "2.0", id: "max-content-create", method: "skills.create",
+      params: { requestId: randomUUID(), name: skill.name, content }
+    });
+    expect(create).toMatchObject({ result: { skillId: skill.skillId } });
+    expect(service.createBridgeSkill).toHaveBeenCalledWith(expect.objectContaining({ content }));
+
+    const read = await request(socketPath, {
+      jsonrpc: "2.0", id: "max-content-read", method: "skills.read",
+      params: { skillId: skill.skillId, source: "bridge", version: "1" }
+    });
+    expect(read).toMatchObject({ result: { format: "markdown" } });
+    expect(read.result.content).toBe(content);
+  }, 20_000);
   it("serves lightweight health independently of a stalled admission snapshot", async () => {
     const socketPath = temporarySocketPath();
     const service = fakeApplicationService();
@@ -102,11 +435,69 @@ describe("native companion server", () => {
     const socketPath = temporarySocketPath(), applicationService = fakeApplicationService();
     applicationService.historyAction = vi.fn(async () => ({ok:true as const}));
     servers.push(await startBridgeCompanionServer({socketPath,applicationService}));
-    const params = {rowKey:"a".repeat(32),expectedRevision:"b".repeat(64),action:"archive",requestId:"11111111-1111-4111-8111-111111111111"};
+    const params = {rowKey:"a".repeat(32),expectedRevision:"b".repeat(64),action:"acknowledge",requestId:"11111111-1111-4111-8111-111111111111"};
     expect(await request(socketPath,{jsonrpc:"2.0",id:1,method:"dashboard.history",params})).toMatchObject({result:{ok:true}});
     expect(applicationService.historyAction).toHaveBeenCalledWith(params);
     expect(await request(socketPath,{jsonrpc:"2.0",id:2,method:"dashboard.history",params:{...params,force:true}})).toHaveProperty("error");
     expect(applicationService.historyAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads one Agent's deferred Dashboard history through the private socket", async () => {
+    const socketPath = temporarySocketPath(), applicationService = fakeApplicationService();
+    applicationService.dashboardHistoryDetail = vi.fn(async ({ rowKey }) => ({
+      kind: "dashboard-history" as const, rowKey, history: [], historyCount: 0,
+      historyRevision: "b".repeat(64)
+    }));
+    servers.push(await startBridgeCompanionServer({ socketPath, applicationService }));
+    const params = { rowKey: "a".repeat(32) };
+    expect(await request(socketPath, {
+      jsonrpc: "2.0", id: "history-detail", method: "dashboard.history-detail", params
+    })).toMatchObject({ result: {
+      kind: "dashboard-history", rowKey: params.rowKey, historyRevision: "b".repeat(64)
+    } });
+    expect(applicationService.dashboardHistoryDetail).toHaveBeenCalledWith(params, expect.objectContaining({ signal: expect.any(AbortSignal), deadlineAt: expect.any(Number) }));
+    expect(await request(socketPath, {
+      jsonrpc: "2.0", id: "invalid-history-detail", method: "dashboard.history-detail", params: { rowKey: "bad" }
+    })).toHaveProperty("error");
+  });
+
+  it("forwards Job mode and independent Background offsets through the native read boundary", async () => {
+    const socketPath=temporarySocketPath(),applicationService=fakeApplicationService();
+    servers.push(await startBridgeCompanionServer({socketPath,applicationService}));
+    expect(await request(socketPath,{jsonrpc:"2.0",id:"background-page",method:"dashboard.snapshot",params:{historyMode:"jobs",backgroundOffset:12,enrich:true,includeHistory:false}})).toHaveProperty("result");
+    expect(applicationService.dashboardSnapshot).toHaveBeenCalledWith(expect.objectContaining({historyMode:"jobs",backgroundOffset:12,inspectRuntime:true,includeHistory:false}),expect.objectContaining({signal:expect.any(AbortSignal)}));
+    expect(await request(socketPath,{jsonrpc:"2.0",id:"bad-background-page",method:"dashboard.snapshot",params:{historyMode:"jobs",backgroundOffset:-1}})).toHaveProperty("error");
+    expect(applicationService.dashboardSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("validates and forwards exact scoped execution detail through the private read API", async () => {
+    const socketPath=temporarySocketPath(),applicationService=fakeApplicationService();
+    applicationService.dashboardExecutionDetail=vi.fn(async args=>({kind:"dashboard-execution",...args,executionRevision:"a".repeat(64),policyRevision:"b".repeat(64),nextExpiryAt:null,execution:{}} as any));
+    servers.push(await startBridgeCompanionServer({socketPath,applicationService}));
+    const params={scopeId:"11111111-1111-4111-8111-111111111111",jobId:"legacy-execution",expectedExecutionRevision:"a".repeat(64)};
+    expect(await request(socketPath,{jsonrpc:"2.0",id:1,method:"dashboard.execution-detail",params})).toMatchObject({result:{kind:"dashboard-execution",jobId:params.jobId}});
+    expect(applicationService.dashboardExecutionDetail).toHaveBeenCalledWith(params,expect.objectContaining({signal:expect.any(AbortSignal),deadlineAt:expect.any(Number)}));
+    expect(await request(socketPath,{jsonrpc:"2.0",id:2,method:"dashboard.execution-detail",params:{...params,scopeId:"wrong"}})).toHaveProperty("error");
+    expect(applicationService.dashboardExecutionDetail).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads a bounded model description history page through the settings read capability", async () => {
+    const socketPath = temporarySocketPath(), applicationService = fakeApplicationService();
+    servers.push(await startBridgeCompanionServer({ socketPath, applicationService }));
+    const params = { modelId: "gpt-current", beforeVersion: 3 };
+    expect(await request(socketPath, {
+      jsonrpc: "2.0", id: "description-history", method: "settings.model-description-history", params
+    })).toMatchObject({ result: {
+      kind: "model-description-history", modelId: "gpt-current",
+      versions: [{ version: 2, description: "Previous" }]
+    } });
+    expect(applicationService.modelDescriptionHistory).toHaveBeenCalledWith(params);
+    expect(REMOTE_COMPANION_APPLICATION_METHODS.has("settings.model-description-history")).toBe(true);
+    expect(await request(socketPath, {
+      jsonrpc: "2.0", id: "invalid-history", method: "settings.model-description-history",
+      params: { modelId: "gpt-current", beforeVersion: -1 }
+    })).toHaveProperty("error");
+    expect(applicationService.modelDescriptionHistory).toHaveBeenCalledTimes(1);
   });
 
   it("routes Dashboard and Settings through the shared application service", async () => {
@@ -129,7 +520,7 @@ describe("native companion server", () => {
       idleOffset: 7,
       inspectRuntime: false,
       includeHistory: false
-    });
+    }, expect.objectContaining({ signal: expect.any(AbortSignal), deadlineAt: expect.any(Number) }));
     expect(dashboard).toMatchObject({ id: 1, result: { kind: "dashboard" } });
 
     await request(socketPath, {
@@ -146,7 +537,7 @@ describe("native companion server", () => {
       idleOffset: undefined,
       inspectRuntime: true,
       includeHistory: true
-    });
+    }, expect.objectContaining({ signal: expect.any(AbortSignal), deadlineAt: expect.any(Number) }));
 
     await request(socketPath, {
       jsonrpc: "2.0",
@@ -162,7 +553,7 @@ describe("native companion server", () => {
       idleOffset: undefined,
       inspectRuntime: true,
       includeHistory: true
-    });
+    }, expect.objectContaining({ signal: expect.any(AbortSignal), deadlineAt: expect.any(Number) }));
 
     const settings = await request(socketPath, {
       jsonrpc: "2.0",
@@ -170,7 +561,7 @@ describe("native companion server", () => {
       method: "settings.snapshot",
       params: { refreshModels: true }
     });
-    expect(applicationService.settingsSnapshot).toHaveBeenCalledWith({ refreshModels: true });
+    expect(applicationService.settingsSnapshot).toHaveBeenCalledWith({ refreshModels: true }, expect.objectContaining({ signal: expect.any(AbortSignal), deadlineAt: expect.any(Number) }));
     expect(settings).toMatchObject({ id: 2, result: { settings: { settingsRevision: 3 } } });
 
     const mutation = {
@@ -219,7 +610,7 @@ describe("native companion server", () => {
       idleOffset: undefined,
       inspectRuntime: false,
       includeHistory: false
-    });
+    }, expect.objectContaining({ signal: expect.any(AbortSignal), deadlineAt: expect.any(Number) }));
   });
 
   it("localizes native Settings warnings using the requested locale", async () => {
@@ -249,6 +640,40 @@ describe("native companion server", () => {
         "프로젝트 폴더를 Codex 설정에서만 관리하려면 이 값을 제거하세요."
     );
     expect(response.result.scopeNotice).not.toBe("unlocalized");
+  });
+
+  it("keeps an automatic-language settings update in the caller locale without persisting presentation metadata", async () => {
+    const socketPath = temporarySocketPath();
+    const applicationService = fakeApplicationService();
+    const rawView = {
+      settings: { settingsRevision: 4, registryRevision: 0, uiLocalePreference: "auto" },
+      catalog: { stale: false, warning: null, models: [] },
+      warnings: [
+        "CODEX_MCP_BRIDGE_ROOTS is a legacy compatibility restriction. " +
+          "Remove it to manage all project folders only from Codex settings."
+      ],
+      scopeNotice: "unlocalized"
+    } as SettingsView;
+    vi.mocked(applicationService.updateSettings).mockResolvedValue(rawView);
+    servers.push(await startBridgeCompanionServer({ socketPath, applicationService }));
+
+    const mutation = {
+      expectedSettingsRevision: 3,
+      operation: { kind: "patch", settings: { maxConcurrentJobs: 4 } }
+    };
+    const response = await request(socketPath, {
+      jsonrpc: "2.0",
+      id: "automatic-ko-update",
+      method: "settings.update",
+      params: { ...mutation, locale: "ko-KR" }
+    });
+
+    expect(applicationService.updateSettings).toHaveBeenCalledWith(mutation);
+    expect(response.result.warnings[0]).toContain("이전 버전 호환용 제한");
+    expect(response.result.presentation.warnings[0]).toEqual({
+      key: "settings.warning.legacyRoots",
+      parameters: {}
+    });
   });
 
   it("rejects malformed requests without closing the server", async () => {
@@ -315,6 +740,76 @@ describe("native companion server", () => {
     expect(applicationService.cancelDrain).toHaveBeenCalledOnce();
   });
 
+  it.each(["runtime.beginDrain", "runtime.cancelDrain"] as const)("forwards the expected receiver identity for %s and leaves replacement B unchanged", async method => {
+    const socketPath = temporarySocketPath(), applicationService = fakeApplicationService();
+    const targetA: RuntimeDrainTarget = { launcherPid: 100, token: randomUUID(), requestId: randomUUID(),
+      attempt: 1, deadlineAt: Date.now() + 300_000 };
+    const targetB = { ...targetA, launcherPid: 200, token: randomUUID() };
+    const admissionB = { acceptingNewJobs: method !== "runtime.cancelDrain" };
+    const receiverB = new RuntimeDrainGate(admissionB, targetB);
+    applicationService.beginDrain = vi.fn(async options => {
+      receiverB.begin(options?.expectedRuntime);
+      return applicationService.runtimeSnapshot();
+    });
+    applicationService.cancelDrain = vi.fn(async options => {
+      receiverB.cancel(options?.expectedRuntime);
+      return applicationService.runtimeSnapshot();
+    });
+    servers.push(await startBridgeCompanionServer({ socketPath, applicationService }));
+    const original = admissionB.acceptingNewJobs;
+    const reply = await request(socketPath, { jsonrpc: "2.0", id: "targeted-drain",
+      method, params: { expectedRuntime: targetA } });
+    expect(reply).toMatchObject({ error: { message: expect.stringContaining("RUNTIME_DRAIN_TARGET_CHANGED") } });
+    expect(admissionB.acceptingNewJobs).toBe(original);
+    expect(method === "runtime.beginDrain" ? applicationService.beginDrain : applicationService.cancelDrain)
+      .toHaveBeenCalledWith({ expectedRuntime: targetA });
+  });
+
+  it("socket replacement between preparing cancelDrain and connecting cannot reopen the replacement service", async () => {
+    const socketPath = temporarySocketPath();
+    const identityA: RuntimeDrainTarget = { launcherPid: 100, token: randomUUID(), requestId: randomUUID(),
+      attempt: 1, deadlineAt: Date.now() + 300_000 };
+    const admissionA = { acceptingNewJobs: true }, gateA = new RuntimeDrainGate(admissionA, identityA);
+    const serviceA = fakeApplicationService();
+    serviceA.beginDrain = async options => { gateA.begin(options?.expectedRuntime); return serviceA.runtimeSnapshot(); };
+    const serverA = await startBridgeCompanionServer({ socketPath, applicationService: serviceA }); servers.push(serverA);
+    await request(socketPath, { jsonrpc: "2.0", id: "owned-A-drain", method: "runtime.beginDrain", params: { expectedRuntime: identityA } });
+    // Caller has already observed A/constructed its cancel. The name now
+    // resolves to B before the new cancellation connection is established.
+    const cancel = { jsonrpc: "2.0", id: "old-A-cancel", method: "runtime.cancelDrain", params: { expectedRuntime: identityA } };
+    await serverA.close(); servers.splice(servers.indexOf(serverA), 1);
+    const admissionB = { acceptingNewJobs: false };
+    const gateB = new RuntimeDrainGate(admissionB, { ...identityA, launcherPid: 200, token: randomUUID() });
+    const serviceB = fakeApplicationService();
+    serviceB.cancelDrain = async options => { gateB.cancel(options?.expectedRuntime); return serviceB.runtimeSnapshot(); };
+    servers.push(await startBridgeCompanionServer({ socketPath, applicationService: serviceB }));
+    expect(await request(socketPath, cancel)).toMatchObject({ error: { message: expect.stringContaining("RUNTIME_DRAIN_TARGET_CHANGED") } });
+    expect(admissionB.acceptingNewJobs).toBe(false);
+  });
+
+  it("targeted cancel cannot reopen a later ordinary drain through the companion boundary", async () => {
+    const socketPath = temporarySocketPath(), applicationService = fakeApplicationService();
+    const identity: RuntimeDrainTarget = { launcherPid: 100, token: randomUUID(), requestId: randomUUID(),
+      attempt: 1, deadlineAt: Date.now() + 300_000 };
+    const admission = { acceptingNewJobs: true }, gate = new RuntimeDrainGate(admission, identity);
+    applicationService.beginDrain = async options => {
+      gate.begin(options?.expectedRuntime);
+      return { ...await applicationService.runtimeSnapshot(), acceptingNewJobs: admission.acceptingNewJobs };
+    };
+    applicationService.cancelDrain = async options => {
+      gate.cancel(options?.expectedRuntime);
+      return { ...await applicationService.runtimeSnapshot(), acceptingNewJobs: admission.acceptingNewJobs };
+    };
+    servers.push(await startBridgeCompanionServer({ socketPath, applicationService }));
+    await request(socketPath, { jsonrpc: "2.0", id: "begin-A", method: "runtime.beginDrain", params: { expectedRuntime: identity } });
+    await request(socketPath, { jsonrpc: "2.0", id: "ordinary-begin", method: "runtime.beginDrain", params: {} });
+    expect(await request(socketPath, { jsonrpc: "2.0", id: "late-cancel-A", method: "runtime.cancelDrain", params: { expectedRuntime: identity } }))
+      .toMatchObject({ error: { message: expect.stringContaining("RUNTIME_DRAIN_NOT_OWNED") } });
+    expect(admission.acceptingNewJobs).toBe(false);
+    expect(await request(socketPath, { jsonrpc: "2.0", id: "ordinary-cancel", method: "runtime.cancelDrain", params: {} }))
+      .toMatchObject({ result: { acceptingNewJobs: true } });
+  });
+
   it("keeps remote publication and device controls on the private local socket", async () => {
     const socketPath = temporarySocketPath();
     const remoteManagement = fakeRemoteManagement();
@@ -349,6 +844,22 @@ describe("native companion server", () => {
       displayName: "Studio"
     });
     expect(configured.result).toMatchObject({ enabled: false, serverId: expect.any(String) });
+
+    const expectedConfiguration = { serverId: configured.result.serverId, enabled: false, endpoint: null, displayName: "Studio" };
+    await request(socketPath, {
+      jsonrpc: "2.0", id: "remote-guarded", method: "remote.configure",
+      params: { enabled: true, endpoint: "https://studio.example:8766", displayName: "new", expectedConfiguration }
+    });
+    expect(remoteManagement.configure).toHaveBeenLastCalledWith({ enabled: true, endpoint: "https://studio.example:8766", displayName: "new", expectedConfiguration });
+    const calls = remoteManagement.configure.mock.calls.length;
+    for (const invalid of [ { ...expectedConfiguration, endpoint: undefined }, { ...expectedConfiguration, ignored: true } ]) {
+      const rejected = await request(socketPath, {
+        jsonrpc: "2.0", id: "remote-invalid-guard", method: "remote.configure",
+        params: { enabled: true, endpoint: "https://studio.example:8766", displayName: "new", expectedConfiguration: invalid }
+      });
+      expect(rejected.error).toBeDefined();
+    }
+    expect(remoteManagement.configure.mock.calls).toHaveLength(calls);
 
     await request(socketPath, {
       jsonrpc: "2.0",
@@ -393,6 +904,11 @@ function fakeApplicationService(): BridgeApplicationService {
     settingsSnapshot: vi.fn(async () => ({
       settings: { settingsRevision: 3 }
     }) as SettingsView),
+    modelDescriptionHistory: vi.fn(async ({ modelId }) => ({
+      kind: "model-description-history" as const, modelId,
+      versions: [{ version: 2, description: "Previous", createdAt: null }],
+      nextBeforeVersion: null
+    })),
     updateSettings: vi.fn(async () => ({
       settings: { settingsRevision: 3 }
     }) as SettingsView),
@@ -461,15 +977,15 @@ function request(
 ): Promise<Record<string, any>> {
   return new Promise((resolve, reject) => {
     const socket = createConnection(socketPath);
-    let buffer = "";
+    const chunks: string[] = [];
     socket.setEncoding("utf8");
     socket.once("connect", () => socket.write(`${JSON.stringify(payload)}\n`));
     socket.on("data", (chunk: string) => {
-      buffer += chunk;
-      const newline = buffer.indexOf("\n");
+      const newline = chunk.indexOf("\n");
+      chunks.push(newline < 0 ? chunk : chunk.slice(0, newline));
       if (newline < 0) return;
       try {
-        resolve(JSON.parse(buffer.slice(0, newline)) as Record<string, any>);
+        resolve(JSON.parse(chunks.join("")) as Record<string, any>);
       } catch (error) {
         reject(error);
       } finally {

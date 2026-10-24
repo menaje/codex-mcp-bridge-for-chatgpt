@@ -167,7 +167,8 @@ export type AssignmentContainmentCorrelation = {
 
 export type WorkerTerminationCorrelation =
   | CancellationTerminationCorrelation
-  | AssignmentContainmentCorrelation;
+  | AssignmentContainmentCorrelation
+  | { kind: "execution-containment"; correlationId: string; reasonCode: string };
 
 export function cancellationTerminationCorrelation(
   intent: CancellationIntentRecord
@@ -190,6 +191,9 @@ export function assertWorkerTerminationCorrelation(
     );
   }
   const correlation = value as Partial<WorkerTerminationCorrelation>;
+  if (correlation?.kind === "execution-containment" && correlation.correlationId &&
+      correlation.reasonCode === "EXECUTION_EVENT_RETENTION_EXHAUSTED") return;
+
   if (
     correlation.kind === "cancellation-intent" &&
     boundedIdentifier(correlation.intentId) &&

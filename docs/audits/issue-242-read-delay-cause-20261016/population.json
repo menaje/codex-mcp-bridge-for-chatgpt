@@ -1,0 +1,20 @@
+{
+  "bytes": 43839488,
+  "counts": {
+    "jobs": 1439,
+    "agents": 810,
+    "sessions": 834,
+    "job_events": 22187
+  },
+  "unarchivedJobs": 44,
+  "unarchivedPublicEvents": {
+    "count": 16739,
+    "totalBytes": 17968428,
+    "maxEventBytes": 18690
+  },
+  "unarchivedJobEventGroups": {
+    "jobs": 44,
+    "totalBytes": 17968428,
+    "maxJobBytes": 1536883
+  }
+}

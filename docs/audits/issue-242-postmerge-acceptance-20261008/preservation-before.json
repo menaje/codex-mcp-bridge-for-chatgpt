@@ -1,0 +1,115 @@
+{
+  "at": "2026-10-07T20:46:08.501033+00:00",
+  "apps": [
+    "/Applications/Codex MCP Bridge for ChatGPT.app"
+  ],
+  "fileMetadataOnly": [
+    {
+      "path": "/Users/seongsik/.codex/auth.json",
+      "bytes": 4339,
+      "mtime_ns": 1790637154167217315,
+      "mode": "0o600",
+      "readable": true,
+      "writable": true
+    },
+    {
+      "path": "/Users/seongsik/.codex/config.toml",
+      "bytes": 8875,
+      "mtime_ns": 1791358352295974066,
+      "mode": "0o600",
+      "readable": true,
+      "writable": true
+    },
+    {
+      "path": "/Users/seongsik/.codex/state_5.sqlite",
+      "bytes": 201433088,
+      "mtime_ns": 1791405186749853358,
+      "mode": "0o644",
+      "readable": true,
+      "writable": true
+    },
+    {
+      "path": "/Users/seongsik/.codex/state_5.sqlite-wal",
+      "bytes": 0,
+      "mtime_ns": 1791405478676870377,
+      "mode": "0o644",
+      "readable": true,
+      "writable": true
+    },
+    {
+      "path": "/Users/seongsik/.codex-mcp-bridge/state.sqlite",
+      "bytes": 15724544,
+      "mtime_ns": 1791405919663598130,
+      "mode": "0o600",
+      "readable": true,
+      "writable": true
+    },
+    {
+      "path": "/Users/seongsik/.codex-mcp-bridge/.env",
+      "exists": false
+    },
+    {
+      "path": "/Users/seongsik/.config/codex-mcp-bridge/.env",
+      "bytes": 774,
+      "mtime_ns": 1789267399511014765,
+      "mode": "0o600",
+      "readable": true,
+      "writable": true
+    }
+  ],
+  "processesWithoutArguments": [
+    "714     1 /System/Library/PrivateFrameworks/ViewBridge.framework/Versions/A/XPCServices/ViewBridgeAuxiliary.xpc/Contents/MacOS/ViewBridgeAuxiliary",
+    "779   594 /Users/seongsik/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3.12",
+    "4637     1 /Users/seongsik/.codex/chatgpt-meetings/versions/darwin-arm64-df15a91433b2b617b1f007a0b6c73e01a3a6e452333ec76dd1ec93bb2c2d80ca/ChatGPT Meetings.app/Contents/MacOS/ChatGPT Meetings",
+    "7597     1 /System/Library/PrivateFrameworks/GeoServices.framework/geodMachServiceBridge",
+    "8055     1 Codex MCP Bridge Execution",
+    "8109     1 Codex MCP Bridge Execution",
+    "8689     1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/154.0.8037.57/Helpers/browser_crashpad_handler",
+    "8691     1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/154.0.8037.57/Helpers/browser_crashpad_handler",
+    "31244 75484 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/154.0.8037.98/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+    "31408 75484 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/154.0.8037.98/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+    "38483     1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/154.0.8037.57/Helpers/browser_crashpad_handler",
+    "38485     1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/154.0.8037.57/Helpers/browser_crashpad_handler",
+    "41041     1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/153.0.8010.53/Helpers/browser_crashpad_handler",
+    "41043     1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/153.0.8010.53/Helpers/browser_crashpad_handler",
+    "43847     1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/154.0.8037.98/Helpers/browser_crashpad_handler",
+    "43849     1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/154.0.8037.98/Helpers/browser_crashpad_handler",
+    "52176 76020 /Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex-code-mode-host",
+    "57733 75484 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/154.0.8037.98/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+    "63830 75484 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/154.0.8037.98/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+    "67596     1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/154.0.8037.93/Helpers/browser_crashpad_handler",
+    "67599     1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/154.0.8037.93/Helpers/browser_crashpad_handler",
+    "74859 81683 /Users/seongsik/.codex-mcp-bridge/runtimes/cli/0.160.0-0aaba513-7ed3-43d4-8a4b-2447bb6373cd/package/vendor/aarch64-apple-darwin/bin/codex",
+    "75545     1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/154.0.8037.98/Helpers/browser_crashpad_handler",
+    "75547     1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/154.0.8037.98/Helpers/browser_crashpad_handler",
+    "75564 75484 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/154.0.8037.98/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+    "75565 75484 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/154.0.8037.98/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+    "75568 75484 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/154.0.8037.98/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+    "76020 75484 /Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+    "76024 75484 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/154.0.8037.98/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+    "76025 75484 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/154.0.8037.98/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+    "76096 75484 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/154.0.8037.98/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+    "76126 75484 /Users/seongsik/.codex/computer-use/Codex Computer Use.app/Contents/MacOS/SkyComputerUseService",
+    "76523 75484 /Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+    "76604 75484 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/154.0.8037.98/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+    "77749 96315 /Users/seongsik/.codex-mcp-bridge/runtimes/cli/0.160.0-0aaba513-7ed3-43d4-8a4b-2447bb6373cd/package/vendor/aarch64-apple-darwin/bin/codex-code-mode-host",
+    "77862 75484 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/154.0.8037.98/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+    "81462     1 /Applications/Codex MCP Bridge for ChatGPT.app/Contents/MacOS/CodexBridgeMenuBar",
+    "81468     1 Codex MCP Bridge Helper",
+    "81488 81468 Codex MCP Bridge Launcher",
+    "81493 81488 Codex MCP Bridge Server",
+    "81526 81493 Codex MCP Bridge State Owner",
+    "81683 81526 Codex MCP Bridge Execution",
+    "81685 81488 /opt/homebrew/Cellar/tunnel-client/0.0.14/libexec/tunnel-client",
+    "84815 84685 /Users/seongsik/.vscode/extensions/openai.chatgpt-26.930.61225-darwin-arm64/bin/macos-aarch64/codex",
+    "88734 75484 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/154.0.8037.98/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+    "88880     1 /System/Library/PrivateFrameworks/XprotectFramework.framework/Versions/A/XPCServices/XProtectBridgeService.xpc/Contents/MacOS/XProtectBridgeService",
+    "92449 81683 /Users/seongsik/.codex-mcp-bridge/runtimes/cli/0.160.0-0aaba513-7ed3-43d4-8a4b-2447bb6373cd/package/vendor/aarch64-apple-darwin/bin/codex",
+    "92451 81683 /Users/seongsik/.codex-mcp-bridge/runtimes/cli/0.160.0-0aaba513-7ed3-43d4-8a4b-2447bb6373cd/package/vendor/aarch64-apple-darwin/bin/codex",
+    "94470 92449 /Users/seongsik/.codex-mcp-bridge/runtimes/cli/0.160.0-0aaba513-7ed3-43d4-8a4b-2447bb6373cd/package/vendor/aarch64-apple-darwin/bin/codex-code-mode-host",
+    "95149 92451 /Users/seongsik/.codex-mcp-bridge/runtimes/cli/0.160.0-0aaba513-7ed3-43d4-8a4b-2447bb6373cd/package/vendor/aarch64-apple-darwin/bin/codex-code-mode-host",
+    "96315 81683 /Users/seongsik/.codex-mcp-bridge/runtimes/cli/0.160.0-0aaba513-7ed3-43d4-8a4b-2447bb6373cd/package/vendor/aarch64-apple-darwin/bin/codex"
+  ],
+  "worktrees": "worktree /Volumes/Data/Dev/codex-mcp-bridge\nHEAD ea8f93e2acbb9f4b6deca113165d27e8c9c23857\nbranch refs/heads/dev\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-candidate-20261008\nHEAD b9cb19d49e8ef9192e1044ddd5880e66c06e1cca\nbranch refs/heads/codex/issue-242-candidate-20261008\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-independent-20261008\nHEAD d1a36b52e84c90c5a3738d2d845ecb2595e0b394\nbranch refs/heads/codex/issue-242-independent-20261008\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review\nHEAD de037d99d82aa42c5a792c1d3bd9c88afb45b173\nbranch refs/heads/codex/issue-242-integration-review\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-p0-w0\nHEAD f710974b33fc40432653c815d175058cba1adaee\nbranch refs/heads/codex/issue-242-p0-w0\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-postmerge-acceptance-20261008\nHEAD 612f230b16d8ad37ddfdc718d4d3f2856c4565b0\nbranch refs/heads/codex/issue-242-postmerge-acceptance-20261008\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-r502\nHEAD e550798fe16bd5944f69f1941a98d249e84adefc\nbranch refs/heads/codex/issue-242-r502\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w1-baseline\nHEAD 8474165e523b47d881f688bd09caf2e4c78ac7af\ndetached\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w1-read-path\nHEAD 5353458221aa65aa1768f434379801d09761344c\nbranch refs/heads/codex/issue-242-w1-read-path\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w2-native\nHEAD 8474165e523b47d881f688bd09caf2e4c78ac7af\nbranch refs/heads/codex/issue-242-w2-native\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w3-completion\nHEAD 6580a196a36dacaa94fff7a6b5a101f58efff9a8\nbranch refs/heads/codex/issue-242-w3-completion\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w4-runtime\nHEAD 2eb315d529e57164b3e4a53cf24737ef3f4649e1\nbranch refs/heads/codex/issue-242-w4-runtime\n\n",
+  "branches": "refs/heads/codex/issue-242-candidate-20261008 b9cb19d49e8ef9192e1044ddd5880e66c06e1cca\nrefs/heads/codex/issue-242-independent-20261008 d1a36b52e84c90c5a3738d2d845ecb2595e0b394\nrefs/heads/codex/issue-242-integration-review de037d99d82aa42c5a792c1d3bd9c88afb45b173\nrefs/heads/codex/issue-242-p0-w0 f710974b33fc40432653c815d175058cba1adaee\nrefs/heads/codex/issue-242-postmerge-acceptance-20261008 612f230b16d8ad37ddfdc718d4d3f2856c4565b0\nrefs/heads/codex/issue-242-r502 e550798fe16bd5944f69f1941a98d249e84adefc\nrefs/heads/codex/issue-242-w1-read-path 5353458221aa65aa1768f434379801d09761344c\nrefs/heads/codex/issue-242-w2-native 8474165e523b47d881f688bd09caf2e4c78ac7af\nrefs/heads/codex/issue-242-w3-completion 6580a196a36dacaa94fff7a6b5a101f58efff9a8\nrefs/heads/codex/issue-242-w4-runtime 2eb315d529e57164b3e4a53cf24737ef3f4649e1\nrefs/heads/dev ea8f93e2acbb9f4b6deca113165d27e8c9c23857\nrefs/heads/main 8bb81b1b27745532b7bc2113bb00e66c43df3bbb\n"
+}

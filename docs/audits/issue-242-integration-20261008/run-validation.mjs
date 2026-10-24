@@ -1,0 +1,42 @@
+import { spawn, execFileSync } from 'node:child_process';
+import { openSync, closeSync, writeFileSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+const cwd='/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review';
+const out=path.join(cwd,'docs/audits/issue-242-integration-20261008');
+const tmpdir='/tmp/cb242-int-tswwmblu';
+const bin=path.join(cwd,'node_modules/.bin');
+const codex='/tmp/codex-cli-0.153.3/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex';
+const tunnel='/opt/homebrew/bin/tunnel-client';
+const env={...process.env,TMPDIR:tmpdir};
+delete env.CODEX_HOME;
+delete env.CODEX_MCP_BRIDGE_LIVE_COMPANION_SOCKET;
+const stages=[];
+const add=(id,command,args,extra={})=>stages.push({id,command,args,extra});
+const vitest=(id,files)=>add(id,path.join(bin,'vitest'),['run',...files,'--maxWorkers=1','--reporter=default','--reporter=json',`--outputFile.json=${path.join(out,id+'.json')}`],{ISSUE_242_TUNNEL_CLIENT:tunnel,ISSUE_242_R502_REPORT:path.join(out,id+'-proxy.json'),ISSUE_242_R502_TUNNEL_REPORT:path.join(out,id+'-tunnel.json')});
+add('build','npm',['run','build']);
+add('tsc-noemit',path.join(bin,'tsc'),['--noEmit','-p','tsconfig.json']);
+add('validate-fast','npm',['run','validate:fast'],{CODEX_MCP_BRIDGE_CODEX:codex});
+vitest('focused-242',['test/issue242Characterization.test.ts','test/issue242Completion.test.ts','test/issue242ProxyCharacterization.test.ts','test/issue242ReadTransport.test.ts','test/issue242R502.test.ts','test/issue242R502Tunnel.test.ts','test/httpDiagnostics.test.ts','test/tunnelHealth.test.ts','test/runtimeStatus.test.ts','test/runtimeProcess.test.ts','test/stateReadProcess.test.ts','test/companionServer.test.ts','test/macosHelperServer.test.ts','test/launcherLifecycle.integration.test.ts']);
+vitest('lifecycle-capacity-db',['test/projectLifecycle.test.ts','test/projectLifecycleHost.test.ts','test/projectRegistry.test.ts','test/projectRecovery.test.ts','test/currentSelectorReplay.test.ts','test/cancellation.test.ts','test/executionRecovery.test.ts','test/executionRuntime.test.ts','test/executionJournal.test.ts','test/executionServiceProcess.test.ts','test/runtimeLifecycle.test.ts','test/runtimeLifecycleRecovery.test.ts','test/automaticRecovery.test.ts','test/stateServiceProcess.test.ts','test/stateStore.test.ts','test/stateDatabaseLifecycle.test.ts','test/stateSchemaMigration.test.ts','test/stateRecovery.test.ts','test/tools.test.ts']);
+add('characterization-1200',path.join(bin,'tsx'),['scripts/issue-242-characterization.ts','1200']);
+add('completion-counts',path.join(bin,'tsx'),['scripts/issue-242-completion.ts']);
+add('tunnel-cost','node',['scripts/issue-242-runtime-cost.mjs','compare',tunnel]);
+add('native-full','npm',['run','macos:check']);
+vitest('node-full',[]);
+const source=execFileSync('git',['show','-s','--format=%H %P %T','HEAD'],{cwd,encoding:'utf8'}).trim();
+const records=[];
+writeFileSync(path.join(out,'validation-plan.json'),JSON.stringify({source,cwd,tmpdir,policy:'taskpolicy -a for validation child only; one Vitest worker; original deadlines; existing dependencies; CODEX_HOME unset; opt-in live companion disabled; pinned tunnel tests use synthetic local Go proxy',stages},null,2)+'\n');
+for(const stage of stages){
+ const fd=openSync(path.join(out,stage.id+'.log'),'w');
+ const record={id:stage.id,source,command:'/usr/sbin/taskpolicy',args:['-a',stage.command,...stage.args],cwd,tmpdir,envOverrides:stage.extra,startedAt:new Date().toISOString()};
+ records.push(record);writeFileSync(path.join(out,'commands.json'),JSON.stringify(records,null,2)+'\n');
+ console.log('START '+stage.id);
+ const at=Date.now();
+ const child=spawn('/usr/sbin/taskpolicy',record.args,{cwd,env:{...env,...stage.extra},stdio:['ignore',fd,fd]});
+ const result=await new Promise(resolve=>{child.once('error',error=>resolve({error:String(error)}));child.once('exit',(code,signal)=>resolve({code,signal}));});
+ closeSync(fd);Object.assign(record,result,{durationMs:Date.now()-at,finishedAt:new Date().toISOString()});
+ if(stage.command===path.join(bin,'vitest')){try{const report=JSON.parse(readFileSync(path.join(out,stage.id+'.json')));record.counts={suites:report.numTotalTestSuites,passed:report.numPassedTests,failed:report.numFailedTests,skipped:report.numPendingTests,total:report.numTotalTests,files:report.testResults.length,failedFiles:report.testResults.filter(r=>r.status==='failed').length};}catch{}}
+ writeFileSync(path.join(out,'commands.json'),JSON.stringify(records,null,2)+'\n');
+ console.log('END '+stage.id+' '+JSON.stringify(result)+' '+JSON.stringify(record.counts??{})+' '+record.durationMs+'ms');
+ if(['build','tsc-noemit'].includes(stage.id)&&result.code!==0) break;
+}

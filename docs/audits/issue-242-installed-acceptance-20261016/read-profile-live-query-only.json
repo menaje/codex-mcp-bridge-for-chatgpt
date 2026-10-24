@@ -1,0 +1,41 @@
+{
+  "runtime": "/Applications/Codex MCP Bridge for ChatGPT.app/Contents/Resources/Runtime",
+  "observations": [
+    {
+      "method": "dashboardSnapshot",
+      "queueMs": 0.10404199999999264,
+      "configMs": 0.6899159999999824,
+      "databaseOpenMs": 0,
+      "sessionsMs": 8.740125000000006,
+      "jobsMs": 232.84508399999999,
+      "settingsMs": 9.205250000000035,
+      "facadeMs": 1.8210829999999874,
+      "projectionMs": 70.921292,
+      "cleanupMs": 0.05129099999999198,
+      "jsonPreflightMs": 0.18729199999995672,
+      "responseBytes": 64696,
+      "sqlStatements": 112,
+      "selectStatements": 110,
+      "endToEndMs": 325.9523750000001,
+      "callerAbandoned": false
+    },
+    {
+      "method": "dashboardSnapshot",
+      "queueMs": 0.02108300000008967,
+      "configMs": 0.19854100000009112,
+      "databaseOpenMs": 0,
+      "sessionsMs": 5.377083999999968,
+      "jobsMs": 85.99187500000005,
+      "settingsMs": 0.701665999999932,
+      "facadeMs": 0.09337500000003729,
+      "projectionMs": 45.745000000000005,
+      "cleanupMs": 0.007749999999987267,
+      "jsonPreflightMs": 0.384584000000018,
+      "responseBytes": 157747,
+      "sqlStatements": 112,
+      "selectStatements": 110,
+      "endToEndMs": 144.93008299999997,
+      "callerAbandoned": false
+    }
+  ]
+}

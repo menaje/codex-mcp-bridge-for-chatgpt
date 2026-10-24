@@ -2,16 +2,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import {
-  ReadBuffer,
-  serializeMessage
-} from "@modelcontextprotocol/sdk/shared/stdio.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import {
-  ToolListChangedNotificationSchema,
-  type JSONRPCMessage
-} from "@modelcontextprotocol/sdk/types.js";
+import { Client } from "@modelcontextprotocol/client";
+import type { JSONRPCMessage, Transport } from "@modelcontextprotocol/server";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 import type {
@@ -42,8 +34,7 @@ describe("persistent stdio bridge", { timeout: 15_000 }, () => {
         stateStore,
         modelCatalog: new StaticModelCatalog(),
         input,
-        output,
-        descriptorReconcileIntervalMs: 60_000
+        output
       }
     );
     expect(stateStore.getMeta("state_service_opened_after_migration")).toBe("0");
@@ -73,20 +64,17 @@ describe("persistent stdio bridge", { timeout: 15_000 }, () => {
         stateStore,
         modelCatalog: new StaticModelCatalog(),
         input: clientToServer,
-        output: serverToClient,
-        descriptorReconcileIntervalMs: 60_000
+        output: serverToClient
       }
     );
-    const client = new Client({ name: "stdio-integration-client", version: "0.0.0" });
+    const client = new Client(
+      { name: "stdio-integration-client", version: "0.0.0" },
+      { versionNegotiation: { mode: { pin: "2026-07-28" } } }
+    );
     const clientTransport = new PairedStdioClientTransport(
       clientToServer,
       serverToClient
     );
-    let listChanged = 0;
-    client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
-      listChanged += 1;
-    });
-
     await runtime.start();
     await client.connect(clientTransport);
     try {
@@ -97,64 +85,80 @@ describe("persistent stdio bridge", { timeout: 15_000 }, () => {
       expect(before.inputSchema.properties).toHaveProperty("executionEnvelopeRef");
       expect(before.inputSchema.properties).toHaveProperty("selection");
       expect(before.inputSchema.properties).not.toHaveProperty("executionPolicyRef");
-      expect(runtime.descriptorCoordinator.status).toMatchObject({
-        bindingCount: 1,
-        notificationEligibleBindingCount: 1,
-        clientRelistObservationCount: 1,
-        clientRelistedSessionCount: 1
-      });
+      expect((before.inputSchema.properties?.taskContractVersion as { const?: string }).const).toBe("6");
 
-      const updateResult = await client.callTool({
-        name: "codex_update_settings",
-        arguments: {
-          expectedSettingsRevision: 0,
-          operation: {
-            kind: "patch",
-            settings: {
-              modelPolicy: {
-                mode: "fixed",
-                selection: {
-                  model: "gpt-5.6-sol",
-                  reasoningEffort: "max"
-                },
-                constraints: { allowDelegation: true }
-              }
-            }
-          }
-        }
-      });
-      if (updateResult.isError) {
-        throw new Error(`stdio settings update failed: ${JSON.stringify(updateResult)}`);
+      expect(before.inputSchema.properties).not.toHaveProperty("completionDelivery");
+      expect(JSON.stringify(before.outputSchema)).not.toContain("eventSubscription");
+      expect((await client.listTools()).tools.map(tool => tool.name)).not.toContain("codex_ui_completion");
+      for (const operation of ["wait", "accepted", "rejected", "uncertain", "release"]) {
+        const retired = await client.callTool({ name: "codex_ui_completion", arguments: { operation } });
+        expect(retired.isError).toBe(true);
+        expect(JSON.stringify(retired)).toContain("CARD_DELIVERY_RETIRED");
       }
-      expect(runtime.descriptorCoordinator.status).toMatchObject({
-        descriptorEpoch: 1,
-        notificationAttemptCount: 0,
-        clientRelistedSessionCount: 1
-      });
-      expect(listChanged).toBe(0);
+      const oldQuery = await client.callTool({ name: "codex_status", arguments: { query: { kind: "completion", receipt: "old" } } });
+      expect(JSON.stringify(oldQuery)).toContain("CARD_DELIVERY_RETIRED");
+      expect(stateStore.listJobs()).toEqual([]);
+      const models = await client.callTool({ name: "codex_models", arguments: { refresh: true } });
+      expect(models.isError).not.toBe(true);
+      expect(models.structuredContent).toMatchObject({ contractVersion: "2" });
 
       const after = (await client.listTools()).tools.find(
         (tool) => tool.name === "codex_task"
       )!;
-      expect(after).toEqual(before);
-      expect(runtime.descriptorCoordinator.status).toMatchObject({
-        clientRelistObservationCount: 2,
-        clientRelistedSessionCount: 1,
-        lastClientRelistedEpoch: runtime.descriptorCoordinator.status.descriptorEpoch
-      });
+      expect(after.inputSchema).toEqual(before.inputSchema);
+    } finally {
+      await client.close();
+      await runtime.close();
+      stateStore.close();
+    }
+  });
 
-      const diagnostics = await client.callTool({
-        name: "codex_diagnostics",
-        arguments: {}
-      });
-      expect(diagnostics.structuredContent).toMatchObject({
-        descriptorDiscovery: {
-          notificationAttempts: 0,
-          clientRelistObservations: 2,
-          currentEpochRelistedSessions: 1,
-          adoptionState: "unknown"
+  it("observes stdio tool failures without replacing their protocol result", async () => {
+    const stateStore = new BridgeStateStore({ file: ":memory:" });
+    const stateDirectory = mkdtempSync(path.join(tmpdir(), "bridge-stdio-errors-"));
+    const clientToServer = new PassThrough();
+    const serverToClient = new PassThrough();
+    const observed: unknown[] = [];
+    const runtime = createStdioBridgeRuntime(
+      loadConfig({
+        CODEX_MCP_BRIDGE_NO_AUTH: "1",
+        CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: path.join(stateDirectory, "state.sqlite"),
+        CODEX_MCP_BRIDGE_MODEL_CATALOG_STATE_FILE: path.join(stateDirectory, "models.json")
+      }),
+      new FakeUpstream(),
+      {
+        stateStore,
+        modelCatalog: new StaticModelCatalog(),
+        input: clientToServer,
+        output: serverToClient,
+        onOperationFailure: error => observed.push(error)
+      }
+    );
+    const client = new Client(
+      { name: "stdio-error-observer", version: "0.0.0" },
+      { versionNegotiation: { mode: { pin: "2026-07-28" } } }
+    );
+    const clientTransport = new PairedStdioClientTransport(
+      clientToServer,
+      serverToClient
+    );
+    await runtime.start();
+    await client.connect(clientTransport);
+    try {
+      const result = await client.callTool({
+        name: "codex_status",
+        arguments: {
+          scopeId: "7d7d7d7d-7d7d-4d7d-8d7d-7d7d7d7d7d7d",
+          query: {
+            kind: "job",
+            id: "8d8d8d8d-8d8d-4d8d-8d8d-8d8d8d8d8d8d"
+          }
         }
       });
+      expect(result.isError).toBe(true);
+      expect(observed.some(error =>
+        error instanceof Error && error.message.includes("HANDLE_UNAVAILABLE")
+      )).toBe(true);
     } finally {
       await client.close();
       await runtime.close();
@@ -164,7 +168,7 @@ describe("persistent stdio bridge", { timeout: 15_000 }, () => {
 });
 
 class PairedStdioClientTransport implements Transport {
-  private readonly readBuffer = new ReadBuffer();
+  private buffer = "";
   private started = false;
   onclose?: () => void;
   onerror?: (error: Error) => void;
@@ -183,7 +187,7 @@ class PairedStdioClientTransport implements Transport {
   }
 
   async send(message: JSONRPCMessage): Promise<void> {
-    const serialized = serializeMessage(message);
+    const serialized = JSON.stringify(message) + "\n";
     if (this.output.write(serialized)) return;
     await new Promise<void>((resolve) => this.output.once("drain", resolve));
   }
@@ -191,20 +195,20 @@ class PairedStdioClientTransport implements Transport {
   async close(): Promise<void> {
     this.input.off("data", this.onData);
     this.input.off("error", this.onInputError);
-    this.readBuffer.clear();
+    this.buffer = "";
     this.onclose?.();
   }
 
   private readonly onData = (chunk: Buffer) => {
-    this.readBuffer.append(chunk);
+    this.buffer += chunk.toString("utf8");
     while (true) {
-      try {
-        const message = this.readBuffer.readMessage();
-        if (message === null) return;
-        this.onmessage?.(message);
-      } catch (error) {
-        this.onerror?.(error instanceof Error ? error : new Error(String(error)));
-      }
+      const newline = this.buffer.indexOf("\n");
+      if (newline < 0) return;
+      const line = this.buffer.slice(0, newline).trim();
+      this.buffer = this.buffer.slice(newline + 1);
+      if (!line) continue;
+      try { this.onmessage?.(JSON.parse(line) as JSONRPCMessage); }
+      catch (error) { this.onerror?.(error instanceof Error ? error : new Error(String(error))); }
     }
   };
 

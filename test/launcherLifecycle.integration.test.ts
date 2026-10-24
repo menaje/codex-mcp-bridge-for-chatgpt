@@ -11,12 +11,90 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
+import { createServer } from "node:http";
 import { describe, expect, it } from "vitest";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
 const launcherPath = path.join(repositoryRoot, "scripts", "start-codex-mcp-bridge.mjs");
 
 describe("managed launcher lifecycle", () => {
+  it.each(["https", "loopback"])("starts authenticated HTTP with %s metadata and rebuilds the profile when OAuth identity changes", async metadataMode => {
+    const root = mkdtempSync(path.join(tmpdir(), "codex-launcher-oauth-"));
+    const envFile = path.join(root, "config", ".env");
+    const profileFile = path.join(root, "profile.yaml");
+    const paths = {
+      envFile, fakeCodex: path.join(root, "fake-codex.mjs"), fakeTunnel: path.join(root, "fake-tunnel-client.mjs"),
+      profileMetadataFile: path.join(root, "profile-meta.json"), runtimeStatusFile: path.join(root, "run", "status.json"),
+      healthURLFile: path.join(root, "run", "health.url"), tunnelPIDFile: path.join(root, "run", "tunnel.pid"),
+      runtimeLockDirectory: path.join(root, "ownership-lock"), transport: "http" as const
+    };
+    const initializationLog = path.join(root, "init.log");
+    const controlPlaneReadyFile = path.join(root, "ready");
+    const portServer = createServer();
+    await new Promise<void>(r => portServer.listen(0, "127.0.0.1", r));
+    const port = (portServer.address() as { port: number }).port;
+    await new Promise<void>(r => portServer.close(() => r()));
+    const metadataUrl = metadataMode === "loopback"
+      ? `http://127.0.0.1:${port}/.well-known/oauth-protected-resource/mcp`
+      : "https://bridge.fixture.example/.well-known/oauth-protected-resource/mcp";
+    mkdirSync(path.dirname(envFile), { recursive: true, mode: 0o700 });
+    const writeEnvironment = (subject: string) => writeFileSync(envFile, [
+      "CONTROL_PLANE_API_KEY=sk-launcher-test-1234567890123456",
+      "CONTROL_PLANE_TUNNEL_ID=tunnel_llllllllllllllllllllllllllllllll",
+      "CODEX_MCP_BRIDGE_OAUTH_ISSUER=https://id.fixture.example/tenant/",
+      "CODEX_MCP_BRIDGE_OAUTH_RESOURCE=https://bridge.fixture.example/mcp",
+      `CODEX_MCP_BRIDGE_OAUTH_RESOURCE_METADATA_URL=${metadataUrl}`,
+      "CODEX_MCP_BRIDGE_OAUTH_JWKS_URI=https://id.fixture.example/keys",
+      `CODEX_MCP_BRIDGE_OAUTH_OPERATOR_SUBJECT=${subject}`,
+      "CODEX_MCP_BRIDGE_TOKEN=installation-sealing-secret-is-not-an-access-token",
+      `CODEX_MCP_BRIDGE_RUNTIME_HOME=${path.join(root, "runtime")}`,
+      `CODEX_HOME=${path.join(root, "codex")}`,
+      `CODEX_MCP_BRIDGE_STATE_DATABASE_FILE=${path.join(root, "state.sqlite")}`,
+      ""
+    ].join("\n"), { mode: 0o600 });
+    writeEnvironment("first-subject");
+    writeExecutable(paths.fakeCodex, "process.exit(2);");
+    writeExecutable(paths.fakeTunnel, fakeTunnelSource({ profileFile, initializationLog, controlPlaneReadyFile,
+      shutdownLog: path.join(root, "shutdown.log"), codexEnvironmentLog: path.join(root, "environment.json") }));
+    const checkWhileConnected = async () => {
+      const metadata = await fetch(`http://127.0.0.1:${port}/.well-known/oauth-protected-resource/mcp`);
+      expect(metadata.status).toBe(200);
+      expect(await metadata.json()).toMatchObject({ authorization_servers: ["https://id.fixture.example/tenant/"] });
+      const denied = await fetch(`http://127.0.0.1:${port}/mcp`, { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: "probe", method: "events/list", params: {} }) });
+      expect(denied.status).toBe(401);
+      expect(denied.headers.get("www-authenticate")).toContain(metadataUrl);
+    };
+    await runLauncher({ ...paths, port, checkWhileConnected });
+    const runArguments = JSON.parse(readFileSync(path.join(root, "environment.json.tunnel-run-args.json"), "utf8"));
+    expect(runArguments.includes("--harpoon.allow-plaintext-http=true")).toBe(metadataMode === "loopback");
+    expect(readFileSync(profileFile, "utf8")).toContain("sample: sample_mcp_with_dcr");
+    const firstIdentity = JSON.parse(readFileSync(paths.profileMetadataFile, "utf8")).identity;
+    expect(firstIdentity.authentication).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify(firstIdentity)).not.toContain("installation-sealing-secret");
+    await runLauncher({ ...paths, port, checkWhileConnected });
+    expect(initializationCount(initializationLog)).toBe(1);
+    writeEnvironment("second-subject");
+    await runLauncher({ ...paths, port, checkWhileConnected });
+    expect(initializationCount(initializationLog)).toBe(2);
+  }, 45_000);
+
+  it("publishes actual daemon exit independently of the previous healthy snapshot", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "codex-launcher-exit-"));
+    const envFile = path.join(root, "config", ".env");
+    mkdirSync(path.dirname(envFile), { recursive: true, mode: 0o700 });
+    writeFileSync(envFile, "CONTROL_PLANE_API_KEY=sk-launcher-test-1234567890123456\nCONTROL_PLANE_TUNNEL_ID=tunnel_llllllllllllllllllllllllllllllll\n", { mode: 0o600 });
+    const fakeCodex = path.join(root, "codex.mjs"), fakeTunnel = path.join(root, "tunnel.mjs");
+    writeExecutable(fakeCodex, "process.exit(2);");
+    writeExecutable(fakeTunnel, fakeTunnelSource({ profileFile: path.join(root, "profile.yaml"),
+      initializationLog: path.join(root, "init.log"), shutdownLog: path.join(root, "shutdown.log"),
+      controlPlaneReadyFile: path.join(root, "ready"), codexEnvironmentLog: path.join(root, "environment.json") }));
+    await runLauncher({ envFile, fakeCodex, fakeTunnel, profileMetadataFile: path.join(root, "profile.json"),
+      runtimeStatusFile: path.join(root, "run", "status.json"), healthURLFile: path.join(root, "run", "health.url"),
+      tunnelPIDFile: path.join(root, "run", "tunnel.pid"), runtimeLockDirectory: path.join(root, "lock"),
+      unexpectedDaemonExit: true });
+  }, 20_000);
+
   it("waits for tunnel readiness and shutdown, then reuses only an unchanged profile", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "codex-launcher-lifecycle-"));
     const configDirectory = path.join(root, "config");
@@ -154,6 +232,7 @@ import {
   writeFileSync
 } from "node:fs";
 import path from "node:path";
+import { createServer } from "node:http";
 
 const args = process.argv.slice(2);
 writeFileSync(${JSON.stringify(paths.codexEnvironmentLog)}, JSON.stringify({
@@ -184,6 +263,8 @@ if (args[0] === "init") {
   mkdirSync(path.dirname(profileFile), { recursive: true, mode: 0o700 });
   writeFileSync(profileFile, [
     "profile: managed",
+    "sample: " + option("--sample"),
+    "url: " + option("--mcp-server-url"),
     "tunnel: " + option("--tunnel-id"),
     "command: " + option("--mcp-command"),
     ""
@@ -192,35 +273,35 @@ if (args[0] === "init") {
   appendFileSync(initializationLog, "init\\n");
   process.exit(0);
 }
-if (args[0] === "doctor") process.exit(0);
-if (args[0] === "health") {
-  try {
-    if (!existsSync(controlPlaneReadyFile)) process.exit(1);
-    if (readFileSync(controlPlaneReadyFile, "utf8") === "fail") {
-      console.log(JSON.stringify({ readyz: { status: 503, body: "sk-health-secret-1234567890123456" },
-        control_plane_poll: { ok: false }, process: { running: true } }));
-      console.error("sk-health-secret-1234567890123456");
-      process.exit(1);
-    }
-    if (readFileSync(controlPlaneReadyFile, "utf8") === "slow") {
-      writeFileSync(controlPlaneReadyFile + ".checking", String(process.pid));
-      await new Promise(resolve => setTimeout(resolve, 4_000));
-    }
-    const url = readFileSync(option("--url-file"), "utf8").trim();
-    const pid = Number(readFileSync(option("--pid-file"), "utf8").trim());
-    process.kill(pid, 0);
-    const stale = readFileSync(controlPlaneReadyFile, "utf8") === "stale";
-    console.log(JSON.stringify({ control_plane_poll: { ok: true, value: Math.floor(Date.now() / 1000) - (stale ? 76 : 0) } }));
-    process.exit(url.startsWith("http://127.0.0.1:") ? 0 : 1);
-  } catch {
-    process.exit(1);
+if (args[0] === "doctor") {
+  if (process.env.CONTROL_PLANE_API_KEY !== "sk-launcher-test-1234567890123456") {
+    console.error("Missing control-plane API key in Tunnel child environment.");
+    process.exit(2);
   }
+  process.exit(0);
+}
+if (args[0] === "health") {
+  // Repetitive health commands must disappear from the launcher.
+  throw new Error("Launcher should use direct health endpoints");
 }
 if (args[0] === "run") {
+  writeFileSync(${JSON.stringify(paths.codexEnvironmentLog + ".tunnel-run-args.json")}, JSON.stringify(args));
   const healthFile = option("--health.url-file");
   const pidFile = option("--pid.file");
-  writeFileSync(healthFile, "http://127.0.0.1:43123\\n", { mode: 0o600 });
-  writeFileSync(pidFile, String(process.pid) + "\\n", { mode: 0o600 });
+  const healthServer = createServer((request, response) => {
+    const state = existsSync(controlPlaneReadyFile) ? readFileSync(controlPlaneReadyFile, "utf8").trim() : "pending";
+    if (state === "slow") writeFileSync(controlPlaneReadyFile + ".checking", String(process.pid));
+    setTimeout(() => {
+      response.statusCode = request.url === "/readyz" && (state === "fail" || state === "pending") ? 503 : 200;
+      if (request.url === "/metrics") response.end("commands_poll_last_successful_timestamp_seconds " +
+        (state === "pending" || state === "fail" ? 0 : Math.floor(Date.now()/1000) - (state === "stale" ? 76 : 0)) + "\\n");
+      else response.end(state === "fail" ? "sk-health-secret-1234567890123456" : "ready");
+    }, state === "slow" ? 4000 : 0);
+  });
+  await new Promise(resolve => healthServer.listen(0, "127.0.0.1", resolve));
+  writeFileSync(healthFile, "http://127.0.0.1:" + healthServer.address().port + "\\n", { mode: 0o600 });
+  // tunnel-client v0.0.14 requests 0644; the launcher must restrict creation.
+  writeFileSync(pidFile, String(process.pid) + "\\n", { mode: 0o644 });
   try { unlinkSync(controlPlaneReadyFile); } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
@@ -256,17 +337,35 @@ async function runLauncher(paths: {
   runtimeLockDirectory: string;
   controlPlaneReadyFile?: string;
   detachOutput?: boolean;
+  unexpectedDaemonExit?: boolean;
+  transport?: "http" | "stdio";
+  port?: number;
+  checkWhileConnected?: () => Promise<void>;
 }): Promise<{ output: string }> {
   const environment = { ...process.env };
+  // Every launcher fixture owns its state and authentication directories.
+  for (const key of Object.keys(environment)) {
+    if (/^(CODEX_MCP_BRIDGE_|CODEX_GPT_BRIDGE_)/.test(key)) delete environment[key];
+  }
   delete environment.CONTROL_PLANE_API_KEY;
   delete environment.CONTROL_PLANE_TUNNEL_ID;
   delete environment.OPENAI_API_KEY;
+  const fixtureRoot = path.dirname(path.dirname(paths.envFile));
+  environment.HOME = path.join(fixtureRoot, "home");
+  environment.CODEX_HOME = path.join(fixtureRoot, "codex");
+  environment.CODEX_MCP_BRIDGE_RUNTIME_HOME = path.join(fixtureRoot, "runtime");
+  environment.CODEX_MCP_BRIDGE_STATE_DATABASE_FILE = path.join(fixtureRoot, "state.sqlite");
+  // The launcher acquires a canonical ownership lock before reading the
+  // supplied dotenv. Keep that lock inside this fixture so a user's running
+  // bridge cannot make the integration test fail before it publishes status.
+  environment.XDG_CONFIG_HOME = path.join(path.dirname(paths.envFile), "xdg-config");
   environment.CODEX_MCP_BRIDGE_CODEX = paths.fakeCodex;
   environment.CODEX_MCP_BRIDGE_MANAGED_BY_APP = "1";
   const child = spawn(process.execPath, [
     launcherPath,
     "--mode", "secure",
-    "--transport", "stdio",
+    "--transport", paths.transport || "stdio",
+    ...(paths.port ? ["--port", String(paths.port)] : []),
     "--env-file", paths.envFile,
     "--profile", "managed",
     "--tunnel-client", paths.fakeTunnel,
@@ -286,11 +385,27 @@ async function runLauncher(paths: {
   child.stdout?.on("data", (chunk: Buffer) => { output += chunk.toString("utf8"); });
   child.stderr?.on("data", (chunk: Buffer) => { output += chunk.toString("utf8"); });
   try {
-    await waitForConnectedStatus(paths.runtimeStatusFile, child);
+    try { await waitForConnectedStatus(paths.runtimeStatusFile, child); }
+    catch (error) { throw new Error(`${String(error)}; fixture launcher output: ${output.replace(/sk-[^\s]{8,}/g, "[REDACTED]")}`); }
+    if (process.platform !== "win32") {
+      expect(statSync(paths.tunnelPIDFile).mode & 0o777).toBe(0o600);
+      expect(statSync(paths.healthURLFile).mode & 0o777).toBe(0o600);
+    }
+    await paths.checkWhileConnected?.();
     expect(existsSync(paths.runtimeLockDirectory)).toBe(true);
     expect(existsSync(
       path.join(path.dirname(paths.envFile), "run", "launcher.lock")
     )).toBe(true);
+    if (paths.unexpectedDaemonExit) {
+      process.kill(Number(readFileSync(paths.tunnelPIDFile, "utf8").trim()), "SIGTERM");
+      const result = await waitForProcessExit(child, 5_000);
+      expect(result.code).toBe(1);
+      expect(readStatus(paths.runtimeStatusFile)).toMatchObject({ phase: "failed", tunnel: {
+        processRunning: false, connected: false, lastProblem: { code: "tunnel-process-exited" },
+        observation: { failure: "process-exited", controlPlanePoll: { fresh: false } }
+      } });
+      return { output };
+    }
     if (paths.controlPlaneReadyFile) {
       if (paths.detachOutput) { child.stdout?.destroy(); child.stderr?.destroy(); }
       const launcherPid = readStatus(paths.runtimeStatusFile).launcherPid;
@@ -311,10 +426,10 @@ async function runLauncher(paths: {
     child.kill("SIGTERM");
     const result = await waitForProcessExit(child, 10_000);
     if (paths.controlPlaneReadyFile) {
-      // A pending four-second probe must not hold up shutdown or outlive its owner.
+      // A pending direct request must not hold up shutdown or outlive its daemon.
       expect(Date.now() - shutdownStarted).toBeLessThan(2_000);
-      const probePid = Number(readFileSync(paths.controlPlaneReadyFile + ".checking", "utf8"));
-      expect(() => process.kill(probePid, 0)).toThrow();
+      const daemonPid = Number(readFileSync(paths.controlPlaneReadyFile + ".checking", "utf8"));
+      expect(() => process.kill(daemonPid, 0)).toThrow();
     }
     if (result.code !== 0) {
       throw new Error(`Launcher exited with ${result.code ?? result.signal}: ${output}`);
@@ -322,8 +437,9 @@ async function runLauncher(paths: {
     return { output };
   } finally {
     if (child.exitCode === null && child.signalCode === null) {
-      child.kill("SIGKILL");
-      await waitForProcessExit(child, 2_000).catch(() => undefined);
+      child.kill("SIGTERM");
+      try { await waitForProcessExit(child, 10_000); }
+      catch { child.kill("SIGKILL"); await waitForProcessExit(child, 2_000).catch(() => undefined); }
     }
   }
 }
@@ -357,7 +473,8 @@ async function waitForConnectedStatus(filePath: string, child: ChildProcess): Pr
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error("Timed out waiting for the managed tunnel status.");
+  const last = existsSync(filePath) ? readStatus(filePath) : {};
+  throw new Error(`Timed out waiting for managed tunnel status; runtime=${last.phase}; tunnel=${last.tunnel?.phase}; observation=${last.tunnel?.observation?.failure}`);
 }
 
 function waitForProcessExit(

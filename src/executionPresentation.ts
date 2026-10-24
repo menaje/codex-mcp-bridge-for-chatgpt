@@ -5,3 +5,20 @@ export function usesFastProcessing(
   return typeof execution?.serviceTier === "string" &&
     /^(priority|fast)$/i.test(execution.serviceTier.trim());
 }
+
+export function processingSpeedLabelKey(mode: string, legacyFast = false): string {
+  return mode === "legacy" ? "settings.processingSpeed." + (legacyFast ? "legacyFast" : "legacyClear") :
+    ["inherit", "standard", "fast", "ultrafast"].includes(mode) ? "settings.processingSpeed." + mode : "settings.processingSpeed.unknown";
+}
+
+/** Shows the recorded selection; labels are reserved for explanatory tooltips. */
+export function executionSpeedBadge(execution: { processingSpeed?: string; serviceTier?: string } | null | undefined, includeLabel = false): string {
+  if (!execution) return "";
+  const mode = execution.processingSpeed?.trim().toLowerCase();
+  if (mode && !["legacy", "fast", "ultrafast"].includes(mode)) return "";
+  const tier = execution.serviceTier?.trim().toLowerCase();
+  // ASCII source keeps the serialized function identical in esbuild and tsc.
+  if (tier === "ultrafast" || mode === "ultrafast") return String.fromCodePoint(128640) + (includeLabel ? " Ultrafast" : "");
+  if (tier === "fast" || tier === "priority" || mode === "fast") return String.fromCodePoint(9889) + (includeLabel ? " Fast" : "");
+  return "";
+}

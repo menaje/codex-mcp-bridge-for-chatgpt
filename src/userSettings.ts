@@ -1,9 +1,11 @@
+import { strictRetentionDays } from "./historyPolicy.js";
 import { DEFAULT_HISTORY_RETENTION_DAYS, HISTORY_RETENTION_DAYS, historyRetentionDays, type HistoryRetentionDays } from "./workHistory.js";
 import { createHmac, randomBytes } from "node:crypto";
 import type { AccessStrategy, BridgeConfig, SandboxMode } from "./config.js";
 import { DEFAULT_USER_MAX_CONCURRENT_JOBS } from "./config.js";
 import { EXECUTION_POLICY_VERSION, resolveTaskSandbox } from "./executionPolicy.js";
 import { BridgeStateStore } from "./stateStore.js";
+import { migratedProcessingSpeed, retainedPolicyServiceTiers, type RetainedServiceTier } from "./processingSpeed.js";
 import {
   MODEL_POLICY_SCHEMA_VERSION,
   automaticModelPolicy,
@@ -11,7 +13,12 @@ import {
   type ModelPolicy
 } from "./modelPolicy.js";
 import { isUiLocalePreference, type UiLocalePreference } from "./uiI18n.js";
-import { normalizeModelDescriptionOverrides, type ModelDescriptionOverrides } from "./modelDescriptions.js";
+import {
+  modelDescriptionId,
+  normalizeModelDescriptionOverrides,
+  type ModelDescriptionHistoryPage,
+  type ModelDescriptionOverrides
+} from "./modelDescriptions.js";
 import {
   MAX_REGISTERED_PROJECTS,
   PROJECT_REQUIRED,
@@ -24,14 +31,10 @@ import {
 
 export type { ProjectRegistryOperation } from "./projectRegistry.js";
 
-export const ACTIVITY_CARD_VISIBILITIES = ["always", "background-only", "never"] as const;
-export type ActivityCardVisibility = (typeof ACTIVITY_CARD_VISIBILITIES)[number];
-export const COMPLETION_HANDOFF_MODES = ["off", "auto-handoff"] as const;
-export type CompletionHandoffMode = (typeof COMPLETION_HANDOFF_MODES)[number];
 export const SETTINGS_REVISION_CONFLICT = "SETTINGS_REVISION_CONFLICT";
 const EXECUTION_POLICY_HMAC_SECRET_META_KEY = "execution_policy_hmac_secret_v1";
-const EXECUTION_POLICY_REF_CONTRACT_VERSION = 5;
-const TASK_EXECUTION_ENVELOPE_REF_CONTRACT_VERSION = 2;
+const EXECUTION_POLICY_REF_CONTRACT_VERSION = 6;
+const TASK_EXECUTION_ENVELOPE_REF_CONTRACT_VERSION = 6;
 
 export type BridgeUserSettings = {
   schemaVersion: typeof MODEL_POLICY_SCHEMA_VERSION;
@@ -44,13 +47,17 @@ export type BridgeUserSettings = {
   modelPolicy: ModelPolicy;
   modelDescriptionOverrides: ModelDescriptionOverrides;
   usePriorityServiceTier: boolean;
+  /** Unknown future values remain stored but cannot execute. Legacy retains the old wire scope. */
+  processingSpeed: string;
+  retainedServiceTiers: RetainedServiceTier[];
   /** App-private composed registry view. UUID/cwd are stripped from public results. */
   projects: ProjectTarget[];
   uiLocalePreference: UiLocalePreference;
   maxConcurrentJobs: number;
   showBridgeThreadsInCodexApp: boolean;
-  activityCardVisibility: ActivityCardVisibility;
-  completionHandoff: CompletionHandoffMode;
+  bridgeThreadPersistence: "persistent" | "ephemeral";
+  /** Retired compatibility field; always true and never chooses Job delivery. */
+  experimentalDirectResultDelivery: boolean;
   historyRetentionDays: HistoryRetentionDays;
 };
 
@@ -74,12 +81,14 @@ type GeneralSettings = Omit<
 export type UserSettingsStoreOptions = {
   stateStore?: BridgeStateStore;
   now?: () => number;
+  projectionOnly?: boolean;
 };
 
 export class UserSettingsStore {
   private readonly stateStore: BridgeStateStore;
   private readonly executionPolicyHmacSecret: Buffer;
   private readonly now: () => number;
+  private readonly projectionOnly: boolean;
   private readonly initial: GeneralSettings;
   private settings: GeneralSettings;
   private readonly warnings: string[] = [];
@@ -95,7 +104,11 @@ export class UserSettingsStore {
     options: UserSettingsStoreOptions = {}
   ) {
     this.stateStore = options.stateStore || new BridgeStateStore({ file: ":memory:" });
-    this.executionPolicyHmacSecret = loadOrCreateExecutionPolicySecret(this.stateStore);
+    this.projectionOnly = options.projectionOnly === true;
+    this.executionPolicyHmacSecret = loadOrCreateExecutionPolicySecret(
+      this.stateStore,
+      !this.projectionOnly
+    );
     this.now = options.now || Date.now;
     this.initial = this.validateGeneral({
       schemaVersion: MODEL_POLICY_SCHEMA_VERSION,
@@ -105,26 +118,54 @@ export class UserSettingsStore {
       modelPolicy: automaticModelPolicy(),
       modelDescriptionOverrides: {},
       usePriorityServiceTier: false,
+      processingSpeed: "legacy",
+      retainedServiceTiers: [],
       uiLocalePreference: "auto",
       maxConcurrentJobs: Math.min(DEFAULT_USER_MAX_CONCURRENT_JOBS, config.maxConcurrentJobs),
       // Durable context is the default for a new installation. Loaded legacy
       // settings retain their explicit (or historical missing-field) choice.
       showBridgeThreadsInCodexApp: true,
-      // Retained cards still interpret this setting. Current presenters do not
-      // use it; preserve the default so legacy completion handoff can migrate.
-      activityCardVisibility: "always",
-      completionHandoff: "off",
+      bridgeThreadPersistence: "persistent",
+      experimentalDirectResultDelivery: true,
       historyRetentionDays: DEFAULT_HISTORY_RETENTION_DAYS
     });
     this.settings = cloneGeneralSettings(this.initial);
     this.load();
+    if (!this.projectionOnly && !this.stateStore.readOnly) this.stateStore.transaction(() => {
+      if (!this.stateStore.getMeta("ordinary_delivery_transition_v2")) this.stateStore.setMeta(
+        "ordinary_delivery_transition_v2", JSON.stringify({ version: 2, appliedAt: new Date(this.now()).toISOString(), policy: "direct-wait", cardSender: "retired", historicalAdmissions: "preserved" })
+      );
+    });
     this.noteUnavailableProjects();
   }
 
   get historyPolicy() { return this.stateStore.workHistory.policy(this.settings.historyRetentionDays); }
 
+  get modelDescriptionHistoryIds(): string[] {
+    return this.stateStore.modelDescriptionHistoryIds();
+  }
+
+  modelDescriptionHistory(modelId: string, beforeVersion?: number, limit = 20): ModelDescriptionHistoryPage {
+    modelDescriptionId(modelId);
+    if (beforeVersion !== undefined && (!Number.isSafeInteger(beforeVersion) || beforeVersion < 1)) {
+      throw new Error("MODEL_DESCRIPTION_HISTORY_CURSOR_INVALID: Invalid version cursor.");
+    }
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 20) {
+      throw new Error("MODEL_DESCRIPTION_HISTORY_LIMIT_INVALID: Request 1 to 20 versions.");
+    }
+    return this.stateStore.modelDescriptionHistory(modelId, beforeVersion, limit);
+  }
+
   get persistent(): boolean {
     return this.stateStore.persistent;
+  }
+
+  get recoverableProjects(): ProjectTarget[] {
+    return this.stateStore.getRecoverableProjects();
+  }
+
+  projectRestoreTarget(projectId: string): ProjectTarget {
+    return this.stateStore.getProjectRestoreTarget(projectId);
   }
 
   get persistencePath(): string | null {
@@ -166,11 +207,13 @@ export class UserSettingsStore {
         accessStrategy: settings.accessStrategy,
         modelPolicy: canonicalExecutionModelPolicy(settings.modelPolicy),
         usePriorityServiceTier: settings.usePriorityServiceTier,
+        processingSpeed: settings.processingSpeed,
         // Bind only catalog fields that can alter admission or dispatch.
         // GPT-facing names and guidance may refresh Settings/UI catalog data,
         // but do not make an otherwise equivalent admission snapshot stale.
         admissionCatalogFingerprint,
         showBridgeThreadsInCodexApp: settings.showBridgeThreadsInCodexApp,
+        bridgeThreadPersistence: settings.bridgeThreadPersistence,
         maxConcurrentJobs: settings.maxConcurrentJobs,
         operator: canonicalExecutionOperatorEnvelope(this.config)
       }))
@@ -179,10 +222,10 @@ export class UserSettingsStore {
 
   /**
    * Stable installation-bound reference to the maximum authority and static
-   * wire shape advertised by codex_task contract v2.
+   * wire shape advertised by codex_task contract v6.
    *
    * User settings, projects, and the live model catalog are deliberately not
-   * included: contract v2 declares their runtime-authoritative behavior in a
+   * included: contract v6 declares their runtime-authoritative behavior in a
    * stable schema. A process/operator change can alter the maximum authority
    * or the schema itself and therefore still requires a connection Refresh.
    */
@@ -193,7 +236,7 @@ export class UserSettingsStore {
       )
       .update(canonicalJsonValue({
         contract: TASK_EXECUTION_ENVELOPE_REF_CONTRACT_VERSION,
-        taskInputContract: 2,
+        taskInputContract: 6,
         maxPromptChars: this.config.maxPromptChars,
         operator: canonicalExecutionOperatorEnvelope(this.config)
       }))
@@ -258,11 +301,12 @@ export class UserSettingsStore {
       modelPolicy,
       modelDescriptionOverrides: {},
       usePriorityServiceTier: this.initial.usePriorityServiceTier,
+      processingSpeed: this.initial.processingSpeed,
       uiLocalePreference: this.initial.uiLocalePreference,
       maxConcurrentJobs: this.initial.maxConcurrentJobs,
       showBridgeThreadsInCodexApp: this.initial.showBridgeThreadsInCodexApp,
-      activityCardVisibility: this.initial.activityCardVisibility,
-      completionHandoff: this.initial.completionHandoff,
+      bridgeThreadPersistence: this.initial.bridgeThreadPersistence,
+      experimentalDirectResultDelivery: this.initial.experimentalDirectResultDelivery,
       historyRetentionDays: this.initial.historyRetentionDays
     };
     return this.applyConfiguration(patch, [], expectedSettingsRevision, undefined);
@@ -296,9 +340,13 @@ export class UserSettingsStore {
       throw new Error("PROJECT_REGISTRY_REVISION_CONFLICT: expectedRegistryRevision is required.");
     }
 
+    const speedPatch = { ...patch };
+    // Old clients send this boolean even when changing unrelated settings.
+    // Once a new speed mode exists, only an explicit new-field edit can change it.
+    if (speedPatch.processingSpeed === undefined && this.settings.processingSpeed !== "legacy") delete speedPatch.usePriorityServiceTier;
     const merged = {
       ...this.settings,
-      ...patch,
+      ...speedPatch,
       settingsRevision: this.settings.settingsRevision,
       updatedAt: this.settings.updatedAt
     } as GeneralSettings;
@@ -317,7 +365,9 @@ export class UserSettingsStore {
         this.stateStore.assertSettingsRevision(expectedSettingsRevision as number);
       }
       if (operations.length > 0) {
-        this.stateStore.assertProjectRegistryRevision(expectedRegistryRevision as number);
+        if (!operations.every(operation => operation.kind === "delete" && !this.stateStore.projectLifecycle.exists(operation.projectId))) {
+          this.stateStore.assertProjectRegistryRevision(expectedRegistryRevision as number);
+        }
       }
       if (generalChanged) {
         const persisted = {
@@ -328,6 +378,11 @@ export class UserSettingsStore {
         this.stateStore.writeSettings(
           persisted,
           expectedSettingsRevision as number,
+          now
+        );
+        this.stateStore.appendModelDescriptionVersionChanges(
+          this.settings.modelDescriptionOverrides,
+          candidate.modelDescriptionOverrides,
           now
         );
         committedSettings = this.validateGeneral(persisted);
@@ -381,6 +436,8 @@ export class UserSettingsStore {
     if (typeof candidate.usePriorityServiceTier !== "boolean") {
       throw new Error("Invalid Priority service-tier preference.");
     }
+    if (typeof candidate.processingSpeed !== "string" || !candidate.processingSpeed || candidate.processingSpeed.length > 100) throw new Error("Invalid processing speed preference.");
+    if (!Array.isArray(candidate.retainedServiceTiers)) throw new Error("Invalid retained service-tier records.");
     if (!isUiLocalePreference(candidate.uiLocalePreference)) {
       throw new Error(`Invalid interface language preference: ${String(candidate.uiLocalePreference)}`);
     }
@@ -391,20 +448,17 @@ export class UserSettingsStore {
       "Concurrent job limit",
       "jobs"
     );
+    if (!["persistent", "ephemeral"].includes(candidate.bridgeThreadPersistence)) {
+      throw new Error("Invalid Bridge conversation storage preference.");
+    }
+    if (candidate.bridgeThreadPersistence === "ephemeral" && candidate.showBridgeThreadsInCodexApp) {
+      throw new Error("EPHEMERAL_NOT_VISIBLE: Turn off Codex app visibility before choosing memory-only conversations.");
+    }
     if (typeof candidate.showBridgeThreadsInCodexApp !== "boolean") {
       throw new Error("Invalid Codex app thread-visibility preference.");
     }
-    if (!ACTIVITY_CARD_VISIBILITIES.includes(candidate.activityCardVisibility)) {
-      throw new Error(`Invalid Activity card visibility: ${String(candidate.activityCardVisibility)}`);
-    }
-    if (!COMPLETION_HANDOFF_MODES.includes(candidate.completionHandoff)) {
-      throw new Error(`Invalid completion handoff mode: ${String(candidate.completionHandoff)}`);
-    }
-    if (
-      candidate.activityCardVisibility === "never" &&
-      candidate.completionHandoff === "auto-handoff"
-    ) {
-      throw new Error("Automatic GPT handoff requires the Activity card to be visible.");
+    if (typeof candidate.experimentalDirectResultDelivery !== "boolean") {
+      throw new Error("Invalid experimental direct-result delivery preference.");
     }
     if (!Number.isInteger(candidate.settingsRevision) || candidate.settingsRevision < 0) {
       throw new Error("Invalid settings revision.");
@@ -412,6 +466,7 @@ export class UserSettingsStore {
     if (candidate.updatedAt !== null && !Number.isFinite(Date.parse(candidate.updatedAt))) {
       throw new Error("Invalid settings update timestamp.");
     }
+    candidate.experimentalDirectResultDelivery = true;
     return cloneGeneralSettings(candidate);
   }
 
@@ -430,7 +485,7 @@ export class UserSettingsStore {
         "state database",
         stored.settingsRevision
       );
-      if (loaded.changed) {
+      if (loaded.changed && !this.projectionOnly) {
         this.stateStore.writeSettings(
           loaded.settings,
           stored.settingsRevision,
@@ -486,6 +541,7 @@ export class UserSettingsStore {
 
   private noteUnavailableProjects(): void {
     for (const entry of this.projectRegistry.availability) {
+      if (entry.project.archiveState && entry.project.archiveState !== "active") continue;
       if (entry.project.archivedAt !== undefined || entry.available) continue;
       this.warnings.push(
         `PROJECT_UNAVAILABLE: Saved project "${entry.project.name}" is unavailable and cannot admit new work.`
@@ -512,7 +568,8 @@ function cloneGeneralSettings(settings: GeneralSettings): GeneralSettings {
   return {
     ...settings,
     modelPolicy: validateModelPolicy(settings.modelPolicy),
-    modelDescriptionOverrides: { ...settings.modelDescriptionOverrides }
+    modelDescriptionOverrides: { ...settings.modelDescriptionOverrides },
+    retainedServiceTiers: structuredClone(settings.retainedServiceTiers)
   };
 }
 
@@ -521,7 +578,10 @@ function canonicalGeneralSettings(settings: GeneralSettings): string {
   return JSON.stringify(semantic);
 }
 
-function loadOrCreateExecutionPolicySecret(stateStore: BridgeStateStore): Buffer {
+function loadOrCreateExecutionPolicySecret(
+  stateStore: BridgeStateStore,
+  createIfMissing = true
+): Buffer {
   return stateStore.transaction(() => {
     const encoded = stateStore.getMeta(EXECUTION_POLICY_HMAC_SECRET_META_KEY);
     if (encoded !== undefined) {
@@ -535,6 +595,9 @@ function loadOrCreateExecutionPolicySecret(stateStore: BridgeStateStore): Buffer
         throw new Error("Invalid persisted execution-policy HMAC key.");
       }
       return decoded;
+    }
+    if (!createIfMissing) {
+      throw new Error("Read projection requires an existing execution-policy HMAC key.");
     }
     const created = randomBytes(32);
     stateStore.setMeta(EXECUTION_POLICY_HMAC_SECRET_META_KEY, created.toString("base64url"));
@@ -613,15 +676,17 @@ function needsGeneralSettingsRewrite(value: Record<string, unknown>): boolean {
     "accessStrategy",
     "modelPolicy",
     "usePriorityServiceTier",
+    "processingSpeed",
+    "retainedServiceTiers",
     "uiLocalePreference",
     "maxConcurrentJobs",
     "showBridgeThreadsInCodexApp",
-    "activityCardVisibility",
-    "completionHandoff",
+    "bridgeThreadPersistence",
+    "experimentalDirectResultDelivery",
     "historyRetentionDays"
   ];
   if (required.some((key) => !Object.prototype.hasOwnProperty.call(value, key))) return true;
-  if (value.schemaVersion !== MODEL_POLICY_SCHEMA_VERSION) return true;
+  if (value.schemaVersion !== MODEL_POLICY_SCHEMA_VERSION || value.experimentalDirectResultDelivery !== true) return true;
   if (
     [
       "revision",
@@ -632,6 +697,11 @@ function needsGeneralSettingsRewrite(value: Record<string, unknown>): boolean {
       "defaultReasoningEffort",
       "legacyPreferredModel",
       "completionDeliveryMode",
+      "dashboardAutoOpenBackground",
+      "dashboardAutoOpen",
+      "activityCardVisibility",
+      "completionFollowUp",
+      "completionHandoff",
       "activityCardView",
       "taskTimeoutMs",
       "defaultSessionMode",
@@ -650,11 +720,16 @@ function readGeneralSettings(
   settingsRevision: number
 ): GeneralSettings {
   if (!isRecord(value)) throw new Error(`Invalid bridge settings at ${source}.`);
+  if (typeof value.schemaVersion === "number" && value.schemaVersion > MODEL_POLICY_SCHEMA_VERSION) throw new Error("SETTINGS_SCHEMA_UNSUPPORTED: Newer settings are preserved. Use a compatible Bridge before admitting work.");
   const accessStrategy = value.accessStrategy as AccessStrategy;
   const migratedPolicy = migrateModelPolicyServiceTiers(value.modelPolicy);
   const hasMigratablePolicy =
     (
       value.schemaVersion === MODEL_POLICY_SCHEMA_VERSION ||
+      value.schemaVersion === 7 ||
+      value.schemaVersion === 6 ||
+      value.schemaVersion === 5 ||
+      value.schemaVersion === 4 ||
       value.schemaVersion === 3 ||
       value.schemaVersion === 2
     ) &&
@@ -678,26 +753,21 @@ function readGeneralSettings(
     usePriorityServiceTier: typeof value.usePriorityServiceTier === "boolean"
       ? value.usePriorityServiceTier
       : migratedPolicy.usedFastTier,
+    processingSpeed: migratedProcessingSpeed(value, retainedPolicyServiceTiers(value.modelPolicy)),
+    retainedServiceTiers: [...new Map([
+      ...(Array.isArray(value.retainedServiceTiers) ? structuredClone(value.retainedServiceTiers) as RetainedServiceTier[] : []),
+      ...retainedPolicyServiceTiers(value.modelPolicy)
+    ].map(entry => [JSON.stringify(entry), entry])).values()],
     uiLocalePreference: isUiLocalePreference(value.uiLocalePreference)
       ? value.uiLocalePreference
       : "auto",
     maxConcurrentJobs,
+    bridgeThreadPersistence: value.bridgeThreadPersistence === "ephemeral" ? "ephemeral" : "persistent",
     showBridgeThreadsInCodexApp: typeof value.showBridgeThreadsInCodexApp === "boolean"
       ? value.showBridgeThreadsInCodexApp
       : false,
-    activityCardVisibility:
-      value.activityCardVisibility === "always" ||
-      value.activityCardVisibility === "background-only" ||
-      value.activityCardVisibility === "never"
-        ? value.activityCardVisibility
-        : "always",
-    historyRetentionDays: historyRetentionDays(value.historyRetentionDays),
-    completionHandoff:
-      value.completionHandoff === "off" || value.completionHandoff === "auto-handoff"
-        ? value.completionHandoff
-        : value.completionDeliveryMode === "auto-handoff"
-          ? "auto-handoff"
-          : "off"
+    experimentalDirectResultDelivery: true,
+    historyRetentionDays: strictRetentionDays(!Object.hasOwn(value,"historyRetentionDays") && value.schemaVersion===2 ? DEFAULT_HISTORY_RETENTION_DAYS : value.historyRetentionDays),
   };
 }
 
@@ -765,11 +835,12 @@ function assertSettingsPatchKeys(patch: BridgeUserSettingsPatch): void {
     "modelPolicy",
     "modelDescriptionOverrides",
     "usePriorityServiceTier",
+    "processingSpeed",
     "uiLocalePreference",
     "maxConcurrentJobs",
     "showBridgeThreadsInCodexApp",
-    "activityCardVisibility",
-    "completionHandoff",
+    "bridgeThreadPersistence",
+    "experimentalDirectResultDelivery",
     "historyRetentionDays"
   ]);
   const unsupported = Object.keys(patch).find((key) => !allowed.has(key));

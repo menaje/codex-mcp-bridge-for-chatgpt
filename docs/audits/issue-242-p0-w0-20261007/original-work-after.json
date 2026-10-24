@@ -1,0 +1,12 @@
+{
+  "statusPorcelain": "",
+  "refs": {
+    "HEAD": "ea8f93e2acbb9f4b6deca113165d27e8c9c23857",
+    "dev": "ea8f93e2acbb9f4b6deca113165d27e8c9c23857",
+    "origin/dev": "264fa5c99ca1c8edeef50af247614204c8f3df53",
+    "main": "8bb81b1b27745532b7bc2113bb00e66c43df3bbb"
+  },
+  "originalWorktreesRemoved": 0,
+  "originalRefsMoved": false,
+  "originalCheckoutWrites": false
+}

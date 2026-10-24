@@ -74,7 +74,7 @@ final class RuntimeLifecycleTests: XCTestCase {
         f.state.setFailure("LIFECYCLE_HANDOFF_FAILED: LIFECYCLE_HANDOFF_CONNECTION_FAILED")
         await model.refreshStatus()
         XCTAssertEqual(model.lifecycleOperation?.phase, "failed")
-        XCTAssertTrue(model.runtimeErrorMessage?.contains("로컬 서비스의 응답") == true)
+        XCTAssertTrue(model.runtimeErrorMessage?.contains("local service response") == true)
         _ = await model.shutdownApplication(force: false)
         XCTAssertEqual(f.server.count("lifecycle.request"), 2)
         XCTAssertTrue(model.applicationShutdownReserved)
@@ -86,17 +86,17 @@ final class RuntimeLifecycleTests: XCTestCase {
         let timeout = "RUNTIME_READINESS_TIMEOUT: \(secret)"
         let restored = BridgeAppLocalization.lifecycleFailureDescription(
             "CONFIG_APPLY_FAILED: \(timeout) Previous runtime configuration was restored.", locale: Locale(identifier: "ko"))
-        XCTAssertTrue(restored.contains("설정 적용에 실패"))
-        XCTAssertTrue(restored.contains("제한 시간"))
-        XCTAssertTrue(restored.contains("이전 설정을 복원했습니다"))
+        XCTAssertTrue(restored.contains("Could not apply the settings."))
+        XCTAssertTrue(restored.contains("before the timeout"))
+        XCTAssertTrue(restored.contains("The previous settings were restored."))
         XCTAssertFalse(restored.contains(secret))
         let failed = BridgeAppLocalization.lifecycleFailureDescription(
             "\(timeout) CONFIG_ROLLBACK_FAILED: token=\(secret)", locale: Locale(identifier: "ko"))
-        XCTAssertTrue(failed.contains("이전 설정을 복원하지 못했습니다"))
+        XCTAssertTrue(failed.contains("Could not restore the previous settings."))
         XCTAssertFalse(failed.contains(secret))
         let restartFailed = BridgeAppLocalization.lifecycleFailureDescription(
             "\(timeout) CONFIG_ROLLBACK_RESTART_FAILED: startup failed", locale: Locale(identifier: "ko"))
-        XCTAssertTrue(restartFailed.contains("복원했지만 서버를 다시 시작하지 못했습니다"))
+        XCTAssertTrue(restartFailed.contains("were restored, but the server could not restart."))
     }
 
     func testHandoffFailurePersistsOnlyTheErrorCategory() throws {
@@ -111,12 +111,61 @@ final class RuntimeLifecycleTests: XCTestCase {
     }
 
     @MainActor
+    func testStartupLifecycleNoticeStaysCompact() throws {
+        let f = try LifecycleNativeFixture(); defer { f.remove() }
+        f.state.setKind("start")
+        f.state.setPhase("executing")
+        let model = AppModel(paths: f.paths, bootstrapper: f.bootstrap)
+        model.recordLocalConnectionStatus(try f.state.status())
+        try requireImageRendering()
+        let content = RuntimeLifecycleNoticeView()
+            .environmentObject(model)
+            .frame(width: 416)
+            .background(Color.white)
+            .environment(\.colorScheme, .light)
+        let rendered = try XCTUnwrap(ImageRenderer(content: content).nsImage)
+        XCTAssertLessThan(rendered.size.height, 48)
+    }
+
+    @MainActor
+    func testInitialRetryBackoffShowsCheckingAndBoundedProgress() throws {
+        let f = try LifecycleNativeFixture(); defer { f.remove() }
+        f.state.setKind("start"); f.state.setPhase("waiting")
+        var status = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(f.state.status())) as? [String: Any])
+        var operation = try XCTUnwrap(status["lifecycle"] as? [String: Any])
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        operation["startup"] = ["source": "application-launch", "startedAt": now - 5000,
+            "deadlineAt": now + 295000, "attempts": 2, "stage": "backoff",
+            "failureCode": "STARTUP_HTTP_TIMEOUT", "failureStage": "http"]
+        status["lifecycle"] = operation
+        let model = AppModel(paths: f.paths, bootstrapper: f.bootstrap)
+        model.recordLocalConnectionStatus(try JSONDecoder().decode(HelperStatus.self, from: JSONSerialization.data(withJSONObject: status)))
+        XCTAssertTrue(model.isBridgeConnectionChecking)
+        XCTAssertEqual(model.operationalObservation, .unknown)
+        XCTAssertEqual(model.lifecycleOperation?.startup?.attempts, 2)
+        try requireImageRendering()
+        let rendered = try XCTUnwrap(ImageRenderer(content: RuntimeLifecycleNoticeView().environmentObject(model).frame(width: 416)).nsImage)
+        XCTAssertGreaterThan(rendered.size.height, 0)
+        XCTAssertLessThan(rendered.size.height, 120)
+    }
+
+    func testInitialStartupFailureCopySeparatesSafetyStorageAndBudget() {
+        let english = Locale(identifier: "en")
+        XCTAssertEqual(BridgeAppLocalization.lifecycleFailureDescription("STARTUP_STATE_FAILED: STATE_STORAGE_CORRUPT", locale: english),
+                       BridgeAppLocalization.string("macos.startup.storage", locale: english))
+        XCTAssertEqual(BridgeAppLocalization.lifecycleFailureDescription("STARTUP_CLEANUP_UNCONFIRMED: STARTUP_STATE_FAILED: STATE_STORAGE_CORRUPT", locale: english),
+                       BridgeAppLocalization.string("macos.startup.unsafe", locale: english))
+        XCTAssertEqual(BridgeAppLocalization.lifecycleFailureDescription("STARTUP_BUDGET_EXHAUSTED", locale: english),
+                       BridgeAppLocalization.string("macos.startup.exhausted", locale: english))
+    }
+
+    @MainActor
     func testFailedReservationNoticeRendersRecoveryReason() throws {
         let f = try LifecycleNativeFixture(); defer { f.remove() }
         f.state.setFailure("RUNTIME_READINESS_TIMEOUT: timeout CONFIG_ROLLBACK_RESTART_FAILED: startup failed")
         let model = AppModel(paths: f.paths, bootstrapper: f.bootstrap)
         model.recordLocalConnectionStatus(try f.state.status())
-        XCTAssertTrue(model.runtimeErrorMessage?.contains("이전 설정을 복원했지만") == true)
+        XCTAssertTrue(model.runtimeErrorMessage?.contains("were restored, but the server could not restart.") == true)
         try requireImageRendering()
         let content = RuntimeLifecycleNoticeView().environmentObject(model).padding(12).frame(width: 440)
             .background(Color.white).environment(\.colorScheme, .light)
@@ -249,6 +298,9 @@ final class RuntimeLifecycleTests: XCTestCase {
         await f.bootstrap.release()
         for _ in 0..<100 { if model.isRemoteClient { break }; try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertTrue(model.isRemoteClient)
+        XCTAssertNil(model.lastConfirmedHelperCheck)
+        XCTAssertNil(model.helperObservationFailure)
+        XCTAssertFalse(model.hasRetainedBridgeObservation)
         XCTAssertTrue(String(decoding: try Data(contentsOf: f.receiptFile), as: UTF8.self).contains("completed"))
     }
 
@@ -320,6 +372,7 @@ private final class LifecycleReplyState: @unchecked Sendable {
     private var ids: [String] = []
     private let dropFirstReceipt: Bool
     init(dropFirstReceipt: Bool) { self.dropFirstReceipt = dropFirstReceipt }
+    func setKind(_ value: String) { lock.withLock { kind = value } }
     func setPhase(_ value: String) { lock.withLock { phase = value } }
     func setFailure(_ value: String) { lock.withLock { phase = "failed"; error = value } }
     func failNextHandoffStatus() { lock.withLock { statusFailures = 1 } }

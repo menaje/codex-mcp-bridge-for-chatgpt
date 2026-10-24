@@ -1,0 +1,28 @@
+{
+  "recordedAt": "2026-10-03T00:32:09.348Z",
+  "verdict": "PASS: actual explicit one-shot pull only",
+  "semanticAndDigestChecks": "passed",
+  "originalMigrationAndSnapshotUnchanged": true,
+  "fixtureRows": 1,
+  "roundtripRows": 1,
+  "localHandlerExecutions": 1,
+  "cloudHttpRequests": 8,
+  "localHttpRequests": 1,
+  "nativeSitesCalls": 11,
+  "pluginSearchCalls": 1,
+  "credentialExactMatches": 0,
+  "signedUrlMatches": 0,
+  "jsonFiles": 12,
+  "readFixtureSourceSelectOnly": true,
+  "readFixtureSummaryMatchesPersistedNativeReceipt": true,
+  "localServerClosed": true,
+  "processExitCode": 0,
+  "offlineConditionsPerformed": [],
+  "duplicateConditionsPerformed": [
+    "enqueue",
+    "same ACK"
+  ],
+  "cloudInitiatedPushTested": false,
+  "parentV3McpReRead": "not yet observed by this agent",
+  "parentV2McpRead": "parent-observed actual reported in user instruction; distinct from agent direct calls"
+}

@@ -1,0 +1,34 @@
+
+ RUN  v4.1.11 /Volumes/Data/Dev/codex-mcp-bridge-issue-242-p0-w0
+
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+ ❯ test/runtimeProcess.test.ts (26 tests | 1 failed | 21 skipped) 61232ms
+     × keeps timed-out native requests reserved until their physical responses arrive 5835ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/runtimeProcess.test.ts > isolated production runtime > keeps timed-out native requests reserved until their physical responses arrive
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ test/runtimeProcess.test.ts:1542:66
+    1540|       const settled = await Promise.all(first);
+    1541|       expect(settled.every(value => value instanceof Error &&
+    1542|         value.message.includes("RUNTIME_RESPONSE_UNCONFIRMED"))).toBe(…
+       |                                                                  ^
+    1543|       await expect(runtime.server.applicationService.settingsSnapshot(…
+    1544|         .rejects.toThrow(/RUNTIME_CAPACITY/);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 4 passed | 21 skipped (26)
+   Start at  20:53:26
+   Duration  69.06s (transform 5.64s, setup 0ms, import 7.36s, tests 61.23s, environment 0ms)
+

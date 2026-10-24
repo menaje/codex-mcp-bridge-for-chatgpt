@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { requireAllowedCwd } from "./config.js";
+import { canonicalHumanText } from "./textIntegrity.js";
 
 export const PROJECT_NAME_MAX_LENGTH = 120;
 export const MAX_REGISTERED_PROJECTS = 100;
@@ -23,12 +24,12 @@ export const PROJECT_LIMIT_EXCEEDED = "PROJECT_LIMIT_EXCEEDED";
 export const PROJECT_CONTEXT_CONFLICT = "PROJECT_CONTEXT_CONFLICT";
 export const PROJECT_ARCHIVED = "PROJECT_ARCHIVED";
 export const PROJECT_DELETE_REQUIRES_ARCHIVE = "PROJECT_DELETE_REQUIRES_ARCHIVE";
+export const PROJECT_DELETE_STILL_PINNED = "PROJECT_DELETE_STILL_PINNED";
 export const PROJECT_OPERATION_CONFLICT = "PROJECT_OPERATION_CONFLICT";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PROJECT_REF_PATTERN = /^prj_[A-Za-z0-9_-]{22}$/;
 const FORBIDDEN_PROJECT_NAME_CODE_POINT = /[\p{Cc}\p{Cs}\p{Bidi_Control}\p{Default_Ignorable_Code_Point}]/u;
-const UNICODE_WHITESPACE = /\p{White_Space}+/gu;
 
 /** Internal-only immutable project record. UUID and cwd must never enter model-facing output. */
 export type ProjectTarget = {
@@ -43,6 +44,10 @@ export type ProjectTarget = {
   sortOrder: number;
   createdAt: number;
   updatedAt: number;
+  archiveState?: import("./projectLifecycle.js").ProjectArchiveState;
+  archiveRevision?: number;
+  archiveRequestedAt?: number;
+  archiveReasons?: string[];
   archivedAt?: number;
 };
 
@@ -112,20 +117,25 @@ export function normalizeProjectName(value: string): string {
     throw new Error(`${PROJECT_NAME_INVALID}: Expected a project name string.`);
   }
   rejectForbiddenProjectNameCodePoints(value);
-  const normalized = value.normalize("NFC");
-  rejectForbiddenProjectNameCodePoints(normalized);
-  const canonical = normalized.replace(UNICODE_WHITESPACE, " ").trim();
-  rejectForbiddenProjectNameCodePoints(canonical);
-  if (!canonical || Array.from(canonical).length > PROJECT_NAME_MAX_LENGTH) {
+  let canonical: string;
+  try {
+    canonical = canonicalHumanText(value, {
+      field: "Project name",
+      maxCharacters: PROJECT_NAME_MAX_LENGTH,
+      collapseWhitespace: true,
+      trim: true
+    });
+  } catch {
     throw new Error(
       `${PROJECT_NAME_INVALID}: Use 1-${PROJECT_NAME_MAX_LENGTH} visible Unicode characters.`
     );
   }
+  rejectForbiddenProjectNameCodePoints(canonical);
   return canonical;
 }
 
 /**
- * Locale-independent Unicode NFKC case folding.
+ * Locale-independent Unicode NFC case folding.
  *
  * ECMAScript does not expose Unicode CaseFolding.txt directly. Per-code-point
  * upper/lower closure implements the full mappings (including expansions such
@@ -133,7 +143,7 @@ export function normalizeProjectName(value: string): string {
  * exceptions where the case-fold representative is not that closure.
  */
 export function projectNameKey(value: string): string {
-  const canonical = normalizeProjectName(value).normalize("NFKC");
+  const canonical = normalizeProjectName(value);
   const folded = Array.from(canonical, (character) => {
     if (character === "\u0131") return character;
     if (character === "\u1e9e") return "ss";
@@ -146,7 +156,10 @@ export function projectNameKey(value: string): string {
     }
     return character.toUpperCase().toLowerCase();
   }).join("");
-  return folded.normalize("NFKC");
+  // Do not use NFKC here: full-width and compatibility characters can be
+  // legitimate distinct project names. NFC keeps canonically equivalent text
+  // searchable without changing the stored display value.
+  return folded.normalize("NFC");
 }
 
 export function canonicalProjectCwd(
@@ -195,7 +208,7 @@ export class ProjectRegistry {
           throw new Error(`${PROJECT_REF_INVALID}: Duplicate project selection reference.`);
         }
         refs.add(project.projectRef);
-        if (project.archivedAt === undefined) {
+        if (isProjectActive(project)) {
           if (activeNames.has(project.nameKey)) {
             throw new Error(`${PROJECT_NAME_CONFLICT}: Active project names must be unique.`);
           }
@@ -211,17 +224,17 @@ export class ProjectRegistry {
           available = canonicalProjectCwd(project.cwd, this.allowedRoots) === project.cwd;
           if (!available) {
             unavailableReason = "The saved folder no longer resolves canonically.";
-            if (!options.retainUnavailable && project.archivedAt === undefined) {
+            if (!options.retainUnavailable && isProjectActive(project)) {
               throw new Error(`${PROJECT_UNAVAILABLE}: ${unavailableReason}`);
             }
           }
         } catch (error) {
-          if (!options.retainUnavailable && project.archivedAt === undefined) throw error;
+          if (!options.retainUnavailable && isProjectActive(project)) throw error;
           unavailableReason = error instanceof Error ? error.message : String(error);
         }
         return {
           project,
-          available: project.archivedAt === undefined && available,
+          available: isProjectActive(project) && available,
           ...(unavailableReason ? { unavailableReason } : {})
         };
       });
@@ -237,18 +250,18 @@ export class ProjectRegistry {
 
   get selectableProjects(): ProjectTarget[] {
     return this.entries
-      .filter((entry) => entry.available && entry.project.archivedAt === undefined)
+      .filter((entry) => entry.available && isProjectActive(entry.project))
       .map(({ project }) => ({ ...project }));
   }
 
   get unavailableProjectIds(): string[] {
     return this.entries
-      .filter((entry) => entry.project.archivedAt === undefined && !entry.available)
+      .filter((entry) => isProjectActive(entry.project) && !entry.available)
       .map(({ project }) => project.id);
   }
 
   resolve(selection?: RuntimeProjectSelection): ProjectTarget {
-    const active = this.entries.filter((entry) => entry.project.archivedAt === undefined);
+    const active = this.entries.filter((entry) => isProjectActive(entry.project));
     if (!selection) {
       if (this.entries.length === 0) {
         throw new Error(
@@ -304,7 +317,7 @@ export class ProjectRegistry {
           `${PROJECT_REGISTRY_CHANGED}: The selected project name changed. Refresh the tool descriptor and retry.`
         );
       }
-      if (entry.project.archivedAt !== undefined) {
+      if (!isProjectActive(entry.project)) {
         throw new Error(`${PROJECT_NOT_FOUND}: The selected project is archived.`);
       }
     }
@@ -359,6 +372,9 @@ function validateProjectTarget(value: ProjectTarget, index: number): ProjectTarg
     sortOrder: value.sortOrder,
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
+    ...(value.archiveState ? { archiveState:value.archiveState,archiveRevision:value.archiveRevision,archiveRequestedAt:value.archiveRequestedAt,archiveReasons:value.archiveReasons } : {}),
     ...(value.archivedAt === undefined ? {} : { archivedAt: value.archivedAt })
   };
 }
+
+export function isProjectActive(project: ProjectTarget): boolean { return project.archivedAt === undefined && (!project.archiveState || project.archiveState === "active"); }

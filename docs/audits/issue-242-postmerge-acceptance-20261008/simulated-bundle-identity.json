@@ -1,0 +1,19 @@
+{
+  "source": "612f230b16d8ad37ddfdc718d4d3f2856c4565b0",
+  "tree": "d84c60eaba624efaf2e4a7280b6ebdb460213406",
+  "bundle": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-postmerge-acceptance-20261008/macos/build/postmerge/Codex MCP Bridge for ChatGPT.app",
+  "inventorySha256": "c8fd01d7e35cd972937ea952b21fd2f9037a4a8294227c06485198ead76bfeb7",
+  "files": 3314,
+  "dependencyMode": "cloned existing verified full dependencies; development dependencies included; not clean npm ci or published DMG",
+  "buildInfo": {
+    "version": "0.4.1",
+    "commit": "612f230b16d8ad37ddfdc718d4d3f2856c4565b0",
+    "dirty": false,
+    "sourceHash": "87fb93928ab0aed801804dc686661ff3d9998014ad7a89cd5aff40aa419c65eb",
+    "builtAt": "2026-10-07T20:47:31.952Z",
+    "id": "612f230b16d8:87fb93928ab0"
+  },
+  "nativeReleaseBuildSha256": "e765041fce9ca5a505f58c536d359c67cbfbc8a2c0b5d63167ba3cd4e877a64c",
+  "reSignedSimulatedBundleNativeSha256": "a5db91743cb864d05a95850c4bebdfc5044698d31ff5d7f5dd0ed9431927d481",
+  "node": "host Node v24.11.1 explicitly selected; no bundled Node acceptance claimed"
+}

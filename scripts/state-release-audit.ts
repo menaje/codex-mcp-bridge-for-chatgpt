@@ -140,23 +140,23 @@ try {
 
 function auditUiCompatibility(): Record<string, unknown> {
   const manifest = readJson(path.join(runtimeRoot, "dist/ui-manifest.json"));
-  assert.equal(manifest.manifestVersion, 2);
+  assert.equal(manifest.manifestVersion, 3);
+  assert.equal(manifest.strategy, "versioned-uri");
   assert.equal(manifest.releaseInventory.catalog, "ui-release-catalog.json");
   assert.equal(manifest.releaseInventory.catalogSha256, runtimeManifest.uiResources.releaseCatalogSha256);
   assert.deepEqual(manifest.releaseInventory.activeResources, runtimeUiCatalog.activeResources);
   assert.deepEqual(manifest.releaseInventory.compatibilityResources, runtimeUiCatalog.compatibilityResources);
   assert.deepEqual(manifest.releaseInventory.retirement, runtimeUiCatalog.retirement);
-  assert.deepEqual(runtimeUiCatalog.activeResources, ["settings", "dashboard", "question"]);
-  assert.deepEqual(runtimeUiCatalog.compatibilityResources, ["activity"]);
+  assert.deepEqual(runtimeUiCatalog.activeResources, ["settings", "dashboard", "relay"]);
+  assert.deepEqual(runtimeUiCatalog.compatibilityResources, []);
   assert.equal(runtimeUiCatalog.retirement.activity.newPresentations, false);
+  assert.equal(runtimeUiCatalog.retirement.question.newPresentations, false);
 
   const selected = [] as Array<any>;
   const physicalFiles = new Set<string>();
   const counts = {
     selected: 0,
     developmentCurrent: 0,
-    publishedBaseline: 0,
-    temporaryException: 0,
     uniqueBytes: 0
   };
   const toolSource = walkFiles(path.join(runtimeRoot, "dist"))
@@ -165,50 +165,47 @@ function auditUiCompatibility(): Record<string, unknown> {
     .join("\n");
 
   for (const [name, resource] of Object.entries(manifest.resources) as Array<[string, any]>) {
-    for (const revision of [resource, ...(resource.previous || [])]) {
-      const relativeDirectory = path.join("dist", "ui", name);
-      const plain = path.join(runtimeRoot, relativeDirectory, `${revision.digest}.html`);
-      const encoded = `${plain}.base64`;
-      const file = existsSync(plain) ? plain : encoded;
-      assert.ok(existsSync(file), `selected UI snapshot is missing: ${name}/${revision.digest}`);
-      const stored = readFileSync(file, "utf8");
-      const html = file.endsWith(".base64")
-        ? Buffer.from(stored.trim(), "base64").toString("utf8")
-        : stored;
-      assert.equal(
-        sha256(Buffer.from(stableJson({ html, metadata: revision.metadata }))),
-        revision.digest,
-        `selected UI snapshot digest must match: ${name}/${revision.digest}`
+    const revision = resource;
+    const file = path.join(runtimeRoot, "dist", "ui", `${name}.html`);
+    assert.ok(existsSync(file), `current UI file is missing: ${name}.html`);
+    const html = readFileSync(file, "utf8");
+    assert.equal(
+      sha256(Buffer.from(stableJson({ html, metadata: revision.metadata }))),
+      revision.digest,
+      `current UI file digest must match: ${name}.html`
+    );
+    assert.equal(
+      revision.uri,
+      `ui://${runtimeManifest.product.runtimeName}/${name}/v${revision.uriVersion}.html`
+    );
+    assert.equal(revision.uriVersion, runtimeUiCatalog.currentContracts[name].uriVersion);
+    const provenance = revision.releaseProvenance;
+    assert.ok(Array.isArray(provenance?.inventories) && provenance.inventories.length > 0);
+    assert.ok(Array.isArray(provenance?.sourceIds) && provenance.sourceIds.length > 0);
+    assert.ok(Array.isArray(provenance?.requiredTools) && provenance.requiredTools.length > 0);
+    assert.ok(provenance.requiredTools.includes(provenance.presenterTool));
+    for (const tool of provenance.requiredTools) {
+      assert.ok(
+        toolSource.includes(`"${tool}"`) || toolSource.includes(`'${tool}'`),
+        `selected UI tool contract is missing from the artifact: ${tool}`
       );
-      const provenance = revision.releaseProvenance;
-      assert.ok(Array.isArray(provenance?.inventories) && provenance.inventories.length > 0);
-      assert.ok(Array.isArray(provenance?.sourceIds) && provenance.sourceIds.length > 0);
-      assert.ok(Array.isArray(provenance?.requiredTools) && provenance.requiredTools.length > 0);
-      assert.ok(provenance.requiredTools.includes(provenance.presenterTool));
-      for (const tool of provenance.requiredTools) {
-        assert.ok(
-          toolSource.includes(`"${tool}"`) || toolSource.includes(`'${tool}'`),
-          `selected UI tool contract is missing from the artifact: ${tool}`
-        );
-      }
-      const relative = path.relative(runtimeRoot, file);
-      physicalFiles.add(relative);
-      counts.uniqueBytes += Buffer.byteLength(html);
-      counts.selected += 1;
-      if (provenance.inventories.includes("development-current")) counts.developmentCurrent += 1;
-      if (provenance.inventories.includes("published-baseline")) counts.publishedBaseline += 1;
-      if (provenance.inventories.includes("temporary-exception")) counts.temporaryException += 1;
-      selected.push({
-        name,
-        digest: revision.digest,
-        uri: revision.uri,
-        inventories: provenance.inventories,
-        sourceIds: provenance.sourceIds,
-        presenterTool: provenance.presenterTool,
-        requiredTools: provenance.requiredTools,
-        bytes: Buffer.byteLength(html)
-      });
     }
+    const relative = path.relative(runtimeRoot, file);
+    physicalFiles.add(relative);
+    counts.uniqueBytes += Buffer.byteLength(html);
+    counts.selected += 1;
+    if (provenance.inventories.includes("development-current")) counts.developmentCurrent += 1;
+    selected.push({
+      name,
+      uriVersion: revision.uriVersion,
+      digest: revision.digest,
+      uri: revision.uri,
+      inventories: provenance.inventories,
+      sourceIds: provenance.sourceIds,
+      presenterTool: provenance.presenterTool,
+      requiredTools: provenance.requiredTools,
+      bytes: Buffer.byteLength(html)
+    });
   }
   assert.deepEqual(
     selected.map(({ bytes: _bytes, ...entry }) => entry),
@@ -219,24 +216,8 @@ function auditUiCompatibility(): Record<string, unknown> {
   );
   assert.deepEqual(packagedFiles, physicalFiles, "artifact must contain only explicitly selected UI snapshots");
 
-  const catalogRevisions = [
-    ...runtimeUiCatalog.publishedBaselines.flatMap((source: any) =>
-      source.resources.map((revision: any) => ({ sourceId: source.id, revision }))
-    ),
-    ...runtimeUiCatalog.temporaryExceptions.flatMap((source: any) =>
-      source.resources.map((revision: any) => ({ sourceId: source.id, revision }))
-    )
-  ];
-  for (const { sourceId, revision } of catalogRevisions) {
-    assert.ok(selected.some((entry) =>
-      entry.name === revision.name && entry.digest === revision.digest &&
-      entry.uri === revision.uri && entry.sourceIds.includes(sourceId)
-    ), `catalog revision was not selected: ${sourceId}/${revision.name}`);
-  }
-  assert.equal(counts.selected, 8);
-  assert.equal(counts.developmentCurrent, 3);
-  assert.equal(counts.publishedBaseline, 2);
-  assert.equal(counts.temporaryException, 4);
+  assert.equal(counts.selected, runtimeUiCatalog.activeResources.length);
+  assert.equal(counts.developmentCurrent, runtimeUiCatalog.activeResources.length);
   return {
     catalogVersion: runtimeUiCatalog.catalogVersion,
     activeResources: runtimeUiCatalog.activeResources,
@@ -244,20 +225,7 @@ function auditUiCompatibility(): Record<string, unknown> {
     selectionCounts: counts,
     selected,
     unclassifiedSnapshotCount: 0,
-    publishedBaseline: runtimeUiCatalog.publishedBaselines.map((entry: any) => ({
-      id: entry.id,
-      version: entry.version,
-      tag: entry.tag,
-      commit: entry.commit,
-      artifactSha256: entry.artifact.sha256
-    })),
-    temporaryExceptions: runtimeUiCatalog.temporaryExceptions.map((entry: any) => ({
-      id: entry.id,
-      kind: entry.kind,
-      commit: entry.commit,
-      buildId: entry.buildId,
-      exitCondition: entry.exitCondition
-    })),
+    historicalRevisions: [],
     activityRetirement: runtimeUiCatalog.retirement.activity
   };
 }
@@ -313,7 +281,8 @@ function auditSupportedStarts(): Array<{
     const direct = new currentStateModule.BridgeStateStore({ file: databaseFile });
     try {
       assert.equal(direct.schemaVersion, runtimeCatalog.currentSchema);
-      assert.equal(direct.getMeta("schema_v19_source_version"), String(sourceSchema));
+      assert.equal(direct.getMeta("state_last_migration_source_schema"), String(sourceSchema));
+      assert.equal(direct.getMeta("state_last_migration_target_schema"), String(runtimeCatalog.currentSchema));
     } finally {
       direct.close();
     }
@@ -355,7 +324,7 @@ function auditSchemaCommitInterruption(): Record<string, unknown> {
   }
   const resumed = new currentStateModule.BridgeStateStore({ file: databaseFile });
   try {
-    assert.equal(resumed.schemaVersion, 19);
+    assert.equal(resumed.schemaVersion, runtimeCatalog.currentSchema);
     assert.equal(resumed.getMeta("state_migration_pending"), undefined);
     assert.match(
       String(resumed.getMeta("state_migration:bridge-state-18-to-19")),
@@ -368,7 +337,7 @@ function auditSchemaCommitInterruption(): Record<string, unknown> {
     sourceSchema: 18,
     committedSchemaBeforeProvenance: 19,
     pendingRecordObserved: true,
-    resumedSchema: 19,
+    resumedSchema: runtimeCatalog.currentSchema,
     provenanceFinalized: true
   };
 }
@@ -401,8 +370,8 @@ function seedSchema(schema: number, databaseFile: string): void {
 
 function removeMigrationArtifacts(databaseFile: string, originalSourceSchema: number): void {
   for (const candidate of [
-    `${databaseFile}.pre-v${originalSourceSchema}-to-v19.sqlite`,
-    `${databaseFile}.migration-v${originalSourceSchema}-to-v19.backup.json`,
+    `${databaseFile}.pre-v${originalSourceSchema}-to-v${runtimeCatalog.currentSchema}.sqlite`,
+    `${databaseFile}.migration-v${originalSourceSchema}-to-v${runtimeCatalog.currentSchema}.backup.json`,
     `${databaseFile}.migration-status.json`,
     `${databaseFile}.migration-lock.json`
   ]) rmSync(candidate, { force: true });
@@ -468,7 +437,7 @@ async function auditMigrationCase(
       checkpoints.push({ id: progress.migrationId, targetSchema: progress.targetSchema });
     }
   });
-  assert.equal(state.schemaVersion, 19);
+  assert.equal(state.schemaVersion, runtimeCatalog.currentSchema);
   assert.equal(state.getMeta("schema_v19_source_version"), String(sourceSchema));
   const migratedDatabase = new RuntimeDatabase(databaseFile, { readonly: true, fileMustExist: true });
   const migratedCounts = semanticCounts(migratedDatabase);
@@ -512,7 +481,7 @@ async function auditMigrationCase(
     retiredPreferredSelectionRemoved: !("preferredSelection" in settings.current.modelPolicy),
     registeredProjectCount: settings.current.projects.length
   };
-  assert.equal(settingsContract.schemaVersion, 4);
+  assert.equal(settingsContract.schemaVersion, runtimeManifest.stateCompatibility.persistentContracts.userSettingsSchema);
   assert.equal(settingsContract.retiredPreferredSelectionRemoved, true);
   if (sourceSchema === 3) {
     assert.equal(settingsContract.accessStrategy, "always-full");
@@ -525,7 +494,7 @@ async function auditMigrationCase(
   state = new currentStateModule.BridgeStateStore({ file: databaseFile });
   state.close();
 
-  const backupFile = `${databaseFile}.pre-v${sourceSchema}-to-v19.sqlite`;
+  const backupFile = `${databaseFile}.pre-v${sourceSchema}-to-v${runtimeCatalog.currentSchema}.sqlite`;
   const eligibility = currentRecoveryModule.inspectStateRecovery({ databaseFile, backupFile });
   assert.equal(eligibility.eligible, true);
   const restored = currentRecoveryModule.restoreStateDatabase({
@@ -551,7 +520,7 @@ async function auditMigrationCase(
     previousRuntime = "state-read-then-health-opened-and-cleanly-stopped-with-published-v0.3.0";
   }
 
-  const metadataFile = `${databaseFile}.migration-v${sourceSchema}-to-v19.backup.json`;
+  const metadataFile = `${databaseFile}.migration-v${sourceSchema}-to-v${runtimeCatalog.currentSchema}.backup.json`;
   const metadata = readJson(metadataFile);
   return {
     sourceSchema,

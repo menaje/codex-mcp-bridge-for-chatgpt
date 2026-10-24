@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "status": "PASS",
+  "scope": "local audit/evidence documents only; no runtime/Site/MCP/network trial executed",
+  "historicalManifests": {
+    "file-digests.json": 21,
+    "roundtrip/file-digests.json": 23
+  },
+  "runnerSnapshots": 4,
+  "jsonFilesParsed": 33,
+  "relativeLinksChecked": 14,
+  "secretPatternMatches": 0,
+  "whitespaceFailures": 0,
+  "originalSnapshotsUnchanged": true,
+  "originatingV3Reads": 2,
+  "completeReportedResponsesEqual": true,
+  "fixtureDigestRecomputed": "41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf",
+  "commandDigestRecomputed": "e1f0757524bb4b7e568ab3378c8aaba461ac8b5254729f74a06bbc3f2ee6b820",
+  "localResponseDigestRecomputed": "647a4c380af69927a3b47155cb936dba7939f493bb5dac2a3f7eeefbca73cbf7",
+  "requestResponseDigestsDifferent": true,
+  "reportedResponseCompactSha256": "b3dd2674523685e1341d68c52f029229409ac547bed7c5a2cdec42cd42c57666",
+  "reportedResponseHashScope": "compact JSON as reported; not MCP wire bytes",
+  "localEventsAreSameRunner": true,
+  "operationalDbSettingsDirectAudit": false,
+  "reviewerJobId": "89f45a29-49e8-4466-902a-f5e6fd2c29f8",
+  "docsOnlyAffected": {
+    "status": "PASS",
+    "node": false,
+    "macOS": false,
+    "codexCliPin": "0.153.3",
+    "log": "affected-validation.txt"
+  },
+  "sourceCommit": "7755827919c042166cf5e2a7cfe3e0f5f76df577"
+}

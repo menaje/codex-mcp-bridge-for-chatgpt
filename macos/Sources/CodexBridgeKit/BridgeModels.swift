@@ -5,6 +5,10 @@ public struct EmptyParameters: Codable, Sendable {
 }
 
 public struct DashboardSnapshot: Codable, Sendable {
+    public var executionContractVersion: Int? = nil
+    public var historyModeApplied: String? = nil
+    public var progressRevision: String? = nil
+    public var executionHistoryRevision: String? = nil
     public var problems: DashboardProblems? = nil
     public let kind: String
     public let generatedAt: String
@@ -12,14 +16,19 @@ public struct DashboardSnapshot: Codable, Sendable {
     public let statusSource: String
     public let coverage: String
     public let enrichment: CardEnrichment?
-    public let codexAccount: CodexAccountUsage?
-    public let weeklyUsage: WeeklyUsage?
+    public var codexAccount: CodexAccountUsage?
+    public var weeklyUsage: WeeklyUsage?
+    public var usageContext: String? = nil
     public let counts: DashboardCounts
     public var activeRows: [DashboardRow]
     public var terminalRows: [DashboardRow]
     public var idleRows: [DashboardRow]
+    public var backgroundRows: [DashboardRow]? = nil
+    public var backgroundPagination: DashboardPage? = nil
+    public var backgroundRevision: String? = nil
     public var statusRows: [DashboardRow]? = nil
     public var statusRowsComplete: Bool? = nil
+    public var statusPagination: DashboardPage? = nil
     public var historyIncluded: Bool? = nil
     public var pagination: DashboardPagination
     public let uiLocalePreference: String
@@ -27,6 +36,7 @@ public struct DashboardSnapshot: Codable, Sendable {
 }
 
 public struct WorkHistoryPolicy: Codable, Sendable, Equatable {
+    public var policyRevision: String? = nil
     public var reviewUntilRetention: Bool? = nil
     public var automaticRecovery: Bool? = nil
     public let retentionDays: Int
@@ -68,16 +78,17 @@ public struct CardEnrichment: Codable, Sendable {
     public let pendingReads: Int?
     public let usageUnavailable: Bool?
     public let oldestObservationAt: String?
+    public var backgroundInventoryUnavailable: Bool? = nil
 
     public var isUpdating: Bool { (pendingReads ?? 0) > 0 }
 
     public var hasFailures: Bool {
-        if pendingReads != nil { return (runtimeUnavailable ?? 0) > 0 || usageUnavailable == true }
+        if pendingReads != nil { return (runtimeUnavailable ?? 0) > 0 || usageUnavailable == true || backgroundInventoryUnavailable == true }
         return isIncomplete
     }
 
     public var isIncomplete: Bool {
-        usageTimedOut || timeouts > 0 || (runtimeUnavailable ?? 0) > 0 || usageUnavailable == true
+        usageTimedOut || timeouts > 0 || (runtimeUnavailable ?? 0) > 0 || usageUnavailable == true || backgroundInventoryUnavailable == true
     }
 }
 
@@ -87,6 +98,74 @@ public enum DashboardAppendBucket: Sendable {
 }
 
 public extension DashboardSnapshot {
+    var hasMoreRunning: Bool {
+        if historyModeApplied == "jobs" {
+            return pagination.active.hasNext && activeRows.filter { $0.bucket == "active" && $0.jobId != nil }.count < (counts.progressJobCount ?? 0)
+        }
+        return statusPagination?.hasNext == true
+    }
+
+    /// Retain immutable history pages when membership is unchanged. Expanded
+    /// running observations are refreshed through the client before merging.
+    func retainingExpandedPages(from previous: DashboardSnapshot?) -> DashboardSnapshot {
+        guard let previous, historyModeApplied == "jobs", previous.historyModeApplied == "jobs",
+              scope == previous.scope, historyPolicy?.policyRevision == previous.historyPolicy?.policyRevision,
+              historyPolicy?.totalRemoved == previous.historyPolicy?.totalRemoved else { return self }
+        var result = self
+        if historyIncluded != false, let executionHistoryRevision, executionHistoryRevision == previous.executionHistoryRevision,
+           pagination.terminal.offset == 0, previous.pagination.terminal.offset > 0,
+           previous.terminalRows.count > terminalRows.count,
+           counts.executionCount == previous.counts.executionCount {
+            result.terminalRows = Self.mergeRows(previous.terminalRows, terminalRows)
+            result.pagination.terminal = previous.pagination.terminal
+        }
+        if var incoming = problems, let old = previous.problems, incoming.revision == old.revision,
+           incoming.query.kind == old.query.kind, incoming.query.review == old.query.review, incoming.query.view == old.query.view,
+           incoming.page.total == old.page.total, old.page.offset > 0, incoming.page.offset <= old.page.offset,
+           old.rows.count > incoming.rows.count {
+            var indices = Dictionary(uniqueKeysWithValues: old.rows.enumerated().map { ($0.element.problemKey, $0.offset) })
+            var rows = old.rows
+            for row in incoming.rows {
+                if let index = indices[row.problemKey] { rows[index] = row }
+                else { indices[row.problemKey] = rows.count; rows.append(row) }
+            }
+            incoming.rows = rows
+            incoming.page = old.page
+            result.problems = incoming
+        }
+        return result
+    }
+
+    /// A missing usage field is an incomplete observation only while the
+    /// server proves the same account and applied CLI context.
+    func retainingUsage(from previous: DashboardSnapshot?) -> DashboardSnapshot {
+        guard let previous, let usageContext, usageContext == previous.usageContext else { return self }
+        var result = self
+        if let account = codexAccount {
+            guard account.authenticated else { return self }
+            if account.usageStatus == "unavailable" {
+                if let old = previous.codexAccount {
+                    guard account.sharesKnownAccount(with: old),
+                          account.planType == old.planType else { return self }
+                    result.codexAccount = account.retainingUnavailableUsage(from: old)
+                }
+                if result.weeklyUsage == nil { result.weeklyUsage = previous.weeklyUsage }
+            }
+        } else {
+            result.codexAccount = previous.codexAccount
+            result.weeklyUsage = weeklyUsage ?? previous.weeklyUsage
+        }
+        return result
+    }
+
+    func clearingUsage() -> DashboardSnapshot {
+        var result = self
+        result.codexAccount = nil
+        result.weeklyUsage = nil
+        result.usageContext = nil
+        return result
+    }
+
     /// Merge one independently paged Dashboard bucket while retaining the
     /// other bucket and evicting rows that moved between runtime states.
     func mergingPage(
@@ -132,7 +211,7 @@ public extension DashboardSnapshot {
         if result.idleRows.count > result.pagination.idle.total {
             result.idleRows = Array(next.idleRows.prefix(result.pagination.idle.total))
         }
-        return result
+        return result.retainingExpandedPages(from: self)
     }
 
     private static func mergeRows(
@@ -172,6 +251,9 @@ public enum DashboardStatusFilter: String, Codable, Sendable {
 }
 
 public struct DashboardCounts: Codable, Sendable {
+    public var progressJobCount: Int? = nil
+    public var executionCount: Int? = nil
+    public var backgroundProcessUnknownAgents: Int? = nil
     public let trackedProjects: Int
     public let trackedConversations: Int
     public let retainedJobs: Int
@@ -222,6 +304,9 @@ public struct DashboardExecution: Codable, Sendable {
     public let reroutedModel: String?
     public let reroutedModelDisplayName: String?
     public let isCurrent: Bool
+    public let processingSpeed: String?
+    public let serviceTierScope: String?
+    public let requestState: String?
 }
 
 public struct CancellationDisplay: Codable, Sendable {
@@ -233,6 +318,19 @@ public struct CancellationDisplay: Codable, Sendable {
 }
 
 public struct DashboardTurn: Codable, Sendable {
+    public var jobId: String? = nil
+    public var scopeId: String? = nil
+    public var activityId: String? = nil
+    public var agentId: String? = nil
+    public var executionRevision: String? = nil
+    public var executionName: String? = nil
+    public var summary: String? = nil
+    public var error: String? = nil
+    public var reasonAvailability: String? = nil
+
+    public var executionKey: String? = nil
+    public var endedAtSource: String? = nil
+    public var detailAvailability: String? = nil
     public let activityKey: String?
     public let activityTitle: String?
     public let execution: DashboardExecution?
@@ -244,7 +342,33 @@ public struct DashboardTurn: Codable, Sendable {
     public let cancellation: CancellationDisplay?
 }
 
+public struct DashboardHistoryDetail: Codable, Sendable {
+    public let kind: String
+    public let rowKey: String
+    public var history: [DashboardTurn]
+    public let historyCount: Int
+    /// Matches the Dashboard row that selected the representative execution.
+    /// Older bridge versions omit it, so clients retain a compatibility path.
+    public var historyRevision: String? = nil
+    public var representativeExecutionKey: String? = nil
+    public var policyRevision: String? = nil
+    public var nextExpiryAt: String? = nil
+    public var historyHasMore: Bool? = nil
+    public var nextCursor: String? = nil
+
+}
+
 public struct DashboardRow: Codable, Identifiable, Sendable {
+    public var jobId: String? = nil
+    public var scopeId: String? = nil
+    public var activityId: String? = nil
+    public var agentId: String? = nil
+    public var executionRevision: String? = nil
+    public var executionName: String? = nil
+    public var summary: String? = nil
+    public var error: String? = nil
+    public var reasonAvailability: String? = nil
+
     public var historyControls: HistoryControls? = nil
     public var handoff: ThreadHandoffStatus? = nil
     public var id: String { rowKey }
@@ -269,6 +393,15 @@ public struct DashboardRow: Codable, Identifiable, Sendable {
     public let latestTurn: DashboardTurn?
     public let history: [DashboardTurn]?
     public let historyCount: Int?
+    /// Stable only for the snapshot that supplied this row; used to discard a
+    /// deferred history response after the Agent begins a new execution.
+    public var historyRevision: String? = nil
+    public var representativeExecutionKey: String? = nil
+    public var policyRevision: String? = nil
+    public var nextExpiryAt: String? = nil
+    public var historyHasMore: Bool? = nil
+    public var nextCursor: String? = nil
+
 }
 
 public struct ThreadHandoffStatus: Codable, Sendable {
@@ -280,6 +413,8 @@ public struct ThreadHandoffStatus: Codable, Sendable {
 
 public struct SettingsSnapshot: Codable, Sendable {
     public var historyPolicy: WorkHistoryPolicy? = nil
+    /// Missing on older bridge builds. Full text is fetched only when opened.
+    public var modelDescriptionHistoryModelIds: [String]? = nil
     public let settings: BridgeSettings
     public let operatorDefaults: BridgeSettings
     public let capabilities: SettingsCapabilities
@@ -287,6 +422,31 @@ public struct SettingsSnapshot: Codable, Sendable {
     public let warnings: [String]
     public let scopeNotice: String
     public let policyActivation: PolicyActivation
+}
+
+public struct ModelDescriptionVersion: Codable, Sendable, Identifiable {
+    public let version: Int
+    public let description: String?
+    public let createdAt: String?
+
+    public var id: Int { version }
+}
+
+public struct ModelDescriptionHistoryPage: Codable, Sendable {
+    public let kind: String
+    public let modelId: String
+    public let versions: [ModelDescriptionVersion]
+    public let nextBeforeVersion: Int?
+}
+
+public struct ModelDescriptionHistoryParameters: Encodable, Sendable {
+    public let modelId: String
+    public let beforeVersion: Int?
+
+    public init(modelId: String, beforeVersion: Int? = nil) {
+        self.modelId = modelId
+        self.beforeVersion = beforeVersion
+    }
 }
 
 public struct BridgeSettings: Codable, Sendable {
@@ -301,12 +461,32 @@ public struct BridgeSettings: Codable, Sendable {
     /// Missing on older servers; official catalog descriptions are never copied here.
     public let modelDescriptionOverrides: [String: String]?
     public let usePriorityServiceTier: Bool
+    public let processingSpeed: String?
     public let projects: [BridgeProject]
     public let uiLocalePreference: String
     public let maxConcurrentJobs: Int
     public let showBridgeThreadsInCodexApp: Bool
-    public let activityCardVisibility: String
-    public let completionHandoff: String
+    public let bridgeThreadPersistence: String?
+    public let experimentalDirectResultDelivery: Bool
+}
+
+/// Opaque local-delivery receipt. It deliberately excludes task prompts,
+/// result content, project paths, Activity IDs, and conversation IDs.
+public struct NativeCompletionAvailability: Decodable, Sendable {
+    public let available: Bool
+    public let nextAvailableAt: Double?
+}
+
+public struct NativeCompletionNotification: Codable, Sendable, Equatable, Identifiable {
+    public let eventId: String
+    public let outboxId: Int
+
+    public var id: String { eventId }
+
+    public init(eventId: String, outboxId: Int) {
+        self.eventId = eventId
+        self.outboxId = outboxId
+    }
 }
 
 public struct BridgeProject: Codable, Identifiable, Sendable {
@@ -314,12 +494,15 @@ public struct BridgeProject: Codable, Identifiable, Sendable {
     public let projectRef: String
     public let projectRevision: Int
     public let name: String
-    public let label: String
     public let nameKey: String
     public let cwd: String
     public let sortOrder: Int
     public let createdAt: Double
     public let updatedAt: Double
+    public let archiveState: String?
+    public let archiveRevision: Int?
+    public let archiveRequestedAt: Double?
+    public let archiveReasons: [String]?
     public let archivedAt: Double?
 }
 
@@ -373,11 +556,12 @@ public struct ModelPolicy: Codable, Sendable {
 }
 
 public struct SettingsCapabilities: Codable, Sendable {
+    public let availableProcessingSpeeds: [String]?
     public let availableAccessStrategies: [String]
     public let availableUiLocalePreferences: [String]
-    public let availableActivityCardVisibilities: [String]
-    public let availableCompletionHandoffs: [String]
     public let projectAvailability: [ProjectAvailability]
+    /// Deleted registrations with retained context; absent on older servers.
+    public let recoverableProjects: [BridgeProject]?
     public let maxConcurrentJobs: Int
     public let defaultBackend: String
     public let allowWorkspaceWrite: Bool
@@ -451,9 +635,12 @@ public struct PolicyActivation: Codable, Sendable {
 }
 
 public struct DashboardParameters: Codable, Sendable {
+    public var historyMode: String? = nil
     public var problems: ProblemQuery? = nil
     public var limit: Int
     public var terminalOffset: Int
+    public var backgroundOffset: Int? = nil
+    public var statusOffset: Int? = nil
     public var idleOffset: Int
     public var enrich: Bool
     public var statusFilter: DashboardStatusFilter
@@ -478,6 +665,16 @@ public struct DashboardParameters: Codable, Sendable {
     }
 }
 
+public struct DashboardHistoryDetailParameters: Codable, Sendable {
+    public let rowKey: String
+
+    public var historyCursor: String? = nil
+    public init(rowKey: String, historyCursor: String? = nil) {
+        self.rowKey = rowKey
+        self.historyCursor = historyCursor
+    }
+}
+
 public struct SettingsSnapshotParameters: Codable, Sendable {
     public let refreshModels: Bool
     public let locale: String
@@ -492,15 +689,29 @@ public struct SettingsMutation: Encodable, Sendable {
     public let expectedSettingsRevision: Int?
     public let expectedRegistryRevision: Int?
     public let operation: SettingsOperation
+    /// Display-only locale consumed by the companion transport adapter. It is
+    /// deliberately not a persisted bridge setting or part of `operation`.
+    public let locale: String?
 
     public init(
         expectedSettingsRevision: Int?,
         expectedRegistryRevision: Int?,
-        operation: SettingsOperation
+        operation: SettingsOperation,
+        locale: String? = nil
     ) {
         self.expectedSettingsRevision = expectedSettingsRevision
         self.expectedRegistryRevision = expectedRegistryRevision
         self.operation = operation
+        self.locale = locale
+    }
+
+    public func withPresentationLocale(_ value: String) -> SettingsMutation {
+        SettingsMutation(
+            expectedSettingsRevision: expectedSettingsRevision,
+            expectedRegistryRevision: expectedRegistryRevision,
+            operation: operation,
+            locale: value
+        )
     }
 }
 
@@ -527,11 +738,13 @@ public struct SettingsPatch: Encodable, Sendable {
     public var modelPolicy: ModelPolicy?
     public var modelDescriptionOverrides: [String: String]?
     public var usePriorityServiceTier: Bool?
+    public var processingSpeed: String?
     public var uiLocalePreference: String?
     public var maxConcurrentJobs: Int?
     public var historyRetentionDays: Int?
     public var showBridgeThreadsInCodexApp: Bool?
-    public var activityCard: ActivityCardPatch?
+    public var bridgeThreadPersistence: String?
+    public var experimentalDirectResultDelivery: Bool?
     public var projectOperations: [ProjectOperation]?
 
     public init(
@@ -539,33 +752,27 @@ public struct SettingsPatch: Encodable, Sendable {
         modelPolicy: ModelPolicy? = nil,
         modelDescriptionOverrides: [String: String]? = nil,
         usePriorityServiceTier: Bool? = nil,
+        processingSpeed: String? = nil,
         uiLocalePreference: String? = nil,
         maxConcurrentJobs: Int? = nil,
         historyRetentionDays: Int? = nil,
         showBridgeThreadsInCodexApp: Bool? = nil,
-        activityCard: ActivityCardPatch? = nil,
+        bridgeThreadPersistence: String? = nil,
+        experimentalDirectResultDelivery: Bool? = nil,
         projectOperations: [ProjectOperation]? = nil
     ) {
         self.accessStrategy = accessStrategy
         self.modelPolicy = modelPolicy
         self.modelDescriptionOverrides = modelDescriptionOverrides
         self.usePriorityServiceTier = usePriorityServiceTier
+        self.processingSpeed = processingSpeed
         self.uiLocalePreference = uiLocalePreference
         self.maxConcurrentJobs = maxConcurrentJobs
         self.historyRetentionDays = historyRetentionDays
         self.showBridgeThreadsInCodexApp = showBridgeThreadsInCodexApp
-        self.activityCard = activityCard
+        self.bridgeThreadPersistence = bridgeThreadPersistence
+        self.experimentalDirectResultDelivery = experimentalDirectResultDelivery
         self.projectOperations = projectOperations
-    }
-}
-
-public struct ActivityCardPatch: Encodable, Sendable {
-    public var visibility: String
-    public var completionHandoff: String
-
-    public init(visibility: String, completionHandoff: String) {
-        self.visibility = visibility
-        self.completionHandoff = completionHandoff
     }
 }
 
@@ -612,13 +819,105 @@ public enum ProjectOperation: Encodable, Sendable {
 }
 
 public struct RuntimeAdmissionSnapshot: Codable, Sendable {
+    public struct AuthConnection: Codable, Sendable {
+        public let source: String
+        public let mode: String
+        public let observedAt: Int64?
+    }
+    public let authConnection: AuthConnection?
     public let acceptingNewJobs: Bool
     public let activeJobs: Int
     public let pendingAdmissions: Int
+    public let pendingInteractions: Int?
+    public let memoryOnlyThreads: Int?
+    public let protectedMemoryOnlyThreads: Int?
+    public let discardableMemoryOnlyThreads: Int?
     public let backgroundProcessState: String
     public let backgroundProcesses: Int
     public let backgroundProcessAgents: Int
     public let backgroundProcessUnknownAgents: Int
+    public let stateService: RuntimeStateServiceSnapshot?
+    public let readService: RuntimeReadServiceSnapshot?
+    public let telemetryService: RuntimeTelemetryServiceSnapshot?
+
+    public init(
+        acceptingNewJobs: Bool,
+        activeJobs: Int,
+        pendingAdmissions: Int,
+        pendingInteractions: Int? = nil,
+        memoryOnlyThreads: Int? = nil,
+        protectedMemoryOnlyThreads: Int? = nil,
+        discardableMemoryOnlyThreads: Int? = nil,
+        backgroundProcessState: String,
+        backgroundProcesses: Int,
+        backgroundProcessAgents: Int,
+        backgroundProcessUnknownAgents: Int,
+        stateService: RuntimeStateServiceSnapshot? = nil,
+        readService: RuntimeReadServiceSnapshot? = nil,
+        telemetryService: RuntimeTelemetryServiceSnapshot? = nil,
+        authConnection: AuthConnection? = nil
+    ) {
+        self.acceptingNewJobs = acceptingNewJobs
+        self.activeJobs = activeJobs
+        self.pendingAdmissions = pendingAdmissions
+        self.pendingInteractions = pendingInteractions
+        self.memoryOnlyThreads = memoryOnlyThreads
+        self.protectedMemoryOnlyThreads = protectedMemoryOnlyThreads
+        self.discardableMemoryOnlyThreads = discardableMemoryOnlyThreads
+        self.backgroundProcessState = backgroundProcessState
+        self.backgroundProcesses = backgroundProcesses
+        self.backgroundProcessAgents = backgroundProcessAgents
+        self.backgroundProcessUnknownAgents = backgroundProcessUnknownAgents
+        self.stateService = stateService
+        self.readService = readService
+        self.telemetryService = telemetryService
+        self.authConnection = authConnection
+    }
+}
+
+public struct RuntimeStateServiceSnapshot: Codable, Sendable {
+    public struct ActiveOperation: Codable, Sendable {
+        public let access: String
+        public let operation: String
+        public let phase: String
+        public let startedAt: Int64
+        public let observedAt: Int64
+    }
+
+    public let status: String
+    public let generation: String?
+    public let heartbeatAgeMs: Int?
+    public let activeOperation: ActiveOperation?
+    public let lastCommitAt: Int64?
+    public let storageError: String?
+    public let storageErrorObservedAt: Int64?
+}
+
+public struct RuntimeReadServiceSnapshot: Codable, Sendable {
+    public struct ActiveOperation: Codable, Sendable {
+        public let method: String
+        public let phase: String
+        public let startedAt: Int64
+        public let observedAt: Int64
+    }
+
+    public let status: String
+    public let generation: String?
+    public let heartbeatAgeMs: Int?
+    public let inFlight: Int
+    public let capacity: Int
+    public let lastSnapshotAt: Int64?
+    public let activeOperation: ActiveOperation?
+}
+
+public struct RuntimeTelemetryServiceSnapshot: Codable, Sendable {
+    public let status: String
+    public let queued: Int
+    public let inFlight: Int
+    public let retained: Int
+    public let dropped: Int
+    public let failed: Int
+    public let lastPersistedAt: Int64?
 }
 
 public struct RuntimeSnapshotParameters: Codable, Sendable {
@@ -701,13 +1000,35 @@ public struct RuntimeConfigurationStatus: Codable, Sendable {
 public struct HelperBridgeStatus: Codable, Sendable {
     public let socketPath: String
     public let connected: Bool
+    /// `timed-out` is an inconclusive bounded observation, not a confirmed exit.
+    public let observation: String?
+    /// Last fresh observation for the current managed process generation.
+    public let lastSuccessfulAt: String?
     public let acceptingNewJobs: Bool?
     public let activeJobs: Int?
     public let pendingAdmissions: Int?
+    public let pendingInteractions: Int?
+    public let memoryOnlyThreads: Int?
+    public let protectedMemoryOnlyThreads: Int?
+    public let discardableMemoryOnlyThreads: Int?
     public let backgroundProcessState: String?
     public let backgroundProcesses: Int?
     public let backgroundProcessAgents: Int?
     public let backgroundProcessUnknownAgents: Int?
+    public let stateServiceStatus: String?
+    public let stateServiceAccess: String?
+    public let stateServicePhase: String?
+    public let stateServiceObservedAt: Int64?
+    public let stateServiceLastCommitAt: Int64?
+    public let stateServiceStorageError: String?
+    public let stateServiceStorageErrorObservedAt: Int64?
+    public let readServiceStatus: String?
+    public let readServicePhase: String?
+    public let readServiceObservedAt: Int64?
+    public let readServiceLastSnapshotAt: Int64?
+    public let telemetryServiceStatus: String?
+    public let telemetryDropped: Int?
+    public let telemetryFailed: Int?
 }
 
 public struct HelperTunnelStatus: Codable, Sendable {
@@ -842,4 +1163,379 @@ public struct HelperLogEntry: Codable, Identifiable, Sendable {
 
 public struct HelperLogs: Codable, Sendable {
     public let entries: [HelperLogEntry]
+}
+
+/// A stable reference into the Bridge-owned Markdown skill library.
+public struct BridgeSkillReference: Codable, Sendable, Equatable {
+    public let skillId: String
+    public let source: String
+    public let version: String
+
+    public init(skillId: String, source: String = "bridge", version: String) {
+        self.skillId = skillId
+        self.source = source
+        self.version = version
+    }
+}
+
+public struct BridgeSkillSummary: Codable, Sendable, Identifiable, Equatable {
+    public var id: String { "\(source)-\(skillId)-\(version)" }
+    public let skillId: String
+    public let source: String
+    public let version: String
+    public let name: String
+    /// Optional discovery metadata. An empty string has no special UI meaning.
+    public let description: String
+    public let contentDigest: String?
+    public let enabled: Bool
+    public let availability: String
+
+    public var reference: BridgeSkillReference {
+        BridgeSkillReference(skillId: skillId, source: source, version: version)
+    }
+}
+
+public struct BridgeSkill: Codable, Sendable, Equatable, Identifiable {
+    public var id: String { skill.id }
+    public let skill: BridgeSkillSummary
+    /// Exact authored source. The client renders this value but never rewrites it.
+    public let content: String
+    public let files: [BridgeSkillFileSummary]
+    public let format: String
+    /// A legacy structured version exposed through the lossless Markdown adapter.
+    public let legacy: Bool
+    public let sourceSnapshot: String
+    public let warnings: [BridgeSkillWarningCode]
+}
+
+public enum BridgeSkillWarningCode: String, Codable, Sendable, Equatable {
+    case archived
+    case legacyStructured = "legacy-structured"
+}
+
+public struct BridgeSkillFileSummary: Codable, Sendable, Equatable, Identifiable {
+    public var id: String { path }
+    public let path: String
+    public let format: String
+    public let bytes: Int
+    public let contentDigest: String
+}
+
+public struct BridgeSkillFileReadRequest: Codable, Sendable, Equatable {
+    public let skillId: String
+    public let source: String
+    public let version: String
+    public let path: String
+
+    public init(reference: BridgeSkillReference, path: String) {
+        skillId = reference.skillId
+        source = reference.source
+        version = reference.version
+        self.path = path
+    }
+}
+
+public struct BridgeSkillFile: Codable, Sendable, Equatable, Identifiable {
+    public var id: String { "\(skill.id)-\(path)" }
+    public let kind: String
+    public let skill: BridgeSkillSummary
+    public let path: String
+    public let content: String
+    public let format: String
+    public let bytes: Int
+    public let contentDigest: String
+}
+
+public struct BridgeSkillFileInput: Codable, Sendable, Equatable {
+    public let path: String
+    public let content: String
+
+    public init(path: String, content: String) {
+        self.path = path
+        self.content = content
+    }
+}
+
+public struct BridgeSkillFileChanges: Codable, Sendable, Equatable {
+    public let upsert: [BridgeSkillFileInput]?
+    public let remove: [String]?
+
+    public init(upsert: [BridgeSkillFileInput]? = nil, remove: [String]? = nil) {
+        self.upsert = upsert
+        self.remove = remove
+    }
+}
+
+public struct BridgeSkillLibrarySnapshot: Codable, Sendable, Equatable {
+    public let skills: [BridgeSkillSummary]
+}
+
+public struct BridgeSkillVersionsParameters: Codable, Sendable, Equatable {
+    public let skillId: String
+
+    public init(skillId: String) {
+        self.skillId = skillId
+    }
+}
+
+public struct BridgeSkillVersionSummary: Codable, Sendable, Identifiable, Equatable {
+    public var id: String { "\(source)-\(skillId)-\(version)" }
+    public let skillId: String
+    public let source: String
+    public let version: String
+    public let name: String
+    public let description: String
+    public let contentDigest: String
+    public let createdAt: String
+    public let format: String
+    public let legacy: Bool
+
+    public var reference: BridgeSkillReference {
+        BridgeSkillReference(skillId: skillId, source: source, version: version)
+    }
+}
+
+public struct BridgeSkillVersionList: Codable, Sendable, Equatable {
+    public let skillId: String
+    public let source: String
+    public let currentVersion: String
+    public let enabled: Bool
+    public let versions: [BridgeSkillVersionSummary]
+}
+
+public struct BridgeSkillCreateRequest: Codable, Sendable, Equatable {
+    public let requestId: String
+    public let name: String
+    public let description: String?
+    public let content: String
+    public let files: [BridgeSkillFileInput]?
+
+    public init(
+        requestId: String = UUID().uuidString,
+        name: String,
+        description: String? = nil,
+        content: String,
+        files: [BridgeSkillFileInput]? = nil
+    ) {
+        self.requestId = requestId
+        self.name = name
+        self.description = description
+        self.content = content
+        self.files = files
+    }
+}
+
+public struct BridgeSkillUpdateRequest: Codable, Sendable, Equatable {
+    public let requestId: String
+    public let skillId: String
+    public let expectedVersion: String
+    public let name: String?
+    public let description: String?
+    public let content: String?
+    public let files: BridgeSkillFileChanges?
+
+    public init(
+        requestId: String = UUID().uuidString,
+        skillId: String,
+        expectedVersion: String,
+        name: String? = nil,
+        description: String? = nil,
+        content: String? = nil,
+        files: BridgeSkillFileChanges? = nil
+    ) {
+        self.requestId = requestId
+        self.skillId = skillId
+        self.expectedVersion = expectedVersion
+        self.name = name
+        self.description = description
+        self.content = content
+        self.files = files
+    }
+}
+
+public struct BridgeSkillRestoreRequest: Codable, Sendable, Equatable {
+    public let requestId: String
+    public let skillId: String
+    public let expectedVersion: String
+    public let sourceVersion: String
+
+    public init(
+        requestId: String = UUID().uuidString,
+        skillId: String,
+        expectedVersion: String,
+        sourceVersion: String
+    ) {
+        self.requestId = requestId
+        self.skillId = skillId
+        self.expectedVersion = expectedVersion
+        self.sourceVersion = sourceVersion
+    }
+}
+
+public struct BridgeSkillSetEnabledRequest: Codable, Sendable, Equatable {
+    public let requestId: String
+    public let skillId: String
+    public let expectedVersion: String
+    public let enabled: Bool
+
+    public init(
+        requestId: String = UUID().uuidString,
+        skillId: String,
+        expectedVersion: String,
+        enabled: Bool
+    ) {
+        self.requestId = requestId
+        self.skillId = skillId
+        self.expectedVersion = expectedVersion
+        self.enabled = enabled
+    }
+}
+
+/// Permanent deletion is intentionally native-only and version checked.
+public struct BridgeSkillDeleteRequest: Codable, Sendable, Equatable {
+    public let requestId: String
+    public let skillId: String
+    public let expectedVersion: String
+
+    public init(
+        requestId: String = UUID().uuidString,
+        skillId: String,
+        expectedVersion: String
+    ) {
+        self.requestId = requestId
+        self.skillId = skillId
+        self.expectedVersion = expectedVersion
+    }
+}
+
+/// A permanent deletion intentionally returns no deleted skill metadata.
+public struct BridgeSkillDeletion: Codable, Sendable, Equatable {
+    public let skillId: String
+    public let source: String
+    public let deletedAt: String
+}
+
+public struct BridgeSkillPackageUploadStarted: Codable, Sendable, Equatable {
+    public let uploadId: String
+    public let expiresAt: String
+    public let chunkMaxBytes: Int
+}
+
+public struct BridgeSkillPackageUploadChunk: Codable, Sendable, Equatable {
+    public let uploadId: String
+    public let chunkIndex: Int
+    public let data: String
+
+    public init(uploadId: String, chunkIndex: Int, data: String) {
+        self.uploadId = uploadId
+        self.chunkIndex = chunkIndex
+        self.data = data
+    }
+}
+
+public struct BridgeSkillPackageUploadProgress: Codable, Sendable, Equatable {
+    public let receivedBytes: Int
+    public let nextChunk: Int
+}
+
+public struct BridgeSkillPackageUploadReference: Codable, Sendable, Equatable {
+    public let uploadId: String
+    public init(uploadId: String) { self.uploadId = uploadId }
+}
+
+public struct BridgeSkillPackageIgnoredFile: Codable, Sendable, Equatable, Identifiable {
+    public var id: String { "\(path)-\(reason)" }
+    public let path: String
+    public let reason: String
+}
+
+public struct BridgeSkillPackageInspection: Codable, Sendable, Equatable {
+    public let uploadId: String
+    public let expiresAt: String
+    public let files: [BridgeSkillFileSummary]
+    public let suggestedMainPath: String?
+    public let suggestedName: String?
+    public let suggestedDescription: String?
+    public let ignored: [BridgeSkillPackageIgnoredFile]
+    public let strippedWrapper: String?
+}
+
+public struct BridgeSkillPackageCreateRequest: Codable, Sendable, Equatable {
+    public let requestId: String
+    public let name: String
+    public let description: String?
+    public let uploadId: String
+    public let mainPath: String
+    public let includePaths: [String]?
+
+    public init(requestId: String = UUID().uuidString, name: String, description: String? = nil,
+                uploadId: String, mainPath: String, includePaths: [String]? = nil) {
+        self.requestId = requestId
+        self.name = name
+        self.description = description
+        self.uploadId = uploadId
+        self.mainPath = mainPath
+        self.includePaths = includePaths
+    }
+}
+
+public struct BridgeSkillPackageUpdateRequest: Codable, Sendable, Equatable {
+    public let requestId: String
+    public let skillId: String
+    public let expectedVersion: String
+    public let uploadId: String
+    public let mainPath: String?
+    public let includePaths: [String]?
+
+    public init(requestId: String = UUID().uuidString, skillId: String, expectedVersion: String,
+                uploadId: String, mainPath: String?, includePaths: [String]? = nil) {
+        self.requestId = requestId
+        self.skillId = skillId
+        self.expectedVersion = expectedVersion
+        self.uploadId = uploadId
+        self.mainPath = mainPath
+        self.includePaths = includePaths
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case requestId, skillId, expectedVersion, uploadId, mainPath, includePaths
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(requestId, forKey: .requestId)
+        try container.encode(skillId, forKey: .skillId)
+        try container.encode(expectedVersion, forKey: .expectedVersion)
+        try container.encode(uploadId, forKey: .uploadId)
+        if let mainPath { try container.encode(mainPath, forKey: .mainPath) }
+        else { try container.encodeNil(forKey: .mainPath) }
+        try container.encodeIfPresent(includePaths, forKey: .includePaths)
+    }
+}
+
+public struct BridgeSkillPackageExport: Codable, Sendable, Equatable {
+    public let fileName: String
+    public let mediaType: String
+    public let bytes: Int
+    public let contentDigest: String
+    public let data: String
+}
+
+public struct DashboardExecutionDetail: Codable, Sendable {
+    public let kind: String
+    public let jobId: String
+    public let scopeId: String
+    public let executionRevision: String
+    public let policyRevision: String
+    public let execution: DashboardTurn
+}
+public struct DashboardExecutionDetailParameters: Codable, Sendable {
+    public let scopeId: String
+    public let jobId: String
+    public let expectedExecutionRevision: String?
+    public let expectedPolicyRevision: String?
+    public init(scopeId: String, jobId: String, expectedExecutionRevision: String? = nil, expectedPolicyRevision: String? = nil) {
+        self.scopeId = scopeId; self.jobId = jobId
+        self.expectedExecutionRevision = expectedExecutionRevision; self.expectedPolicyRevision = expectedPolicyRevision
+    }
 }

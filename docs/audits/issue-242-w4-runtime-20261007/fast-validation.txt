@@ -1,0 +1,20 @@
+
+> codex-mcp-bridge-for-chatgpt@0.4.1 validate:fast
+> npm run release:check && npm run app-server:compat:check
+
+
+> codex-mcp-bridge-for-chatgpt@0.4.1 release:check
+> npm run localization:check && node scripts/release-manifest.mjs check && node scripts/release-policy.mjs check
+
+
+> codex-mcp-bridge-for-chatgpt@0.4.1 localization:check
+> tsx scripts/localization.mts check
+
+Localization catalog and generated files are synchronized.
+Release manifest is synchronized for v0.4.1.
+Release policy is valid for development stage with 75 active fragment(s).
+
+> codex-mcp-bridge-for-chatgpt@0.4.1 app-server:compat:check
+> tsx scripts/app-server-schema.ts check
+
+Configured Codex executable "codex" could not be verified with --version within 5000ms. Restore the chosen installation or explicitly select another one.

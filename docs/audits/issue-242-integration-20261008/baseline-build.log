@@ -1,0 +1,15 @@
+
+> codex-mcp-bridge-for-chatgpt@0.4.1 build
+> npm run release:check && node -e "require('node:fs').rmSync('dist', { recursive: true, force: true })" && tsc -p tsconfig.json && node scripts/write-build-info.mjs
+
+
+> codex-mcp-bridge-for-chatgpt@0.4.1 release:check
+> npm run localization:check && node scripts/release-manifest.mjs check && node scripts/release-policy.mjs check
+
+
+> codex-mcp-bridge-for-chatgpt@0.4.1 localization:check
+> tsx scripts/localization.mts check
+
+Localization catalog and generated files are synchronized.
+Release manifest is synchronized for v0.4.1.
+Release policy is valid for development stage with 77 active fragment(s).

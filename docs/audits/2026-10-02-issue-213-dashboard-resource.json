@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-02",
+  "baseline": "1727980",
+  "runtime": {
+    "time": "2026-10-01T21:59:33.254Z",
+    "source": "direct_loopback_runtime_read",
+    "authentication": "task_only_locally_signed_60_second_token_not_ChatGPT_login",
+    "hostAcceptance": false,
+    "descriptor": {
+      "tool": "codex_dashboard",
+      "resourceUri": "ui://codex-mcp-bridge/dashboard/v3.html",
+      "outputTemplate": "ui://codex-mcp-bridge/dashboard/v3.html"
+    },
+    "resource": {
+      "uri": "ui://codex-mcp-bridge/dashboard/v3.html",
+      "htmlSha256": "72a5473b45a3df5203a56b59c3c02ddb478cc0eafe6dddfbba734bb3a3c8a98a",
+      "htmlBytes": 217538,
+      "hasV3Startup": true,
+      "hasGeneration37": true,
+      "hasResultHandoff": true,
+      "hasFormerRouting": false
+    },
+    "calls": [
+      "tools/list",
+      "resources/read"
+    ],
+    "newJobs": 0,
+    "newSubscriptions": 0
+  },
+  "artifactParity": {
+    "sourceSha256": "72a5473b45a3df5203a56b59c3c02ddb478cc0eafe6dddfbba734bb3a3c8a98a",
+    "compiledSha256": "72a5473b45a3df5203a56b59c3c02ddb478cc0eafe6dddfbba734bb3a3c8a98a",
+    "packagedSha256": "72a5473b45a3df5203a56b59c3c02ddb478cc0eafe6dddfbba734bb3a3c8a98a",
+    "runtimeSha256": "72a5473b45a3df5203a56b59c3c02ddb478cc0eafe6dddfbba734bb3a3c8a98a",
+    "allEqual": true
+  },
+  "hostObservation": {
+    "browser": "Codex In-app Browser",
+    "connection": "existing isolated OAuth trial",
+    "toolsRefresh": "failed",
+    "visibleRefreshError": "앱을 업데이트할 수 없습니다. 다시 시도하세요",
+    "reconnect": "previous temporary authorization origin does not resolve",
+    "mountedDashboardIframe": false,
+    "v3IframeAcceptance": false,
+    "newLoginCompleted": false
+  },
+  "authorizationBoundary": {
+    "issuerChangedInRestoredTrial": true,
+    "oldJobPrincipalMigration": false,
+    "delegationImplemented": false,
+    "delegationEnabled": false,
+    "designDecision": "pending",
+    "openAiInquiry": "unsent"
+  },
+  "retainedTrialState": {
+    "totalJobs": 2,
+    "newJobs": 0,
+    "newA": 0,
+    "newB": 0,
+    "eventSubscriptions": 0,
+    "freshAApprovedFollowups": 0
+  },
+  "validation": {
+    "focusedCardTests": 46,
+    "focusedParityIntegrityHttpTests": 29,
+    "finalNodePassed": 1213,
+    "finalSwift": {
+      "executed": 216,
+      "skipped": 2,
+      "failures": 0
+    },
+    "pinnedCli": "0.153.3",
+    "independentGitHubCi": false
+  },
+  "privacy": {
+    "tokensPersistedForRuntimeInspection": false,
+    "rawProtocolBodiesPublished": false,
+    "callbackLocationsPublished": false,
+    "signingSecretsPublished": false
+  }
+}

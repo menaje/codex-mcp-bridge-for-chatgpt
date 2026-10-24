@@ -1,0 +1,41 @@
+
+ RUN  v4.1.11 /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w3-completion
+
+ ❯ test/tools.test.ts (55 tests | 1 failed) 177986ms
+     × preserves an admitted speed through a settings change and handles later support loss explicitly: false 6526ms
+ ❯ test/issue221Delivery.test.ts (21 tests | 1 failed) 62675ms
+     × preserves an admitted events B replay carrying its original delivery selector 5627ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > preserves an admitted events B replay carrying its original delivery selector
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue221Delivery.test.ts:352:44
+    350|     expect(result.items[0].answer).toBe("Completed fixture work.");
+    351|   });
+    352|   it.each(["live-card", "events"] as const)("preserves an admitted %s …
+       |                                            ^
+    353|     const a = await admit({ approvedFollowups: [{ prompt: "Fixture B" …
+    354|     const parent = (await exact((a.structuredContent as any).jobId)).i…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > preserves an admitted speed through a settings change and handles later support loss explicitly: false
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/tools.test.ts:217:25
+    215|   });
+    216|
+    217|   it.each([false, true])("preserves an admitted speed through a settin…
+       |                         ^
+    218|     Object.assign(upstream, { capabilities: () => APP_SERVER_CAPABILIT…
+    219|     const current = await server.applicationService.settingsSnapshot();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  2 failed | 74 passed (76)
+   Start at  22:11:02
+   Duration  253.76s (transform 8.01s, setup 0ms, import 12.10s, tests 240.66s, environment 1ms)

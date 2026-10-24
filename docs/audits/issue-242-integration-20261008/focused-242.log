@@ -1,0 +1,179 @@
+
+ RUN  v4.1.11 /Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review
+
+ ✓ test/macosHelperServer.test.ts (55 tests) 110709ms
+     ✓ remembers distinct explicit Codex homes already used by the Helper without a folder picker  843ms
+     ✓ keeps a pending auth change inert on ordinary start and applies it only through a drained restart  1052ms
+     ✓ keeps the prior choice pending when a launched authentication runtime never becomes ready  2002ms
+     ✓ recovers profile A after profile B fails to launch and applies the same verified B candidate on retry  3988ms
+     ✓ does not resolve an unconfirmed activation while its runtime still runs  617ms
+     ✓ keeps the original runtime when a persisted job still belongs to the old authentication  858ms
+     ✓ applies authentication while retaining a completed result protected by user-hold  1075ms
+     ✓ applies authentication while retaining a completed result protected by host-accepted  1074ms
+     ✓ applies authentication while retaining a completed result protected by acceptance-unknown  1063ms
+     ✓ keeps a running job and its restart reservation for over 60 seconds, then restarts on its event  62042ms
+     ✓ preserves memory-only conversations with unfinished work for restart and lets the user cancel  690ms
+     ✓ preserves memory-only conversations with unfinished work for stop and lets the user cancel  741ms
+     ✓ preserves memory-only conversations with unfinished work for configure and lets the user cancel  726ms
+     ✓ preserves memory-only conversations with unfinished work for repair and lets the user cancel  692ms
+     ✓ preserves memory-only conversations with unfinished work for shutdown and lets the user cancel  661ms
+     ✓ preserves memory-only conversations with unfinished work for mode-switch and lets the user cancel  661ms
+     ✓ preserves memory-only conversations with unfinished work for helper-replace and lets the user cancel  653ms
+     ✓ allows a safe restart when only completed memory-only contexts remain  962ms
+     ✓ preserves an unconfirmed completion and its exact result across a safe helper restart  981ms
+     ✓ rejects a superseded CLI target and leaves the old runtime running  704ms
+     ✓ does not let automatic crash recovery override a pending stop  1155ms
+     ✓ creates a private dotenv and starts the runtime on a fresh install  580ms
+     ✓ imports a discovered tunnel-client profile without returning its secret  566ms
+     ✓ atomically applies configuration and restarts the managed runtime  1147ms
+     ✓ redacts secrets split across runtime output chunks  769ms
+     ✓ rejects launcher readiness from 'a different tunnel profile'  799ms
+     ✓ rejects launcher readiness from 'the legacy stdio transport'  816ms
+     ✓ tolerates a 750ms status response and retains bounded failure and recovery diagnostics  5440ms
+     ✓ does not change the dotenv when active work misses the drain deadline  1941ms
+     ✓ requires force when verified background processes would be interrupted  1110ms
+     ✓ blocks graceful stop when background process impact cannot be verified  1113ms
+     ✓ force stop verifies and removes detached descendants from the managed runtime tree  3870ms
+     ✓ re-enables admissions when a graceful-stop status request fails  1416ms
+     ✓ rechecks memory-only sessions after closing admission and preserves the running backend  912ms
+     ✓ rolls back the dotenv and restores the old runtime when new startup fails  1412ms
+     ✓ restarts the unchanged runtime when a concurrent dotenv edit prevents commit  1152ms
+     ✓ safely adopts an app-managed runtime left behind by a helper crash  1125ms
+     ✓ adopts and drains an existing runtime before changing its dotenv  1389ms
+     ✓ uses Codex command and CODEX_HOME from dotenv without returning raw CLI output  803ms
+     ✓ does not report an account read failure as a logged-out Codex account  714ms
+ ✓ test/companionServer.test.ts (19 tests) 6953ms
+     ✓ carries the full worst-case JSON-escaped Bridge skill content over the native socket  6903ms
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.
+ ✓ test/runtimeProcess.test.ts (27 tests) 78757ms
+     ✓ forwards W3 committed readiness and read-only availability across the runtime generation boundary  1186ms
+     ✓ supervises Codex execution separately from the operational state owner  4434ms
+     ✓ keeps liveness responsive, reports a blocked write, and recovers after the DB lock  4449ms
+     ✓ keeps the stdio companion boundary responsive during the same DB lock  5140ms
+     ✓ fails admission after SQLite reports a full state database  1611ms
+     ✓ reports a SQLite busy failure at transaction admission and clears it after a commit  6682ms
+     ✓ fails actual Job admission after a non-transaction task read surfaces SQLITE_BUSY  3504ms
+     ✓ fails actual Job admission after a non-transaction task read surfaces SQLITE_IOERR_FSYNC  3547ms
+     ✓ fails actual Job admission after a non-transaction task read surfaces SQLITE_CORRUPT_VTAB  3437ms
+     ✓ fails actual Job admission after a non-transaction task read surfaces SQLITE_READONLY_DBMOVED  3515ms
+     ✓ preserves a forwarded MCP request through a stale heartbeat  5897ms
+     ✓ preserves a complete split UTF-8 ID when the forwarded response is lost  911ms
+     ✓ separates a proxy connection failure from still-fresh runtime readiness  1095ms
+     ✓ reports request capacity separately when only the added body crosses the limit  963ms
+     ✓ reserves MCP byte capacity for exact recovery reads  912ms
+     ✓ applies the same bounded exact-read reservation to declared and chunked bodies  1056ms
+     ✓ preserves a chunked exact read when another request fills ordinary bytes after its headers  1021ms
+     ✓ keeps every retired card sender operation out of the control reserve  885ms
+     ✓ finishes valid question, cancellation and exact result controls during observer saturation  7077ms
+     ✓ reserves native control capacity when incomplete MCP requests saturate the proxy  1272ms
+     ✓ bounds MCP control reservations and releases disconnected observers  4877ms
+     ✓ releases the HTTP observer when a complete caller disconnects  877ms
+     ✓ keeps timed-out native requests reserved until their physical responses arrive  1408ms
+     ✓ keeps public liveness responsive while bounded large MCP payloads are parsed  1001ms
+     ✓ recovers a killed runtime without claiming an in-flight write committed  4458ms
+     ✓ continues recovery when a replacement runtime misses its startup deadline  5256ms
+     ✓ keeps the operational database rollback-compatible and rebuilds telemetry independently  2288ms
+ ✓ test/launcherLifecycle.integration.test.ts (4 tests) 59746ms
+     ✓ starts authenticated HTTP with https metadata and rebuilds the profile when OAuth identity changes  8258ms
+     ✓ starts authenticated HTTP with loopback metadata and rebuilds the profile when OAuth identity changes  8158ms
+     ✓ publishes actual daemon exit independently of the previous healthy snapshot  1839ms
+     ✓ waits for tunnel readiness and shutdown, then reuses only an unchanged profile  41488ms
+ ❯ test/issue242R502.test.ts (15 tests | 1 failed) 6158ms
+     ✓ preserves queued response framing after late-error follows upstream end 83ms
+     ✓ preserves queued response framing after late-response-error follows upstream end 71ms
+     ✓ preserves queued response framing after late-timeout follows upstream end 69ms
+     ✓ returns structured unavailable before headers, then recovers 48ms
+     ✓ leaves partial responses incomplete, then recovers 71ms
+     ✓ expires an upstream that never responds before headers exactly once 276ms
+     ✓ preserves a complete application-owned timeout response before headers 70ms
+     ✓ releases a caller disconnected during its incomplete body 139ms
+     ✓ detaches a complete-body caller while its application action continues once 130ms
+     ✓ preserves a completed response through normal socket close and connection reuse 183ms
+     ✓ returns capacity exactly once after an idle expiry delayed by a high event-loop stall  368ms
+     ✓ correlates admitted/queued/dispatch and strips a caller-supplied trace id 24ms
+     × joins public ingress with the real supervised child and application response 48ms
+     ✓ returns structured unavailable for a real child response exceeding the idle budget before headers  588ms
+     ✓ observes the real child's later response after its complete-body caller disconnects  597ms
+ ✓ test/stateReadProcess.test.ts (6 tests) 7177ms
+     ✓ uses the selected CLI schema before any Job, missing method undefined  2562ms
+     ✓ uses the selected CLI schema before any Job, missing method turn/start  873ms
+     ✓ keeps a session visible through IPC during account loss, change and reader restart  990ms
+     ✓ reads current WAL state without registering a writer and recovers its own process  1522ms
+     ✓ keeps timed-out reads charged to bounded capacity until the child replies  451ms
+     ✓ keeps current reads and writes moving while an older WAL snapshot delays truncation  779ms
+ ✓ test/tunnelHealth.test.ts (21 tests) 4242ms
+     ✓ accepts 700ms endpoint latency with a complete first snapshot and never exposes bodies  725ms
+     ✓ retains recent external success after a multi-second API timeout without inventing endpoint success  2024ms
+     ✓ fences PID mismatch and locator replacement before and after requests  309ms
+ ✓ test/issue242Completion.test.ts (5 tests) 320ms
+ ↓ test/issue242R502Tunnel.test.ts (1 test | 1 skipped)
+ ✓ test/runtimeStatus.test.ts (9 tests) 105ms
+ ✓ test/issue242ProxyCharacterization.test.ts (5 tests) 1579ms
+ ✓ test/issue242ReadTransport.test.ts (1 test) 926ms
+     ✓ forwards local deadlines and cancellation through supervisor IPC without cancelling work  926ms
+ ✓ test/issue242Characterization.test.ts (2 tests) 543ms
+     ✓ measures fresh query-only projections without changing results or writer ownership  454ms
+ ✓ test/httpDiagnostics.test.ts (3 tests) 8ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/issue242R502.test.ts > R502 deterministic lifecycle races > joins public ingress with the real supervised child and application response
+AssertionError: expected [ Array(9) ] to deeply equal ArrayContaining{…}
+
+- Expected
++ Received
+
+- ArrayContaining [
++ [
+    "admitted",
+    "request-finished",
+    "application-dispatch",
++   "state-start",
++   "state-yield",
+    "application-response",
++   "response-header-start",
+    "response-headers",
+-   "response-complete",
+    "cleanup",
+  ]
+
+ ❯ test/issue242R502.test.ts:326:80
+    324|     const phases = phasesFor(start);
+    325|     expect(new Set(phases.map(row => row.requestId)).size).toBe(1);
+    326|     expect(phases.filter(row => row.source === "child").map(row => row…
+       |                                                                                ^
+    327|       "admitted", "request-finished", "application-dispatch", "applica…
+    328|     expect(JSON.stringify(phases)).not.toContain("private-id");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 12 passed | 1 skipped (14)
+      Tests  1 failed | 171 passed | 1 skipped (173)
+   Start at  03:30:20
+   Duration  281.53s (transform 1.04s, setup 0ms, import 3.28s, tests 277.22s, environment 1ms)
+
+JSON report written to /Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/focused-242.json

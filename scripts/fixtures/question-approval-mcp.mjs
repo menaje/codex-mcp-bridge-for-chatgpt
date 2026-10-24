@@ -1,6 +1,6 @@
 import { appendFileSync } from "node:fs";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { McpServer } from "@modelcontextprotocol/server";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
 
 const server = new McpServer({ name: "question-approval-probe", version: "1" });
 server.registerTool("approval_probe", {
@@ -11,4 +11,4 @@ server.registerTool("approval_probe", {
   appendFileSync(process.env.QUESTION_PROBE_LEDGER, "unexpected invocation\n", { mode: 0o600 });
   return { content: [{ type: "text", text: "PROBE_TOOL_EXECUTED" }] };
 });
-await server.connect(new StdioServerTransport());
+serveStdio(() => server, { legacy: "reject" });

@@ -1,4 +1,4 @@
-import type { CallToolResult, Progress } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult, Progress } from "@modelcontextprotocol/server";
 import type { CodexBackendKind } from "./config.js";
 import type { BackendCapabilities, ModelSelection } from "./modelPolicy.js";
 import type { WorkerTerminationCorrelation } from "./cancellation.js";
@@ -32,7 +32,11 @@ export type CodexPublicEvent = {
   details?: Record<string, unknown>;
 };
 
-export type CodexProgress = Progress & { event?: CodexPublicEvent };
+export type CodexProgress = Progress & {
+  event?: CodexPublicEvent;
+  /** Execution-owner recovery snapshot, scoped to this exact request. */
+  pendingInteractionIds?: string[];
+};
 
 export type CodexInteractionDecision =
   | "accept"
@@ -127,7 +131,7 @@ export type CodexThreadResumeProbe = (
     }
   | {
       state: "unknown";
-      reason: "unsupported" | "transient";
+      reason: "unsupported" | "transient" | "storage-unavailable";
       threadId: string;
       retryable: true;
     }
@@ -163,6 +167,8 @@ export type CodexBackgroundTerminal = {
 export type CodexThreadStartRequest = ExecutionAccessRequest & {
   backendKind: CodexBackendKind;
   prompt: string;
+  /** Bridge-generated admission metadata, separate from the caller's prompt. */
+  executionContext?: string;
   selection: ModelSelection;
   /** App Server only: keep the new thread in memory instead of materializing it on disk. */
   contextId?: string;
@@ -173,6 +179,7 @@ export type CodexThreadContinueRequest = ExecutionAccessRequest & {
   backendKind: CodexBackendKind;
   threadId: string;
   prompt: string;
+  executionContext?: string;
   selection?: ModelSelection;
 };
 
@@ -180,6 +187,7 @@ export type CodexThreadForkRequest = ExecutionAccessRequest & {
   backendKind: CodexBackendKind;
   threadId: string;
   prompt: string;
+  executionContext?: string;
   selection?: ModelSelection;
   /** App Server only: keep the fork in memory instead of materializing it on disk. */
   contextId?: string;
@@ -200,6 +208,15 @@ export type CodexWeeklyUsage = {
 };
 
 export type CodexUpstream = {
+  supportsExecutionRecovery?(): boolean;
+  recoverExecution?(jobId: string, onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void): Promise<ToolResult>;
+  acknowledgeExecution?(jobId: string): void | Promise<void>;
+  /** Exact live request/worker binding, used only for controls on its existing Job. */
+  ownsActiveExecution?(jobId: string, assignment: UpstreamWorkerAssignment): boolean;
+  /** The current executor delivered this exact retained terminal receipt. */
+  ownsRetainedResult?(jobId: string, assignment: UpstreamWorkerAssignment): boolean;
+  detachExecution?(): void | Promise<void>;
   listTools(): Promise<unknown>;
   /** Read-only contract check, before durable task admission. */
   prepareExecution?(input: { backendKind: CodexBackendKind; contextMode: "fresh" | "continue" | "fork" }): Promise<void>;
@@ -208,6 +225,7 @@ export type CodexUpstream = {
   /** Account-wide Codex weekly rate-limit projection exposed by App Server. */
   accountRevision?(): string;
   readAccountSnapshot?(): Promise<import("./codexAccount.js").CodexAccountSnapshot | null>;
+  readAuthenticationPolicy?(): Promise<{ config: unknown; requirements: unknown }>;
   readAccountRateLimits?(): Promise<CodexWeeklyUsage | null>;
   startThread?(
     input: CodexThreadStartRequest,
@@ -241,6 +259,8 @@ export type CodexUpstream = {
     threadId: string,
     backendKind?: CodexBackendKind
   ): Promise<CodexBackgroundTerminal[] | null>;
+  /** Snapshot of already materialized threads in live workers; never starts or resumes a worker/thread. */
+  listLoadedThreadIds?(): Promise<string[] | null>;
   terminateBackgroundTerminal?(
     threadId: string,
     processId: string,
@@ -262,7 +282,7 @@ export type CodexUpstream = {
     correlation: WorkerTerminationCorrelation,
     graceMs?: number,
     /** Automatic recovery may interrupt only the exact previously requested turn. */
-    options?: { interruptOnly: true }
+    options?: { interruptOnly?: true; retirementThreadIds?: readonly string[] }
   ): Promise<JsonRpcTerminationResult>;
   respondToInteraction?(
     interactionId: string,

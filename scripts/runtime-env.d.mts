@@ -33,7 +33,6 @@ export function loadRuntimeEnvFile(
   filePath: string,
   options?: {
     required?: boolean;
-    apply?: (filePath: string) => void;
     allowedKey?: (key: string) => boolean;
     platform?: NodeJS.Platform;
     uid?: number;
@@ -49,6 +48,19 @@ export function readRuntimeEnvSubset(
     allowBroadReadOnlyPermissions?: boolean;
   }
 ): Record<string, string>;
+
+export const CODEX_CHILD_ENV_KEYS: readonly string[];
+export function codexChildEnvironment(
+  filePath?: string,
+  inherited?: NodeJS.ProcessEnv
+): NodeJS.ProcessEnv;
+export function codexChildEnvironmentFingerprint(environment: NodeJS.ProcessEnv): string;
+export const CODEX_APPLIED_ENV_KEYS: readonly string[];
+export function codexAppliedEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
+export function codexProcessEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
+export function mcpOAuthRequested(environment: NodeJS.ProcessEnv): boolean;
+export function isLoopbackOAuthMetadataUrl(value: string, host: string, port: number | string): boolean;
+export function mcpOAuthEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
 
 export type PreparedRuntimeEnvUpdate = {
   readonly path: string;

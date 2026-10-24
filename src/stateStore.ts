@@ -1,10 +1,46 @@
+import { acquireHistoryPolicyGate } from "./historyPolicyGate.js";
+import { readAppliedHistoryPolicy, retainedJobSql, historyExpired, strictRetentionDays } from "./historyPolicy.js";
+import { ProjectLifecycleStore } from "./projectLifecycle.js";
+import { nativeCompletionRetryMs, type NativeCompletionAvailability } from "./completionDelivery.js";
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import Database from "better-sqlite3";
-import { CURRENT_STATE_SCHEMA, CURRENT_STATE_SCHEMA_VERSION } from "./stateSchema.js";
+import { EVENT_RESULT_RECOVERY_MS, McpEventStore, type EventJob, type LifecycleRoot } from "./mcpEventStore.js";
+import { RelayDeliveryStore } from "./relayDelivery.js";
+import { McpEventAccessStore } from "./mcpEventAccess.js";
+import { TaskFollowupStore, issueApprovedFollowups, readFollowupReference, type ApprovedFollowup, type FollowupReference, type DynamicFollowupReference } from "./taskFollowups.js";
+import { canonicalHumanText, parseJsonTextStrict } from "./textIntegrity.js";
+import {
+  CURRENT_STATE_SCHEMA,
+  CURRENT_STATE_SCHEMA_VERSION,
+  V20_ASYNC_EXECUTION_MIGRATION_SCHEMA,
+  V21_JOB_COMPLETION_DELIVERY_MIGRATION_SCHEMA,
+  V22_JOB_COMPLETION_RESULT_SOURCE_MIGRATION_SCHEMA,
+  V23_JOB_COMPLETION_RESULT_OFFER_MIGRATION_SCHEMA,
+  V26_MODEL_DESCRIPTION_VERSIONS_MIGRATION_SCHEMA,
+  V27_DECISION_CARD_RETIREMENT_MIGRATION_SCHEMA,
+  V28_JOB_HISTORY_INDEX_MIGRATION_SCHEMA,
+  V29_BACKGROUND_WORK_INDEX_MIGRATION_SCHEMA,
+  V30_SESSION_AUTH_BOUNDARY_MIGRATION_SCHEMA,
+  V31_PROJECT_LIFECYCLE_MIGRATION_SCHEMA,
+  V32_HISTORY_POLICY_MIGRATION_SCHEMA
+} from "./stateSchema.js";
+import type { ModelDescriptionHistoryPage, ModelDescriptionOverrides } from "./modelDescriptions.js";
+import {
+  MAINTENANCE_COMMAND_RECEIPT_RETENTION_BATCH,
+  MAINTENANCE_COMMAND_RECEIPT_RETENTION_MS,
+  OPERATIONAL_COMMAND_RECEIPT_RESULT_MAX_BYTES,
+  V25_OPERATIONAL_COMMAND_RECEIPT_MIGRATION_SCHEMA,
+  type OperationalCommandApplication,
+  type OperationalCommandExecution,
+  type OperationalCommandReceipt,
+  type OperationalCommandReceiptInput
+} from "./operationalCommandReceipt.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { PRODUCT_INFO } from "./productInfo.js";
+import { retainedExecutionSummary } from "./executionAudit.js";
 import {
   STATE_MIGRATION_CATALOG_VERSION,
   SUPPORTED_STATE_SCHEMA_VERSIONS,
@@ -25,7 +61,8 @@ import {
 import {
   V15_WORK_HISTORY_MIGRATION_SCHEMA,
   WorkHistoryStore,
-  historyRetentionDays
+  historyRetentionDays,
+  type HistoryRetentionCandidate
 } from "./workHistory.js";
 import {
   V17_AUTOMATIC_RECOVERY_MIGRATION_SCHEMA,
@@ -42,9 +79,21 @@ import {
   type ThreadPersistence
 } from "./threadConnections.js";
 import { QuestionStore, V13_QUESTION_STORE_MIGRATION_SCHEMA } from "./questionStore.js";
+import { V24_DECISION_CARD_MIGRATION_SCHEMA } from "./decisionCardStore.js";
+import {
+  DashboardReadModel,
+  StatusReadModel,
+  type DashboardArchivedCounts,
+  type DashboardArchivedJobRow,
+  type DashboardRepresentativeOrder
+} from "./stateReadModels.js";
+import type {
+  OperationalJobRetentionCommand,
+  OperationalJobRetentionResult,
+  OperationalStateOperationPhase
+} from "./stateService.js";
 import {
   ACTIVITY_COMPLETION_TRIGGERS,
-  ACTIVITY_EXECUTION_MODES,
   ACTIVITY_HANDOFF_POLICIES,
   ACTIVITY_JOB_STATUSES,
   ACTIVITY_KINDS,
@@ -56,7 +105,6 @@ import {
   isTerminalActivityJobStatus,
   valueIsOneOf,
   type ActivityCompletionTrigger,
-  type ActivityExecutionMode,
   type ActivityHandoffPolicy,
   type ActivityJobCounts,
   type ActivityKind,
@@ -67,6 +115,7 @@ import {
 import {
   AGENT_CONTEXT_MODES,
   AGENT_LIFECYCLES,
+  canonicalAgentName,
   isAgentContextMode,
   isAgentLifecycle,
   normalizeAgentName,
@@ -82,6 +131,7 @@ import {
   PROJECT_CWD_CONFLICT,
   PROJECT_CWD_STILL_PINNED,
   PROJECT_DELETE_REQUIRES_ARCHIVE,
+  PROJECT_DELETE_STILL_PINNED,
   PROJECT_LIMIT_EXCEEDED,
   PROJECT_NAME_CONFLICT,
   PROJECT_NOT_FOUND,
@@ -118,13 +168,60 @@ import {
   type JobTerminalOrigin
 } from "./cancellation.js";
 
+export const STATE_DATABASE_BUSY_TIMEOUT_MS = 5_000;
+
 const CURRENT_SCHEMA_VERSION = CURRENT_STATE_SCHEMA_VERSION;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const CANCELLATION_REASON_CODE_PATTERN = /^[a-z0-9][a-z0-9._-]{0,79}$/;
 const TRANSPORT_OBSERVATION_LIMIT = 1_000;
 
+// Match the ordinary 200-event window, but export only the newest correlated
+// acceptance and reroute proofs used by Dashboard execution labels. Progress
+// text and unrelated model/turn notifications never cross this read boundary.
+const DASHBOARD_EXECUTION_EVENTS_SQL = `CASE
+  WHEN json_type(j.payload,'$.executionDecision') = 'object' THEN COALESCE((
+    SELECT json_group_array(json(proof)) FROM (
+      SELECT event_id, json_object(
+        'eventId',json_extract(payload,'$.eventId'),
+        'type',json_extract(payload,'$.type'),
+        'phase',json_extract(payload,'$.phase'),
+        'createdAt',json_extract(payload,'$.createdAt'),
+        'summary','',
+        'details',json_object(
+          'threadId',json_extract(payload,'$.details.threadId'),
+          'turnId',json_extract(payload,'$.details.turnId'),
+          'evidence',json_extract(payload,'$.details.evidence'),
+          'kind',json_extract(payload,'$.details.kind'),
+          'serverCorrelation',json_extract(payload,'$.details.serverCorrelation'),
+          'toModel',json_extract(payload,'$.details.toModel')
+        )
+      ) AS proof FROM (
+        SELECT event_id,payload,
+               ROW_NUMBER() OVER (PARTITION BY json_extract(payload,'$.type') ORDER BY event_id DESC) AS evidence_rank
+          FROM (
+            SELECT event_id,event_type,payload FROM job_events
+             WHERE job_id=j.job_id AND event_type LIKE 'app-%'
+             ORDER BY event_id DESC LIMIT 200
+          )
+         WHERE (event_type LIKE 'app-turn%' OR event_type LIKE 'app-model%')
+           AND json_extract(payload,'$.details.threadId') = COALESCE(NULLIF(j.thread_id,''),json_extract(j.payload,'$.sessionDecision.threadId'))
+           AND json_extract(payload,'$.details.turnId') = j.upstream_request_id
+           AND json_type(payload,'$.eventId') = 'text' AND json_extract(payload,'$.eventId') != ''
+           AND json_type(payload,'$.createdAt') IN ('integer','real') AND json_extract(payload,'$.createdAt') >= 0
+           AND json_type(payload,'$.summary') = 'text'
+           AND json_extract(payload,'$.phase') IN ('started','updated','completed','waiting')
+           AND ((json_extract(payload,'$.type') = 'turn' AND json_extract(payload,'$.phase') = 'started'
+                 AND json_extract(payload,'$.details.evidence') = 'turn/start-accepted')
+             OR (json_extract(payload,'$.type') = 'model' AND json_extract(payload,'$.details.kind') = 'rerouted'
+                 AND json_extract(payload,'$.details.serverCorrelation') = 'explicit' AND json_type(payload,'$.details.toModel') = 'text'))
+      ) WHERE evidence_rank = 1 ORDER BY event_id
+    )
+  ),'[]') ELSE '[]' END`;
+
 type SessionRowInput = {
   threadId: string;
+  authBoundary?: string;
   scopeId: string;
   backendKind?: string;
   cwd: string;
@@ -143,6 +240,11 @@ type SessionRowInput = {
 };
 
 type JobRowInput = {
+  mcpPrincipal?: string;
+  approvedFollowups?: ApprovedFollowup[];
+  followup?: FollowupReference;
+  relayFollowup?: DynamicFollowupReference;
+  requestEnvelopeHash?: string;
   jobId: string;
   scopeId: string;
   requestId: string;
@@ -151,7 +253,6 @@ type JobRowInput = {
   sourceThreadId?: string;
   activityId?: string;
   threadId?: string;
-  executionMode?: ActivityExecutionMode;
   backendKind?: string;
   bridgeInstanceId?: string;
   workerId?: string;
@@ -176,6 +277,31 @@ type JobRowInput = {
   sessionDecision?: { threadId?: string };
   terminalOrigin?: JobTerminalOrigin;
   cancellationIntentId?: string;
+  completionDeliveryPolicy?: "live-card" | "direct-wait" | "relay-card" | "events";
+};
+
+/**
+ * A persisted Job payload hydrated with the canonical columns owned by the
+ * state store. Feature-specific payload fields remain unknown, while callers
+ * can safely inspect the durable handles and lifecycle fields below.
+ */
+export type StoredJobRecord = Record<string, unknown> & {
+  jobId: string;
+  scopeId: string;
+  requestId: string;
+  activityId: string;
+  threadId?: string;
+  sourceThreadId?: string;
+  status: string;
+  backendKind: string;
+  projectId?: string;
+  projectName?: string;
+  cwd: string;
+  sandbox: string;
+  createdAt: number;
+  updatedAt: number;
+  version: number;
+  lastProgressAt: number;
 };
 
 type JobProgressStateInput = {
@@ -203,6 +329,7 @@ type JobProgressUpdateResult = {
 };
 
 export type DashboardRetainedJobSummary = {
+  endedAt?: number; endedAtSource?: string; detailAvailability?: string;
   jobId: string;
   scopeId: string;
   activityId: string;
@@ -216,7 +343,25 @@ export type DashboardRetainedJobSummary = {
     reasoningEffort: string;
     serviceTier?: string;
     reroutedModel?: string;
+    processingSpeed?: string;
+    serviceTierScope?: "turn";
+    requestState?: "requested" | "accepted";
   };
+};
+
+export type DashboardExecutionRecord = {
+  jobId:string;scopeId:string;activityId:string;agentId:string|null;threadId:string|null;sessionId:string|null;status:string;createdAt:number;updatedAt:number;
+  endedAt:number|null;endedAtSource:string|null;detailAvailability:string;activityTitle:string;agentName:string|null;
+  projectId:string|null;projectName:string|null;executionName:string|null;summary:string|null;error:string|null;
+  cancellationReason:string|null;cancellationSource:string|null;cancellationRequestedAt:number|null;
+  cancellationTargetKind:string|null;cancellationStatus:string|null;blockingKind:string|null;
+};
+
+export type ArchivedJobAdmissionReceipt = {
+  managementEnded?: boolean;
+  jobId: string;
+  requestId: string;
+  status: string;
 };
 
 type JsonRow = { payload: string };
@@ -233,10 +378,14 @@ type ProjectStorageRow = {
   updated_at: number;
   archived_at: number | null;
   deleted_at: number | null;
+  archive_state: import("./projectLifecycle.js").ProjectArchiveState;
+  archive_revision: number;
+  archive_requested_at: number | null;
+  archive_reasons: string;
 };
 type LegacyProjectStorageRow = Omit<
   ProjectStorageRow,
-  "project_ref" | "project_revision" | "deleted_at"
+  "project_ref" | "project_revision" | "deleted_at" | "archive_state" | "archive_revision" | "archive_requested_at" | "archive_reasons"
 >;
 type ProjectRegistryStorageRow = {
   registry_revision: number;
@@ -248,13 +397,13 @@ export type SettingsStorageRecord = {
   payload: unknown;
 };
 type JobStorageRow = JsonRow & {
+  ended_at?: number|null; ended_at_source?: string|null; detail_availability?: string; result_body?: string|null;
   job_id: string;
   scope_id: string;
   request_id: string;
   activity_id: string;
   thread_id: string | null;
   source_thread_id: string | null;
-  execution_mode: string;
   backend_kind: string;
   bridge_instance_id: string | null;
   worker_id: string | null;
@@ -301,6 +450,7 @@ type PreviousJobRow = {
   project_name: string | null;
   pinned_cwd: string | null;
   archived_at: number | null;
+  completion_delivery_policy: string;
 };
 type ActivityStorageRow = {
   activity_id: string;
@@ -312,7 +462,6 @@ type ActivityStorageRow = {
   card_generation: number;
   title: string;
   kind: string;
-  execution_mode: string;
   handoff_policy: string;
   completion_trigger: string;
   lifecycle: string;
@@ -344,7 +493,6 @@ export type CreateActivityInput = {
   continuationOfActivityId?: string;
   title?: string;
   kind?: ActivityKind;
-  executionMode?: ActivityExecutionMode;
   handoffPolicy?: ActivityHandoffPolicy;
   completionTrigger?: ActivityCompletionTrigger;
   legacy?: boolean;
@@ -436,6 +584,51 @@ export type CompletionOutboxRecord = {
   createdAt: number;
 };
 
+export const JOB_COMPLETION_DELIVERY_STATES = [
+  "pending",
+  "leased",
+  "host-rejected",
+  "host-accepted",
+  "acceptance-unknown",
+  "result-read"
+] as const;
+export type JobCompletionDeliveryState = (typeof JOB_COMPLETION_DELIVERY_STATES)[number];
+export const JOB_COMPLETION_RESULT_READ_SOURCES = [
+  "completion-receipt",
+  "direct-job-query"
+] as const;
+export type JobCompletionResultReadSource =
+  (typeof JOB_COMPLETION_RESULT_READ_SOURCES)[number];
+export type JobCompletionDeliveryRecord = {
+  jobId: string;
+  scopeId: string;
+  terminalVersion: number;
+  receipt: string;
+  state: JobCompletionDeliveryState;
+  attemptCount: number;
+  nextAttemptAt?: number;
+  leaseOwner?: string;
+  leaseExpiresAt?: number;
+  lastHostRejectedAt?: number;
+  lastHostError?: string;
+  hostAcceptedAt?: number;
+  acceptanceUnknownAt?: number;
+  resultReadAt?: number;
+  resultReadSource?: JobCompletionResultReadSource;
+  completionResultOfferedAt?: number;
+  directResultOfferedAt?: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+
+/**
+ * An accepted UI message cannot be observed end-to-end. Keep an uncertain
+ * completion out of automatic retries until a future verified route can make
+ * an explicit recovery decision.
+ */
+export const COMPLETION_OUTBOX_UNCERTAIN_HOLD_AT = 8_640_000_000_000_000;
+
 export type BridgeInstanceRecord = {
   instanceId: string;
   startedAt: number;
@@ -506,6 +699,21 @@ export type BeginSteeringDeliveryInput = {
 
 export type BridgeStateStoreOptions = {
   file: string;
+  /** Query-only projection connection. It never migrates or registers a writer. */
+  readOnly?: boolean;
+  /** Diagnostic SQL trace hook used by bounded-path audits and tests. */
+  traceSql?: (sql: string) => void;
+  /**
+   * Privacy-safe transaction boundary used by an enclosing process
+   * supervisor. It never receives SQL, identifiers, payloads, or results.
+   */
+  onTransactionPhase?: (phase: OperationalStateOperationPhase) => void;
+  /**
+   * Storage-boundary observations for fail-closed readiness. Callbacks are
+   * diagnostic only and can never change transaction success or failure.
+   */
+  onTransactionCommitted?: () => void;
+  onTransactionFailure?: (error: unknown) => void;
   /** Test hook fired in the crash window after schema commit and before provenance commit. */
   onMigrationSchemaCommitted?: (progress: StateMigrationProgress) => void;
   /** Test/diagnostic hook fired after each durable schema checkpoint. */
@@ -525,32 +733,79 @@ export type StateMigrationProgress = {
  * transaction, one scope version, and an idempotent completion outbox.
  */
 export class BridgeStateStore {
+  private experimentalEventsEnabled = false;
+
+  configureExperimentalEvents(enabled: boolean): void { this.experimentalEventsEnabled = enabled; }
   readonly questions: QuestionStore;
   readonly threadConnections: ThreadConnectionStore;
   readonly eventRetention: EventRetention;
   readonly workHistory: WorkHistoryStore;
   readonly automaticRecovery: AutomaticRecoveryStore;
+  readonly dashboardReadModel: DashboardReadModel;
+  readonly statusReadModel: StatusReadModel;
   private database!: Database.Database;
   private readonly databaseLease: StateDatabaseOpenLease | null;
   private readonly migrationLease: StateMigrationLease | null;
   private readonly currentInstanceId = randomUUID();
   private transactionDepth = 0;
+  private readonly insertedNotifyCompletions = new Set<number>();
+  private readonly completionReadyListeners = new Set<() => void>();
+  private readonly mcpEventReadyListeners = new Set<() => void>();
+  private readonly relayReadyListeners = new Set<(activityId: string) => void>();
+  private readonly relayReadyPending = new Map<string, string>();
+  private relayRevisionNumber = 0;
+  private readonly mcpEventReadyPending = new Map<string, { jobId: string; id: string }>();
   private closed = false;
 
   constructor(private readonly options: BridgeStateStoreOptions) {
-    if (options.file !== ":memory:") {
+    if (!options.readOnly && options.file !== ":memory:") {
       mkdirSync(path.dirname(options.file), { recursive: true, mode: 0o700 });
     }
-    this.databaseLease = prepareStateDatabaseOpen(options.file);
+    this.databaseLease = options.readOnly ? null : prepareStateDatabaseOpen(options.file);
     this.migrationLease = this.databaseLease?.requiresMigration
       ? this.databaseLease as StateMigrationLease
       : null;
     let openedDatabase: Database.Database | undefined;
     try {
       const databaseFile = this.databaseLease?.databaseFile ?? options.file;
-      this.database = new Database(databaseFile);
+      const databaseOptions = {
+        ...(options.readOnly ? { readonly: true, fileMustExist: true } : {}),
+        ...(options.traceSql
+          ? { verbose: (message?: unknown) => options.traceSql?.(String(message ?? "")) }
+          : {})
+      };
+      this.database = new Database(databaseFile, databaseOptions);
       openedDatabase = this.database;
-      this.database.pragma("busy_timeout = 5000");
+      this.database.pragma(`busy_timeout = ${STATE_DATABASE_BUSY_TIMEOUT_MS}`);
+      if (options.readOnly) {
+        this.database.pragma("query_only = ON");
+        const existingVersion = this.getMeta("schema_version");
+        if (existingVersion !== CURRENT_SCHEMA_VERSION) {
+          throw new Error(
+            `Read projection requires current state schema ${CURRENT_SCHEMA_VERSION}; ` +
+            `found ${existingVersion ?? "unknown"}.`
+          );
+        }
+        this.questions = new QuestionStore(this.database, { readOnly: true, policy: () => this.appliedHistoryPolicy() });
+        this.eventRetention = new EventRetention(this.database, {
+          readSummary: (jobId) => this.readJobSummary(jobId),
+          saveSummary: (jobId, summary) => this.saveJobSummary(jobId, summary)
+        }, {
+          deleteActivityEvents: (olderThan, batchSize, retainedLimit, now) =>
+            this.deleteActivityEventsForRetention(olderThan, batchSize, retainedLimit, now),
+          deleteExpiredResultHolds: (now, limit) =>
+            this.deleteExpiredResultHoldsForRetention(now, limit)
+        }, { readOnly: true });
+        this.workHistory = new WorkHistoryStore(
+          this.database,
+          (candidate, now) => this.expireHistoryProjection(candidate, now)
+        );
+        this.automaticRecovery = new AutomaticRecoveryStore(this.database, () => this.appliedHistoryPolicy());
+        this.threadConnections = new ThreadConnectionStore(this.database);
+        this.dashboardReadModel = new DashboardReadModel(this.database, () => this.appliedHistoryPolicy());
+        this.statusReadModel = new StatusReadModel(this.database);
+        return;
+      }
       if (this.migrationLease) this.claimExclusiveMigrationConnection();
       this.configureDatabaseConnection();
       this.database.exec(`
@@ -572,8 +827,30 @@ export class BridgeStateStore {
       if (existingVersion === undefined) {
         this.transaction(() => {
           this.database.exec(CURRENT_STATE_SCHEMA);
+          this.database.exec(V20_ASYNC_EXECUTION_MIGRATION_SCHEMA);
+          this.database.exec(V21_JOB_COMPLETION_DELIVERY_MIGRATION_SCHEMA);
+          this.database.exec(V22_JOB_COMPLETION_RESULT_SOURCE_MIGRATION_SCHEMA);
+          this.database.exec(V23_JOB_COMPLETION_RESULT_OFFER_MIGRATION_SCHEMA);
+          this.database.exec(V24_DECISION_CARD_MIGRATION_SCHEMA);
+          this.database.exec(V25_OPERATIONAL_COMMAND_RECEIPT_MIGRATION_SCHEMA);
+          this.database.exec(V26_MODEL_DESCRIPTION_VERSIONS_MIGRATION_SCHEMA);
+          this.database.exec(V27_DECISION_CARD_RETIREMENT_MIGRATION_SCHEMA);
+          this.database.exec(V28_JOB_HISTORY_INDEX_MIGRATION_SCHEMA);
+          this.database.exec(V29_BACKGROUND_WORK_INDEX_MIGRATION_SCHEMA);
+          this.database.exec(V30_SESSION_AUTH_BOUNDARY_MIGRATION_SCHEMA);
+          this.database.exec(V31_PROJECT_LIFECYCLE_MIGRATION_SCHEMA);
+          this.database.exec(V32_HISTORY_POLICY_MIGRATION_SCHEMA);
           this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
-          this.setMeta("schema_v19_created_at", new Date().toISOString());
+          this.setMeta("schema_v21_created_at", new Date().toISOString());
+          this.setMeta("schema_v22_created_at", new Date().toISOString());
+          this.setMeta("schema_v23_created_at", new Date().toISOString());
+          this.setMeta("schema_v24_created_at", new Date().toISOString());
+          this.setMeta("schema_v25_created_at", new Date().toISOString());
+          this.setMeta("schema_v26_created_at", new Date().toISOString());
+          this.setMeta("schema_v27_created_at", new Date().toISOString());
+          this.setMeta("schema_v28_created_at", new Date().toISOString());
+          this.setMeta("schema_v29_created_at", new Date().toISOString());
+          this.setMeta("schema_v30_created_at", new Date().toISOString());
           this.setMeta("state_migration_catalog_version", String(STATE_MIGRATION_CATALOG_VERSION));
           this.setMeta("state_database_id", randomUUID());
           this.recordSchemaOrigin("fresh");
@@ -606,13 +883,13 @@ export class BridgeStateStore {
         // before this instance has registered durable ownership below.
         this.database.close();
         openedDatabase = undefined;
-        this.database = new Database(databaseFile);
+        this.database = new Database(databaseFile, databaseOptions);
         openedDatabase = this.database;
-        this.database.pragma("busy_timeout = 5000");
+        this.database.pragma(`busy_timeout = ${STATE_DATABASE_BUSY_TIMEOUT_MS}`);
         this.configureDatabaseConnection();
       }
       this.questions = this.transaction(() => {
-        const questions = new QuestionStore(this.database);
+        const questions = new QuestionStore(this.database, { policy: () => this.appliedHistoryPolicy() });
         if (Object.values(questions.startupMaintenance).some((count) => count > 0)) {
           this.setMeta("state_startup_maintenance_last", JSON.stringify({
             reason: "question-expiry-and-dispatch-recovery",
@@ -622,10 +899,23 @@ export class BridgeStateStore {
         }
         return questions;
       });
-      this.workHistory = new WorkHistoryStore(this.database);
-      this.automaticRecovery = new AutomaticRecoveryStore(this.database);
+      this.eventRetention = new EventRetention(this.database, {
+        readSummary: (jobId) => this.readJobSummary(jobId),
+        saveSummary: (jobId, summary) => this.saveJobSummary(jobId, summary)
+      }, {
+        deleteActivityEvents: (olderThan, batchSize, retainedLimit, now) =>
+          this.deleteActivityEventsForRetention(olderThan, batchSize, retainedLimit, now),
+        deleteExpiredResultHolds: (now, limit) =>
+          this.deleteExpiredResultHoldsForRetention(now, limit)
+      });
+      this.workHistory = new WorkHistoryStore(
+        this.database,
+        (candidate, now) => this.expireHistoryProjection(candidate, now)
+      );
+      this.automaticRecovery = new AutomaticRecoveryStore(this.database, () => this.appliedHistoryPolicy());
       this.threadConnections = new ThreadConnectionStore(this.database);
-      this.eventRetention = new EventRetention(this.database);
+      this.dashboardReadModel = new DashboardReadModel(this.database, () => this.appliedHistoryPolicy());
+      this.statusReadModel = new StatusReadModel(this.database);
       if (this.getMeta("state_database_id") === undefined) {
         this.transaction(() => this.setMeta("state_database_id", randomUUID()));
       }
@@ -646,6 +936,7 @@ export class BridgeStateStore {
   get persistent(): boolean {
     return this.options.file !== ":memory:";
   }
+  get isClosed(): boolean { return this.closed; }
 
   get persistencePath(): string | null {
     return this.persistent ? this.options.file : null;
@@ -657,6 +948,158 @@ export class BridgeStateStore {
 
   get bridgeInstanceId(): string {
     return this.currentInstanceId;
+  }
+
+  /** Stable identity of this authoritative database across process generations. */
+  get databaseId(): string {
+    const value = this.getMeta("state_database_id");
+    if (!value) throw new Error("STATE_DATABASE_ID_MISSING: Operational database identity is unavailable.");
+    return value;
+  }
+
+  /** Test-only fault injection on the already-open writer connection. */
+  freezePageCountForTesting(): number {
+    if (process.env.NODE_ENV !== "test") {
+      throw new Error("State page-count fault injection is available only in tests.");
+    }
+    const pageCount = Number(this.database.pragma("page_count", { simple: true }));
+    this.database.pragma(`max_page_count = ${pageCount}`);
+    return pageCount;
+  }
+
+  /**
+   * Apply one semantic state command and persist its compact result atomically.
+   * Reusing a command ID with an identical payload returns the first result;
+   * reusing it for different work is a hard conflict.
+   */
+  executeOperationalCommand<T extends Record<string, unknown>>(
+    input: OperationalCommandReceiptInput,
+    apply: () => OperationalCommandApplication<T>,
+    observePhase?: (phase: OperationalStateOperationPhase) => void
+  ): OperationalCommandExecution<T> {
+    validateOperationalCommandReceiptInput(input);
+    return this.transaction(() => {
+      const existing = this.readOperationalCommandReceipt<T>(input.commandId);
+      if (existing) {
+        if (
+          existing.operation !== input.operation ||
+          existing.payloadSha256 !== input.payloadSha256 ||
+          existing.aggregateKey !== input.aggregateKey
+        ) {
+          throw new Error(
+            "STATE_COMMAND_CONFLICT: The command ID was already committed with a different payload."
+          );
+        }
+        return { receipt: existing, replayed: true };
+      }
+
+      const applied = apply();
+      if (
+        applied.resultingVersion !== undefined &&
+        (!Number.isSafeInteger(applied.resultingVersion) || applied.resultingVersion < 0)
+      ) {
+        throw new Error("STATE_COMMAND_RESULT_INVALID: resultingVersion must be a non-negative integer.");
+      }
+      const resultJson = JSON.stringify(applied.result);
+      if (
+        resultJson === undefined ||
+        Buffer.byteLength(resultJson, "utf8") > OPERATIONAL_COMMAND_RECEIPT_RESULT_MAX_BYTES
+      ) {
+        throw new Error(
+          `STATE_COMMAND_RESULT_TOO_LARGE: Command receipts are limited to ${OPERATIONAL_COMMAND_RECEIPT_RESULT_MAX_BYTES} bytes.`
+        );
+      }
+      const parsedResult = parseJsonTextStrict(
+        resultJson,
+        "operational command receipt result"
+      );
+      if (!isRecord(parsedResult) || Array.isArray(parsedResult)) {
+        throw new Error("STATE_COMMAND_RESULT_INVALID: Command receipt result must be a JSON object.");
+      }
+      const committedAt = input.committedAt ?? Date.now();
+      if (!Number.isSafeInteger(committedAt) || committedAt < 0) {
+        throw new Error("STATE_COMMAND_RECEIPT_INVALID: committedAt must be a non-negative integer.");
+      }
+      this.database.prepare(`
+        INSERT INTO operational_command_receipts(
+          command_id, operation, payload_sha256, aggregate_key, resulting_version,
+          result, worker_generation, committed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        input.commandId,
+        input.operation,
+        input.payloadSha256,
+        input.aggregateKey ?? null,
+        applied.resultingVersion ?? null,
+        resultJson,
+        input.workerGeneration,
+        committedAt
+      );
+      return {
+        receipt: {
+          commandId: input.commandId,
+          operation: input.operation,
+          payloadSha256: input.payloadSha256,
+          ...(input.aggregateKey !== undefined ? { aggregateKey: input.aggregateKey } : {}),
+          ...(applied.resultingVersion !== undefined
+            ? { resultingVersion: applied.resultingVersion }
+            : {}),
+          result: parsedResult as T,
+          workerGeneration: input.workerGeneration,
+          committedAt
+        },
+        replayed: false
+      };
+    }, observePhase);
+  }
+
+  getOperationalCommandReceipt<T = unknown>(
+    commandId: string
+  ): OperationalCommandReceipt<T> | undefined {
+    if (!UUID_PATTERN.test(commandId)) {
+      throw new Error("STATE_COMMAND_RECEIPT_INVALID: commandId must be a UUID.");
+    }
+    return this.readOperationalCommandReceipt<T>(commandId);
+  }
+
+  getLastOperationalCommandCommitAt(): number | undefined {
+    const row = this.database.prepare(`
+      SELECT MAX(committed_at) AS committed_at
+        FROM operational_command_receipts
+    `).get() as { committed_at: number | null };
+    return row.committed_at === null ? undefined : Number(row.committed_at);
+  }
+
+  /**
+   * Delete only old idempotent maintenance receipts. Business commands keep
+   * their domain request IDs as the long-lived idempotency authority and need
+   * a separate reference-aware policy before they can enter this cleanup.
+   */
+  maintainOperationalCommandReceiptRetention(
+    now = Date.now(),
+    limit = MAINTENANCE_COMMAND_RECEIPT_RETENTION_BATCH
+  ): { receiptsRemoved: number } {
+    if (!Number.isSafeInteger(now) || now < 0) {
+      throw new Error("STATE_COMMAND_RECEIPT_RETENTION_INVALID: now must be a non-negative integer.");
+    }
+    if (!Number.isSafeInteger(limit) || limit < 1) {
+      throw new Error("STATE_COMMAND_RECEIPT_RETENTION_INVALID: limit must be a positive integer.");
+    }
+    const boundedLimit = Math.min(MAINTENANCE_COMMAND_RECEIPT_RETENTION_BATCH, limit);
+    const cutoff = Math.max(0, now - MAINTENANCE_COMMAND_RECEIPT_RETENTION_MS);
+    return this.transaction(() => {
+      const result = this.database.prepare(`
+        DELETE FROM operational_command_receipts
+         WHERE command_id IN (
+           SELECT command_id
+             FROM operational_command_receipts
+            WHERE operation = 'maintain' AND committed_at < ?
+            ORDER BY committed_at ASC, command_id ASC
+            LIMIT ?
+         )
+      `).run(cutoff, boundedLimit);
+      return { receiptsRemoved: result.changes };
+    });
   }
 
   /** Record the point after which snapshot rollback could discard admitted work. */
@@ -730,13 +1173,42 @@ export class BridgeStateStore {
     }
   }
 
-  transaction<T>(operation: () => T): T {
-    if (this.transactionDepth > 0) return operation();
-    this.database.exec("BEGIN IMMEDIATE");
-    this.transactionDepth += 1;
+  private releaseSettingsPolicyGate?: () => void;
+
+  transaction<T>(
+    operation: () => T,
+    observePhase?: (phase: OperationalStateOperationPhase) => void
+  ): T {
+    if (this.options.readOnly) return operation();
+    if (this.transactionDepth > 0) {
+      this.observeTransactionPhase(observePhase, "executing");
+      return operation();
+    }
+    this.observeTransactionPhase(observePhase, "write-lock-wait");
     try {
+      this.database.exec("BEGIN IMMEDIATE");
+    } catch (error) {
+      this.observeTransactionFailure(error);
+      throw error;
+    }
+    this.transactionDepth += 1;
+    let committed = false;
+    try {
+      this.observeTransactionPhase(observePhase, "executing");
       const result = operation();
+      this.observeTransactionPhase(observePhase, "committing");
       this.database.exec("COMMIT");
+      committed = true;
+      try {
+        this.options.onTransactionCommitted?.();
+      } catch {
+        // Readiness diagnostics cannot change a committed transaction.
+      }
+      // The per-command observer owns its response boundary because it may
+      // still need to persist/replay a receipt before replying. The enclosing
+      // runtime observer only needs to know that this synchronous transaction
+      // has released SQLite.
+      this.observeTransactionPhase(undefined, "responding");
       return result;
     } catch (error) {
       try {
@@ -744,22 +1216,132 @@ export class BridgeStateStore {
       } catch {
         // Preserve the original transaction error.
       }
+      this.observeTransactionFailure(error);
       throw error;
     } finally {
       this.transactionDepth -= 1;
+      const releasePolicyGate=this.releaseSettingsPolicyGate;
+      this.releaseSettingsPolicyGate=undefined;
+      releasePolicyGate?.();
+      const relayReady = [...this.relayReadyPending.entries()];
+      this.relayReadyPending.clear();
+      const eventReady = [...this.mcpEventReadyPending.values()];
+      this.mcpEventReadyPending.clear();
+      const inserted = [...this.insertedNotifyCompletions];
+      this.insertedNotifyCompletions.clear();
+      const now = Date.now();
+      let ready = false;
+      if (committed && this.completionReadyListeners.size) {
+        try {
+          ready = inserted.some(outboxId => {
+            const row = this.getCompletionOutbox(outboxId);
+            return row && row.deliveredAt === undefined && row.acknowledgedAt === undefined &&
+              (row.nextAttemptAt === undefined || row.nextAttemptAt <= now) &&
+              (row.leaseOwner === undefined || (row.leaseExpiresAt !== undefined && row.leaseExpiresAt <= now));
+          });
+        } catch { /* A lost invalidation is recovered by the next read-only check. */ }
+      }
+      if (ready) {
+        for (const listener of this.completionReadyListeners) {
+          try { listener(); } catch { /* Invalidation cannot undo a durable commit. */ }
+        }
+      }
+      if (committed) {
+        this.emitMcpEventReady(eventReady);
+        this.emitRelayReady(relayReady);
+      }
     }
   }
 
-  listSessions(): unknown[] {
+  get relayRevision(): string { return `${this.currentInstanceId}:${this.relayRevisionNumber}`; }
+
+  subscribeRelayReady(listener: (activityId: string) => void): () => void {
+    this.relayReadyListeners.add(listener);
+    return () => { this.relayReadyListeners.delete(listener); };
+  }
+
+  markRelayReady(activityId: string, jobId: string): void {
+    if (this.transactionDepth) this.relayReadyPending.set(jobId, activityId);
+    else this.emitRelayReady([[jobId, activityId]]);
+  }
+
+  private emitRelayReady(records: Array<[string, string]>): void {
+    for (const activityId of new Set(records.map(([, activityId]) => activityId))) {
+      try {
+        if (!this.relay.pending(activityId).length) continue;
+        this.relayRevisionNumber += 1;
+        for (const listener of this.relayReadyListeners) {
+          try { listener(activityId); } catch { /* Committed source remains recoverable. */ }
+        }
+      } catch { /* A lost signal is recovered by the next exact read. */ }
+    }
+  }
+
+  subscribeNativeCompletionReady(listener: () => void): () => void {
+    this.completionReadyListeners.add(listener);
+    return () => { this.completionReadyListeners.delete(listener); };
+  }
+
+  subscribeMcpEventReady(listener: () => void): () => void {
+    this.mcpEventReadyListeners.add(listener);
+    return () => { this.mcpEventReadyListeners.delete(listener); };
+  }
+
+  markMcpEventReady(jobId: string, id: string): void {
+    if (this.transactionDepth) this.mcpEventReadyPending.set(`${jobId}\0${id}`, { jobId, id });
+    else this.emitMcpEventReady([{ jobId, id }]);
+  }
+
+  private emitMcpEventReady(records: Array<{ jobId: string; id: string }>): void {
+    if (!this.mcpEventReadyListeners.size || !records.length) return;
+    let ready = false;
+    try {
+      ready = records.some(key => {
+        const current = this.mcpEvents.get(key.jobId, key.id);
+        return current && !current.disabled && current.event && current.delivery === "pending" && current.expiresAt > Date.now();
+      });
+    } catch { /* A missed invalidation is recovered from the durable intent. */ }
+    if (ready) for (const listener of this.mcpEventReadyListeners) {
+      try { listener(); } catch { /* Best-effort invalidation; startup reconciles durable intents. */ }
+    }
+  }
+
+  private observeTransactionPhase(
+    observer: ((phase: OperationalStateOperationPhase) => void) | undefined,
+    phase: OperationalStateOperationPhase
+  ): void {
+    try {
+      this.options.onTransactionPhase?.(phase);
+    } catch {
+      // Diagnostics cannot change transaction semantics.
+    }
+    try {
+      observer?.(phase);
+    } catch {
+      // Diagnostics cannot change transaction semantics.
+    }
+  }
+
+  private observeTransactionFailure(error: unknown): void {
+    try {
+      this.options.onTransactionFailure?.(error);
+    } catch {
+      // Readiness diagnostics cannot replace the original transaction error.
+    }
+  }
+
+  listSessions(scopeId?: string): unknown[] {
     return this.database
       .prepare(`SELECT s.*,p.name AS project_name FROM sessions s
         LEFT JOIN projects p ON p.project_id=s.project_id
+        ${scopeId ? "WHERE s.scope_id=?" : ""}
         ORDER BY s.last_used_at ASC`)
-      .all()
+      .all(...(scopeId ? [scopeId] : []))
       .map((value) => {
         const row = value as Record<string, unknown>;
         return {
           threadId: String(row.thread_id),
+          ...(row.auth_boundary ? { authBoundary: String(row.auth_boundary) } : {}),
           scopeId: String(row.scope_id),
           backendKind: String(row.backend_kind),
           ...(row.session_id ? { sessionId: String(row.session_id) } : {}),
@@ -776,7 +1358,7 @@ export class BridgeStateStore {
             : {}),
           sandbox: String(row.sandbox),
           ...(row.selection
-            ? { selection: parsePayload({ payload: String(row.selection) }, "session selection") }
+            ? { selection: parseCurrentPayload({ payload: String(row.selection) }, "session selection") }
             : {}),
           ...(row.policy_revision === null
             ? {}
@@ -817,13 +1399,15 @@ export class BridgeStateStore {
     this.transaction(() => {
       this.ensureScope(session.scopeId, session.lastUsedAt);
       const project = normalizeProjectIdentity(session.projectId, session.projectName);
+      if (this.tableHasColumn("projects","archive_state") && this.projectLifecycle.retiredThread(session.threadId)) throw new Error("PROJECT_MANAGEMENT_ENDED: This thread was retired.");
+      if (this.tableHasColumn("projects","archive_state")) this.projectLifecycle.assertActive(project?.projectId);
       this.database
         .prepare(`
           INSERT INTO sessions(
             thread_id,scope_id,project_id,backend_kind,cwd,sandbox,session_id,
             forked_from_thread_id,persistence,visible_in_codex_app,selection,
-            policy_revision,created_at,updated_at,last_used_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            policy_revision,created_at,updated_at,last_used_at,auth_boundary
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(thread_id) DO UPDATE SET
             scope_id = excluded.scope_id,
             cwd = excluded.cwd,
@@ -837,7 +1421,8 @@ export class BridgeStateStore {
             selection = excluded.selection,
             policy_revision = excluded.policy_revision,
             updated_at = excluded.updated_at,
-            last_used_at = excluded.last_used_at
+            last_used_at = excluded.last_used_at,
+            auth_boundary = COALESCE(excluded.auth_boundary,sessions.auth_boundary)
         `)
         .run(
           session.threadId,
@@ -856,7 +1441,8 @@ export class BridgeStateStore {
           Number.isInteger(session.policyRevision) ? session.policyRevision : null,
           session.createdAt ?? session.lastUsedAt,
           session.updatedAt ?? session.lastUsedAt,
-          session.lastUsedAt
+          session.lastUsedAt,
+          session.authBoundary || null
         );
       this.threadConnections.register({ threadId: session.threadId, scopeId: session.scopeId,
         persistence: session.persistence || (session.visibleInCodexApp === true ? "persistent" : session.visibleInCodexApp === false ? "ephemeral" : "unknown") }, session.lastUsedAt);
@@ -875,20 +1461,32 @@ export class BridgeStateStore {
     return Number((row as CountRow).count);
   }
 
-  listJobs(): unknown[] {
+  listJobs(agentId?: string, scopeId?: string): StoredJobRecord[] {
+    return this.readJobs(agentId, scopeId, true);
+  }
+
+  /** Current state, pending inputs and small execution proofs, without progress bodies. */
+  listJobsForDashboard(agentId?: string, scopeId?: string): StoredJobRecord[] {
+    if (!this.options.readOnly) {
+      throw new Error("Dashboard Job hydration requires a query-only projection.");
+    }
+    return this.readJobs(agentId, scopeId, false);
+  }
+
+  private readJobs(agentId: string | undefined, scopeId: string | undefined, includePublicEvents: boolean): StoredJobRecord[] {
     return this.database
       .prepare(`
         SELECT j.payload,j.job_id,j.scope_id,j.request_id,j.activity_id,j.thread_id,
-               j.source_thread_id,j.status,j.execution_mode,j.backend_kind,
+               j.source_thread_id,j.status,j.backend_kind,
                bridge_instance_id, worker_id, worker_generation, upstream_request_id,
                terminal_version,agent_id,context_mode,a.project_id,p.name AS project_name,
                j.cwd,j.sandbox,j.created_at,j.updated_at,j.job_version,j.last_progress_at,
-               j.last_progress,j.terminal_origin,j.cancellation_intent_id,
-               COALESCE((SELECT json_group_array(json(event.payload)) FROM (
-                 SELECT payload FROM job_events
-                  WHERE job_id=j.job_id AND event_type LIKE 'app-%'
+               j.last_progress,j.terminal_origin,j.cancellation_intent_id,j.ended_at,j.ended_at_source,j.detail_availability,
+               ${includePublicEvents ? `COALESCE((SELECT json_group_array(json(event.payload)) FROM (
+                 SELECT payload FROM (SELECT event_id,payload FROM job_events
+                  WHERE job_id=j.job_id AND event_type LIKE 'app-%' ORDER BY event_id DESC LIMIT 200)
                   ORDER BY event_id
-               ) event),'[]') AS public_events,
+               ) event),'[]')` : DASHBOARD_EXECUTION_EVENTS_SQL} AS public_events,
                COALESCE((SELECT json_group_array(json(interaction.payload)) FROM (
                  SELECT json_patch(payload,json_object(
                    'interactionId',interaction_id,
@@ -899,11 +1497,41 @@ export class BridgeStateStore {
           FROM jobs j
           JOIN activities a ON a.activity_id=j.activity_id
           LEFT JOIN projects p ON p.project_id=a.project_id
-         WHERE j.archived_at IS NULL
+         WHERE j.archived_at IS NULL AND ${retainedJobSql(this.appliedHistoryPolicy(),"j")}
+           ${agentId ? "AND j.agent_id=?" : ""}
+           ${scopeId ? "AND j.scope_id=?" : ""}
          ORDER BY j.updated_at ASC
       `)
-      .all()
+      .all(...(agentId ? [agentId] : []), ...(scopeId ? [scopeId] : []))
       .map((row) => hydrateJobPayload(row as JobStorageRow));
+  }
+
+  /** Connection-local commit observation; holds no WAL snapshot between reads. */
+  readObservationVersion(): number {
+    return Number(this.database.pragma("data_version", { simple: true }));
+  }
+
+  /** Exact scoped admission proof after the result body leaves ordinary Job retention. */
+  getArchivedJobAdmissionReceipt(
+    scopeId: string,
+    query: { kind: "job"; id: string } | { kind: "request"; requestId: string }
+  ): ArchivedJobAdmissionReceipt | undefined {
+    const column = query.kind === "job" ? "job_id" : "request_id";
+    const value = query.kind === "job" ? query.id : query.requestId;
+    const retired = query.kind === "job" ? this.projectLifecycle.jobReceipt(query.id,scopeId) : this.projectLifecycle.receipt("task",scopeId,query.requestId);
+    if (retired?.subject_id) return {jobId:retired.subject_id,requestId:retired.request_id,status:retired.outcome,managementEnded:true};
+    const row = this.database.prepare(`
+      SELECT job_id, request_id, status
+        FROM jobs
+       WHERE scope_id = ? AND ${column} = ? AND status IN ('completed','failed','interrupted','cancelled')
+    `).get(scopeId, value) as {
+      job_id: string;
+      request_id: string;
+      status: string;
+    } | undefined;
+    return row
+      ? { jobId: row.job_id, requestId: row.request_id, status: row.status }
+      : undefined;
   }
 
   /** Includes completed and archived work when selecting the initial card scope. */
@@ -928,12 +1556,12 @@ export class BridgeStateStore {
     const rows = this.database
       .prepare(`
         SELECT job_id, scope_id, activity_id, agent_id, backend_kind,
-               status, created_at, updated_at, summary
+               status, created_at, updated_at, ended_at, ended_at_source, detail_availability, summary
           FROM jobs
          WHERE archived_at IS NOT NULL
-           AND NOT EXISTS (SELECT 1 FROM work_history_state h WHERE h.job_id=jobs.job_id AND h.expired_at IS NOT NULL)
+           AND ${retainedJobSql(this.appliedHistoryPolicy())}
            ${scopeId ? "AND scope_id = ?" : ""}
-         ORDER BY updated_at DESC, job_id DESC
+         ORDER BY created_at DESC, job_id DESC
          LIMIT ?
       `)
       .all(...(scopeId ? [scopeId, boundedLimit] : [boundedLimit])) as Array<{
@@ -947,31 +1575,217 @@ export class BridgeStateStore {
         created_at: number;
         summary: string;
       }>;
-    return rows.map((row) => {
-      const parsed = parsePayload({ payload: row.summary }, "archived dashboard job summary");
-      const summary = isRecord(parsed) ? parsed : {};
-      const execution = readDashboardRetainedExecution(summary);
-      return {
-        jobId: row.job_id,
-        scopeId: row.scope_id,
-        activityId: row.activity_id,
-        ...(row.agent_id ? { agentId: row.agent_id } : {}),
-        ...(row.backend_kind ? { backendKind: row.backend_kind } : {}),
-        status: row.status,
-        createdAt: Number(row.created_at),
-        updatedAt: Number(row.updated_at),
-        ...(execution ? { execution } : {})
-      };
-    });
+    return rows.map(decodeDashboardArchivedJob);
+  }
+
+  /** Bounded overview projection: at most `perAgentLimit` archived rows are
+   * materialized per Agent, while the SQL window keeps exact history totals. */
+  listDashboardArchivedJobsByAgent(
+    scopeId?: string,
+    perAgentLimit = 13,
+    representativeOrder: DashboardRepresentativeOrder = "created",
+    agentIds?: readonly string[]
+  ): {
+    jobs: DashboardRetainedJobSummary[];
+    totalsByAgent: Map<string, number>;
+  } {
+    const result = this.dashboardReadModel.archivedByAgent(
+      scopeId,
+      perAgentLimit,
+      representativeOrder,
+      agentIds
+    );
+    return { jobs: result.rows.map(decodeDashboardArchivedJob), totalsByAgent: result.totalsByAgent };
+  }
+
+  listDashboardAgentRetainedJobs(scopeId: string, agentId: string, historyLimit = 12): {
+    representative?: DashboardRetainedJobSummary;
+    history: DashboardRetainedJobSummary[];
+    total: number;
+  } {
+    const result = this.dashboardReadModel.agentHistory(scopeId, agentId, historyLimit);
+    return {
+      ...(result.representative
+        ? { representative: decodeDashboardArchivedJob(result.representative) }
+        : {}),
+      history: result.history.map(decodeDashboardArchivedJob),
+      total: result.total
+    };
+  }
+
+  listDashboardRetainedJobsByIds(jobIds: readonly string[], scopeId?: string): DashboardRetainedJobSummary[] {
+    return this.dashboardReadModel.archivedByIds(jobIds, scopeId).map(decodeDashboardArchivedJob);
+  }
+
+  dashboardExecutionCounts(scopeId?:string,now=Date.now()):{progress:number;terminal:number;completed:number;failed:number;interrupted:number;cancelled:number} {
+    const rows=this.database.prepare(`SELECT status,COUNT(*) n FROM jobs j WHERE ${retainedJobSql(this.appliedHistoryPolicy(now),"j")}
+      ${scopeId ? "AND scope_id=?" : ""} GROUP BY status`).all(...(scopeId ? [scopeId] : [])) as Array<{status:string;n:number}>;
+    const n=new Map(rows.map(x=>[x.status,x.n]));
+    return {progress:["running","terminating","termination-failed"].reduce((s,k)=>s+(n.get(k)||0),0),
+      terminal:["completed","failed","interrupted","cancelled"].reduce((s,k)=>s+(n.get(k)||0),0),
+      completed:n.get("completed")||0,failed:n.get("failed")||0,interrupted:n.get("interrupted")||0,cancelled:n.get("cancelled")||0};
+  }
+
+  dashboardExecutionPage(scopeId:string|undefined,statuses:readonly string[],offset:number,limit:number,now=Date.now()):{jobs:DashboardExecutionRecord[];total:number;offset:number;scopeIds:string[];revision:string} {
+    const predicate=`${retainedJobSql(this.appliedHistoryPolicy(now),"j")} AND j.status IN (${statuses.map(()=>"?").join(",")}) ${scopeId ? "AND j.scope_id=?" : ""}`;
+    const args=[...statuses,...(scopeId ? [scopeId] : [])];
+    // Hash only durable scalar membership/order, never history bodies or live
+    // enrichment. The retention predicate also catches expiry before cleanup.
+    const collection=this.database.prepare(`SELECT COUNT(*) n,json_group_array(json_array(job_id,status,created_at,ended_at)) identities
+      FROM (SELECT job_id,status,created_at,ended_at FROM jobs j WHERE ${predicate} ORDER BY job_id)`).get(...args) as {n:number;identities:string};
+    const total=collection.n,revision=createHash("sha256").update(JSON.stringify(["execution-list-v1",scopeId ?? null,statuses,collection.identities])).digest("hex");
+    const bounded=Math.max(1,Math.min(50,limit)),at=Math.min(Math.max(0,offset),total ? Math.floor((total-1)/bounded)*bounded : 0);
+    const orderColumn=statuses.every(status=>["completed","failed","interrupted","cancelled"].includes(status)) ? "ended_at" : "created_at";
+    const ids=this.database.prepare(`SELECT job_id FROM jobs j WHERE ${predicate} ORDER BY ${orderColumn} DESC,job_id DESC LIMIT ? OFFSET ?`).all(...args,bounded,at) as Array<{job_id:string}>;
+    const scopes=this.database.prepare(`SELECT DISTINCT j.scope_id FROM jobs j WHERE ${predicate}`).all(...args) as Array<{scope_id:string}>;
+    const records=new Map(this.dashboardExecutionRecords(ids.map(x=>x.job_id),scopeId,now).map(record=>[record.jobId,record]));
+    return {jobs:ids.flatMap(({job_id})=>{const record=records.get(job_id);return record ? [record] : [];}),total,offset:at,scopeIds:scopes.map(x=>x.scope_id),revision};
+  }
+
+  dashboardExecutionRecords(jobIds:readonly string[],scopeId?:string,now=Date.now()):DashboardExecutionRecord[] {
+    const result:DashboardExecutionRecord[]=[],ids=[...new Set(jobIds)];
+    for(let offset=0;offset<ids.length;offset+=500) {
+      const part=ids.slice(offset,offset+500);
+      result.push(...this.database.prepare(`SELECT j.job_id jobId,j.scope_id scopeId,j.activity_id activityId,j.agent_id agentId,j.thread_id threadId,thread_session.session_id sessionId,j.status,
+        j.created_at createdAt,j.updated_at updatedAt,j.ended_at endedAt,j.ended_at_source endedAtSource,j.detail_availability detailAvailability,
+        a.title activityTitle,agent.agent_name agentName,a.project_id projectId,p.name projectName,
+        CASE WHEN json_type(j.payload,'$.executionName')='text' THEN json_extract(j.payload,'$.executionName') END executionName,
+        COALESCE(CASE WHEN json_type(j.payload,'$.summary')='text' THEN json_extract(j.payload,'$.summary') END,
+          CASE WHEN json_type(j.summary,'$.display.summary')='text' THEN json_extract(j.summary,'$.display.summary') END) summary,
+        COALESCE(j.problem_summary,json_extract(j.payload,'$.error')) error,
+        c.reason_text cancellationReason,c.source cancellationSource,c.created_at cancellationRequestedAt,c.target_kind cancellationTargetKind,COALESCE(ci.status,
+          (SELECT i.status FROM cancellation_intents i WHERE i.scope_id=j.scope_id AND i.target_job_id=j.job_id
+           AND i.created_at<=COALESCE(j.ended_at,j.updated_at) ORDER BY i.created_at DESC,i.intent_id DESC LIMIT 1),c.status) cancellationStatus,
+        (SELECT COALESCE(json_extract(i.payload,'$.kind'),'unknown-input') FROM job_interactions i WHERE i.job_id=j.job_id AND i.is_blocking=1 ORDER BY position LIMIT 1) blockingKind
+        FROM jobs j JOIN activities a ON a.activity_id=j.activity_id LEFT JOIN agents agent ON agent.agent_id=j.agent_id LEFT JOIN projects p ON p.project_id=a.project_id
+        LEFT JOIN sessions thread_session ON thread_session.thread_id=j.thread_id
+        LEFT JOIN cancellation_intents ci ON ci.intent_id=j.cancellation_intent_id
+        LEFT JOIN cancellation_operations c ON c.scope_id=j.scope_id AND c.request_id=COALESCE(ci.request_id,
+          (SELECT i.request_id FROM cancellation_intents i WHERE i.scope_id=j.scope_id AND i.target_job_id=j.job_id
+           AND i.created_at<=COALESCE(j.ended_at,j.updated_at) ORDER BY i.created_at DESC,i.intent_id DESC LIMIT 1))
+        WHERE j.job_id IN (${part.map(()=>"?").join(",")}) AND ${retainedJobSql(this.appliedHistoryPolicy(now),"j")}
+          ${scopeId ? "AND j.scope_id=?" : ""} ORDER BY j.created_at DESC,j.job_id DESC`).all(...part,...(scopeId ? [scopeId] : [])) as DashboardExecutionRecord[]);
+    }
+    return result;
+  }
+
+  /** Scalar candidates for the thread/session route; history bodies are not loaded. */
+  dashboardExecutionIdentitiesForThread(routeId:string,now=Date.now()):Array<Pick<DashboardExecutionRecord,"jobId"|"scopeId"|"agentId"|"threadId"|"sessionId">> {
+    const normalized=routeId.trim().toLowerCase();
+    return this.database.prepare(`SELECT j.job_id jobId,j.scope_id scopeId,j.agent_id agentId,j.thread_id threadId,thread_session.session_id sessionId
+      FROM jobs j LEFT JOIN sessions thread_session ON thread_session.thread_id=j.thread_id
+      WHERE (LOWER(TRIM(j.thread_id))=? OR LOWER(TRIM(thread_session.session_id))=?) AND ${retainedJobSql(this.appliedHistoryPolicy(now),"j")}`)
+      .all(normalized,normalized) as Array<Pick<DashboardExecutionRecord,"jobId"|"scopeId"|"agentId"|"threadId"|"sessionId">>;
+  }
+
+  dashboardExecutionScopes(jobIds:readonly string[],scopeId?:string,now=Date.now()):Map<string,string> {
+    const result=new Map<string,string>(),ids=[...new Set(jobIds)];
+    for(let offset=0;offset<ids.length;offset+=500) {
+      const part=ids.slice(offset,offset+500);
+      for(const row of this.database.prepare(`SELECT job_id,scope_id FROM jobs j WHERE job_id IN (${part.map(()=>"?").join(",")})
+        AND ${retainedJobSql(this.appliedHistoryPolicy(now),"j")} ${scopeId ? "AND scope_id=?" : ""}`).all(...part,...(scopeId ? [scopeId] : [])) as Array<{job_id:string;scope_id:string}>) result.set(row.job_id,row.scope_id);
+    }
+    return result;
+  }
+
+  dashboardJobSummaries(jobIds: readonly string[]): Map<string, Record<string, unknown>> {
+    return new Map([...this.dashboardReadModel.summaries(jobIds)].map(([jobId, summary]) => {
+      const parsed = parseCurrentPayload({payload:summary}, "dashboard job summary");
+      return [jobId, sanitizeRetainedJobSummary(parsed)] as const;
+    }));
+  }
+
+  dashboardActivityProjects(ids:readonly string[]):Map<string,{projectId?:string;projectName?:string}> {
+    const result=new Map<string,{projectId?:string;projectName?:string}>(),unique=[...new Set(ids)];
+    for(let offset=0;offset<unique.length;offset+=500) {
+      const part=unique.slice(offset,offset+500);
+      const rows=this.database.prepare(`SELECT a.activity_id,a.project_id,p.name FROM activities a LEFT JOIN projects p ON p.project_id=a.project_id
+        WHERE a.activity_id IN (${part.map(()=>"?").join(",")})`).all(...part) as Array<{activity_id:string;project_id:string|null;name:string|null}>;
+      for(const row of rows) result.set(row.activity_id,{projectId:row.project_id || undefined,projectName:row.name || undefined});
+    }
+    return result;
+  }
+
+  dashboardActivityTitles(activityIds: readonly string[]): Map<string, string> {
+    return this.dashboardReadModel.activityTitles(activityIds);
+  }
+
+  dashboardArchivedCounts(scopeId?: string): DashboardArchivedCounts {
+    return this.dashboardReadModel.archivedCounts(scopeId);
   }
 
   upsertJob(job: JobRowInput): void {
     this.transaction(() => this.upsertJobInternal(job));
   }
 
-  deleteJob(jobId: string): void {
+  maintainJobRetentionCandidates(
+    command: OperationalJobRetentionCommand
+  ): OperationalJobRetentionResult {
+    return this.transaction(() => {
+      const deadline = performance.now() + command.maxDurationMs;
+      let remainingAdmissionReservations = command.admissionReservations;
+      let removed = 0;
+      const classifications: OperationalJobRetentionResult["classifications"] = [];
+      for (const candidate of command.candidates) {
+        if (
+          removed >= command.maxRemoved ||
+          classifications.length > 0 && performance.now() >= deadline
+        ) break;
+        const row = this.database.prepare(`
+          SELECT status, updated_at, job_version
+            FROM jobs
+           WHERE job_id = ? AND archived_at IS NULL
+        `).get(candidate.jobId) as {
+          status: string;
+          updated_at: number;
+          job_version: number;
+        } | undefined;
+        if (
+          !row ||
+          !isTerminalActivityJobStatus(row.status) ||
+          row.updated_at !== candidate.updatedAt ||
+          row.job_version !== candidate.version
+        ) {
+          classifications.push({ ...candidate, disposition: "skipped" });
+          continue;
+        }
+        if (
+          this.retentionProtection(
+            candidate.jobId,
+            command.now,
+            command.completionResultRecoveryMs
+          ).length > 0
+        ) {
+          if (!candidate.knownProtected) {
+            remainingAdmissionReservations = Math.max(0, remainingAdmissionReservations - 1);
+          }
+          classifications.push({ ...candidate, disposition: "protected" });
+          continue;
+        }
+        if (candidate.knownProtected) remainingAdmissionReservations += 1;
+        if (
+          candidate.updatedAt >= command.cutoffAt &&
+          remainingAdmissionReservations <= command.retentionTarget
+        ) {
+          classifications.push({ ...candidate, disposition: "retained" });
+          continue;
+        }
+        if (this.deleteJob(candidate.jobId, command.now)) {
+          removed += 1;
+          remainingAdmissionReservations = Math.max(0, remainingAdmissionReservations - 1);
+          classifications.push({ ...candidate, disposition: "removed" });
+        } else {
+          classifications.push({ ...candidate, disposition: "protected" });
+        }
+      }
+      return { classifications, remainingAdmissionReservations };
+    });
+  }
+
+  deleteJob(jobId: string, now = Date.now()): boolean {
+    let archived = false;
     this.transaction(() => {
-      if (this.retentionProtection(jobId).length) return;
+      if (this.retentionProtection(jobId, now).length) return;
       const row = this.database
         .prepare(`
           SELECT job_id, scope_id, request_id, status, updated_at, activity_id,
@@ -991,16 +1805,15 @@ export class BridgeStateStore {
           }
         | undefined;
       if (!row) return;
-      const now = Date.now();
       const scopeVersion = this.nextScopeVersion(row.scope_id, now);
       if (!this.eventRetention.summary(jobId).usage) {
         const usage = this.database.prepare("SELECT payload FROM job_events WHERE job_id=? AND event_type LIKE 'app-usage%' ORDER BY event_id DESC LIMIT 1").get(jobId) as JsonRow | undefined;
-        if (usage) this.eventRetention.prepare({jobId,eventType:"app-usage",payload:JSON.parse(usage.payload)}, true, false);
+        if (usage) this.eventRetention.prepare({jobId,eventType:"app-usage",payload:parseStoredJson(usage.payload, "job event")}, true, false);
       }
       this.database
-        .prepare("UPDATE jobs SET archived_at = ?, payload = ? WHERE job_id = ?")
-        .run(now, JSON.stringify({ resultOmitted: true }), row.job_id);
-      this.database.prepare("DELETE FROM job_events WHERE job_id=?").run(jobId);
+        .prepare("UPDATE jobs SET archived_at = ? WHERE job_id = ?")
+        .run(now, row.job_id);
+      // Archiving releases registry capacity without deleting retained history.
       this.insertJobEvent({
         jobId: row.job_id,
         activityId: row.activity_id,
@@ -1009,27 +1822,29 @@ export class BridgeStateStore {
         eventType: "retention-pruned",
         status: row.status,
         createdAt: now,
-        payload: { resultBodyRetained: false }
+        payload: { resultBodyRetained: true }
       });
       this.touchActivity(row.activity_id, scopeVersion, now, "job-retention-pruned", {
         jobId: row.job_id
       });
+      archived = true;
     });
+    return archived;
   }
 
-  retentionProtection(jobId: string, now = Date.now()): string[] {
-    const row = this.database.prepare("SELECT status,activity_id FROM jobs WHERE job_id=?").get(jobId) as {status:string;activity_id:string} | undefined;
+  retentionProtection(
+    jobId: string,
+    now = Date.now(),
+    completionResultRecoveryMs = 0
+  ): string[] {
+    const row = this.database.prepare(`SELECT status,activity_id,updated_at,
+      json_extract(payload,'$.completionDeliveryPolicy') AS completion_policy FROM jobs WHERE job_id=?`).get(jobId) as {
+      status:string;activity_id:string;updated_at:number;completion_policy:string|null;
+    } | undefined;
     if (!row) return [];
-    const reasons: string[] = [];
-    if (isActiveActivityJobStatus(row.status)) reasons.push("active-work");
-    if (this.database.prepare("SELECT 1 FROM job_interactions WHERE job_id=? AND is_blocking=1 LIMIT 1").get(jobId)) reasons.push("pending-interaction");
-    if (this.database.prepare("SELECT 1 FROM completion_outbox WHERE activity_id=? AND delivered_at IS NULL AND acknowledged_at IS NULL LIMIT 1").get(row.activity_id)) reasons.push("undelivered-result");
-    const steering = this.uncertainResultState(jobId);
-    const review = this.eventRetention.summary(jobId).uncertainResponseReview as {count?:number;latestUpdateAt?:number} | undefined;
-    if (steering.pending || steering.count > 0 && (review?.count !== steering.count || review.latestUpdateAt !== steering.latestUpdateAt)) reasons.push("uncertain-response");
-    if (this.database.prepare("SELECT 1 FROM cancellation_intents WHERE (target_job_id=? OR (target_kind='activity' AND target_activity_id=?)) AND status IN ('recorded','dispatched') LIMIT 1").get(jobId, row.activity_id)) reasons.push("pending-cancellation");
-    if (this.database.prepare("SELECT 1 FROM result_holds WHERE job_id=? AND expires_at>?").get(jobId, now)) reasons.push("user-hold");
-    return reasons;
+    // Eviction preserves the durable body and every control journal. Terminal
+    // delivery/hold/uncertainty therefore need no registry-capacity reservation.
+    return isActiveActivityJobStatus(row.status) ? ["active-work"] : [];
   }
 
   holdResult(jobId: string, reason: string, expiresAt: number, now = Date.now()): void {
@@ -1060,23 +1875,243 @@ export class BridgeStateStore {
       FROM steering_deliveries WHERE job_id=? AND status IN ('prepared','dispatching','uncertain')`).get(jobId) as {pending:number;count:number;latestUpdateAt:number};
   }
 
+  latestControlJob(agentId:string):{jobId:string;threadId:string|null}|undefined {
+    const row=this.database.prepare("SELECT job_id,thread_id FROM jobs WHERE agent_id=? ORDER BY created_at DESC,job_id DESC LIMIT 1")
+      .get(agentId) as {job_id:string;thread_id:string|null}|undefined;
+    return row ? {jobId:row.job_id,threadId:row.thread_id} : undefined;
+  }
+
+  latestControlJobs(agentIds:readonly string[]):Map<string,{jobId:string;threadId:string|null}> {
+    const result=new Map<string,{jobId:string;threadId:string|null}>(),ids=[...new Set(agentIds)];
+    for(let offset=0;offset<ids.length;offset+=500) {
+      const part=ids.slice(offset,offset+500);
+      const rows=this.database.prepare(`SELECT agent_id,job_id,thread_id FROM (
+        SELECT agent_id,job_id,thread_id,ROW_NUMBER() OVER (PARTITION BY agent_id ORDER BY created_at DESC,job_id DESC) rank
+        FROM jobs WHERE agent_id IN (${part.map(()=>"?").join(",")})) WHERE rank=1`)
+        .all(...part) as Array<{agent_id:string;job_id:string;thread_id:string|null}>;
+      for(const row of rows) result.set(row.agent_id,{jobId:row.job_id,threadId:row.thread_id});
+    }
+    return result;
+  }
+
+  appliedHistoryPolicy(now = Date.now()) { return readAppliedHistoryPolicy(this.database, now); }
+
+  /** Protection of actual execution is separate from the age of its history. */
+  private historyExecutionProtected(jobId: string): boolean {
+    const row = this.database.prepare("SELECT status FROM jobs WHERE job_id=?").get(jobId) as {status:string}|undefined;
+    return Boolean(row && isActiveActivityJobStatus(row.status));
+  }
+
+  retainedJobIds(ids: readonly string[], now=Date.now()): Set<string> {
+    const retained=new Set<string>(),policy=this.appliedHistoryPolicy(now);
+    for (let start=0;start<ids.length;start+=500) {
+      const part=ids.slice(start,start+500);
+      if (!part.length) continue;
+      const rows=this.database.prepare(`SELECT job_id FROM jobs WHERE job_id IN (${part.map(()=>"?").join(",")})
+        AND ${retainedJobSql(policy)}`).all(...part) as Array<{job_id:string}>;
+      for(const row of rows) retained.add(row.job_id);
+    }
+    return retained;
+  }
+
+  historyCacheMetadata(agentIds: readonly string[], now=Date.now()): Map<string,{historyRevision:string;nextExpiryAt:string|null}> {
+    const result=new Map<string,{historyRevision:string;nextExpiryAt:string|null}>(),policy=this.appliedHistoryPolicy(now);
+    for(let start=0;start<agentIds.length;start+=500) {
+      const part=agentIds.slice(start,start+500);if(!part.length) continue;
+      const rows=this.database.prepare(`SELECT a.agent_id,COALESCE(r.revision,0) revision,
+        (SELECT MIN(ended_at) FROM jobs WHERE agent_id=a.agent_id AND ${retainedJobSql(policy)}) next_basis,
+        (SELECT COUNT(*) FROM jobs WHERE agent_id=a.agent_id AND ${retainedJobSql(policy)}) retained_count
+        FROM agents a LEFT JOIN agent_history_revisions r ON r.agent_id=a.agent_id
+        WHERE a.agent_id IN (${part.map(()=>"?").join(",")})`).all(...part) as Array<{agent_id:string;revision:number;next_basis:number|null;retained_count:number}>;
+      for(const row of rows) result.set(row.agent_id,{historyRevision:createHash("sha256")
+        .update(JSON.stringify(["history-v3",row.agent_id,row.revision,row.retained_count,row.next_basis])).digest("hex"),
+        nextExpiryAt:policy.retentionDays===0||row.next_basis===null ? null : new Date(row.next_basis+policy.retentionDays*86_400_000).toISOString()});
+    }
+    return result;
+  }
+
+  retainedJobVisible(jobId: string, now = Date.now()): boolean {
+    return Boolean(this.database.prepare(`SELECT 1 FROM jobs WHERE job_id=? AND ${retainedJobSql(this.appliedHistoryPolicy(now))}`).get(jobId));
+  }
+
+  /** Exact scoped durable detail survives registry eviction. No hydration of other Jobs. */
+  readAgentHistoryPage(scopeId:string,agentId:string,cursor:{at:number;id:string}|undefined,limit=12,now=Date.now()):{
+    history:DashboardRetainedJobSummary[];representative?:string;total:number;hasMore:boolean
+  } {
+    const predicate=retainedJobSql(this.appliedHistoryPolicy(now));
+    const representative=this.database.prepare(`SELECT job_id FROM jobs WHERE scope_id=? AND agent_id=? AND ${predicate}
+      ORDER BY CASE WHEN status IN ('running','terminating','termination-failed') THEN 0 ELSE 1 END,created_at DESC,job_id DESC LIMIT 1`)
+      .get(scopeId,agentId) as {job_id:string}|undefined;
+    const exclusion=representative?.job_id || "";
+    const total=(this.database.prepare(`SELECT COUNT(*) n FROM jobs WHERE scope_id=? AND agent_id=? AND job_id<>?
+      AND status IN ('completed','failed','interrupted','cancelled') AND ${predicate}`).get(scopeId,agentId,exclusion) as {n:number}).n;
+    const rows=this.database.prepare(`SELECT job_id,scope_id,activity_id,agent_id,backend_kind,status,created_at,updated_at,
+      ended_at,ended_at_source,detail_availability,summary FROM jobs WHERE scope_id=? AND agent_id=? AND job_id<>?
+      AND status IN ('completed','failed','interrupted','cancelled') AND ${predicate}
+      ${cursor ? "AND (created_at<? OR created_at=? AND job_id<?)" : ""}
+      ORDER BY created_at DESC,job_id DESC LIMIT ?`).all(scopeId,agentId,exclusion,...(cursor ? [cursor.at,cursor.at,cursor.id] : []),Math.min(100,limit)+1) as DashboardArchivedJobRow[];
+    return {history:rows.slice(0,limit).map(decodeDashboardArchivedJob),representative:representative?.job_id,total,hasMore:rows.length>limit};
+  }
+
+  saveJobResultBody(jobId:string,result:unknown):void {
+    if(this.workHistory.expired(jobId)) return;
+    this.database.prepare("INSERT INTO job_result_bodies(job_id,payload) VALUES (?,?) ON CONFLICT(job_id) DO UPDATE SET payload=excluded.payload")
+      .run(jobId,JSON.stringify(result));
+  }
+
+  readRetainedJobDetail(scopeId: string, query: {kind:"job";id:string}|{kind:"request";requestId:string}, now = Date.now()): StoredJobRecord | undefined {
+    const row = this.database.prepare(`SELECT j.payload,j.job_id,j.scope_id,j.request_id,j.activity_id,j.thread_id,
+      j.source_thread_id,j.status,j.backend_kind,j.bridge_instance_id,j.worker_id,j.worker_generation,j.upstream_request_id,
+      j.terminal_version,j.agent_id,j.context_mode,a.project_id,p.name AS project_name,j.cwd,j.sandbox,j.created_at,
+      j.updated_at,j.ended_at,j.ended_at_source,j.detail_availability,b.payload AS result_body,j.job_version,j.last_progress_at,j.last_progress,
+      j.terminal_origin,j.cancellation_intent_id,
+      COALESCE((SELECT json_group_array(json(payload)) FROM job_events WHERE job_id=j.job_id AND event_type LIKE 'app-%'),'[]') AS public_events,
+      COALESCE((SELECT json_group_array(json(json_patch(payload,json_object('interactionId',interaction_id,
+        'isBlocking',json(CASE is_blocking WHEN 1 THEN 'true' ELSE 'false' END)))))
+        FROM job_interactions WHERE job_id=j.job_id),'[]') AS pending_interactions
+      FROM jobs j JOIN activities a ON a.activity_id=j.activity_id LEFT JOIN projects p ON p.project_id=a.project_id
+      LEFT JOIN job_result_bodies b ON b.job_id=j.job_id
+      WHERE j.scope_id=? AND j.${query.kind === "job" ? "job_id" : "request_id"}=? AND ${retainedJobSql(this.appliedHistoryPolicy(now),"j")}`)
+      .get(scopeId,query.kind === "job" ? query.id : query.requestId) as JobStorageRow|undefined;
+    return row ? hydrateJobPayload(row) : undefined;
+  }
+
+  maintainEventRetention(now = Date.now()): ReturnType<EventRetention["sweep"]> {
+    return this.transaction(() => this.eventRetention.sweep(now));
+  }
+
+  maintainHistoryRetention(now = Date.now()): { historyRemoved: number } {
+    return this.transaction(() => {
+      const days = this.appliedHistoryPolicy(now).retentionDays;
+      const historyRemoved = this.workHistory.sweep(
+        days,
+        jobId => this.historyExecutionProtected(jobId),
+        now
+      );
+      this.sweepActivityHistoryMaterials(now);
+      if (historyRemoved > 0) {
+        this.setMeta("state_history_retention_last_run", JSON.stringify({
+          reason: "configured-retention-policy",
+          at: new Date(now).toISOString(),
+          historyRetentionDays: days,
+          historyRemoved
+        }));
+      }
+      return { historyRemoved };
+    });
+  }
+
+  private completionHistoryPredicate(now=Date.now()):string {
+    const policy=this.appliedHistoryPolicy(now);
+    return "COALESCE(json_extract(payload,'$.historyExpired'),0)=0"+
+      (policy.cutoffAt===null ? "" : ` AND created_at>${Math.floor(policy.cutoffAt)}`);
+  }
+
+  /** Completion text and cancellation prose have immutable capture clocks;
+   * their control identities survive independently from their visible history. */
+  private sweepActivityHistoryMaterials(now:number):void {
+    const policy=this.appliedHistoryPolicy(now);
+    if(policy.cutoffAt===null) return;
+    this.database.prepare(`UPDATE completion_outbox SET payload='{"historyExpired":true}'
+      WHERE outbox_id IN (SELECT outbox_id FROM completion_outbox WHERE created_at<=?
+        AND COALESCE(json_extract(payload,'$.historyExpired'),0)=0 ORDER BY created_at,outbox_id LIMIT 64)`)
+      .run(policy.cutoffAt);
+    this.database.prepare(`UPDATE cancellation_operations SET reason_text=NULL
+      WHERE rowid IN (SELECT rowid FROM cancellation_operations WHERE created_at<=? AND reason_text IS NOT NULL
+        ORDER BY created_at,rowid LIMIT 64)`).run(policy.cutoffAt);
+  }
+
+  private cancellationHistoryProjection(row:Record<string,unknown>):Record<string,unknown> {
+    return historyExpired(Number(row.created_at),this.appliedHistoryPolicy()) ? {...row,reason_text:null} : row;
+  }
+
+  maintainRecoveryRetention(now = Date.now()): ReturnType<AutomaticRecoveryStore["prune"]> {
+    return this.transaction(() => {
+      const days = this.appliedHistoryPolicy(now).retentionDays;
+      return this.automaticRecovery.prune(days, now);
+    });
+  }
+
+  maintainQuestionRetention(now = Date.now()): ReturnType<QuestionStore["maintain"]> {
+    return this.transaction(() => this.questions.maintain(now));
+  }
+
+  /** Compatibility entry point. Each domain commits an independent bounded
+   * slice; no BEGIN IMMEDIATE spans the complete maintenance cycle. */
   maintainRetention(now = Date.now()): ReturnType<EventRetention["sweep"]> &
     ReturnType<AutomaticRecoveryStore["prune"]> & { historyRemoved: number } {
-    return this.transaction(() => {
-      const result = this.eventRetention.sweep(now);
-      const settings = this.getSettingsRecord()?.payload;
-      const days = historyRetentionDays(isRecord(settings) ? settings.historyRetentionDays : undefined);
-      const historyRemoved = this.workHistory.sweep(days, jobId => this.retentionProtection(jobId, now).length > 0, now);
-      const recovery = this.automaticRecovery.prune(days, now);
-      const report = { ...result, historyRemoved, ...recovery };
-      this.setMeta("state_retention_last_run", JSON.stringify({
-        reason: "configured-retention-policy",
-        at: new Date(now).toISOString(),
-        historyRetentionDays: days,
-        ...report
-      }));
-      return report;
-    });
+    const event = this.maintainEventRetention(now);
+    const history = this.maintainHistoryRetention(now);
+    const recovery = this.maintainRecoveryRetention(now);
+    const report = { ...event, ...history, ...recovery };
+    const days = this.appliedHistoryPolicy(now).retentionDays;
+    this.transaction(() => this.setMeta("state_retention_last_run", JSON.stringify({
+      reason: "configured-retention-policy",
+      at: new Date(now).toISOString(),
+      historyRetentionDays: days,
+      ...report
+    })));
+    return report;
+  }
+
+  private readJobSummary(jobId: string): Record<string, unknown> {
+    const row = this.database.prepare("SELECT summary FROM jobs WHERE job_id=?")
+      .get(jobId) as {summary:string} | undefined;
+    return row
+      ? sanitizeRetainedJobSummary(parseCurrentPayload({payload: row.summary}, "job summary"))
+      : {};
+  }
+
+  private saveJobSummary(jobId: string, summary: Record<string, unknown>): void {
+    this.database.prepare("UPDATE jobs SET summary=? WHERE job_id=?")
+      .run(JSON.stringify(sanitizeRetainedJobSummary(summary)), jobId);
+  }
+
+  private deleteActivityEventsForRetention(
+    olderThan: number,
+    batchSize: number,
+    retainedLimit: number,
+    now=Date.now()
+  ): number {
+    const policy=this.appliedHistoryPolicy(now);
+    if (policy.cutoffAt===null) return 0;
+    const ageRemoved=this.database.prepare(`DELETE FROM activity_events WHERE event_id IN (
+      SELECT e.event_id FROM activity_events e
+      WHERE CASE WHEN EXISTS (SELECT 1 FROM jobs WHERE job_id=json_extract(e.payload,'$.jobId'))
+        THEN (SELECT ended_at FROM jobs WHERE job_id=json_extract(e.payload,'$.jobId')) ELSE e.created_at END<=?
+      ORDER BY e.event_id LIMIT ?)`).run(Math.min(olderThan,policy.cutoffAt),batchSize).changes;
+    const observations=this.database.prepare(`DELETE FROM transport_observations WHERE observation_id IN (
+      SELECT t.observation_id FROM transport_observations t LEFT JOIN jobs j ON j.job_id=t.job_id
+      WHERE (j.job_id IS NULL AND t.created_at<=?) OR j.ended_at<=?
+      ORDER BY t.observation_id LIMIT ?)`).run(Math.min(olderThan,policy.cutoffAt),Math.min(olderThan,policy.cutoffAt),batchSize).changes;
+    return ageRemoved+observations;
+  }
+
+  private deleteExpiredResultHoldsForRetention(now: number, limit: number): number {
+    return this.database.prepare(`
+      DELETE FROM result_holds WHERE job_id IN (
+        SELECT job_id FROM result_holds WHERE expires_at<=? LIMIT ?
+      )
+    `).run(now, limit).changes;
+  }
+
+  /** Central Unit-of-Work command for the cross-domain history projection. */
+  private expireHistoryProjection(candidate: HistoryRetentionCandidate, _now: number): void {
+    const receipt = {resultOmitted:true,historyExpired:true};
+    const current=this.appliedHistoryPolicy(_now);
+    const clock=this.database.prepare("SELECT ended_at,status FROM jobs WHERE job_id=?").get(candidate.jobId) as {ended_at:number|null;status:string};
+    if (!historyExpired(clock.ended_at,current) || isActiveActivityJobStatus(clock.status)) throw new Error("HISTORY_POLICY_CHANGED: Candidate is no longer expired.");
+    this.database.prepare("UPDATE jobs SET payload=?,summary='{}',last_progress=NULL,problem_summary=NULL,detail_availability='expired',archived_at=COALESCE(archived_at,?) WHERE job_id=?")
+      .run(JSON.stringify(receipt),_now,candidate.jobId);
+    this.database.prepare("DELETE FROM job_interactions WHERE job_id=?").run(candidate.jobId);
+    this.database.prepare("DELETE FROM job_result_bodies WHERE job_id=?").run(candidate.jobId);
+    // Retain outcome/hash/request identity only; never interpret expiry as delivery.
+    this.database.prepare("UPDATE steering_deliveries SET result=NULL WHERE job_id=?").run(candidate.jobId);
+    this.relay.forgetJob(candidate.jobId);
+    this.mcpEventAccess.forgetJob(candidate.jobId);
+    this.eventRetention.deleteJobEventsForHistory(candidate.jobId);
+    this.database.prepare("DELETE FROM job_completion_deliveries WHERE job_id=?")
+      .run(candidate.jobId);
   }
 
   replaceJobs(jobs: JobRowInput[]): void {
@@ -1099,7 +2134,7 @@ export class BridgeStateStore {
   }
 
   countJobs(scopeId?: string, status?: string): number {
-    let sql = "SELECT COUNT(*) AS count FROM jobs WHERE archived_at IS NULL";
+    let sql = `SELECT COUNT(*) AS count FROM jobs WHERE archived_at IS NULL AND ${retainedJobSql(this.appliedHistoryPolicy())}`;
     const parameters: string[] = [];
     if (scopeId) {
       sql += " AND scope_id = ?";
@@ -1117,10 +2152,9 @@ export class BridgeStateStore {
     const activityId = normalizeUuid(input.activityId || randomUUID(), "activityId");
     const scopeId = normalizeUuid(input.scopeId, "scopeId");
     const kind = input.kind || "other";
-    const executionMode = input.executionMode || "background";
     const handoffPolicy = input.handoffPolicy || "none";
     const completionTrigger = input.completionTrigger || "manual";
-    assertActivityPolicy(kind, executionMode, handoffPolicy, completionTrigger);
+    assertActivityPolicy(kind, handoffPolicy, completionTrigger);
     let project = normalizeActivityProjectAdmission(
       input.projectId,
       input.projectName,
@@ -1147,15 +2181,15 @@ export class BridgeStateStore {
         // the source project for continue/fork and compatibility callers.
         project ||= sourceProject;
       }
+      if (this.tableHasColumn("projects","archive_state")) this.projectLifecycle.assertActive(project?.projectId);
       const scopeVersion = this.nextScopeVersion(scopeId, now);
       this.insertActivity({
         activityId,
         scopeId,
         ...project,
         continuationOfActivityId,
-        title: normalizeActivityTitle(input.title || "Codex activity"),
+        title: canonicalActivityTitle(input.title || "Codex activity"),
         kind,
-        executionMode,
         handoffPolicy,
         completionTrigger,
         legacy: input.legacy || false,
@@ -1169,7 +2203,6 @@ export class BridgeStateStore {
         createdAt: now,
         payload: {
           kind,
-          executionMode,
           handoffPolicy,
           completionTrigger,
           projectId: project?.projectId || null,
@@ -1255,7 +2288,7 @@ export class BridgeStateStore {
     return this.transaction(() => {
       this.ensureScope(scopeId, now);
       if (this.getAgent(agentId)) throw new Error("Agent id already exists.");
-      const { agentName, normalizedName } = normalizeAgentName(input.agentName);
+      const { agentName, normalizedName } = canonicalAgentName(input.agentName);
       const lifecycle = input.lifecycle || "idle";
       if (!isAgentLifecycle(lifecycle)) throw new Error("Invalid Agent lifecycle.");
       try {
@@ -1286,6 +2319,15 @@ export class BridgeStateStore {
     return row ? readAgentRow(row) : undefined;
   }
 
+  /** Stable keyset for background reconciliation. A restart may revisit rows,
+   * but never needs to hydrate the entire Agent table before serving reads. */
+  recoveryAgentIds(afterAgentId: string, limit: number): string[] {
+    const boundedLimit = Math.max(1, Math.min(32, Math.floor(limit)));
+    return (this.database.prepare(`SELECT agent_id FROM agents WHERE agent_id > ?
+      ORDER BY agent_id LIMIT ?`).all(afterAgentId, boundedLimit) as Array<{agent_id:string}>)
+      .map(row => row.agent_id);
+  }
+
   getAgentForThread(threadId: string): BridgeAgent | undefined {
     const row = this.database
       .prepare(`
@@ -1311,6 +2353,14 @@ export class BridgeStateStore {
     sql += " ORDER BY updated_at DESC LIMIT ? OFFSET ?";
     parameters.push(boundedLimit, boundedOffset);
     return (this.database.prepare(sql).all(...parameters) as AgentStorageRow[]).map(readAgentRow);
+  }
+
+  /** Opaque detail lookup needs identities, not every Agent's retained payload. */
+  listDashboardAgentIds(scopeId?: string): string[] {
+    return (this.database.prepare(`SELECT agent_id FROM agents
+      ${scopeId ? "WHERE scope_id=?" : ""}`)
+      .all(...(scopeId ? [normalizeUuid(scopeId, "agent scopeId")] : [])) as Array<{ agent_id: string }>)
+      .map(row => row.agent_id);
   }
 
   countAgents(scopeId?: string): number {
@@ -1346,6 +2396,15 @@ export class BridgeStateStore {
       .all() as AgentThreadStorageRow[]).map(readAgentThreadRow);
   }
 
+  currentAgentThread(agentId: string): BridgeAgentThread | undefined {
+    const row = this.database.prepare(`SELECT t.*,s.session_id,s.scope_id,s.project_id,
+      p.name AS project_name,s.backend_kind,s.cwd,s.sandbox,s.forked_from_thread_id
+      FROM agent_threads t JOIN sessions s ON s.thread_id=t.thread_id
+      LEFT JOIN projects p ON p.project_id=s.project_id
+      WHERE t.agent_id=? AND t.is_current=1`).get(agentId) as AgentThreadStorageRow | undefined;
+    return row ? readAgentThreadRow(row) : undefined;
+  }
+
   listAgentThreads(agentId: string): BridgeAgentThread[] {
     return (this.database
       .prepare(`SELECT t.*,s.session_id,s.scope_id,s.project_id,p.name AS project_name,
@@ -1378,6 +2437,9 @@ export class BridgeStateStore {
       const backendKind = normalizeRequiredString(input.backendKind, "backend kind", 100);
       const sandbox = normalizeRequiredString(input.sandbox, "sandbox", 100);
       let project = normalizeProjectIdentity(input.projectId, input.projectName);
+      if (this.tableHasColumn("projects","archive_state")) {
+        if (this.projectLifecycle.retiredThread(threadId)) throw new Error("PROJECT_MANAGEMENT_ENDED: Retired thread cannot be selected again.");
+      }
       const owner = this.getAgentForThread(threadId);
       if (owner && owner.agentId !== agent.agentId) {
         throw new Error("The Codex thread is already owned by another bridge Agent.");
@@ -1423,6 +2485,9 @@ export class BridgeStateStore {
           );
         }
         project ||= existingProject;
+      }
+      if (this.tableHasColumn("projects","archive_state")) {
+        this.projectLifecycle.assertActive(project?.projectId);
       }
       const forkedFromThreadId = input.forkedFromThreadId
         ? normalizeRequiredString(input.forkedFromThreadId, "forkedFromThreadId", 200)
@@ -1690,10 +2755,87 @@ export class BridgeStateStore {
     });
   }
 
+  /** A current-state proof, independent of historical incident bodies and retry budgets. */
+  private endedOrphanRevision(agent: BridgeAgent): string | undefined {
+    if (!agent.currentThreadId || agent.currentJobId) return undefined;
+    const connection=this.threadConnections.get(agent.currentThreadId);
+    if (connection?.agentId!==agent.agentId || connection.scopeId!==agent.scopeId ||
+        connection.phase!=="released" || connection.evidence!=="worker-exited" || connection.handoffRequested ||
+        this.threadConnections.hasUnfinishedWork(agent.currentThreadId)) return undefined;
+    // Archived history cannot grant permission to ignore surviving control state.
+    if (this.database.prepare(`SELECT 1 FROM jobs j WHERE j.archived_at IS NOT NULL
+      AND (j.agent_id=? OR j.thread_id=? OR j.source_thread_id=?) AND (
+        j.status IN ('running','terminating','termination-failed') OR
+        EXISTS(SELECT 1 FROM job_interactions i WHERE i.job_id=j.job_id AND i.is_blocking=1) OR
+        EXISTS(SELECT 1 FROM cancellation_intents c WHERE (c.target_job_id=j.job_id OR
+          (c.target_kind='activity' AND c.target_activity_id=j.activity_id)) AND c.status IN ('recorded','dispatched')))
+      LIMIT 1`).get(agent.agentId,agent.currentThreadId,agent.currentThreadId)) return undefined;
+    return "orphan-ended-v1:"+createHash("sha256").update(JSON.stringify([
+      agent.agentId,agent.scopeId,agent.currentThreadId,connection.revision,this.latestControlJob(agent.agentId)
+    ])).digest("hex");
+  }
+
+  hasEndedOrphanProof(agentId: string): boolean {
+    return this.endedOrphanProofAgentIds([agentId]).has(agentId);
+  }
+
+  /** Batch the proof and its current authority before dashboard ranking. */
+  endedOrphanProofAgentIds(agentIds: readonly string[]): Set<string> {
+    const result=new Set<string>(),ids=[...new Set(agentIds)];
+    for (let offset=0;offset<ids.length;offset+=500) {
+      const part=ids.slice(offset,offset+500);
+      const rows=this.database.prepare(`SELECT a.agent_id,a.scope_id,a.current_thread_id,c.revision connection_revision,r.revision proof_revision,
+        (SELECT job_id FROM jobs WHERE agent_id=a.agent_id ORDER BY created_at DESC,job_id DESC LIMIT 1) control_job_id,
+        (SELECT thread_id FROM jobs WHERE agent_id=a.agent_id ORDER BY created_at DESC,job_id DESC LIMIT 1) control_thread_id
+        FROM agents a JOIN runtime_problem_resolutions r ON r.agent_id=a.agent_id
+        JOIN thread_connections c ON c.thread_id=a.current_thread_id AND c.agent_id=a.agent_id AND c.scope_id=a.scope_id
+        WHERE a.agent_id IN (${part.map(()=>"?").join(",")}) AND a.lifecycle='idle' AND a.current_job_id IS NULL
+          AND r.revision LIKE 'orphan-ended-v1:%' AND c.phase='released' AND c.evidence='worker-exited' AND c.handoff_requested=0
+          AND NOT EXISTS(SELECT 1 FROM jobs j WHERE (j.agent_id=a.agent_id OR j.thread_id=a.current_thread_id OR j.source_thread_id=a.current_thread_id)
+            AND (j.status IN ('running','terminating','termination-failed') OR
+              EXISTS(SELECT 1 FROM job_interactions i WHERE i.job_id=j.job_id AND i.is_blocking=1) OR
+              EXISTS(SELECT 1 FROM cancellation_intents x WHERE (x.target_job_id=j.job_id OR
+                (x.target_kind='activity' AND x.target_activity_id=j.activity_id)) AND x.status IN ('recorded','dispatched'))))`)
+        .all(...part) as Array<{agent_id:string;scope_id:string;current_thread_id:string;connection_revision:number;
+          proof_revision:string;control_job_id:string|null;control_thread_id:string|null}>;
+      for (const row of rows) {
+        const control=row.control_job_id ? {jobId:row.control_job_id,threadId:row.control_thread_id} : undefined;
+        const revision="orphan-ended-v1:"+createHash("sha256").update(JSON.stringify([
+          row.agent_id,row.scope_id,row.current_thread_id,row.connection_revision,control])).digest("hex");
+        if (revision===row.proof_revision) result.add(row.agent_id);
+      }
+    }
+    return result;
+  }
+
+  settleEndedOrphan(input: {agentId:string;version:number;threadId:string;connectionRevision:number;
+    controlJobId?:string;now?:number}): BridgeAgent | undefined {
+    return this.transaction(() => {
+      const agent=this.getAgent(input.agentId),connection=this.threadConnections.get(input.threadId);
+      if (!agent || agent.version!==input.version || agent.lifecycle!=="orphaned" || agent.currentJobId ||
+          agent.currentThreadId!==input.threadId || connection?.revision!==input.connectionRevision ||
+          this.latestControlJob(agent.agentId)?.jobId!==input.controlJobId) return undefined;
+      const revision=this.endedOrphanRevision(agent);
+      if (!revision || this.database.prepare(`SELECT 1 FROM user_questions WHERE scope_id=?
+        AND json_extract(payload,'$.status')='pending' AND expires_at>? LIMIT 1`).get(agent.scopeId,input.now ?? Date.now()) ||
+        this.database.prepare(`SELECT 1 FROM steering_deliveries s JOIN jobs j ON j.job_id=s.job_id
+        WHERE (j.agent_id=? OR j.thread_id=? OR j.source_thread_id=?)
+          AND s.status IN ('prepared','dispatching','uncertain') LIMIT 1`).get(agent.agentId,input.threadId,input.threadId)) return undefined;
+      const now=input.now ?? Date.now();
+      const changed=this.database.prepare(`UPDATE agents SET lifecycle='idle',current_job_id=NULL,orphaned_reason=NULL,
+        version=version+1,updated_at=? WHERE agent_id=? AND version=? AND lifecycle='orphaned'
+        AND current_job_id IS NULL AND current_thread_id=?`).run(now,agent.agentId,input.version,input.threadId).changes;
+      if (!changed) return undefined;
+      this.workHistory.resolveRuntimeProblem(agent.agentId,revision,now);
+      this.nextScopeVersion(agent.scopeId,now);
+      return this.requireAgent(agent.agentId);
+    });
+  }
+
   renameAgent(agentId: string, name: string, now = Date.now()): BridgeAgent {
     return this.transaction(() => {
       const agent = this.requireAgent(agentId);
-      const { agentName, normalizedName } = normalizeAgentName(name);
+      const { agentName, normalizedName } = canonicalAgentName(name);
       try {
         this.database
           .prepare(`
@@ -1713,18 +2855,21 @@ export class BridgeStateStore {
   }
 
   getAgentMutation(scopeId: string, requestId: string): { actionHash: string; result: unknown } | undefined {
+    this.projectLifecycle.assertRequest("mutation",scopeId,requestId);
     const row = this.database
       .prepare("SELECT action_hash, result FROM agent_mutations WHERE scope_id = ? AND request_id = ?")
       .get(scopeId, requestId) as { action_hash: string; result: string } | undefined;
     return row
       ? {
           actionHash: row.action_hash,
-          result: parsePayload({ payload: row.result }, "Agent mutation result")
+          result: parseCurrentPayload({ payload: row.result }, "Agent mutation result")
         }
       : undefined;
   }
 
   recordAgentMutation(scopeId: string, requestId: string, actionHash: string, result: unknown, now = Date.now()): void {
+    this.projectLifecycle.assertRequest("mutation",scopeId,requestId,actionHash);
+    if (this.projectLifecycle.containsRetiredReference(result)) throw new Error("PROJECT_MANAGEMENT_ENDED: Mutation target management has ended.");
     this.database
       .prepare(`
         INSERT INTO agent_mutations(scope_id, request_id, action_hash, result, created_at)
@@ -1767,6 +2912,9 @@ export class BridgeStateStore {
     const promptSha256 = normalizeDigest(input.promptSha256, "steering prompt digest");
     const now = normalizeEventTimestamp(input.now ?? Date.now());
     return this.transaction(() => {
+      this.projectLifecycle.assertRequest("steering",scopeId,requestId,actionHash);
+      if (this.projectLifecycle.jobReceipt(jobId)) throw new Error("PROJECT_MANAGEMENT_ENDED: This Job was retired.");
+      this.projectLifecycle.assertActive((this.database.prepare("SELECT a.project_id FROM jobs j JOIN activities a ON a.activity_id=j.activity_id WHERE j.job_id=?").get(jobId) as {project_id:string}|undefined)?.project_id);
       const existing = this.getSteeringDelivery(scopeId, requestId);
       if (existing) {
         if (existing.actionHash !== actionHash) {
@@ -1882,7 +3030,14 @@ export class BridgeStateStore {
         "SELECT * FROM cancellation_operations WHERE scope_id = ? AND request_id = ?"
       )
       .get(scopeId, requestId) as Record<string, unknown> | undefined;
-    return row ? readCancellationOperationRow(row) : undefined;
+    if(!row) return;
+    // Control replay/settlement remains usable when history policy is unavailable.
+    // Omit prose from this projection; never discard the durable control or use
+    // an invented retention period to delete its original.
+    let projected:Record<string,unknown>;
+    try {projected=this.cancellationHistoryProjection(row);}
+    catch {projected={...row,reason_text:null};}
+    return readCancellationOperationRow(projected);
   }
 
   listCancellationOperations(scopeId?: string): CancellationOperationRecord[] {
@@ -1895,7 +3050,7 @@ export class BridgeStateStore {
       : this.database
           .prepare("SELECT * FROM cancellation_operations ORDER BY created_at ASC")
           .all();
-    return (rows as Array<Record<string, unknown>>).map(readCancellationOperationRow);
+    return (rows as Array<Record<string, unknown>>).map(row=>readCancellationOperationRow(this.cancellationHistoryProjection(row)));
   }
 
   beginCancellationOperation(input: BeginCancellationOperationInput): {
@@ -1904,6 +3059,7 @@ export class BridgeStateStore {
   } {
     const normalized = normalizeCancellationOperationInput(input);
     return this.transaction(() => {
+      this.projectLifecycle.assertRequest("cancellation",normalized.scopeId,normalized.requestId,normalized.actionHash);
       const existing = this.getCancellationOperation(normalized.scopeId, normalized.requestId);
       if (existing) {
         if (existing.actionHash !== normalized.actionHash) {
@@ -2150,15 +3306,6 @@ export class BridgeStateStore {
           reasonCode,
           now
         );
-      this.database
-        .prepare(`
-          DELETE FROM transport_observations
-           WHERE observation_id NOT IN (
-             SELECT observation_id FROM transport_observations
-              ORDER BY observation_id DESC LIMIT ?
-           )
-        `)
-        .run(TRANSPORT_OBSERVATION_LIMIT);
       const row = this.database
         .prepare("SELECT * FROM transport_observations WHERE observation_id = ?")
         .get(Number(result.lastInsertRowid)) as Record<string, unknown> | undefined;
@@ -2183,7 +3330,6 @@ export class BridgeStateStore {
     policy: {
       handoffPolicy?: ActivityHandoffPolicy;
       completionTrigger?: ActivityCompletionTrigger;
-      executionMode?: ActivityExecutionMode;
       kind?: ActivityKind;
     },
     now = Date.now()
@@ -2194,27 +3340,26 @@ export class BridgeStateStore {
         throw new Error("Activity policy can only change while the Activity is open.");
       }
       const kind = policy.kind || activity.kind;
-      const executionMode = policy.executionMode || activity.executionMode;
       const handoffPolicy = policy.handoffPolicy || activity.handoffPolicy;
       const completionTrigger = policy.completionTrigger || activity.completionTrigger;
-      assertActivityPolicy(kind, executionMode, handoffPolicy, completionTrigger);
+      assertActivityPolicy(kind, handoffPolicy, completionTrigger);
       const scopeVersion = this.nextScopeVersion(activity.scopeId, now);
       this.database
         .prepare(`
           UPDATE activities
-             SET kind = ?, execution_mode = ?, handoff_policy = ?, completion_trigger = ?,
+             SET kind = ?, handoff_policy = ?, completion_trigger = ?,
                  verification = CASE WHEN ? = 'verify' THEN verification ELSE 'not-required' END,
                  version = version + 1, updated_at = ?
            WHERE activity_id = ?
         `)
-        .run(kind, executionMode, handoffPolicy, completionTrigger, handoffPolicy, now, activityId);
+        .run(kind, handoffPolicy, completionTrigger, handoffPolicy, now, activityId);
       this.insertActivityEvent({
         activityId,
         scopeId: activity.scopeId,
         scopeVersion,
         eventType: "policy-updated",
         createdAt: now,
-        payload: { kind, executionMode, handoffPolicy, completionTrigger }
+        payload: { kind, handoffPolicy, completionTrigger }
       });
       return this.requireActivity(activityId);
     });
@@ -2281,6 +3426,8 @@ export class BridgeStateStore {
         createdAt: now,
         payload: { source: "explicit-update", reason: normalizeOptionalBoundedText(reason, 2_000) || null }
       });
+      this.relay.endActivity(activityId);
+      if (this.experimentalEventsEnabled) this.mcpEvents.stopActivity(activityId);
       if (activity.handoffPolicy === "notify") {
         this.insertCompletionOutbox({
           activityId,
@@ -2438,6 +3585,8 @@ export class BridgeStateStore {
         createdAt: now,
         payload: { evidence: normalizedEvidence }
       });
+      this.relay.endActivity(activityId);
+      if (this.experimentalEventsEnabled) this.mcpEvents.stopActivity(activityId);
       return this.requireActivity(activityId);
     });
   }
@@ -2491,14 +3640,14 @@ export class BridgeStateStore {
       scopeVersion: Number(row.scope_version),
       eventType: String(row.event_type),
       createdAt: Number(row.created_at),
-      payload: parsePayload({ payload: String(row.payload) }, "activity event")
+      payload: parseCurrentPayload({ payload: String(row.payload) }, "activity event")
     }));
   }
 
   listJobEvents(jobId?: string): JobEventRecord[] {
     const rows = jobId
-      ? this.database.prepare("SELECT * FROM job_events WHERE job_id = ? ORDER BY event_id ASC").all(jobId)
-      : this.database.prepare("SELECT * FROM job_events ORDER BY event_id ASC").all();
+      ? this.database.prepare(`SELECT e.* FROM job_events e JOIN jobs j ON j.job_id=e.job_id WHERE e.job_id=? AND ${retainedJobSql(this.appliedHistoryPolicy(),"j")} ORDER BY e.event_id ASC`).all(jobId)
+      : this.database.prepare(`SELECT e.* FROM job_events e JOIN jobs j ON j.job_id=e.job_id WHERE ${retainedJobSql(this.appliedHistoryPolicy(),"j")} ORDER BY e.event_id ASC`).all();
     return (rows as Array<Record<string, unknown>>).map((row) => ({
       eventId: Number(row.event_id),
       jobId: String(row.job_id),
@@ -2508,8 +3657,16 @@ export class BridgeStateStore {
       eventType: String(row.event_type),
       status: String(row.status),
       createdAt: Number(row.created_at),
-      payload: parsePayload({ payload: String(row.payload) }, "job event")
+      payload: parseCurrentPayload({ payload: String(row.payload) }, "job event")
     }));
+  }
+
+  /** Whitelisted delivery diagnostics outlive ephemeral grants, without credentials. */
+  recordHistoryDiagnostic(jobId:string,eventType:string,details:Record<string,unknown>,now=Date.now()):void {
+    const row=this.database.prepare("SELECT activity_id,scope_id,status FROM jobs WHERE job_id=?").get(jobId) as {activity_id:string;scope_id:string;status:string}|undefined;
+    if(!row || this.workHistory.expired(jobId)) return;
+    this.insertJobEvent({jobId,activityId:row.activity_id,scopeId:row.scope_id,scopeVersion:this.getScopeVersion(row.scope_id),
+      eventType,status:row.status,createdAt:now,payload:details});
   }
 
   recordJobTelemetryEvent(
@@ -2524,7 +3681,7 @@ export class BridgeStateStore {
       const update = state ? this.updateJobProgressStateInternal(jobId, state) : undefined;
       const row = update?.row || this.getJobProgressStorageRow(jobId);
       if (!row) throw new Error("Cannot attach telemetry to an unknown Codex job.");
-      const scopeVersion = this.nextScopeVersion(row.scope_id, createdAt);
+      const scopeVersion = this.nextRuntimeScopeVersion(row.scope_id, createdAt);
       if (update?.resumedFromTerminationFailure) {
         this.insertJobEvent({
           jobId: row.job_id,
@@ -2564,6 +3721,16 @@ export class BridgeStateStore {
           payload: { jobId: row.job_id }
         });
       }
+      const eventDetails = payload && typeof payload === "object"
+        ? (payload as { details?: { interaction?: unknown; resolvedInteractionId?: unknown } }).details : undefined;
+      if ((eventType.startsWith("app-input-required-") ||
+          eventType.startsWith("app-approval-required-") || eventDetails?.interaction || eventDetails?.resolvedInteractionId)) {
+        const eventJob = this.getEventJobSnapshot(jobId);
+        if (eventJob) {
+          if (this.experimentalEventsEnabled) this.mcpEvents.enqueueLifecycle(eventJob);
+          this.relay.reconcileJob(eventJob);
+        }
+      }
       return scopeVersion;
     });
   }
@@ -2571,8 +3738,15 @@ export class BridgeStateStore {
   updateJobProgressState(jobId: string, state: JobProgressStateInput): boolean {
     return this.transaction(() => {
       const update = this.updateJobProgressStateInternal(jobId, state);
+      if (state.pendingInteractions.length || update.agentStateChanged) {
+        const eventJob = this.getEventJobSnapshot(jobId);
+        if (eventJob) {
+          if (this.experimentalEventsEnabled) this.mcpEvents.enqueueLifecycle(eventJob);
+          this.relay.reconcileJob(eventJob);
+        }
+      }
       if (!update.resumedFromTerminationFailure && !update.agentStateChanged) return false;
-      const scopeVersion = this.nextScopeVersion(update.row.scope_id, state.updatedAt);
+      const scopeVersion = this.nextRuntimeScopeVersion(update.row.scope_id, state.updatedAt);
       if (update.resumedFromTerminationFailure) {
         this.insertJobEvent({
           jobId: update.row.job_id,
@@ -2589,24 +3763,135 @@ export class BridgeStateStore {
     });
   }
 
+  getJobCompletionDelivery(
+    jobId: string,
+    scopeId?: string
+  ): JobCompletionDeliveryRecord | undefined {
+    const row = scopeId
+      ? this.database.prepare(
+          "SELECT * FROM job_completion_deliveries WHERE job_id=? AND scope_id=?"
+        ).get(
+          normalizeUuid(jobId, "completion delivery jobId"),
+          normalizeUuid(scopeId, "completion delivery scopeId")
+        )
+      : this.database.prepare(
+          "SELECT * FROM job_completion_deliveries WHERE job_id=?"
+        ).get(normalizeUuid(jobId, "completion delivery jobId"));
+    return row ? readJobCompletionDeliveryRow(row as Record<string, unknown>) : undefined;
+  }
+
+  getJobCompletionDeliveryByReceipt(
+    receipt: string,
+    scopeId: string
+  ): JobCompletionDeliveryRecord | undefined {
+    const row = this.database.prepare(
+      "SELECT * FROM job_completion_deliveries WHERE receipt=? AND scope_id=?"
+    ).get(
+      normalizeJobCompletionReceipt(receipt),
+      normalizeUuid(scopeId, "completion delivery scopeId")
+    ) as Record<string, unknown> | undefined;
+    return row ? readJobCompletionDeliveryRow(row) : undefined;
+  }
+
+  recordJobCompletionResultOffer(input: {
+    scopeId: string;
+    source: JobCompletionResultReadSource;
+    jobId?: string;
+    receipt?: string;
+    now?: number;
+  }): JobCompletionDeliveryRecord | undefined {
+    const scopeId = normalizeUuid(input.scopeId, "completion delivery scopeId");
+    const timestamp = normalizeEventTimestamp(input.now ?? Date.now());
+    if (input.source === "completion-receipt") {
+      if (!input.receipt || input.jobId) {
+        throw new Error("COMPLETION_RESULT_OFFER_INVALID: Receipt offer requires only an exact receipt.");
+      }
+      const receipt = normalizeJobCompletionReceipt(input.receipt);
+      const result = this.database.prepare(`
+        UPDATE job_completion_deliveries
+           SET completion_result_offered_at=COALESCE(completion_result_offered_at,?),
+               updated_at=CASE WHEN completion_result_offered_at IS NULL THEN ? ELSE updated_at END
+         WHERE receipt=? AND scope_id=?
+      `).run(timestamp, timestamp, receipt, scopeId);
+      if (result.changes !== 1) {
+        throw new Error("COMPLETION_DELIVERY_UNAVAILABLE: Exact completion delivery is unavailable.");
+      }
+      return this.getJobCompletionDeliveryByReceipt(receipt, scopeId);
+    }
+    if (!input.jobId || input.receipt) {
+      throw new Error("COMPLETION_RESULT_OFFER_INVALID: Direct offer requires only an exact Job.");
+    }
+    const jobId = normalizeUuid(input.jobId, "completion delivery jobId");
+    this.database.prepare(`
+      UPDATE job_completion_deliveries
+         SET direct_result_offered_at=COALESCE(direct_result_offered_at,?),
+             updated_at=CASE WHEN direct_result_offered_at IS NULL THEN ? ELSE updated_at END
+       WHERE job_id=? AND scope_id=?
+    `).run(timestamp, timestamp, jobId, scopeId);
+    return this.getJobCompletionDelivery(jobId, scopeId);
+  }
+
   listCompletionOutbox(activityId?: string): CompletionOutboxRecord[] {
     const rows = activityId
       ? this.database
-          .prepare("SELECT * FROM completion_outbox WHERE activity_id = ? ORDER BY outbox_id ASC")
+          .prepare(`SELECT * FROM completion_outbox WHERE activity_id = ? AND ${this.completionHistoryPredicate()} ORDER BY outbox_id ASC`)
           .all(activityId)
-      : this.database.prepare("SELECT * FROM completion_outbox ORDER BY outbox_id ASC").all();
+      : this.database.prepare(`SELECT * FROM completion_outbox WHERE ${this.completionHistoryPredicate()} ORDER BY outbox_id ASC`).all();
     return (rows as Array<Record<string, unknown>>).map(readCompletionOutboxRow);
   }
 
   listPendingCompletionOutbox(scopeId: string, limit = 20): CompletionOutboxRecord[] {
+    const now = Date.now();
     const rows = this.database
       .prepare(`
-        SELECT * FROM completion_outbox
-         WHERE scope_id = ? AND delivered_at IS NULL AND acknowledged_at IS NULL
+          SELECT * FROM completion_outbox
+         WHERE scope_id = ? AND ${this.completionHistoryPredicate()} AND delivered_at IS NULL AND acknowledged_at IS NULL
+           AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
          ORDER BY created_at ASC LIMIT ?
       `)
-      .all(scopeId, Math.max(0, Math.min(100, limit)));
+      .all(scopeId, now, Math.max(0, Math.min(100, limit)));
     return (rows as Array<Record<string, unknown>>).map(readCompletionOutboxRow);
+  }
+
+  /**
+   * Native completion alerts have no conversation-card capability. Limit this
+   * cross-scope read to terminal notify records and expose only an opaque
+   * projection through the private companion service.
+   */
+  listPendingNotifyCompletionOutbox(limit = 20): CompletionOutboxRecord[] {
+    const now = Date.now();
+    const rows = this.database
+      .prepare(`
+          SELECT * FROM completion_outbox
+           WHERE ${this.completionHistoryPredicate(now)} AND channel = 'notify' AND delivered_at IS NULL AND acknowledged_at IS NULL
+             AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+             AND (lease_owner IS NULL OR lease_expires_at <= ?)
+           ORDER BY created_at ASC LIMIT ?
+      `)
+      .all(now, now, Math.max(0, Math.min(100, limit)));
+    return (rows as Array<Record<string, unknown>>).map(readCompletionOutboxRow);
+  }
+
+  nativeCompletionAvailability(now = Date.now()): NativeCompletionAvailability {
+    // A deferred item becomes processable only after BOTH retry and lease deadlines.
+    // This SELECT neither acquires the writer lock nor updates attempts/leases.
+    const row = this.database.prepare(`
+      SELECT MIN(MAX(COALESCE(next_attempt_at, 0),
+                     CASE WHEN lease_owner IS NULL THEN 0 ELSE COALESCE(lease_expires_at, 0) END)) AS due
+        FROM completion_outbox
+       WHERE ${this.completionHistoryPredicate(now)} AND channel = 'notify' AND delivered_at IS NULL AND acknowledged_at IS NULL
+    `).get() as { due: number | null };
+    return row.due === null ? { available: false } : {
+      available: row.due <= now, nextAvailableAt: Math.max(now, row.due)
+    };
+  }
+
+  getCompletionOutbox(outboxId: number): CompletionOutboxRecord | undefined {
+    if (!Number.isSafeInteger(outboxId) || outboxId < 1) return undefined;
+    const row = this.database
+      .prepare(`SELECT * FROM completion_outbox WHERE outbox_id = ? AND ${this.completionHistoryPredicate()}`)
+      .get(outboxId) as Record<string, unknown> | undefined;
+    return row ? readCompletionOutboxRow(row) : undefined;
   }
 
   listPendingCompletionActivityIds(scopeId: string): string[] {
@@ -2614,7 +3899,7 @@ export class BridgeStateStore {
       .prepare(`
         SELECT DISTINCT activity_id
           FROM completion_outbox
-         WHERE scope_id = ? AND delivered_at IS NULL AND acknowledged_at IS NULL
+         WHERE scope_id = ? AND ${this.completionHistoryPredicate()} AND delivered_at IS NULL AND acknowledged_at IS NULL
          ORDER BY activity_id ASC
       `)
       .all(normalizeUuid(scopeId, "completion outbox scopeId")) as Array<{ activity_id: string }>;
@@ -2632,15 +3917,17 @@ export class BridgeStateStore {
       const result = this.database
         .prepare(`
           UPDATE completion_outbox
-             SET lease_owner = ?, lease_expires_at = ?, attempt_count = attempt_count + 1
-           WHERE outbox_id = ? AND scope_id = ?
+             SET lease_owner = ?, lease_expires_at = ?, next_attempt_at = NULL,
+                 attempt_count = attempt_count + 1
+           WHERE outbox_id = ? AND scope_id = ? AND ${this.completionHistoryPredicate(now)}
              AND delivered_at IS NULL AND acknowledged_at IS NULL
+             AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
              AND (lease_owner IS NULL OR lease_expires_at <= ? OR lease_owner = ?)
         `)
-        .run(leaseOwner, now + leaseMs, outboxId, scopeId, now, leaseOwner);
+        .run(leaseOwner, now + leaseMs, outboxId, scopeId, now, now, leaseOwner);
       if (result.changes !== 1) return undefined;
       const row = this.database
-        .prepare("SELECT * FROM completion_outbox WHERE outbox_id = ?")
+        .prepare(`SELECT * FROM completion_outbox WHERE outbox_id = ? AND ${this.completionHistoryPredicate()}`)
         .get(outboxId) as Record<string, unknown> | undefined;
       return row ? readCompletionOutboxRow(row) : undefined;
     });
@@ -2656,7 +3943,8 @@ export class BridgeStateStore {
       const result = this.database
         .prepare(`
           UPDATE completion_outbox
-             SET delivered_at = COALESCE(delivered_at, ?), lease_owner = NULL, lease_expires_at = NULL
+             SET delivered_at = COALESCE(delivered_at, ?), lease_owner = NULL,
+                 lease_expires_at = NULL, next_attempt_at = NULL
            WHERE outbox_id = ? AND scope_id = ? AND (lease_owner = ? OR delivered_at IS NOT NULL)
         `)
         .run(now, outboxId, scopeId, leaseOwner);
@@ -2680,6 +3968,40 @@ export class BridgeStateStore {
          WHERE outbox_id = ? AND scope_id = ? AND lease_owner = ? AND delivered_at IS NULL
       `)
       .run(outboxId, scopeId, leaseOwner);
+  }
+
+  releaseNativeCompletionOutbox(record: CompletionOutboxRecord, leaseOwner: string, now = Date.now()): boolean {
+    return this.database.prepare(`
+      UPDATE completion_outbox SET lease_owner = NULL, lease_expires_at = NULL, next_attempt_at = ?
+       WHERE outbox_id = ? AND scope_id = ? AND channel = 'notify' AND lease_owner = ?
+         AND delivered_at IS NULL AND acknowledged_at IS NULL
+    `).run(now + nativeCompletionRetryMs(record.attemptCount), record.outboxId, record.scopeId, leaseOwner).changes === 1;
+  }
+
+  markCompletionOutboxUncertain(
+    outboxId: number,
+    scopeId: string,
+    leaseOwner: string
+  ): CompletionOutboxRecord {
+    return this.transaction(() => {
+      const result = this.database
+        .prepare(`
+          UPDATE completion_outbox
+             SET lease_owner = NULL, lease_expires_at = NULL,
+                 next_attempt_at = ?
+           WHERE outbox_id = ? AND scope_id = ? AND lease_owner = ?
+             AND delivered_at IS NULL AND acknowledged_at IS NULL
+        `)
+        .run(COMPLETION_OUTBOX_UNCERTAIN_HOLD_AT, outboxId, scopeId, leaseOwner);
+      if (result.changes !== 1) {
+        throw new Error("Completion handoff lease is missing or owned by another widget.");
+      }
+      const row = this.database
+        .prepare("SELECT * FROM completion_outbox WHERE outbox_id = ?")
+        .get(outboxId) as Record<string, unknown> | undefined;
+      if (!row) throw new Error("Unknown completion handoff event.");
+      return readCompletionOutboxRow(row);
+    });
   }
 
   listBridgeInstances(): BridgeInstanceRecord[] {
@@ -2706,7 +4028,7 @@ export class BridgeStateStore {
       ? {
           settingsRevision: row.settings_revision,
           updatedAt: row.updated_at,
-          payload: parsePayload(row, "settings")
+          payload: parseCurrentPayload(row, "settings")
         }
       : undefined;
   }
@@ -2738,6 +4060,8 @@ export class BridgeStateStore {
   ): SettingsStorageRecord {
     return this.transaction(() => {
       this.assertSettingsRevision(expectedRevision);
+      if(this.options.readOnly) throw new Error("STATE_READ_ONLY: Cannot change settings in a projection.");
+      this.releaseSettingsPolicyGate ||= acquireHistoryPolicyGate(this.database.name);
       const nextRevision = expectedRevision + 1;
       this.database
         .prepare(`
@@ -2757,6 +4081,55 @@ export class BridgeStateStore {
     });
   }
 
+  modelDescriptionHistoryIds(): string[] {
+    return (this.database.prepare(`
+      SELECT DISTINCT model_id FROM model_description_versions ORDER BY model_id
+    `).all() as Array<{ model_id: string }>).map((row) => row.model_id);
+  }
+
+  modelDescriptionHistory(
+    modelId: string,
+    beforeVersion: number | undefined,
+    limit: number
+  ): ModelDescriptionHistoryPage {
+    const rows = this.database.prepare(`
+      SELECT version, description, created_at FROM model_description_versions
+       WHERE model_id = ? AND version < ? ORDER BY version DESC LIMIT ?
+    `).all(modelId, beforeVersion ?? Number.MAX_SAFE_INTEGER, limit + 1) as Array<{
+      version: number; description: string | null; created_at: number | null
+    }>;
+    const visible = rows.slice(0, limit);
+    return {
+      kind: "model-description-history",
+      modelId,
+      versions: visible.map((row) => ({
+        version: row.version,
+        description: row.description,
+        createdAt: row.created_at === null ? null : new Date(row.created_at).toISOString()
+      })),
+      nextBeforeVersion: rows.length > limit ? visible.at(-1)!.version : null
+    };
+  }
+
+  appendModelDescriptionVersionChanges(
+    previous: ModelDescriptionOverrides,
+    next: ModelDescriptionOverrides,
+    now: number
+  ): void {
+    const insert = this.database.prepare(`
+      INSERT INTO model_description_versions(model_id, version, description, created_at)
+      SELECT ?, COALESCE(MAX(version), 0) + 1, ?, ?
+        FROM model_description_versions WHERE model_id = ?
+    `);
+    for (const modelId of new Set([...Object.keys(previous), ...Object.keys(next)])) {
+      const before = Object.prototype.hasOwnProperty.call(previous, modelId) ? previous[modelId] : null;
+      const after = Object.prototype.hasOwnProperty.call(next, modelId) ? next[modelId] : null;
+      if (before !== after) insert.run(modelId, after, now, modelId);
+    }
+  }
+
+  get projectLifecycle(): ProjectLifecycleStore { return new ProjectLifecycleStore(this.database); }
+
   getProjectRegistrySnapshot(): ProjectRegistrySnapshot {
     const registry = this.database
       .prepare(`
@@ -2768,7 +4141,7 @@ export class BridgeStateStore {
     const rows = this.database
       .prepare(`
         SELECT project_id, project_ref, project_revision, name, name_key, cwd, sort_order,
-               created_at, updated_at, archived_at, deleted_at
+               created_at, updated_at, archived_at, deleted_at, archive_state, archive_revision, archive_requested_at, archive_reasons
           FROM projects
          WHERE deleted_at IS NULL
          ORDER BY sort_order ASC, created_at ASC, project_id ASC
@@ -2787,6 +4160,22 @@ export class BridgeStateStore {
       .get() as { registry_revision: number } | undefined;
     if (!row) throw new Error("Project registry metadata is missing.");
     return row.registry_revision;
+  }
+
+  /** App-private recovery list; these tombstones remain excluded from admission. */
+  getRecoverableProjects(): ProjectTarget[] {
+    return (this.database.prepare(`
+      SELECT project_id, project_ref, project_revision, name, name_key, cwd, sort_order,
+             created_at, updated_at, archived_at, deleted_at, archive_state, archive_revision, archive_requested_at, archive_reasons
+        FROM projects p
+       WHERE deleted_at IS NOT NULL AND archive_state IN ('processing','unresolved')
+       ORDER BY deleted_at DESC, project_id ASC
+       LIMIT ?
+    `).all(MAX_REGISTERED_PROJECTS) as ProjectStorageRow[]).map(readProjectStorageRow);
+  }
+
+  getProjectRestoreTarget(projectId: string): ProjectTarget {
+    return readProjectStorageRow(this.requireProjectStorageRow(normalizeProjectId(projectId), true));
   }
 
   assertProjectRegistryRevision(expectedRevision: number): void {
@@ -2824,9 +4213,9 @@ export class BridgeStateStore {
         const rows = this.database
           .prepare(`
             SELECT project_id, project_ref, project_revision, name, name_key, cwd, sort_order,
-                   created_at, updated_at, archived_at, deleted_at
+                   created_at, updated_at, archived_at, deleted_at, archive_state, archive_revision, archive_requested_at, archive_reasons
               FROM projects
-             WHERE name_key = ? AND archived_at IS NULL AND deleted_at IS NULL
+             WHERE name_key = ? AND archive_state='active' AND deleted_at IS NULL
           `)
           .all(nameKey) as ProjectStorageRow[];
         if (rows.length !== 1) {
@@ -2838,7 +4227,7 @@ export class BridgeStateStore {
         const row = this.database
           .prepare(`
             SELECT project_id, project_ref, project_revision, name, name_key, cwd, sort_order,
-                   created_at, updated_at, archived_at, deleted_at
+                   created_at, updated_at, archived_at, deleted_at, archive_state, archive_revision, archive_requested_at, archive_reasons
               FROM projects
              WHERE project_ref = ? AND deleted_at IS NULL
           `)
@@ -2861,7 +4250,7 @@ export class BridgeStateStore {
             `${PROJECT_REGISTRY_CHANGED}: The selected project name changed. Refresh the tool descriptor and retry.`
           );
         }
-        if (project.archivedAt !== undefined) {
+        if (project.archiveState !== "active") {
           throw new Error(`${PROJECT_NOT_FOUND}: The selected project is archived.`);
         }
       }
@@ -2894,6 +4283,8 @@ export class BridgeStateStore {
       );
     }
     return this.transaction(() => {
+      if (operations.length > 0 && operations.every(operation => operation.kind === "delete" &&
+        !this.projectLifecycle.exists(normalizeProjectId(operation.projectId)))) return this.getProjectRegistrySnapshot();
       this.assertProjectRegistryRevision(expectedRevision);
       const seen = new Map<string, Set<ProjectRegistryOperation["kind"]>>();
       for (const operation of operations) {
@@ -2962,7 +4353,7 @@ export class BridgeStateStore {
 
         if (operation.kind === "reorder") {
           const active = this.database
-            .prepare("SELECT project_id FROM projects WHERE archived_at IS NULL AND deleted_at IS NULL ORDER BY sort_order, created_at")
+            .prepare("SELECT project_id FROM projects WHERE archive_state='active' AND deleted_at IS NULL ORDER BY sort_order, created_at")
             .all() as Array<{ project_id: string }>;
           const requested = operation.projectIds.map(normalizeProjectId);
           if (
@@ -2985,9 +4376,10 @@ export class BridgeStateStore {
         }
 
         const projectId = normalizeProjectId(operation.projectId);
-        const row = this.requireProjectStorageRow(projectId);
+        if (operation.kind === "delete" && !this.database.prepare("SELECT 1 FROM projects WHERE project_id=?").get(projectId)) continue;
+        const row = this.requireProjectStorageRow(projectId, operation.kind === "restore" || operation.kind === "archive" || operation.kind === "delete");
         if (operation.kind === "rename") {
-          if (row.archived_at !== null) {
+          if (row.archive_state !== "active") {
             throw new Error(`${PROJECT_ARCHIVED}: Restore an archived project to change its active name.`);
           }
           const name = normalizeProjectName(operation.name);
@@ -3003,7 +4395,7 @@ export class BridgeStateStore {
           continue;
         }
         if (operation.kind === "relocate") {
-          if (row.archived_at !== null) {
+          if (row.archive_state !== "active") {
             throw new Error(`${PROJECT_ARCHIVED}: Restore an archived project to relocate it.`);
           }
           const cwd = canonicalProjectCwd(operation.cwd, allowedRoots);
@@ -3019,30 +4411,27 @@ export class BridgeStateStore {
           continue;
         }
         if (operation.kind === "archive") {
-          if (row.archived_at === null) {
-            this.database
-              .prepare("UPDATE projects SET archived_at = ?, updated_at = ? WHERE project_id = ?")
-              .run(now, now, projectId);
+          if (row.archive_state !== "complete") {
+            this.database.prepare(`UPDATE projects SET archive_state='processing',archive_revision=archive_revision+1,
+              archive_requested_at=COALESCE(archive_requested_at,?),archive_reasons='[]',updated_at=? WHERE project_id=?`)
+              .run(now,now,projectId);
             changed = true;
             changedProjectIds.add(projectId);
           }
           continue;
         }
         if (operation.kind === "delete") {
-          if (row.archived_at === null) {
-            throw new Error(
-              `${PROJECT_DELETE_REQUIRES_ARCHIVE}: Archive the project before deleting its registration.`
-            );
-          }
-          this.database
-            .prepare("UPDATE projects SET deleted_at = ?, updated_at = ? WHERE project_id = ?")
-            .run(now, now, projectId);
+          this.projectLifecycle.delete(projectId,now);
           changed = true;
-          changedProjectIds.add(projectId);
           continue;
         }
-
-        if (row.archived_at === null) {
+        if (row.deleted_at !== null) {
+          throw new Error("PROJECT_MANAGEMENT_ENDED: A deleted legacy registration must finish cleanup; register the folder again after deletion.");
+        }
+        if (row.archive_state !== "active" && row.archive_state !== "complete") {
+          throw new Error("PROJECT_ARCHIVE_PENDING: Finish archive cleanup before restoring this registration.");
+        }
+        if (row.archive_state === "active" && row.deleted_at === null) {
           if (operation.name !== undefined || operation.cwd !== undefined) {
             throw new Error(`${PROJECT_OPERATION_CONFLICT}: The project is already active.`);
           }
@@ -3056,7 +4445,7 @@ export class BridgeStateStore {
         this.database
           .prepare(`
             UPDATE projects
-               SET name = ?, name_key = ?, cwd = ?, archived_at = NULL, updated_at = ?
+               SET name = ?, name_key = ?, cwd = ?, archived_at = NULL, deleted_at = NULL, archive_state='active', archive_requested_at=NULL, archive_reasons='[]', updated_at = ?
              WHERE project_id = ?
           `)
           .run(name, nameKey, cwd, now, projectId);
@@ -3083,14 +4472,14 @@ export class BridgeStateStore {
     });
   }
 
-  private requireProjectStorageRow(projectId: string): ProjectStorageRow {
+  private requireProjectStorageRow(projectId: string, includeDeleted = false): ProjectStorageRow {
     const row = this.database
       .prepare(`
         SELECT project_id, project_ref, project_revision, name, name_key, cwd, sort_order,
-               created_at, updated_at, archived_at, deleted_at
-          FROM projects WHERE project_id = ? AND deleted_at IS NULL
+               created_at, updated_at, archived_at, deleted_at, archive_state, archive_revision, archive_requested_at, archive_reasons
+          FROM projects WHERE project_id = ? AND (? OR deleted_at IS NULL)
       `)
-      .get(projectId) as ProjectStorageRow | undefined;
+      .get(projectId, includeDeleted ? 1 : 0) as ProjectStorageRow | undefined;
     if (!row) throw new Error(`${PROJECT_NOT_FOUND}: Unknown project.`);
     return row;
   }
@@ -3104,7 +4493,7 @@ export class BridgeStateStore {
       const conflict = this.database
         .prepare(`
           SELECT 1 FROM projects
-           WHERE name_key = ? AND archived_at IS NULL AND deleted_at IS NULL
+           WHERE name_key = ? AND archive_state='active' AND deleted_at IS NULL
              AND (? IS NULL OR project_id <> ?)
            LIMIT 1
         `)
@@ -3117,7 +4506,7 @@ export class BridgeStateStore {
       const conflict = this.database
         .prepare(`
           SELECT 1 FROM projects
-           WHERE cwd = ? AND archived_at IS NULL AND deleted_at IS NULL
+           WHERE cwd = ? AND archive_state='active' AND deleted_at IS NULL
              AND (? IS NULL OR project_id <> ?)
            LIMIT 1
         `)
@@ -3130,23 +4519,16 @@ export class BridgeStateStore {
 
   private assertProjectCwdReusable(cwd: string, projectId: string): void {
     const pinned = this.database.prepare(`
-      SELECT 1 FROM activities
-       WHERE pinned_cwd = ? AND project_id IS NOT ?
-         AND lifecycle IN ('open','sealed','terminating')
-      UNION ALL
-      SELECT 1 FROM agent_threads t JOIN sessions s ON s.thread_id=t.thread_id
-        JOIN agents a ON a.agent_id = t.agent_id
-       WHERE s.cwd = ? AND s.project_id IS NOT ? AND t.is_current = 1
-         AND a.lifecycle <> 'orphaned'
-      UNION ALL
       SELECT 1 FROM jobs j JOIN activities a ON a.activity_id=j.activity_id
-       WHERE j.cwd = ? AND a.project_id IS NOT ? AND j.archived_at IS NULL
+       WHERE j.cwd=? AND a.project_id IS NOT ?
          AND j.status IN ('running','terminating','termination-failed')
+      UNION ALL SELECT 1 FROM projects WHERE cwd=? AND project_id IS NOT ?
+        AND archive_state IN ('processing','unresolved')
       LIMIT 1
-    `).get(cwd, projectId, cwd, projectId, cwd, projectId);
+    `).get(cwd,projectId,cwd,projectId);
     if (pinned) {
       throw new Error(
-        `${PROJECT_CWD_STILL_PINNED}: Another project's resumable context still owns that folder.`
+        `${PROJECT_CWD_STILL_PINNED}: Another project has active execution or unfinished archive cleanup in this folder.`
       );
     }
   }
@@ -3177,6 +4559,12 @@ export class BridgeStateStore {
   }
 
   setMeta(key: string, value: string): void {
+    if (this.tableHasColumn("projects","archive_state")) {
+      let parsed: unknown; try { parsed=JSON.parse(value); } catch { parsed=value; }
+      if (this.projectLifecycle.containsRetiredReference(parsed)) return;
+      const identities=key.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) || [];
+      if (identities.some(id=>this.projectLifecycle.jobReceipt(id))) return;
+    }
     this.database
       .prepare(`
         INSERT INTO bridge_meta(key, value) VALUES (?, ?)
@@ -3185,8 +4573,105 @@ export class BridgeStateStore {
       .run(key, value);
   }
 
+  /** Narrow UoW storage for bounded protocol metadata journals. */
+  listMeta(prefix: string, limit: number, afterKey?: string): Array<{ key: string; value: string }> {
+    return this.database.prepare("SELECT key,value FROM bridge_meta WHERE key>=? AND key<? AND key>? ORDER BY key LIMIT ?")
+      .all(prefix, prefix + "\uffff", afterKey || "", limit) as Array<{ key: string; value: string }>;
+  }
+
+  deleteMeta(key: string): void { this.database.prepare("DELETE FROM bridge_meta WHERE key=?").run(key); }
+
+  /** Indexed cleanup within the owning Job's existing retention transaction. */
+  deleteMetaPrefix(prefix: string): void {
+    this.database.prepare("DELETE FROM bridge_meta WHERE key>=? AND key<?").run(prefix, prefix + "\uffff");
+  }
+
+  get mcpEvents(): McpEventStore { return new McpEventStore(this); }
+  get mcpEventAccess(): McpEventAccessStore { return new McpEventAccessStore(this); }
+  get taskFollowups(): TaskFollowupStore { return new TaskFollowupStore(this); }
+  get relay(): RelayDeliveryStore { return new RelayDeliveryStore(this); }
+  get readOnly(): boolean { return this.options.readOnly === true; }
+
+  isEventActivityEnded(activityId: string): boolean {
+    const row = this.database.prepare("SELECT lifecycle FROM activities WHERE activity_id=?").get(activityId) as { lifecycle: string } | undefined;
+    return !row || ["completed", "cancelled", "abandoned"].includes(row.lifecycle);
+  }
+
+  /** Narrow, result-free indexed reads used only for exact input changes and
+   * lifecycle subscribe/refresh/startup recovery, never for progress polling. */
+  getEventJobSnapshot(jobId: string): EventJob | undefined {
+    return this.readEventJobSnapshots("j.job_id=?", [jobId], 1)[0];
+  }
+
+  /** Registry capacity archival is distinct from common history expiry. Relay
+   * recovery must still find an enrolled terminal result retained in history. */
+  getRelayJobSnapshot(jobId: string): EventJob | undefined {
+    return this.readEventJobSnapshots("j.job_id=?", [jobId], 1, true)[0];
+  }
+
+  listEventLifecycleJobs(root: LifecycleRoot, scopeId: string): EventJob[] {
+    return this.readEventJobSnapshots("j.agent_id=? AND j.scope_id=? AND j.activity_id=? AND j.created_at>=?",
+      [root.agentId, scopeId, root.activityId, root.createdAt], 256);
+  }
+
+  private readEventJobSnapshots(where: string, bindings: unknown[], limit: number, includeArchived = false): EventJob[] {
+    return (this.database.prepare(`
+      SELECT j.job_id,j.scope_id,j.activity_id,j.agent_id,a.project_id,j.status,j.job_version,
+             j.terminal_version,j.created_at,j.updated_at,
+             json_extract(j.payload,'$.mcpPrincipal') AS principal,
+             j.worker_id,j.worker_generation,j.thread_id,json_extract(j.payload,'$.trackingState') AS tracking_state,
+             json_extract(j.payload,'$.completionDeliveryPolicy') AS delivery_policy,
+             COALESCE((SELECT json_group_array(json(payload)) FROM (
+               SELECT json_patch(payload,json_object('interactionId',interaction_id,
+                 'isBlocking',json(CASE is_blocking WHEN 1 THEN 'true' ELSE 'false' END))) AS payload
+                 FROM job_interactions WHERE job_id=j.job_id ORDER BY position
+             )),'[]') AS interactions
+        FROM jobs j JOIN activities a ON a.activity_id=j.activity_id
+       WHERE ${includeArchived ? retainedJobSql(this.appliedHistoryPolicy(), "j") : "j.archived_at IS NULL"} AND ${where} ORDER BY j.updated_at DESC LIMIT ?
+    `).all(...bindings, limit) as Array<Record<string, unknown>>).map(row => ({
+      jobId: String(row.job_id), scopeId: String(row.scope_id), activityId: String(row.activity_id),
+      agentId: String(row.agent_id), projectId: typeof row.project_id === "string" ? row.project_id : undefined, status: String(row.status),
+      version: Number(row.job_version), terminalVersion: row.terminal_version ? Number(row.terminal_version) : undefined,
+      workerId: typeof row.worker_id === "string" ? row.worker_id : undefined,
+      workerGeneration: typeof row.worker_generation === "number" ? row.worker_generation : undefined,
+      threadId: typeof row.thread_id === "string" ? row.thread_id : undefined,
+      trackingState: typeof row.tracking_state === "string" ? row.tracking_state : undefined,
+      createdAt: Number(row.created_at), updatedAt: Number(row.updated_at),
+      mcpPrincipal: typeof row.principal === "string" ? row.principal : undefined,
+      completionDeliveryPolicy: row.delivery_policy as EventJob["completionDeliveryPolicy"],
+      pendingInteractions: parseJsonTextStrict(String(row.interactions), "Lifecycle pending interactions") as EventJob["pendingInteractions"]
+    }));
+  }
+
+  isEventJobRetained(jobId: string): boolean {
+    return Boolean(this.database.prepare("SELECT 1 FROM jobs WHERE job_id=? AND archived_at IS NULL AND json_extract(payload, '$.historyExpired') IS NOT 1").get(jobId));
+  }
+
+  isEventProjectAvailable(projectId: string): boolean {
+    return Boolean(this.database.prepare("SELECT 1 FROM projects WHERE project_id=? AND archive_state='active' AND deleted_at IS NULL").get(projectId));
+  }
+
+  /** Revalidate the predecessor at the same atomic followup admission boundary. */
+  followupParent(jobId: string, scopeId: string, version: number): {
+    threadId: string | null; sandbox: string; selection: Record<string, unknown> | null
+  } | undefined {
+    const row = this.database.prepare(`SELECT j.thread_id AS threadId,j.sandbox,
+      json_extract(j.payload,'$.executionDecision.effectiveSelection') AS selection
+      FROM jobs j JOIN job_completion_deliveries d ON d.job_id=j.job_id
+      JOIN activities a ON a.activity_id=j.activity_id LEFT JOIN projects p ON p.project_id=a.project_id
+      WHERE (a.project_id IS NULL OR (p.archive_state='active' AND p.deleted_at IS NULL)) AND j.job_id=? AND j.scope_id=? AND j.job_version=? AND j.status='completed'
+        AND ${retainedJobSql(this.appliedHistoryPolicy(), "j")} AND (d.direct_result_offered_at IS NOT NULL OR d.completion_result_offered_at IS NOT NULL)`)
+      .get(jobId, scopeId, version) as { threadId: string | null; sandbox: string; selection: string | null } | undefined;
+    return row ? { ...row, selection: row.selection ? JSON.parse(row.selection) : null } : undefined;
+  }
+
   close(): void {
     if (this.closed) return;
+    if (this.options.readOnly) {
+      this.database.close();
+      this.closed = true;
+      return;
+    }
     const now = Date.now();
     this.database
       .prepare(`
@@ -3319,6 +4804,19 @@ export class BridgeStateStore {
     }
     this.runMigration("17", "18", originalSourceSchema, () => this.migrateV17ToV18());
     this.runMigration("18", "19", originalSourceSchema, () => this.migrateV18ToV19());
+    this.runMigration("19", "20", originalSourceSchema, () => this.migrateV19ToV20());
+    this.runMigration("20", "21", originalSourceSchema, () => this.migrateV20ToV21());
+    this.runMigration("21", "22", originalSourceSchema, () => this.migrateV21ToV22());
+    this.runMigration("22", "23", originalSourceSchema, () => this.migrateV22ToV23());
+    this.runMigration("23", "24", originalSourceSchema, () => this.migrateV23ToV24());
+    this.runMigration("24", "25", originalSourceSchema, () => this.migrateV24ToV25());
+    this.runMigration("25", "26", originalSourceSchema, () => this.migrateV25ToV26());
+    this.runMigration("26", "27", originalSourceSchema, () => this.migrateV26ToV27());
+    this.runMigration("27", "28", originalSourceSchema, () => this.migrateV27ToV28());
+    this.runMigration("28", "29", originalSourceSchema, () => this.migrateV28ToV29());
+    this.runMigration("29", "30", originalSourceSchema, () => this.migrateV29ToV30());
+    this.runMigration("30", "31", originalSourceSchema, () => this.migrateV30ToV31());
+    this.runMigration("31", "32", originalSourceSchema, () => this.migrateV31ToV32());
     if (this.getMeta("schema_version") !== CURRENT_SCHEMA_VERSION) {
       throw new Error(`Bridge state migration stopped at unsupported schema version ${this.getMeta("schema_version")}.`);
     }
@@ -4621,6 +6119,211 @@ export class BridgeStateStore {
     }
   }
 
+  private migrateV19ToV20(): void {
+    this.database.pragma("foreign_keys = OFF");
+    try {
+      this.transaction(() => {
+        this.database.exec(V20_ASYNC_EXECUTION_MIGRATION_SCHEMA);
+        const violations = this.database.pragma("foreign_key_check") as unknown[];
+        if (violations.length > 0) {
+          throw new Error("Bridge state schema v20 migration produced foreign-key violations.");
+        }
+        const now = Date.now();
+        this.setMeta("schema_version", "20");
+        this.setMeta("schema_v20_execution_contract", "durable-async-v1");
+        this.setMeta("schema_v20_migrated_at", new Date(now).toISOString());
+      });
+    } finally {
+      this.database.pragma("foreign_keys = ON");
+    }
+  }
+
+  private migrateV20ToV21(): void {
+    this.database.pragma("foreign_keys = OFF");
+    try {
+      this.transaction(() => {
+        this.database.exec(V21_JOB_COMPLETION_DELIVERY_MIGRATION_SCHEMA);
+        const violations = this.database.pragma("foreign_key_check") as unknown[];
+        if (violations.length > 0) {
+          throw new Error("Bridge state schema v21 migration produced foreign-key violations.");
+        }
+        const now = Date.now();
+        this.setMeta("schema_version", "21");
+        this.setMeta("schema_v21_completion_delivery_contract", "exact-job-live-card-v1");
+        this.setMeta("schema_v21_migrated_at", new Date(now).toISOString());
+      });
+    } finally {
+      this.database.pragma("foreign_keys = ON");
+    }
+  }
+
+  private migrateV21ToV22(): void {
+    this.database.pragma("foreign_keys = OFF");
+    try {
+      this.transaction(() => {
+        this.database.exec(V22_JOB_COMPLETION_RESULT_SOURCE_MIGRATION_SCHEMA);
+        const violations = this.database.pragma("foreign_key_check") as unknown[];
+        if (violations.length > 0) {
+          throw new Error("Bridge state schema v22 migration produced foreign-key violations.");
+        }
+        const now = Date.now();
+        this.setMeta("schema_version", "22");
+        this.setMeta("schema_v22_completion_result_source", "direct-result-consumption-v1");
+        this.setMeta("schema_v22_migrated_at", new Date(now).toISOString());
+      });
+    } finally {
+      this.database.pragma("foreign_keys = ON");
+    }
+  }
+
+  private migrateV22ToV23(): void {
+    this.database.pragma("foreign_keys = OFF");
+    try {
+      this.transaction(() => {
+        this.database.exec(V23_JOB_COMPLETION_RESULT_OFFER_MIGRATION_SCHEMA);
+        const violations = this.database.pragma("foreign_key_check") as unknown[];
+        if (violations.length > 0) {
+          throw new Error("Bridge state schema v23 migration produced foreign-key violations.");
+        }
+        const now = Date.now();
+        this.setMeta("schema_version", "23");
+        this.setMeta("schema_v23_completion_result_offer", "server-offer-not-receipt-v1");
+        this.setMeta("schema_v23_migrated_at", new Date(now).toISOString());
+      });
+    } finally {
+      this.database.pragma("foreign_keys = ON");
+    }
+  }
+
+  private migrateV23ToV24(): void {
+    this.database.pragma("foreign_keys = OFF");
+    try {
+      this.transaction(() => {
+        this.database.exec(V24_DECISION_CARD_MIGRATION_SCHEMA);
+        const violations = this.database.pragma("foreign_key_check") as unknown[];
+        if (violations.length > 0) {
+          throw new Error("Bridge state schema v24 migration produced foreign-key violations.");
+        }
+        const now = Date.now();
+        this.setMeta("schema_version", "24");
+        this.setMeta("schema_v24_decision_card_contract", "freeform-decision-card-v1");
+        this.setMeta("schema_v24_migrated_at", new Date(now).toISOString());
+      });
+    } finally {
+      this.database.pragma("foreign_keys = ON");
+    }
+  }
+
+  private migrateV24ToV25(): void {
+    this.transaction(() => {
+      this.database.exec(V25_OPERATIONAL_COMMAND_RECEIPT_MIGRATION_SCHEMA);
+      this.setMeta("schema_version", "25");
+      this.setMeta("schema_v25_operational_command_receipts", "durable-command-receipts-v1");
+      this.setMeta("schema_v25_migrated_at", new Date().toISOString());
+    });
+  }
+
+  private migrateV25ToV26(): void {
+    this.transaction(() => {
+      this.database.exec(V26_MODEL_DESCRIPTION_VERSIONS_MIGRATION_SCHEMA);
+      this.setMeta("schema_version", "26");
+      this.setMeta("schema_v26_model_description_versions", "per-model-history-v1");
+      this.setMeta("schema_v26_migrated_at", new Date().toISOString());
+    });
+  }
+
+  private migrateV26ToV27(): void {
+    this.database.pragma("foreign_keys = OFF");
+    try {
+      this.transaction(() => {
+        this.database.exec(V27_DECISION_CARD_RETIREMENT_MIGRATION_SCHEMA);
+        const violations = this.database.pragma("foreign_key_check") as unknown[];
+        if (violations.length > 0) {
+          throw new Error("Bridge state schema v27 migration produced foreign-key violations.");
+        }
+        this.setMeta("schema_version", "27");
+        this.setMeta("schema_v27_decision_card_retirement", "legacy-tables-dropped-v1");
+        this.setMeta("schema_v27_migrated_at", new Date().toISOString());
+      });
+    } finally {
+      this.database.pragma("foreign_keys = ON");
+    }
+  }
+
+  private migrateV27ToV28(): void {
+    this.transaction(() => {
+      this.database.exec(V28_JOB_HISTORY_INDEX_MIGRATION_SCHEMA);
+      this.setMeta("schema_version", "28");
+      this.setMeta("schema_v28_job_history_index", "agent-recent-v1");
+      this.setMeta("schema_v28_migrated_at", new Date().toISOString());
+    });
+  }
+
+  private migrateV28ToV29(): void {
+    this.transaction(() => {
+      this.database.exec(V29_BACKGROUND_WORK_INDEX_MIGRATION_SCHEMA);
+      this.setMeta("schema_version", "29");
+      this.setMeta("schema_v29_background_work_indexes", "recovery-agent-and-worker-v1");
+      this.setMeta("schema_v29_migrated_at", new Date().toISOString());
+    });
+  }
+
+  private migrateV31ToV32(): void {
+    this.transaction(() => {
+      this.database.exec(V32_HISTORY_POLICY_MIGRATION_SCHEMA);
+      this.setMeta("schema_version", "32");
+      this.setMeta("schema_v32_migrated_at", new Date().toISOString());
+    });
+  }
+
+  private migrateV30ToV31(): void {
+    this.transaction(() => {
+      this.database.exec(V31_PROJECT_LIFECYCLE_MIGRATION_SCHEMA);
+      this.setMeta("schema_version", "31");
+      this.setMeta("schema_v31_migrated_at", new Date().toISOString());
+    });
+  }
+
+  private migrateV29ToV30(): void {
+    this.transaction(() => {
+      this.database.exec(V30_SESSION_AUTH_BOUNDARY_MIGRATION_SCHEMA);
+      this.setMeta("schema_version", "30");
+      this.setMeta("schema_v30_session_auth_boundary", "nullable-owner-v1");
+      this.setMeta("schema_v30_migrated_at", new Date().toISOString());
+    });
+  }
+
+  private readOperationalCommandReceipt<T>(
+    commandId: string
+  ): OperationalCommandReceipt<T> | undefined {
+    const row = this.database.prepare(`
+      SELECT command_id, operation, payload_sha256, aggregate_key, resulting_version,
+             result, worker_generation, committed_at
+        FROM operational_command_receipts
+       WHERE command_id = ?
+    `).get(commandId) as {
+      command_id: string;
+      operation: string;
+      payload_sha256: string;
+      aggregate_key: string | null;
+      resulting_version: number | null;
+      result: string;
+      worker_generation: string;
+      committed_at: number;
+    } | undefined;
+    if (!row) return undefined;
+    return {
+      commandId: row.command_id,
+      operation: row.operation,
+      payloadSha256: row.payload_sha256,
+      ...(row.aggregate_key !== null ? { aggregateKey: row.aggregate_key } : {}),
+      ...(row.resulting_version !== null ? { resultingVersion: row.resulting_version } : {}),
+      result: parseStoredJson(row.result, "operational command receipt result") as T,
+      workerGeneration: row.worker_generation,
+      committedAt: row.committed_at
+    };
+  }
+
   private registerBridgeInstance(): void {
     this.transaction(() => {
       const now = Date.now();
@@ -4665,9 +6368,13 @@ export class BridgeStateStore {
   }
 
   private upsertJobInternal(job: JobRowInput): void {
+    if (this.tableHasColumn("projects","archive_state") && this.projectLifecycle.jobReceipt(job.jobId)) return;
     // Late snapshots cannot resurrect expired display data or release the
     // original request reservation.
     if (this.workHistory?.expired(job.jobId)) return;
+    if (job.approvedFollowups || job.followup) job = { ...job,
+      approvedFollowups: issueApprovedFollowups(job.jobId, job.approvedFollowups),
+      followup: job.followup ? readFollowupReference(job.followup) : undefined };
     if (!valueIsOneOf(ACTIVITY_JOB_STATUSES, job.status)) {
       throw new Error(`Invalid Codex job status for Activity storage: ${job.status}.`);
     }
@@ -4676,19 +6383,31 @@ export class BridgeStateStore {
       "job activityId"
     );
     const scopeId = normalizeUuid(job.scopeId, "job scopeId");
-    const executionMode = normalizeActivityExecutionMode(job.executionMode || "background");
     const previous = this.database
       .prepare(`
         SELECT j.scope_id,j.activity_id,j.thread_id,j.source_thread_id,j.status,j.backend_kind,j.bridge_instance_id,
                j.terminal_version,j.agent_id,j.context_mode,j.cwd,j.sandbox,j.created_at,j.job_version,
                j.last_progress_at,j.last_progress,j.terminal_origin,j.cancellation_intent_id,
                a.project_id,p.name AS project_name,
-               a.pinned_cwd,j.archived_at
+               a.pinned_cwd,j.archived_at,
+               COALESCE(json_extract(j.payload,'$.completionDeliveryPolicy'),'live-card') AS completion_delivery_policy
           FROM jobs j JOIN activities a ON a.activity_id=j.activity_id
           LEFT JOIN projects p ON p.project_id=a.project_id
          WHERE j.job_id = ?
       `)
       .get(job.jobId) as PreviousJobRow | undefined;
+    if (previous && isTerminalActivityJobStatus(previous.status) && isActiveActivityJobStatus(job.status)) return;
+    const relayGoal = !previous ? this.relay.goal(activityId) : undefined;
+    if (relayGoal && (relayGoal.scopeId !== scopeId || relayGoal.mcpPrincipal !== job.mcpPrincipal)) {
+      throw new Error("RELAY_OWNER_REQUIRED: New work must retain the original goal owner.");
+    }
+    if (relayGoal?.followupsStopped) {
+      throw new Error("RELAY_FOLLOWUPS_STOPPED: This Activity no longer accepts followup work.");
+    }
+    if (!previous && this.tableHasColumn("projects","archive_state")) {
+      this.projectLifecycle.assertRequest("task",scopeId,job.requestId);
+      this.projectLifecycle.assertActive(job.projectId || this.getActivityProjectAdmission(activityId)?.projectId);
+    }
     if (!previous && job.status === "running") this.threadConnections.assertAdmission(job.agentId, job.threadId || job.sessionDecision?.threadId || job.sourceThreadId);
     const terminalOrigin = job.terminalOrigin ||
       (previous?.terminal_origin && JOB_TERMINAL_ORIGINS.includes(previous.terminal_origin as JobTerminalOrigin)
@@ -4764,6 +6483,23 @@ export class BridgeStateStore {
     }
     job.terminalOrigin = terminalOrigin;
     job.cancellationIntentId = cancellationIntentId;
+    if (
+      job.completionDeliveryPolicy !== undefined &&
+      job.completionDeliveryPolicy !== "live-card" &&
+      job.completionDeliveryPolicy !== "direct-wait" &&
+      job.completionDeliveryPolicy !== "relay-card" &&
+      job.completionDeliveryPolicy !== "events"
+    ) {
+      throw new Error("Invalid Codex job completion delivery policy.");
+    }
+    const completionDeliveryPolicy = job.completionDeliveryPolicy ||
+      (previous?.completion_delivery_policy === "events" ? "events" :
+        previous?.completion_delivery_policy === "relay-card" ? "relay-card" :
+        previous?.completion_delivery_policy === "direct-wait" ? "direct-wait" : "live-card");
+    if (previous && previous.completion_delivery_policy !== completionDeliveryPolicy) {
+      throw new Error("A persisted Codex job completion delivery policy cannot change.");
+    }
+    job.completionDeliveryPolicy = completionDeliveryPolicy;
     if (previous && previous.scope_id !== scopeId) {
       throw new Error("A persisted Codex job cannot move to another conversation scope.");
     }
@@ -4809,7 +6545,7 @@ export class BridgeStateStore {
     if (requestCollision) {
       throw new Error(
         requestCollision.archived_at
-          ? "requestId belongs to an archived Codex job in this scope; its result body is no longer retained. Use a fresh requestId for a new logical turn."
+          ? "requestId belongs to an archived Codex job in this scope; its result body is no longer retained. Read codex_status query kind='request' for the terminal admission fact. A new logical turn requires a new requestId."
           : "requestId was already used by another Codex job in this scope."
       );
     }
@@ -4828,7 +6564,6 @@ export class BridgeStateStore {
         ...(projectCwd ? { projectCwd } : {}),
         title: `Codex job ${job.jobId.slice(0, 8)}`,
         kind: "other",
-        executionMode,
         handoffPolicy: "none",
         completionTrigger: "manual",
         legacy: true,
@@ -4908,13 +6643,12 @@ export class BridgeStateStore {
     const lastProgressAt = finiteNumber(job.lastProgressAt) ?? previous?.last_progress_at ?? job.updatedAt;
     const lastProgress = job.lastProgress === undefined
       ? previous?.last_progress
-        ? parsePayload({ payload: previous.last_progress }, "job progress")
+        ? parseCurrentPayload({ payload: previous.last_progress }, "job progress")
         : undefined
       : job.lastProgress;
     job.activityId = activityId;
     job.scopeId = scopeId;
     job.threadId = threadId;
-    job.executionMode = executionMode;
     job.backendKind = backendKind;
     job.agentId = agentId;
     job.contextMode = contextMode;
@@ -4932,14 +6666,11 @@ export class BridgeStateStore {
     this.database
       .prepare(`
         INSERT INTO jobs(
-          job_id,scope_id,request_id,activity_id,thread_id,source_thread_id,status,execution_mode,
-          backend_kind, bridge_instance_id, worker_id, worker_generation, upstream_request_id,
+          job_id,scope_id,request_id,activity_id,thread_id,source_thread_id,status,
+          backend_kind,bridge_instance_id,worker_id,worker_generation,upstream_request_id,
           terminal_version,agent_id,context_mode,cwd,sandbox,created_at,updated_at,archived_at,
           job_version,last_progress_at,last_progress,terminal_origin,cancellation_intent_id,payload
-        ) VALUES (
-          ?,?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?,
-          NULL, ?,?,?,?,?,?
-        )
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?,?,?,?,?)
         ON CONFLICT(job_id) DO UPDATE SET
           scope_id = excluded.scope_id,
           request_id = excluded.request_id,
@@ -4947,7 +6678,6 @@ export class BridgeStateStore {
           thread_id = excluded.thread_id,
           source_thread_id = excluded.source_thread_id,
           status = excluded.status,
-          execution_mode = excluded.execution_mode,
           backend_kind = excluded.backend_kind,
           bridge_instance_id = excluded.bridge_instance_id,
           worker_id = excluded.worker_id,
@@ -4975,7 +6705,6 @@ export class BridgeStateStore {
         threadId || null,
         normalizeOptionalString(job.sourceThreadId) || previous?.source_thread_id || null,
         job.status,
-        executionMode,
         backendKind,
         bridgeInstanceId || null,
         normalizeOptionalString(job.workerId) || null,
@@ -4995,7 +6724,25 @@ export class BridgeStateStore {
         cancellationIntentId || null,
         JSON.stringify(jobPayloadForStorage(job as Record<string, unknown>))
       );
+    if (nowTerminal) this.database.prepare(`UPDATE jobs SET ended_at=COALESCE(ended_at,?),
+      ended_at_source=COALESCE(ended_at_source,'recorded'),problem_summary=COALESCE(?,problem_summary) WHERE job_id=?`).run(job.updatedAt,(job as Record<string,unknown>).error ?? null,job.jobId);
+    if (nowTerminal && !wasTerminal && terminalVersion) {
+      this.insertJobCompletionDelivery({
+        jobId: job.jobId,
+        scopeId,
+        terminalVersion,
+        createdAt: job.updatedAt
+      });
+    }
+    this.taskFollowups.admit({ ...job, activityId, agentId, scopeId });
+    if (nowTerminal && this.experimentalEventsEnabled) this.mcpEvents.enqueue(job);
     this.replaceJobInteractions(job.jobId, job.pendingInteractions || []);
+    if (this.experimentalEventsEnabled) this.mcpEvents.enqueueLifecycle(job);
+    if (job.completionDeliveryPolicy === "relay-card" || this.relay.registration(job.jobId) ||
+        !previous && job.completionDeliveryPolicy !== "events" && job.completionDeliveryPolicy !== "live-card" && this.relay.goal(activityId)) {
+      const snapshot = this.getEventJobSnapshot(job.jobId);
+      if (snapshot) { this.relay.register(snapshot); this.relay.reconcileJob(snapshot); }
+    }
 
     const agentStateChanged = agentId
       ? this.syncAgentForJob(job, agentId, activityId, job.updatedAt)
@@ -5232,6 +6979,8 @@ export class BridgeStateStore {
       createdAt: now,
       payload: { counts, waitingOn: decision.waitingOn }
     });
+    if (decision.lifecycle === "completed") this.relay.endActivity(activityId);
+    if (this.experimentalEventsEnabled && decision.lifecycle === "completed") this.mcpEvents.stopActivity(activityId);
     if (completionTransition && decision.completionChannel) {
       this.insertCompletionOutbox({
         activityId,
@@ -5287,7 +7036,6 @@ export class BridgeStateStore {
     continuationOfActivityId?: string;
     title: string;
     kind: ActivityKind;
-    executionMode: ActivityExecutionMode;
     handoffPolicy: ActivityHandoffPolicy;
     completionTrigger: ActivityCompletionTrigger;
     legacy: boolean;
@@ -5305,20 +7053,19 @@ export class BridgeStateStore {
     this.database.prepare(`
       INSERT INTO activities(
         activity_id,scope_id,project_id,pinned_cwd,continuation_of_activity_id,
-        card_generation,title,kind,execution_mode,handoff_policy,completion_trigger,
+        card_generation,title,kind,handoff_policy,completion_trigger,
         lifecycle,waiting_on,verification,version,completion_version,legacy,
         created_at,updated_at,sealed_at,completed_at,total_jobs,running_jobs,
         completed_jobs,failed_jobs,interrupted_jobs,cancelled_jobs,terminal_jobs
-      ) VALUES (?,?,?,?,?,1,?,?,?,?,?,'open',?,'not-required',1,0,?,?,?,NULL,NULL,?,?,?,?,?,?,?)
+      ) VALUES (?,?,?,?,?,1,?,?,?,?,'open',?,'not-required',1,0,?,?,?,NULL,NULL,?,?,?,?,?,?,?)
     `).run(
       input.activityId,
       input.scopeId,
       project?.projectId || null,
       project?.projectCwd || null,
       input.continuationOfActivityId || null,
-      normalizeActivityTitle(input.title),
+      canonicalActivityTitle(input.title),
       input.kind,
-      input.executionMode,
       input.handoffPolicy,
       input.completionTrigger,
       input.waitingOn || "none",
@@ -5376,6 +7123,21 @@ export class BridgeStateStore {
       .prepare("UPDATE scopes SET version = version + 1, updated_at = ? WHERE scope_id = ?")
       .run(now, scopeId);
     return this.getScopeVersion(scopeId);
+  }
+
+  /** Runtime-only one-statement scope bump. Frozen migrations retain the
+   * original nextScopeVersion implementation and checksum above. */
+  private nextRuntimeScopeVersion(scopeId: string, now: number): number {
+    const row = this.database.prepare(`
+      INSERT INTO scopes(scope_id,version,created_at,updated_at)
+      VALUES (?,1,?,?)
+      ON CONFLICT(scope_id) DO UPDATE SET
+        version=scopes.version+1,
+        updated_at=MAX(scopes.updated_at,excluded.updated_at)
+      RETURNING version
+    `).get(scopeId, now, now) as {version:number} | undefined;
+    if (!row) throw new Error("Could not advance the conversation scope version.");
+    return Number(row.version);
   }
 
   private insertActivityEvent(input: Omit<ActivityEventRecord, "eventId">): void {
@@ -5579,7 +7341,7 @@ export class BridgeStateStore {
     createdAt: number;
     payload: unknown;
   }): void {
-    this.database
+    const result = this.database
       .prepare(`
         INSERT OR IGNORE INTO completion_outbox(
           activity_id, scope_id, completion_version, channel, payload, attempt_count,
@@ -5594,6 +7356,29 @@ export class BridgeStateStore {
         JSON.stringify(input.payload),
         input.createdAt
       );
+    if (result.changes === 1 && input.channel === "notify") this.insertedNotifyCompletions.add(Number(result.lastInsertRowid));
+  }
+
+  private insertJobCompletionDelivery(input: {
+    jobId: string;
+    scopeId: string;
+    terminalVersion: number;
+    createdAt: number;
+  }): void {
+    this.database.prepare(`
+      INSERT OR IGNORE INTO job_completion_deliveries(
+        job_id,scope_id,terminal_version,receipt,state,attempt_count,next_attempt_at,
+        lease_owner,lease_expires_at,last_host_rejected_at,last_host_error,
+        host_accepted_at,acceptance_unknown_at,result_read_at,created_at,updated_at
+      ) VALUES (?, ?, ?, ?, 'pending', 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?)
+    `).run(
+      input.jobId,
+      input.scopeId,
+      input.terminalVersion,
+      jobCompletionReceipt(input.scopeId, input.jobId, input.terminalVersion),
+      input.createdAt,
+      input.createdAt
+    );
   }
 
   private getActivityRow(activityId: string): ActivityStorageRow | undefined {
@@ -5670,6 +7455,8 @@ export class BridgeStateStore {
       payload
     });
     this.acknowledgeCompletionOutbox(activity.activityId, undefined, now);
+    this.relay.endActivity(activity.activityId);
+    if (this.experimentalEventsEnabled) this.mcpEvents.stopActivity(activity.activityId);
     return this.requireActivity(activity.activityId);
   }
 
@@ -5878,7 +7665,7 @@ function readSteeringDeliveryRow(row: Record<string, unknown>): SteeringDelivery
     status,
     bridgeInstanceId: String(row.bridge_instance_id),
     result: row.result
-      ? parsePayload({ payload: String(row.result) }, "steering delivery result")
+      ? parseCurrentPayload({ payload: String(row.result) }, "steering delivery result")
       : undefined,
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
@@ -5926,7 +7713,7 @@ function readCancellationOperationRow(row: Record<string, unknown>): Cancellatio
     reason: row.reason_text ? String(row.reason_text) : undefined,
     status: row.status as CancellationOperationStatus,
     result: row.result
-      ? parsePayload({ payload: String(row.result) }, "cancellation operation result")
+      ? parseCurrentPayload({ payload: String(row.result) }, "cancellation operation result")
       : undefined,
     createdAt: Number(row.created_at),
     completedAt: row.completed_at === null || row.completed_at === undefined
@@ -6030,15 +7817,23 @@ function readProjectStorageRow(row: ProjectStorageRow): ProjectTarget {
     sortOrder: row.sort_order,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    archiveState: row.archive_state,
+    archiveRevision: row.archive_revision,
+    archiveReasons: JSON.parse(row.archive_reasons || "[]"),
+    ...(row.archive_requested_at == null ? {} : { archiveRequestedAt: row.archive_requested_at }),
     ...(row.archived_at === null ? {} : { archivedAt: row.archived_at })
   };
 }
 
-function hydrateJobPayload(row: JobStorageRow): unknown {
-  const payload = parsePayload(row, "job");
+function hydrateJobPayload(row: JobStorageRow): StoredJobRecord {
+  const payload = parseCurrentPayload(row, "job");
   if (!isRecord(payload)) throw new Error("Invalid job payload in the bridge state database: expected an object.");
   return {
     ...payload,
+    // Original availability is independent of the bounded delivery projection.
+    // Hydration must not erase a previously recorded omission merely because
+    // the complete original is still retained on disk.
+    ...(row.result_body ? {result:parseCurrentPayload({payload:row.result_body},"retained result body")} : {}),
     jobId: row.job_id,
     scopeId: row.scope_id,
     requestId: row.request_id,
@@ -6046,7 +7841,6 @@ function hydrateJobPayload(row: JobStorageRow): unknown {
     threadId: row.thread_id || undefined,
     sourceThreadId: row.source_thread_id || undefined,
     status: row.status,
-    executionMode: normalizeActivityExecutionMode(row.execution_mode),
     backendKind: row.backend_kind,
     ...(row.project_id ? { projectId: row.project_id } : {}),
     ...(row.project_name ? { projectName: row.project_name } : {}),
@@ -6054,13 +7848,14 @@ function hydrateJobPayload(row: JobStorageRow): unknown {
     sandbox: row.sandbox,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    endedAt: row.ended_at ?? undefined, endedAtSource: row.ended_at_source, detailAvailability: row.detail_availability,
     version: row.job_version,
     lastProgressAt: row.last_progress_at,
     ...(row.last_progress
-      ? { lastProgress: parsePayload({ payload: row.last_progress }, "job progress") }
+      ? { lastProgress: parseCurrentPayload({ payload: row.last_progress }, "job progress") }
       : {}),
-    publicEvents: JSON.parse(row.public_events),
-    pendingInteractions: JSON.parse(row.pending_interactions),
+    publicEvents: parseStoredJson(row.public_events, "job public events"),
+    pendingInteractions: parseStoredJson(row.pending_interactions, "job pending interactions"),
     ...(row.terminal_origin ? { terminalOrigin: row.terminal_origin } : {}),
     ...(row.cancellation_intent_id
       ? { cancellationIntentId: row.cancellation_intent_id }
@@ -6073,11 +7868,6 @@ function hydrateJobPayload(row: JobStorageRow): unknown {
     agentId: row.agent_id || undefined,
     contextMode: isAgentContextMode(row.context_mode) ? row.context_mode : undefined
   };
-}
-
-function normalizeActivityExecutionMode(value: unknown): ActivityExecutionMode {
-  if (valueIsOneOf(ACTIVITY_EXECUTION_MODES, value)) return value;
-  throw new Error(`Invalid Activity execution mode: ${String(value)}.`);
 }
 
 function readActivityRow(row: ActivityStorageRow): BridgeActivity {
@@ -6100,7 +7890,6 @@ function readActivityRow(row: ActivityStorageRow): BridgeActivity {
     cardGeneration: row.card_generation,
     title: row.title,
     kind: row.kind,
-    executionMode: normalizeActivityExecutionMode(row.execution_mode),
     handoffPolicy: row.handoff_policy,
     completionTrigger: row.completion_trigger,
     lifecycle: row.lifecycle,
@@ -6221,14 +8010,10 @@ function readActivityAgentRow(row: ActivityAgentStorageRow): ActivityAgentAssign
 
 function assertActivityPolicy(
   kind: unknown,
-  executionMode: unknown,
   handoffPolicy: unknown,
   completionTrigger: unknown
 ): void {
   if (!valueIsOneOf(ACTIVITY_KINDS, kind)) throw new Error("Invalid Activity kind.");
-  if (!valueIsOneOf(ACTIVITY_EXECUTION_MODES, executionMode)) {
-    throw new Error("Invalid Activity execution mode.");
-  }
   if (!valueIsOneOf(ACTIVITY_HANDOFF_POLICIES, handoffPolicy)) {
     throw new Error("Invalid Activity handoff policy.");
   }
@@ -6244,9 +8029,28 @@ function normalizeUuid(value: string, label: string): string {
 }
 
 export function normalizeActivityTitle(value: string): string {
+  // Kept byte-for-byte compatible for callers that need historical activity
+  // behavior. New writes use canonicalActivityTitle below.
   const normalized = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
   if (!normalized) throw new Error("Activity title cannot be empty.");
   return normalized.slice(0, 120);
+}
+
+/** Current-write policy for a human-visible activity title. */
+export function canonicalActivityTitle(value: string): string {
+  try {
+    return canonicalHumanText(value, {
+      field: "Activity title",
+      maxCharacters: 120,
+      collapseWhitespace: true,
+      trim: true
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("exceeds")) {
+      throw new Error("Activity title cannot exceed 120 characters.");
+    }
+    throw new Error("Activity title cannot be empty.");
+  }
 }
 
 function normalizeVerificationEvidence(
@@ -6289,9 +8093,14 @@ function normalizeRequiredBoundedText(value: string, label: string, maxLength: n
 
 function normalizeOptionalBoundedText(value: string | undefined, maxLength: number): string | undefined {
   if (value === undefined) return undefined;
-  const normalized = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+  const normalized = canonicalHumanText(value, {
+    field: "Text",
+    allowEmpty: true,
+    maxCharacters: maxLength,
+    collapseWhitespace: true,
+    trim: true
+  });
   if (!normalized) return undefined;
-  if (normalized.length > maxLength) throw new Error(`Text cannot exceed ${maxLength} characters.`);
   return normalized;
 }
 
@@ -6374,7 +8183,7 @@ function readCompletionOutboxRow(row: Record<string, unknown>): CompletionOutbox
     scopeId: String(row.scope_id),
     completionVersion: Number(row.completion_version),
     channel: row.channel as "notify" | "verify",
-    payload: parsePayload({ payload: String(row.payload) }, "completion outbox"),
+    payload: parseCurrentPayload({ payload: String(row.payload) }, "completion outbox"),
     attemptCount: Number(row.attempt_count),
     nextAttemptAt: optionalNumber(row.next_attempt_at),
     leaseOwner: optionalString(row.lease_owner),
@@ -6383,6 +8192,81 @@ function readCompletionOutboxRow(row: Record<string, unknown>): CompletionOutbox
     acknowledgedAt: optionalNumber(row.acknowledged_at),
     createdAt: Number(row.created_at)
   };
+}
+
+function readJobCompletionDeliveryRow(
+  row: Record<string, unknown>
+): JobCompletionDeliveryRecord {
+  const state = String(row.state);
+  if (!valueIsOneOf(JOB_COMPLETION_DELIVERY_STATES, state)) {
+    throw new Error("Invalid stored Job completion delivery state.");
+  }
+  const resultReadSource = optionalString(row.result_read_source);
+  if (
+    resultReadSource !== undefined &&
+    !valueIsOneOf(JOB_COMPLETION_RESULT_READ_SOURCES, resultReadSource)
+  ) {
+    throw new Error("Invalid stored Job completion result-read source.");
+  }
+  if (state === "result-read" && resultReadSource === undefined) {
+    throw new Error("Stored Job completion result-read state has no source.");
+  }
+  return {
+    jobId: String(row.job_id),
+    scopeId: String(row.scope_id),
+    terminalVersion: Number(row.terminal_version),
+    receipt: normalizeJobCompletionReceipt(String(row.receipt)),
+    state,
+    attemptCount: Number(row.attempt_count),
+    nextAttemptAt: optionalNumber(row.next_attempt_at),
+    leaseOwner: optionalString(row.lease_owner),
+    leaseExpiresAt: optionalNumber(row.lease_expires_at),
+    lastHostRejectedAt: optionalNumber(row.last_host_rejected_at),
+    lastHostError: optionalString(row.last_host_error),
+    hostAcceptedAt: optionalNumber(row.host_accepted_at),
+    acceptanceUnknownAt: optionalNumber(row.acceptance_unknown_at),
+    resultReadAt: optionalNumber(row.result_read_at),
+    resultReadSource,
+    completionResultOfferedAt: optionalNumber(row.completion_result_offered_at),
+    directResultOfferedAt: optionalNumber(row.direct_result_offered_at),
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at)
+  };
+}
+
+export function jobCompletionReceipt(
+  scopeId: string,
+  jobId: string,
+  terminalVersion: number
+): string {
+  if (!Number.isInteger(terminalVersion) || terminalVersion < 1) {
+    throw new Error("Invalid Job completion terminal version.");
+  }
+  return `completion-${createHash("sha256")
+    .update("codex-job-completion/v1", "utf8")
+    .update("\0", "utf8")
+    .update(normalizeCompletionIdentity(scopeId, "completion delivery scopeId"), "utf8")
+    .update("\0", "utf8")
+    .update(normalizeCompletionIdentity(jobId, "completion delivery jobId"), "utf8")
+    .update("\0", "utf8")
+    .update(String(terminalVersion), "utf8")
+    .digest("hex")}`;
+}
+
+function normalizeCompletionIdentity(value: string, label: string): string {
+  const normalized = value.trim();
+  if (!normalized || normalized.length > 512) {
+    throw new Error(`${label} must be a non-empty identifier.`);
+  }
+  return normalized;
+}
+
+function normalizeJobCompletionReceipt(receipt: string): string {
+  const value = receipt.trim();
+  if (!/^completion-[a-f0-9]{64}$/.test(value)) {
+    throw new Error("Invalid Job completion receipt.");
+  }
+  return value;
 }
 
 export function legacyActivityIdForJob(jobId: string): string {
@@ -6416,31 +8300,42 @@ function readDashboardRetainedExecution(
   payload: Record<string, unknown>
 ): DashboardRetainedJobSummary["execution"] | undefined {
   const retainedExecution = isRecord(payload.execution) ? payload.execution : undefined;
-  const decision = isRecord(payload.executionDecision) ? payload.executionDecision : undefined;
-  const selection = decision && isRecord(decision.effectiveSelection)
-    ? decision.effectiveSelection
-    : retainedExecution;
+  const selection = retainedExecutionSummary(payload) || retainedExecution;
   const model = selection && normalizeOptionalString(selection.model);
   const reasoningEffort = selection && normalizeOptionalString(selection.reasoningEffort);
   if (!model || !reasoningEffort) return undefined;
   const serviceTier = selection && normalizeOptionalString(selection.serviceTier);
 
-  let reroutedModel = retainedExecution && normalizeOptionalString(retainedExecution.reroutedModel);
-  if (!reroutedModel && Array.isArray(payload.publicEvents)) {
-    for (let index = payload.publicEvents.length - 1; index >= 0; index -= 1) {
-      const event = payload.publicEvents[index];
-      if (!isRecord(event) || event.type !== "model" || !isRecord(event.details)) continue;
-      if (event.details.kind !== "rerouted") continue;
-      reroutedModel = normalizeOptionalString(event.details.toModel);
-      if (reroutedModel) break;
-    }
-  }
+  const hasEvidenceContract = selection?.requestState === "accepted" || selection?.requestState === "requested";
+  let reroutedModel = hasEvidenceContract ? normalizeOptionalString(selection?.reroutedModel) : undefined;
   if (reroutedModel === model) reroutedModel = undefined;
   return {
     model,
     reasoningEffort,
     ...(serviceTier ? { serviceTier } : {}),
-    ...(reroutedModel ? { reroutedModel } : {})
+    ...(reroutedModel ? { reroutedModel } : {}),
+    ...(selection?.serviceTierScope === "turn" ? { serviceTierScope: "turn" as const } : {}),
+    ...(typeof selection?.processingSpeed === "string" ? { processingSpeed: selection.processingSpeed } : {}),
+    requestState: selection?.requestState === "accepted" ? "accepted" : "requested"
+  };
+}
+
+function decodeDashboardArchivedJob(row: DashboardArchivedJobRow): DashboardRetainedJobSummary {
+  const parsed = parseCurrentPayload({ payload: row.summary }, "archived dashboard job summary");
+  const summary = isRecord(parsed) ? parsed : {};
+  const execution = readDashboardRetainedExecution(summary);
+  return {
+    jobId: row.job_id,
+    scopeId: row.scope_id,
+    activityId: row.activity_id,
+    ...(row.agent_id ? { agentId: row.agent_id } : {}),
+    ...(row.backend_kind ? { backendKind: row.backend_kind } : {}),
+    status: row.status,
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at),
+    endedAt: row.ended_at == null ? undefined : Number(row.ended_at),
+    endedAtSource: row.ended_at_source ?? undefined, detailAvailability: row.detail_availability,
+    ...(execution ? { execution } : {})
   };
 }
 
@@ -6499,9 +8394,34 @@ function parsePayload(row: JsonRow, label: string): unknown {
   }
 }
 
+/** Strict parser for currently readable state rows; frozen migrations use parsePayload. */
+function parseCurrentPayload(row: JsonRow, label: string): unknown {
+  try {
+    return parseJsonTextStrict(row.payload, `bridge state ${label} payload`);
+  } catch (error) {
+    throw new Error(
+      `Invalid ${label} payload in the bridge state database: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+}
+
+function parseStoredJson(value: string, label: string): unknown {
+  try {
+    return parseJsonTextStrict(value, `bridge state ${label}`);
+  } catch (error) {
+    throw new Error(
+      `Invalid ${label} in the bridge state database: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+}
+
 const STRUCTURED_JOB_PAYLOAD_KEYS = [
   "jobId", "scopeId", "requestId", "activityId", "threadId", "sourceThreadId",
-  "status", "executionMode", "backendKind", "bridgeInstanceId", "workerId",
+  "status", "backendKind", "bridgeInstanceId", "workerId",
   "workerGeneration", "upstreamRequestId", "terminalVersion", "agentId", "contextMode",
   "projectId", "projectLabel", "projectName", "projectUuid", "projectNameSnapshot",
   "projectCwdSnapshot", "cwd", "sandbox", "createdAt", "updatedAt",
@@ -6530,6 +8450,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function hasBlockingInteraction(value: unknown): boolean {
   return Array.isArray(value) && value.some(entry => !entry || typeof entry !== "object" || entry.isBlocking !== false);
+}
+
+function validateOperationalCommandReceiptInput(input: OperationalCommandReceiptInput): void {
+  if (!UUID_PATTERN.test(input.commandId)) {
+    throw new Error("STATE_COMMAND_RECEIPT_INVALID: commandId must be a UUID.");
+  }
+  if (!/^[a-z][a-z0-9.-]{0,79}$/u.test(input.operation)) {
+    throw new Error("STATE_COMMAND_RECEIPT_INVALID: operation must be a bounded semantic identifier.");
+  }
+  if (!SHA256_PATTERN.test(input.payloadSha256)) {
+    throw new Error("STATE_COMMAND_RECEIPT_INVALID: payloadSha256 must be a lowercase SHA-256 digest.");
+  }
+  if (
+    input.aggregateKey !== undefined &&
+    (!input.aggregateKey || Buffer.byteLength(input.aggregateKey, "utf8") > 512)
+  ) {
+    throw new Error("STATE_COMMAND_RECEIPT_INVALID: aggregateKey must contain at most 512 bytes.");
+  }
+  if (!UUID_PATTERN.test(input.workerGeneration)) {
+    throw new Error("STATE_COMMAND_RECEIPT_INVALID: workerGeneration must be a UUID.");
+  }
 }
 
 function processIsAlive(processId: number): boolean {

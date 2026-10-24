@@ -3,9 +3,11 @@ import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import * as tar from "tar";
 import type { RuntimeInstaller } from "./codexRuntime.js";
+import { parseJsonUtf8Strict } from "./textIntegrity.js";
 
 const MAX_ARCHIVE_BYTES = 512 * 1024 * 1024;
 const MAX_EXPANDED_BYTES = 2 * 1024 * 1024 * 1024;
+const MAX_REGISTRY_METADATA_BYTES = 1024 * 1024;
 
 /** HTTPS + exact publisher metadata + integrity check, with no npm scripts or global install. */
 export const installManagedCli: RuntimeInstaller = async ({ directory, version, onProgress }) => {
@@ -34,7 +36,9 @@ export const installManagedCli: RuntimeInstaller = async ({ directory, version, 
 async function registryMetadata(version: string): Promise<{ name: string; version: string; dist: { tarball: string; integrity: string } }> {
   const response = await fetch(`https://registry.npmjs.org/@openai/codex/${encodeURIComponent(version)}`, { signal: AbortSignal.timeout(30_000) });
   if (!response.ok) throw new Error("CODEX_PACKAGE_UNAVAILABLE");
-  return await response.json() as Awaited<ReturnType<typeof registryMetadata>>;
+  const body = new Uint8Array(await response.arrayBuffer());
+  if (body.byteLength > MAX_REGISTRY_METADATA_BYTES) throw new Error("CODEX_PACKAGE_UNAVAILABLE");
+  return parseJsonUtf8Strict(body, "Codex package registry metadata") as Awaited<ReturnType<typeof registryMetadata>>;
 }
 
 export async function downloadVerified(

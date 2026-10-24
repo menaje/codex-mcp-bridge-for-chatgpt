@@ -1,0 +1,27 @@
+
+ RUN  v4.1.11 /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w4-runtime
+
+ ❯ test/launcherLifecycle.integration.test.ts (3 tests | 1 failed | 2 skipped) 11014ms
+     × starts authenticated HTTP with https metadata and rebuilds the profile when OAuth identity changes 10995ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/launcherLifecycle.integration.test.ts > managed launcher lifecycle > starts authenticated HTTP with https metadata and rebuilds the profile when OAuth identity changes
+Error: Error: Timed out waiting for managed tunnel status; runtime=starting; tunnel=stopped; observation=undefined; fixture launcher output: Loaded runtime environment from /var/folders/0w/xl0qvy093052t14h6gpmfr1r0000gn/T/codex-launcher-oauth-gUtD8j/config/.env.
+
+ ❯ runLauncher test/launcherLifecycle.integration.test.ts:363:27
+    361|   try {
+    362|     try { await waitForConnectedStatus(paths.runtimeStatusFile, child)…
+    363|     catch (error) { throw new Error(`${String(error)}; fixture launche…
+       |                           ^
+    364|     await paths.checkWhileConnected?.();
+    365|     expect(existsSync(paths.runtimeLockDirectory)).toBe(true);
+ ❯ test/launcherLifecycle.integration.test.ts:68:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 2 skipped (3)
+   Start at  21:46:35
+   Duration  15.88s (transform 729ms, setup 0ms, import 1.59s, tests 11.01s, environment 0ms)

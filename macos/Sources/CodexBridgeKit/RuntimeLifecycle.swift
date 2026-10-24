@@ -17,6 +17,18 @@ public struct RuntimeLifecycleOperation: Codable, Equatable, Sendable, Identifia
     public let targetBuildId: String?
     public let targetDescription: String?
     public let cancellable: Bool
+    public var startup: InitialStartup? = nil
+    public struct InitialStartup: Codable, Equatable, Sendable {
+        public let source: String
+        public let startedAt: Int64
+        public let deadlineAt: Int64
+        public let attempts: Int
+        public let nextAttemptAt: Int64?
+        public let stage: String
+        public let failureCode: String?
+        public let failureStage: String?
+        public let retrySuppressed: Bool?
+    }
     public var id: String { requestId }
     public var isPending: Bool { !["completed", "cancelled", "failed"].contains(phase) }
     public var isExecuting: Bool { ["executing", "reconnecting", "handoff-ready", "handing-off"].contains(phase) }
@@ -77,7 +89,9 @@ public enum RuntimeLifecycleHandoffStore {
               metadata.st_uid == getuid(), metadata.st_mode & 0o077 == 0, metadata.st_size <= 65536 else {
             throw CocoaError(.fileReadNoPermission)
         }
-        return try JSONDecoder().decode(Receipt.self, from: handle.readToEnd() ?? Data())
+        let data = try handle.readToEnd() ?? Data()
+        try BridgeTextIntegrity.validateJSONUTF8(data)
+        return try JSONDecoder().decode(Receipt.self, from: data)
     }
 
     public static func write(requestId: String, completed: Bool, runtimeLockDirectory: URL, failureCode: String? = nil) throws {

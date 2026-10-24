@@ -1,10 +1,41 @@
 import type { CodexModelDescriptor } from "./modelCatalog.js";
+import {
+  TextIntegrityError,
+  canonicalHumanText,
+  opaqueIdentifier,
+  utf8ByteLength
+} from "./textIntegrity.js";
 
 export type ModelDescriptionOverrides = Record<string, string>;
+export type ModelDescriptionVersion = {
+  version: number;
+  description: string | null;
+  /** Unknown for the current value imported from pre-history settings. */
+  createdAt: string | null;
+};
+export type ModelDescriptionHistoryPage = {
+  kind: "model-description-history";
+  modelId: string;
+  versions: ModelDescriptionVersion[];
+  nextBeforeVersion: number | null;
+};
 
 export const MAX_MODEL_DESCRIPTION_LENGTH = 2_000;
 export const MAX_MODEL_DESCRIPTION_OVERRIDES = 100;
 export const MAX_MODEL_DESCRIPTION_OVERRIDES_BYTES = 64 * 1_024;
+
+export function modelDescriptionId(id: string): string {
+  try {
+    const modelId = opaqueIdentifier(id, {
+      field: "Model ID", maxCharacters: 200,
+      rejectControlCharacters: true, rejectNul: true
+    });
+    if (!modelId || modelId !== modelId.trim()) throw new Error("invalid model id");
+    return modelId;
+  } catch {
+    throw new Error("MODEL_DESCRIPTIONS_INVALID: Invalid model ID.");
+  }
+}
 
 /** Only user-authored text is persisted. Catalog descriptions remain upstream data. */
 export function normalizeModelDescriptionOverrides(value: unknown): ModelDescriptionOverrides {
@@ -17,17 +48,29 @@ export function normalizeModelDescriptionOverrides(value: unknown): ModelDescrip
   }
   const normalized: Array<[string, string]> = [];
   for (const [id, raw] of entries) {
-    if (!id || id !== id.trim() || id.length > 200 || /[\u0000-\u001f\u007f]/.test(id) || typeof raw !== "string") {
+    // A catalog model ID is protocol-owned and opaque; do not NFC it.
+    const modelId = modelDescriptionId(id);
+    let description: string;
+    try {
+      description = canonicalHumanText(raw, {
+        field: "Model description",
+        allowEmpty: true,
+        maxCharacters: MAX_MODEL_DESCRIPTION_LENGTH,
+        trim: true,
+        // Multi-line model guidance is a display field, not a compact label.
+        // NUL remains forbidden while line breaks are intentionally retained.
+        rejectControlCharacters: false
+      });
+    } catch (error) {
+      if (error instanceof TextIntegrityError && error.code === "TEXT_TOO_LONG") {
+        throw new Error(`MODEL_DESCRIPTION_TOO_LONG: A model description may contain at most ${MAX_MODEL_DESCRIPTION_LENGTH} characters.`);
+      }
       throw new Error("MODEL_DESCRIPTIONS_INVALID: Each model ID must have a text description.");
     }
-    const description = raw.trim();
-    if (description.length > MAX_MODEL_DESCRIPTION_LENGTH) {
-      throw new Error(`MODEL_DESCRIPTION_TOO_LONG: A model description may contain at most ${MAX_MODEL_DESCRIPTION_LENGTH} characters.`);
-    }
-    if (description) normalized.push([id, description]);
+    if (description) normalized.push([modelId, description]);
   }
   const result = Object.fromEntries(normalized.sort(([left], [right]) => left.localeCompare(right)));
-  if (Buffer.byteLength(JSON.stringify(result), "utf8") > MAX_MODEL_DESCRIPTION_OVERRIDES_BYTES) {
+  if (utf8ByteLength(JSON.stringify(result), "Model description overrides") > MAX_MODEL_DESCRIPTION_OVERRIDES_BYTES) {
     throw new Error("MODEL_DESCRIPTIONS_LIMIT: Saved model descriptions exceed the total text limit.");
   }
   return result;

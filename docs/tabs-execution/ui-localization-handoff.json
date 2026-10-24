@@ -1,0 +1,85 @@
+{
+  "owner": "A synchronizes localization source and generated resources in all supported locales",
+  "keys": {
+    "execution.job": {
+      "en": "Execution",
+      "ko": "실행"
+    },
+    "execution.details": {
+      "en": "Execution details",
+      "ko": "실행 상세"
+    },
+    "execution.loadDetail": {
+      "en": "Load exact execution detail",
+      "ko": "정확한 실행 상세 조회"
+    },
+    "execution.cancelled": {
+      "en": "Cancelled",
+      "ko": "취소"
+    },
+    "execution.cancellationReason": {
+      "en": "Cancellation reason",
+      "ko": "취소 사유"
+    },
+    "execution.cancellationUnrecorded": {
+      "en": "Unrecorded",
+      "ko": "미기록"
+    },
+    "execution.errorUnrecorded": {
+      "en": "Error or interruption reason unrecorded",
+      "ko": "오류·중단 사유 미기록"
+    },
+    "execution.legacyPartial": {
+      "en": "An older version did not retain the original detail",
+      "ko": "이전 버전에서 원문 미보존"
+    },
+    "execution.unavailable": {
+      "en": "The linked execution is unavailable",
+      "ko": "연결된 실행을 조회할 수 없습니다"
+    },
+    "execution.systemIncident": {
+      "en": "System incident without a Job",
+      "ko": "Job 없는 시스템 사건"
+    },
+    "execution.problemUnits": {
+      "en": "Jobs {jobs} · System incidents {system} · Unavailable jobs {unavailable} · Events {events}",
+      "ko": "관련 실행 {jobs} · 시스템 사건 {system} · 조회 불가 실행 {unavailable} · 전체 사건 {events}"
+    },
+    "execution.historyGrouped": {
+      "en": "Execution history (legacy Agent groups)",
+      "ko": "실행 기록(구형 Agent 묶음)"
+    },
+    "execution.changed": {
+      "en": "Execution content changed. Refresh the list.",
+      "ko": "실행 내용이 변경되었습니다. 목록을 새로고침하세요."
+    },
+    "execution.systemAndUnavailable": {
+      "en": "System {system} · Unavailable {unavailable}",
+      "ko": "시스템 {system} · 조회 불가 {unavailable}"
+    },
+    "execution.count": {
+      "en": "{count} executions",
+      "ko": "실행 {count}개"
+    },
+    "execution.cancellationRequestedAt": {
+      "en": "Cancellation requested: {time}",
+      "ko": "취소 요청: {time}"
+    },
+    "execution.legacyIncidentUnits": {
+      "en": "Legacy event count: {events}. Exact Job totals are unavailable.",
+      "ko": "구형 사건 수 {events}개. 정확한 Job 집계는 제공되지 않았습니다."
+    }
+  },
+  "cardDetailRoute": {
+    "confirmed": "codex_ui_read view dashboard-execution",
+    "inputs": [
+      "scopeId",
+      "jobId",
+      "expectedExecutionRevision",
+      "expectedPolicyRevision",
+      "widgetInstanceId",
+      "scope"
+    ],
+    "source": "A implementation register/readDashboardExecutionDetail, read-only inspected; integration verification remains A-owned"
+  }
+}

@@ -1,0 +1,566 @@
+[0/1] Planning build
+Test Suite 'All tests' started at 2026-10-07 22:08:54.044.
+Test Suite 'CodexBridgeMacPackageTests.xctest' started at 2026-10-07 22:08:54.051.
+Test Suite 'AppPresentationTests' started at 2026-10-07 22:08:54.051.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testAppBundleProhibitsMultipleInstances]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testAppBundleProhibitsMultipleInstances]' passed (0.009 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testApplicationQuitConfirmationOnlyAppearsWhenShutdownImpactExistsOrIsUnknown]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testApplicationQuitConfirmationOnlyAppearsWhenShutdownImpactExistsOrIsUnknown]' passed (0.002 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testApplicationShutdownStopsWhenPendingSettingsCannotBeSaved]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testApplicationShutdownStopsWhenPendingSettingsCannotBeSaved]' passed (0.200 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testAuthenticationNoticeDistinguishesCheckingFromLoggedOut]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testAuthenticationNoticeDistinguishesCheckingFromLoggedOut]' passed (0.014 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testBrandMarkScalesInsideItsSquare]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testBrandMarkScalesInsideItsSquare]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testChangesDuringAuthAndInstallationReadsGetATrailingRefresh]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testChangesDuringAuthAndInstallationReadsGetATrailingRefresh]' passed (1.900 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testClosingDashboardDuringAReadKeepsHealthyMenuState]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testClosingDashboardDuringAReadKeepsHealthyMenuState]' passed (0.983 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testConfirmedStartupFailuresStillShowRecoveryGuidance]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testConfirmedStartupFailuresStillShowRecoveryGuidance]' passed (0.017 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testDashboardEnrichmentFailureRemainsVisibleUntilRecovery]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testDashboardEnrichmentFailureRemainsVisibleUntilRecovery]' passed (0.347 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testDashboardHistoryDeduplicatesOnlyActivityHeadingsAndKeepsTurnExecution]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testDashboardHistoryDeduplicatesOnlyActivityHeadingsAndKeepsTurnExecution]' passed (0.006 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testDashboardLinksAcceptOnlyExpectedLocalContractShapes]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testDashboardLinksAcceptOnlyExpectedLocalContractShapes]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testDashboardRefreshesOnOpeningButNotOnBackgroundSchedule]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testDashboardRefreshesOnOpeningButNotOnBackgroundSchedule]' passed (3.683 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testDisabledUltraRemainsSavedWithoutBeingExecutable]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testDisabledUltraRemainsSavedWithoutBeingExecutable]' passed (0.003 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testEarlierApplicationInstanceWinsSingleInstanceSelection]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testEarlierApplicationInstanceWinsSingleInstanceSelection]' passed (0.002 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testFastModeUsesEachExecutionAndDetectsNextRunChanges]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testFastModeUsesEachExecutionAndDetectsNextRunChanges]' passed (0.003 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testHealthyRuntimeDistinguishesLoadingFromAuthenticationProblems]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testHealthyRuntimeDistinguishesLoadingFromAuthenticationProblems]' passed (0.018 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testHistoricalSpeedBadgesUseOnlyRecognizedRecordedValues]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testHistoricalSpeedBadgesUseOnlyRecognizedRecordedValues]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testIssue242ArchiveDeleteSameCwdRegistrationFencesLateDashboardAndDetail]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testIssue242ArchiveDeleteSameCwdRegistrationFencesLateDashboardAndDetail]' passed (0.875 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testIssue242FailureRecoveryCancellationAndActualStop]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testIssue242FailureRecoveryCancellationAndActualStop]' passed (0.035 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testIssue242HelperRPCFailureKeepsSettingsSkillsDetailAndFencesLateReads]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testIssue242HelperRPCFailureKeepsSettingsSkillsDetailAndFencesLateReads]' passed (0.659 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testIssue242HelperRPCFailureRetainsObservationAfterGrace]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testIssue242HelperRPCFailureRetainsObservationAfterGrace]' passed (0.014 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testIssue242LateHelperHealthCannotReplaceConfirmedStop]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testIssue242LateHelperHealthCannotReplaceConfirmedStop]' passed (0.656 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testIssue242RepeatedDashboardAndHelperMethodCounts]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testIssue242RepeatedDashboardAndHelperMethodCounts]' passed (0.026 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testLateDashboardFromPreviousRemoteServerCannotOverwriteActiveServer]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testLateDashboardFromPreviousRemoteServerCannotOverwriteActiveServer]' passed (0.845 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testLifecycleNoticeUpdatesMenuHealthWithoutWaitingForPolling]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testLifecycleNoticeUpdatesMenuHealthWithoutWaitingForPolling]' passed (0.838 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testLocalTransientFailurePreservesContentAndConfirmedFailureIsUnavailable]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testLocalTransientFailurePreservesContentAndConfirmedFailureIsUnavailable]' passed (0.024 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testLoginItemApprovalOpensSystemSettingsInsteadOfReregistering]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testLoginItemApprovalOpensSystemSettingsInsteadOfReregistering]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testLoginItemRegistrationFailureKeepsActualSystemState]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testLoginItemRegistrationFailureKeepsActualSystemState]' passed (0.003 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testLoginItemRegistrationUsesSystemStateWithoutSharedSettings]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testLoginItemRegistrationUsesSystemStateWithoutSharedSettings]' passed (0.000 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testMenuBarBrandImagesAreDistinctTemplates]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testMenuBarBrandImagesAreDistinctTemplates]' passed (0.045 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testModelDescriptionEditKeepsCatalogTextLiveAndOnlySavesDeliberateChanges]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testModelDescriptionEditKeepsCatalogTextLiveAndOnlySavesDeliberateChanges]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testModelDescriptionEditRejectsKnownConflictsAndSupportsOlderServers]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testModelDescriptionEditRejectsKnownConflictsAndSupportsOlderServers]' passed (0.018 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testModelDescriptionHistoryDecodesAndLoadsThroughRemoteClient]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testModelDescriptionHistoryDecodesAndLoadsThroughRemoteClient]' passed (0.216 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testModelDescriptionSaveAndRestorePatchOnlyUserTextAndPreserveUnavailableModels]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testModelDescriptionSaveAndRestorePatchOnlyUserTextAndPreserveUnavailableModels]' passed (0.319 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testNativeLocalizationDoesNotExposeBackendStatusDiagnostics]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testNativeLocalizationDoesNotExposeBackendStatusDiagnostics]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testNativeLocalizationDoesNotExposeBridgeSkillDiagnostics]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testNativeLocalizationDoesNotExposeBridgeSkillDiagnostics]' passed (0.002 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testNativeLocalizationDoesNotTreatUnknownExplicitLocaleAsAutomatic]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testNativeLocalizationDoesNotTreatUnknownExplicitLocaleAsAutomatic]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testNativeLocalizationNormalizesRegionalLocales]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testNativeLocalizationNormalizesRegionalLocales]' passed (0.002 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testNativeLocalizationSupportsEverySharedExplicitLocale]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testNativeLocalizationSupportsEverySharedExplicitLocale]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testNativeLocalizationTreatsLegacyTunnelPollAsProgress]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testNativeLocalizationTreatsLegacyTunnelPollAsProgress]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testNativeLocalSocketFailuresExplainTheirCause]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testNativeLocalSocketFailuresExplainTheirCause]' passed (0.007 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testNativeProjectConflictsExplainRecoveryWithoutExposingDiagnostics]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testNativeProjectConflictsExplainRecoveryWithoutExposingDiagnostics]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testNativeRPCDiagnosticsAreNotLocalizationKeys]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testNativeRPCDiagnosticsAreNotLocalizationKeys]' passed (0.040 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testNativeSemanticKeyFallsBackToEnglishInsteadOfDisplayingItsIdentifier]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testNativeSemanticKeyFallsBackToEnglishInsteadOfDisplayingItsIdentifier]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testNetworkLossCannotReuseTheHelpersPreviouslyConnectedTunnelState]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testNetworkLossCannotReuseTheHelpersPreviouslyConnectedTunnelState]' passed (0.018 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testNextExecutionComparisonIgnoresPresentationOnlyFields]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testNextExecutionComparisonIgnoresPresentationOnlyFields]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testOlderDashboardFailureCannotReplaceANewerSuccessfulRead]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testOlderDashboardFailureCannotReplaceANewerSuccessfulRead]' passed (0.767 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testOlderSettingsFailureCannotReplaceNewerSuccess]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testOlderSettingsFailureCannotReplaceNewerSuccess]' passed (0.704 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testOlderSettingsSuccessCannotReplaceNewerRevision]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testOlderSettingsSuccessCannotReplaceNewerRevision]' passed (0.751 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testPairingWhileHostingRegistersServerBeforeModeSwitch]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testPairingWhileHostingRegistersServerBeforeModeSwitch]' passed (0.004 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testPrimaryAppWindowsUseStageManagerPrimaryBehavior]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testPrimaryAppWindowsUseStageManagerPrimaryBehavior]' passed (0.452 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testProblemBulkReviewCollectsEveryPageBeforeWritingAndRejectsChangedLists]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testProblemBulkReviewCollectsEveryPageBeforeWritingAndRejectsChangedLists]' passed (0.972 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testReadProjectionDelayIsPartialAndDoesNotClaimRuntimeOrWritesFailed]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testReadProjectionDelayIsPartialAndDoesNotClaimRuntimeOrWritesFailed]' passed (0.019 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testReasoningEffortLabelsUseCanonicalLowercaseValuesInEveryLocale]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testReasoningEffortLabelsUseCanonicalLowercaseValuesInEveryLocale]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testRecoveryGraceExpiresEvenWhileAStatusRequestIsStalled]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testRecoveryGraceExpiresEvenWhileAStatusRequestIsStalled]' passed (8.363 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testRemoteClientRecoversAfterTemporaryConnectionFailure]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testRemoteClientRecoversAfterTemporaryConnectionFailure]' passed (0.404 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testRemoteClientStartsWithoutLocalHelperAndQuitsWithoutRuntimeControl]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testRemoteClientStartsWithoutLocalHelperAndQuitsWithoutRuntimeControl]' passed (2.263 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testRemoteRePairingReplacesCredentialAndRemovingActiveServerClosesItsClient]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testRemoteRePairingReplacesCredentialAndRemovingActiveServerClosesItsClient]' passed (0.590 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testSettingsAutosaveAcknowledgementRebasesNewerEdits]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testSettingsAutosaveAcknowledgementRebasesNewerEdits]' passed (0.002 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testSettingsDraftDeduplicatesCatalogChoices]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testSettingsDraftDeduplicatesCatalogChoices]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testSettingsDraftDoesNotInventMissingAutomaticDefault]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testSettingsDraftDoesNotInventMissingAutomaticDefault]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testSettingsDraftIgnoresRetiredAutomaticDefaultsWithoutDirtyingPolicy]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testSettingsDraftIgnoresRetiredAutomaticDefaultsWithoutDirtyingPolicy]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testSettingsDraftPreservesUnavailableSavedSelectionUntilPolicyChanges]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testSettingsDraftPreservesUnavailableSavedSelectionUntilPolicyChanges]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testSettingsDraftPreservesUnknownSpeedWhenRebased]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testSettingsDraftPreservesUnknownSpeedWhenRebased]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testSettingsDraftTracksExperimentalDirectResultDelivery]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testSettingsDraftTracksExperimentalDirectResultDelivery]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testSettingsReadCannotReplaceCompletedSave]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testSettingsReadCannotReplaceCompletedSave]' passed (1.372 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testSettingsRefreshPreservesDirtyDraftUntilExplicitReload]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testSettingsRefreshPreservesDirtyDraftUntilExplicitReload]' passed (0.002 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testSlowDetailsCannotBlockHealthAndConcurrentChecksAreCoalesced]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testSlowDetailsCannotBlockHealthAndConcurrentChecksAreCoalesced]' passed (1.005 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testSpeedPickerAutosaveOnlyChangesScopeAfterChoosingASpeed]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testSpeedPickerAutosaveOnlyChangesScopeAfterChoosingASpeed]' passed (0.994 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testSpeedPickerKeepsCompatibilityStateOutOfItsChoices]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testSpeedPickerKeepsCompatibilityStateOutOfItsChoices]' passed (0.004 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testStartupAndTunnelReadinessUseCheckingHealthInsteadOfUnavailable]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testStartupAndTunnelReadinessUseCheckingHealthInsteadOfUnavailable]' passed (0.017 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testStateStorageFailureIsDistinctFromAnUnconfirmedResponse]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testStateStorageFailureIsDistinctFromAnUnconfirmedResponse]' passed (0.014 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testTimedOutBridgeObservationRetainsLastDashboardAsUnconfirmed]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testTimedOutBridgeObservationRetainsLastDashboardAsUnconfirmed]' passed (0.016 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testTunnelProbeFailureGetsGraceButRuntimeExitDoesNot]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testTunnelProbeFailureGetsGraceButRuntimeExitDoesNot]' passed (0.014 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testTurnSpeedRequestsStayDistinctFromConfirmationAndConversationScope]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testTurnSpeedRequestsStayDistinctFromConfirmationAndConversationScope]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testUltraOffAutosavePreservesAutomaticChoicesAndRequiresFixedReplacement]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testUltraOffAutosavePreservesAutomaticChoicesAndRequiresFixedReplacement]' passed (0.462 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testUnchangedSettingsDraftDoesNotEnterAutosaveQueue]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testUnchangedSettingsDraftDoesNotEnterAutosaveQueue]' passed (0.017 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testW3ProgressDoesNotClaimAndReadyDrainsTwentyFiveInDebouncedBatches]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testW3ProgressDoesNotClaimAndReadyDrainsTwentyFiveInDebouncedBatches]' passed (2.287 seconds).
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testWorkProblemsStayInDashboardWithoutMakingTheBridgeUnhealthy]' started.
+Test Case '-[CodexBridgeKitTests.AppPresentationTests testWorkProblemsStayInDashboardWithoutMakingTheBridgeUnhealthy]' passed (0.040 seconds).
+Test Suite 'AppPresentationTests' passed at 2026-10-07 22:09:27.462.
+	 Executed 79 tests, with 0 failures (0 unexpected) in 33.386 (33.410) seconds
+Test Suite 'BrandIconTests' started at 2026-10-07 22:09:27.462.
+Test Case '-[CodexBridgeKitTests.BrandIconTests testMenuBarIconsKeepTransparentMarginsAtBothDisplayScales]' started.
+Test Case '-[CodexBridgeKitTests.BrandIconTests testMenuBarIconsKeepTransparentMarginsAtBothDisplayScales]' passed (0.025 seconds).
+Test Suite 'BrandIconTests' passed at 2026-10-07 22:09:27.488.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.025 (0.026) seconds
+Test Suite 'BridgeModelsTests' started at 2026-10-07 22:09:27.488.
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testBridgeProjectDecodesTheServerProjectContract]' started.
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testBridgeProjectDecodesTheServerProjectContract]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testBridgeSkillMutationAndVersionContractsPreserveFreeformMarkdown]' started.
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testBridgeSkillMutationAndVersionContractsPreserveFreeformMarkdown]' passed (0.005 seconds).
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testDashboardLoadMoreEvictsRowsThatBecomeActive]' started.
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testDashboardLoadMoreEvictsRowsThatBecomeActive]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testDashboardLoadMoreRetainsIndependentPageCaches]' started.
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testDashboardLoadMoreRetainsIndependentPageCaches]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testDisplayFormatParsesBackendTimestampsWithAndWithoutFractions]' started.
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testDisplayFormatParsesBackendTimestampsWithAndWithoutFractions]' passed (0.004 seconds).
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testDisplayFormatUsesRequestedLocaleForDurations]' started.
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testDisplayFormatUsesRequestedLocaleForDurations]' passed (0.017 seconds).
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testHelperCompatibilityRequiresProtocolBuildAndNativeSetupCapabilities]' started.
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testHelperCompatibilityRequiresProtocolBuildAndNativeSetupCapabilities]' passed (0.002 seconds).
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testHelperStatusDoesNotRequireCredentialValues]' started.
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testHelperStatusDoesNotRequireCredentialValues]' passed (0.000 seconds).
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testNativeCompletionNotificationDecodesOnlyItsOpaqueReceipt]' started.
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testNativeCompletionNotificationDecodesOnlyItsOpaqueReceipt]' passed (0.000 seconds).
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testPagedDashboardResponseKeepsUsageOnlyWithinTheSameDisplayContext]' started.
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testPagedDashboardResponseKeepsUsageOnlyWithinTheSameDisplayContext]' passed (0.000 seconds).
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testProjectArchiveIntentAndUnresolvedReasonsDecodeWithoutCompletionMarker]' started.
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testProjectArchiveIntentAndUnresolvedReasonsDecodeWithoutCompletionMarker]' passed (0.000 seconds).
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testProjectOperationsUseExplicitDeltaShapes]' started.
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testProjectOperationsUseExplicitDeltaShapes]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testProjectRecoveryCapabilitiesPreserveIdentityAndAcceptOlderServers]' started.
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testProjectRecoveryCapabilitiesPreserveIdentityAndAcceptOlderServers]' passed (0.000 seconds).
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testSettingsMutationKeepsIndependentRevisionsAndNestedPatch]' started.
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testSettingsMutationKeepsIndependentRevisionsAndNestedPatch]' passed (0.000 seconds).
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testSettingsPatchOmitsUntouchedModelPolicy]' started.
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testSettingsPatchOmitsUntouchedModelPolicy]' passed (0.000 seconds).
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testSettingsPatchSendsAnExplicitTurnSpeedAlongsideLegacyCompatibility]' started.
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testSettingsPatchSendsAnExplicitTurnSpeedAlongsideLegacyCompatibility]' passed (0.000 seconds).
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testTunnelSetupDiscoveryDecodesOnlyRedactedCandidateMetadata]' started.
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testTunnelSetupDiscoveryDecodesOnlyRedactedCandidateMetadata]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testTunnelSetupInputParserExtractsBothValuesFromOnePaste]' started.
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testTunnelSetupInputParserExtractsBothValuesFromOnePaste]' passed (0.002 seconds).
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testUnavailableAccountUsageKeepsTheNewestConfirmedObservation]' started.
+Test Case '-[CodexBridgeKitTests.BridgeModelsTests testUnavailableAccountUsageKeepsTheNewestConfirmedObservation]' passed (0.005 seconds).
+Test Suite 'BridgeModelsTests' passed at 2026-10-07 22:09:27.532.
+	 Executed 19 tests, with 0 failures (0 unexpected) in 0.041 (0.044) seconds
+Test Suite 'CodexRuntimeModelsTests' started at 2026-10-07 22:09:27.532.
+Test Case '-[CodexBridgeKitTests.CodexRuntimeModelsTests testAccountGroupingRequiresKnownMatchingIdentity]' started.
+Test Case '-[CodexBridgeKitTests.CodexRuntimeModelsTests testAccountGroupingRequiresKnownMatchingIdentity]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.CodexRuntimeModelsTests testAPIUnknownCostsDoNotDecodeAsZeroOrAsPlanQuota]' started.
+Test Case '-[CodexBridgeKitTests.CodexRuntimeModelsTests testAPIUnknownCostsDoNotDecodeAsZeroOrAsPlanQuota]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.CodexRuntimeModelsTests testAuthSelectionDecodesWorkspaceAndBillingEvidenceWithoutBreakingOlderSnapshots]' started.
+Test Case '-[CodexBridgeKitTests.CodexRuntimeModelsTests testAuthSelectionDecodesWorkspaceAndBillingEvidenceWithoutBreakingOlderSnapshots]' passed (0.002 seconds).
+Test Case '-[CodexBridgeKitTests.CodexRuntimeModelsTests testCreditBalanceIsNotPresentedAsSpendingOrDisplayedBeforePlanExhaustion]' started.
+Test Case '-[CodexBridgeKitTests.CodexRuntimeModelsTests testCreditBalanceIsNotPresentedAsSpendingOrDisplayedBeforePlanExhaustion]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.CodexRuntimeModelsTests testCreditsAndResetCouponsRemainSeparateAndVerifiedZeroCostsRemainZero]' started.
+Test Case '-[CodexBridgeKitTests.CodexRuntimeModelsTests testCreditsAndResetCouponsRemainSeparateAndVerifiedZeroCostsRemainZero]' passed (0.000 seconds).
+Test Case '-[CodexBridgeKitTests.CodexRuntimeModelsTests testMenuKeepsCodexWeeklyUsageWithUnrelatedWindows]' started.
+Test Case '-[CodexBridgeKitTests.CodexRuntimeModelsTests testMenuKeepsCodexWeeklyUsageWithUnrelatedWindows]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.CodexRuntimeModelsTests testMenuUpdateRequiresManagedSelectionAvailableUpdateAndNotifications]' started.
+Test Case '-[CodexBridgeKitTests.CodexRuntimeModelsTests testMenuUpdateRequiresManagedSelectionAvailableUpdateAndNotifications]' passed (0.002 seconds).
+Test Case '-[CodexBridgeKitTests.CodexRuntimeModelsTests testOnlyActiveInstallationPhasesShowProgress]' started.
+Test Case '-[CodexBridgeKitTests.CodexRuntimeModelsTests testOnlyActiveInstallationPhasesShowProgress]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.CodexRuntimeModelsTests testPreviouslyUsedCodexHomeCanBeSelectedWithoutSubmittingAPath]' started.
+Test Case '-[CodexBridgeKitTests.CodexRuntimeModelsTests testPreviouslyUsedCodexHomeCanBeSelectedWithoutSubmittingAPath]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.CodexRuntimeModelsTests testSettingsPollsFastOnlyForVisibleInstallationProgress]' started.
+Test Case '-[CodexBridgeKitTests.CodexRuntimeModelsTests testSettingsPollsFastOnlyForVisibleInstallationProgress]' passed (0.000 seconds).
+Test Suite 'CodexRuntimeModelsTests' passed at 2026-10-07 22:09:27.543.
+	 Executed 10 tests, with 0 failures (0 unexpected) in 0.010 (0.012) seconds
+Test Suite 'CompletionNotificationWakeTests' started at 2026-10-07 22:09:27.543.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationWakeTests testDuplicateOutOfOrderReconnectEpochAndAppRestart]' started.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationWakeTests testDuplicateOutOfOrderReconnectEpochAndAppRestart]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.CompletionNotificationWakeTests testLegacyUnsupportedEventsAndDueRetryOrLease]' started.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationWakeTests testLegacyUnsupportedEventsAndDueRetryOrLease]' passed (0.002 seconds).
+Test Case '-[CodexBridgeKitTests.CompletionNotificationWakeTests testProgressAndSettingsNeverWakeClaimsAndLostEventsUseBoundedRecovery]' started.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationWakeTests testProgressAndSettingsNeverWakeClaimsAndLostEventsUseBoundedRecovery]' passed (0.024 seconds).
+Test Suite 'CompletionNotificationWakeTests' passed at 2026-10-07 22:09:27.571.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.027 (0.027) seconds
+Test Suite 'CompletionNotificationsTests' started at 2026-10-07 22:09:27.571.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testDeferredRetryPreflightDoesNotClaimAndRetainsDeadline]' started.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testDeferredRetryPreflightDoesNotClaimAndRetainsDeadline]' passed (0.012 seconds).
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testDeliveredButAckLostReleasesAndUsesSameIdentifierOnRecovery]' started.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testDeliveredButAckLostReleasesAndUsesSameIdentifierOnRecovery]' passed (0.009 seconds).
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testFailedDeliveryReleasesTheClaimForRetry]' started.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testFailedDeliveryReleasesTheClaimForRetry]' passed (0.005 seconds).
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testIssue242RepeatedEmptyClaimsAndPermissionGate]' started.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testIssue242RepeatedEmptyClaimsAndPermissionGate]' passed (0.006 seconds).
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testPermissionRevokedDuringPreflightDoesNotClaim]' started.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testPermissionRevokedDuringPreflightDoesNotClaim]' passed (0.334 seconds).
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testSingleflightAndGenerationFenceBeforeClaim]' started.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testSingleflightAndGenerationFenceBeforeClaim]' passed (0.126 seconds).
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testSuccessfulDeliveryClaimsAndAcknowledgesOpaqueEvents]' started.
+Test Case '-[CodexBridgeKitTests.CompletionNotificationsTests testSuccessfulDeliveryClaimsAndAcknowledgesOpaqueEvents]' passed (0.007 seconds).
+Test Suite 'CompletionNotificationsTests' passed at 2026-10-07 22:09:28.071.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.498 (0.500) seconds
+Test Suite 'ConnectionObservationRecoveryTests' started at 2026-10-07 22:09:28.071.
+Test Case '-[CodexBridgeKitTests.ConnectionObservationRecoveryTests testDeferredMenuReadCompletesAfterLocalConnectionRecovery]' started.
+Test Case '-[CodexBridgeKitTests.ConnectionObservationRecoveryTests testDeferredMenuReadCompletesAfterLocalConnectionRecovery]' passed (3.800 seconds).
+Test Case '-[CodexBridgeKitTests.ConnectionObservationRecoveryTests testDeferredMenuReadCompletesAfterRemoteConnectionRecovery]' started.
+Test Case '-[CodexBridgeKitTests.ConnectionObservationRecoveryTests testDeferredMenuReadCompletesAfterRemoteConnectionRecovery]' passed (1.293 seconds).
+Test Case '-[CodexBridgeKitTests.ConnectionObservationRecoveryTests testExplicitWindowEntryRefreshesDashboardWithAnExistingQuietSubscription]' started.
+Test Case '-[CodexBridgeKitTests.ConnectionObservationRecoveryTests testExplicitWindowEntryRefreshesDashboardWithAnExistingQuietSubscription]' passed (3.952 seconds).
+Test Case '-[CodexBridgeKitTests.ConnectionObservationRecoveryTests testFailedObservationDoesNotClaimTheServerStopped]' started.
+Test Case '-[CodexBridgeKitTests.ConnectionObservationRecoveryTests testFailedObservationDoesNotClaimTheServerStopped]' passed (0.010 seconds).
+Test Case '-[CodexBridgeKitTests.ConnectionObservationRecoveryTests testLateEnrichmentNoticeStaysCachedUntilExplicitWindowRefresh]' started.
+Test Case '-[CodexBridgeKitTests.ConnectionObservationRecoveryTests testLateEnrichmentNoticeStaysCachedUntilExplicitWindowRefresh]' passed (2.759 seconds).
+Test Case '-[CodexBridgeKitTests.ConnectionObservationRecoveryTests testObservationGapReschedulesTheExpiryForTheFreshWindow]' started.
+Test Case '-[CodexBridgeKitTests.ConnectionObservationRecoveryTests testObservationGapReschedulesTheExpiryForTheFreshWindow]' passed (8.495 seconds).
+Test Case '-[CodexBridgeKitTests.ConnectionObservationRecoveryTests testSleepKeepsMenuCheckingUntilAFreshObservation]' started.
+Test Case '-[CodexBridgeKitTests.ConnectionObservationRecoveryTests testSleepKeepsMenuCheckingUntilAFreshObservation]' passed (0.022 seconds).
+Test Case '-[CodexBridgeKitTests.ConnectionObservationRecoveryTests testStructuralRefreshPreservesAnUnfinishedEnrichment]' started.
+Test Case '-[CodexBridgeKitTests.ConnectionObservationRecoveryTests testStructuralRefreshPreservesAnUnfinishedEnrichment]' passed (1.796 seconds).
+Test Case '-[CodexBridgeKitTests.ConnectionObservationRecoveryTests testWindowEntryRecoveryRefreshesDashboardImmediately]' started.
+Test Case '-[CodexBridgeKitTests.ConnectionObservationRecoveryTests testWindowEntryRecoveryRefreshesDashboardImmediately]' passed (2.458 seconds).
+Test Suite 'ConnectionObservationRecoveryTests' passed at 2026-10-07 22:09:52.660.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 24.585 (24.588) seconds
+Test Suite 'ConnectionRecoveryWindowTests' started at 2026-10-07 22:09:52.660.
+Test Case '-[CodexBridgeKitTests.ConnectionRecoveryWindowTests testConfirmedProcessExitDoesNotWaitForRecoveryGrace]' started.
+Test Case '-[CodexBridgeKitTests.ConnectionRecoveryWindowTests testConfirmedProcessExitDoesNotWaitForRecoveryGrace]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.ConnectionRecoveryWindowTests testOldExpiryCannotEndANewRecoveryWindow]' started.
+Test Case '-[CodexBridgeKitTests.ConnectionRecoveryWindowTests testOldExpiryCannotEndANewRecoveryWindow]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.ConnectionRecoveryWindowTests testRepeatedOrCachedFailuresCannotExtendRecoveryIndefinitely]' started.
+Test Case '-[CodexBridgeKitTests.ConnectionRecoveryWindowTests testRepeatedOrCachedFailuresCannotExtendRecoveryIndefinitely]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.ConnectionRecoveryWindowTests testTransientFailureRecoversWithoutDeclaringAnOutage]' started.
+Test Case '-[CodexBridgeKitTests.ConnectionRecoveryWindowTests testTransientFailureRecoversWithoutDeclaringAnOutage]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.ConnectionRecoveryWindowTests testWakeAndClockChangesStartAFreshBoundedWindow]' started.
+Test Case '-[CodexBridgeKitTests.ConnectionRecoveryWindowTests testWakeAndClockChangesStartAFreshBoundedWindow]' passed (0.001 seconds).
+Test Suite 'ConnectionRecoveryWindowTests' passed at 2026-10-07 22:09:52.665.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.004 (0.005) seconds
+Test Suite 'DashboardPopoverTests' started at 2026-10-07 22:09:52.665.
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testAnimatedNativePopoverKeepsUsageFrameThroughLoadMoreAndReopen]' started.
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testAnimatedNativePopoverKeepsUsageFrameThroughLoadMoreAndReopen]' passed (14.692 seconds).
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testAppLaunchCanObserveAnExistingOperationWithoutAnIdentityError]' started.
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testAppLaunchCanObserveAnExistingOperationWithoutAnIdentityError]' passed (0.219 seconds).
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testAppLaunchSubmitsStartOnceAndLaterBootstrapDoesNotUndoAManualStop]' started.
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testAppLaunchSubmitsStartOnceAndLaterBootstrapDoesNotUndoAManualStop]' passed (0.229 seconds).
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testCachedHistoryIsDiscardedWhenTheSameAgentRowRepresentsANewExecution]' started.
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testCachedHistoryIsDiscardedWhenTheSameAgentRowRepresentsANewExecution]' passed (0.131 seconds).
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testDashboardLongListAndEmptyPanelResizeTheNativePopoverContent]' started.
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testDashboardLongListAndEmptyPanelResizeTheNativePopoverContent]' passed (20.736 seconds).
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testDetailHeightFitsEmptyShortAndLongListsToTheOwningScreen]' started.
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testDetailHeightFitsEmptyShortAndLongListsToTheOwningScreen]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testFailedLaunchKeepsTheSameRequestIdentityForAnExplicitRetry]' started.
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testFailedLaunchKeepsTheSameRequestIdentityForAnExplicitRetry]' passed (0.155 seconds).
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testHistoryExpansionKeepsTheNativePopoverAndHeaderAnchoredAtTheTop]' started.
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testHistoryExpansionKeepsTheNativePopoverAndHeaderAnchoredAtTheTop]' passed (8.323 seconds).
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testHistoryLoadingAndLoadedListKeepTheSameExpandedViewport]' started.
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testHistoryLoadingAndLoadedListKeepTheSameExpandedViewport]' passed (11.243 seconds).
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testLateHistoryResultCannotChangeTheLocallySelectedPanel]' started.
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testLateHistoryResultCannotChangeTheLocallySelectedPanel]' passed (0.468 seconds).
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testLoadMoreRecentAndIdleRetainUsageFromTheActualPagedReply]' started.
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testLoadMoreRecentAndIdleRetainUsageFromTheActualPagedReply]' passed (0.197 seconds).
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testOpeningDuringStartupCoalescesIntoOneStagedDashboardRefresh]' started.
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testOpeningDuringStartupCoalescesIntoOneStagedDashboardRefresh]' passed (0.732 seconds).
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testStaleDeferredHistoryRefreshesInsteadOfAttachingToANewExecution]' started.
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testStaleDeferredHistoryRefreshesInsteadOfAttachingToANewExecution]' passed (0.156 seconds).
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testStatusChangesStayLocalWhileReopeningRefreshesAndSharesPendingEnrichment]' started.
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testStatusChangesStayLocalWhileReopeningRefreshesAndSharesPendingEnrichment]' passed (0.817 seconds).
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testStatusPanelsUseTheLoadedSnapshotAndHistoryLoadsOnlyWhenOpened]' started.
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testStatusPanelsUseTheLoadedSnapshotAndHistoryLoadsOnlyWhenOpened]' passed (0.162 seconds).
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testStatusRowLoadsItsEarlierExecutionsOnlyWhenExpanded]' started.
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testStatusRowLoadsItsEarlierExecutionsOnlyWhenExpanded]' passed (0.167 seconds).
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testUsageRemainsInTheNativePopoverAcrossMissingDelayedAndFailedReplies]' started.
+Test Case '-[CodexBridgeKitTests.DashboardPopoverTests testUsageRemainsInTheNativePopoverAcrossMissingDelayedAndFailedReplies]' passed (21.281 seconds).
+Test Suite 'DashboardPopoverTests' passed at 2026-10-07 22:11:12.381.
+	 Executed 17 tests, with 0 failures (0 unexpected) in 79.708 (79.716) seconds
+Test Suite 'DashboardPopoverWindowTests' started at 2026-10-07 22:11:12.382.
+Test Case '-[CodexBridgeKitTests.DashboardPopoverWindowTests testContentSizePreferenceAcceptsTheLatestValidMeasurement]' started.
+Test Case '-[CodexBridgeKitTests.DashboardPopoverWindowTests testContentSizePreferenceAcceptsTheLatestValidMeasurement]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.DashboardPopoverWindowTests testNativePopoverCannotCollapseWhileTheModelIsStillStarting]' started.
+Test Case '-[CodexBridgeKitTests.DashboardPopoverWindowTests testNativePopoverCannotCollapseWhileTheModelIsStillStarting]' passed (1.770 seconds).
+Test Case '-[CodexBridgeKitTests.DashboardPopoverWindowTests testScreenMeasurementIsStableAndDoesNotMutateTheNativeHostWindow]' started.
+Test Case '-[CodexBridgeKitTests.DashboardPopoverWindowTests testScreenMeasurementIsStableAndDoesNotMutateTheNativeHostWindow]' passed (1.815 seconds).
+Test Suite 'DashboardPopoverWindowTests' passed at 2026-10-07 22:11:15.977.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 3.586 (3.596) seconds
+Test Suite 'HelperBootstrapTests' started at 2026-10-07 22:11:15.977.
+Test Case '-[CodexBridgeKitTests.HelperBootstrapTests testFailedBootoutRestoresDefinitionWithoutStartingReplacement]' started.
+Test Case '-[CodexBridgeKitTests.HelperBootstrapTests testFailedBootoutRestoresDefinitionWithoutStartingReplacement]' passed (0.020 seconds).
+Test Case '-[CodexBridgeKitTests.HelperBootstrapTests testFailedFreshInstallRemovesUnusableDefinition]' started.
+Test Case '-[CodexBridgeKitTests.HelperBootstrapTests testFailedFreshInstallRemovesUnusableDefinition]' passed (0.013 seconds).
+Test Case '-[CodexBridgeKitTests.HelperBootstrapTests testFailedReplacementKickstartUnloadsNewServiceBeforeRollback]' started.
+Test Case '-[CodexBridgeKitTests.HelperBootstrapTests testFailedReplacementKickstartUnloadsNewServiceBeforeRollback]' passed (0.011 seconds).
+Test Case '-[CodexBridgeKitTests.HelperBootstrapTests testFailedReplacementRestoresPreviousDefinitionAndService]' started.
+Test Case '-[CodexBridgeKitTests.HelperBootstrapTests testFailedReplacementRestoresPreviousDefinitionAndService]' passed (0.012 seconds).
+Test Case '-[CodexBridgeKitTests.HelperBootstrapTests testLaunchAgentUsesPersistentConfigurationWorkingDirectory]' started.
+Test Case '-[CodexBridgeKitTests.HelperBootstrapTests testLaunchAgentUsesPersistentConfigurationWorkingDirectory]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.HelperBootstrapTests testReadinessFailureRollsBackPreviousDefinitionAndService]' started.
+Test Case '-[CodexBridgeKitTests.HelperBootstrapTests testReadinessFailureRollsBackPreviousDefinitionAndService]' passed (0.012 seconds).
+Test Case '-[CodexBridgeKitTests.HelperBootstrapTests testReplacementRetriesTransientLaunchdBootstrapRace]' started.
+Test Case '-[CodexBridgeKitTests.HelperBootstrapTests testReplacementRetriesTransientLaunchdBootstrapRace]' passed (0.302 seconds).
+Test Case '-[CodexBridgeKitTests.HelperBootstrapTests testStopLaunchAgentBootsOutAndVerifiesServiceRemoval]' started.
+Test Case '-[CodexBridgeKitTests.HelperBootstrapTests testStopLaunchAgentBootsOutAndVerifiesServiceRemoval]' passed (0.002 seconds).
+Test Case '-[CodexBridgeKitTests.HelperBootstrapTests testStopLaunchAgentReportsBootoutFailureWithoutClaimingShutdown]' started.
+Test Case '-[CodexBridgeKitTests.HelperBootstrapTests testStopLaunchAgentReportsBootoutFailureWithoutClaimingShutdown]' passed (0.002 seconds).
+Test Case '-[CodexBridgeKitTests.HelperBootstrapTests testStopLaunchAgentTreatsAlreadyMissingServiceAsStopped]' started.
+Test Case '-[CodexBridgeKitTests.HelperBootstrapTests testStopLaunchAgentTreatsAlreadyMissingServiceAsStopped]' passed (0.001 seconds).
+Test Suite 'HelperBootstrapTests' passed at 2026-10-07 22:11:16.358.
+	 Executed 10 tests, with 0 failures (0 unexpected) in 0.375 (0.381) seconds
+Test Suite 'LiveCompanionTests' started at 2026-10-07 22:11:16.358.
+Test Case '-[CodexBridgeKitTests.LiveCompanionTests testLiveDashboardAndSettingsContractsWhenRequested]' started.
+/Volumes/Data/Dev/codex-mcp-bridge-issue-242-w3-completion/macos/Tests/CodexBridgeKitTests/LiveCompanionTests.swift:10: -[CodexBridgeKitTests.LiveCompanionTests testLiveDashboardAndSettingsContractsWhenRequested] : Test skipped - Set CODEX_MCP_BRIDGE_LIVE_COMPANION_SOCKET for the opt-in live contract smoke test.
+Test Case '-[CodexBridgeKitTests.LiveCompanionTests testLiveDashboardAndSettingsContractsWhenRequested]' skipped (0.012 seconds).
+Test Suite 'LiveCompanionTests' passed at 2026-10-07 22:11:16.372.
+	 Executed 1 test, with 1 test skipped and 0 failures (0 unexpected) in 0.012 (0.014) seconds
+Test Suite 'OperationalNotificationsTests' started at 2026-10-07 22:11:16.372.
+Test Case '-[CodexBridgeKitTests.OperationalNotificationsTests testCompletionNotificationContentIsGenericAndContainsNoTaskData]' started.
+Test Case '-[CodexBridgeKitTests.OperationalNotificationsTests testCompletionNotificationContentIsGenericAndContainsNoTaskData]' passed (0.004 seconds).
+Test Case '-[CodexBridgeKitTests.OperationalNotificationsTests testDeniedPermissionPreferencesDeliveryFailureAndPersistence]' started.
+Test Case '-[CodexBridgeKitTests.OperationalNotificationsTests testDeniedPermissionPreferencesDeliveryFailureAndPersistence]' passed (0.062 seconds).
+Test Case '-[CodexBridgeKitTests.OperationalNotificationsTests testGraceTransientRecoveryAndRestartDedupe]' started.
+Test Case '-[CodexBridgeKitTests.OperationalNotificationsTests testGraceTransientRecoveryAndRestartDedupe]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.OperationalNotificationsTests testOperationalClassificationIgnoresTaskEventsAndManualOperations]' started.
+Test Case '-[CodexBridgeKitTests.OperationalNotificationsTests testOperationalClassificationIgnoresTaskEventsAndManualOperations]' passed (0.034 seconds).
+Test Case '-[CodexBridgeKitTests.OperationalNotificationsTests testPermissionRefreshRecognizesAuthorizationWithoutPromptingAgain]' started.
+Test Case '-[CodexBridgeKitTests.OperationalNotificationsTests testPermissionRefreshRecognizesAuthorizationWithoutPromptingAgain]' passed (0.030 seconds).
+Test Case '-[CodexBridgeKitTests.OperationalNotificationsTests testPrivateErrorsBecomeFixedCopyAndSafeSettingsDestinations]' started.
+Test Case '-[CodexBridgeKitTests.OperationalNotificationsTests testPrivateErrorsBecomeFixedCopyAndSafeSettingsDestinations]' passed (0.004 seconds).
+Test Case '-[CodexBridgeKitTests.OperationalNotificationsTests testReadinessBannerWaitsForGraceAndClearsAsSoonAsConnectionRecovers]' started.
+Test Case '-[CodexBridgeKitTests.OperationalNotificationsTests testReadinessBannerWaitsForGraceAndClearsAsSoonAsConnectionRecovers]' passed (0.037 seconds).
+Test Case '-[CodexBridgeKitTests.OperationalNotificationsTests testRestartAndUnknownObservationCannotCountAsContinuousRecovery]' started.
+Test Case '-[CodexBridgeKitTests.OperationalNotificationsTests testRestartAndUnknownObservationCannotCountAsContinuousRecovery]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.OperationalNotificationsTests testSuspendedPollingCannotCountAsContinuousRecovery]' started.
+Test Case '-[CodexBridgeKitTests.OperationalNotificationsTests testSuspendedPollingCannotCountAsContinuousRecovery]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.OperationalNotificationsTests testSystemPermissionPreservesTheInitialAuthorizationPrompt]' started.
+Test Case '-[CodexBridgeKitTests.OperationalNotificationsTests testSystemPermissionPreservesTheInitialAuthorizationPrompt]' passed (0.001 seconds).
+Test Suite 'OperationalNotificationsTests' passed at 2026-10-07 22:11:16.552.
+	 Executed 10 tests, with 0 failures (0 unexpected) in 0.176 (0.180) seconds
+Test Suite 'RemoteConnectionTests' started at 2026-10-07 22:11:16.552.
+Test Case '-[CodexBridgeKitTests.RemoteConnectionTests testLivePinnedPairingWhenRequested]' started.
+/Volumes/Data/Dev/codex-mcp-bridge-issue-242-w3-completion/macos/Tests/CodexBridgeKitTests/RemoteConnectionTests.swift:14: -[CodexBridgeKitTests.RemoteConnectionTests testLivePinnedPairingWhenRequested] : Test skipped - Set CODEX_MCP_BRIDGE_LIVE_REMOTE_INVITATION for the opt-in HTTPS pairing smoke test.
+Test Case '-[CodexBridgeKitTests.RemoteConnectionTests testLivePinnedPairingWhenRequested]' skipped (0.002 seconds).
+Test Case '-[CodexBridgeKitTests.RemoteConnectionTests testPairingInvitationCarriesPinnedServerIdentityAndExpires]' started.
+Test Case '-[CodexBridgeKitTests.RemoteConnectionTests testPairingInvitationCarriesPinnedServerIdentityAndExpires]' passed (0.012 seconds).
+Test Case '-[CodexBridgeKitTests.RemoteConnectionTests testProfilePreferencesContainNoDeviceCredential]' started.
+Test Case '-[CodexBridgeKitTests.RemoteConnectionTests testProfilePreferencesContainNoDeviceCredential]' passed (0.013 seconds).
+Test Case '-[CodexBridgeKitTests.RemoteConnectionTests testRemoteHelloRejectsServerAndCertificateReplacement]' started.
+Test Case '-[CodexBridgeKitTests.RemoteConnectionTests testRemoteHelloRejectsServerAndCertificateReplacement]' passed (0.005 seconds).
+Test Case '-[CodexBridgeKitTests.RemoteConnectionTests testRemoteTransportUsesTheBridgeSkillEnvelopeLimit]' started.
+Test Case '-[CodexBridgeKitTests.RemoteConnectionTests testRemoteTransportUsesTheBridgeSkillEnvelopeLimit]' passed (0.001 seconds).
+Test Suite 'RemoteConnectionTests' passed at 2026-10-07 22:11:16.590.
+	 Executed 5 tests, with 1 test skipped and 0 failures (0 unexpected) in 0.034 (0.039) seconds
+Test Suite 'RuntimeLifecycleTests' started at 2026-10-07 22:11:16.591.
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testAppReentryFinishesModePersistenceAfterVerifiedHelperExit]' started.
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testAppReentryFinishesModePersistenceAfterVerifiedHelperExit]' passed (0.375 seconds).
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testCancellationWinningAtAcknowledgementDoesNotBecomeAHandoffFailure]' started.
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testCancellationWinningAtAcknowledgementDoesNotBecomeAHandoffFailure]' passed (0.348 seconds).
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testCancelledHandoffDoesNotWriteALateFailureOrStopTheHelper]' started.
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testCancelledHandoffDoesNotWriteALateFailureOrStopTheHelper]' passed (0.475 seconds).
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testFailedExternalShutdownDoesNotReportCompletionOrQuit]' started.
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testFailedExternalShutdownDoesNotReportCompletionOrQuit]' passed (0.454 seconds).
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testFailedReservationNoticeRendersRecoveryReason]' started.
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testFailedReservationNoticeRendersRecoveryReason]' passed (0.409 seconds).
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testFailureBeforeHandoffAcknowledgementRecordsCauseAndCanBeRetried]' started.
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testFailureBeforeHandoffAcknowledgementRecordsCauseAndCanBeRetried]' passed (0.389 seconds).
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testFailureCopyIncludesCauseAndActualConfigurationRecoveryOutcome]' started.
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testFailureCopyIncludesCauseAndActualConfigurationRecoveryOutcome]' passed (0.002 seconds).
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testHandoffFailurePersistsOnlyTheErrorCategory]' started.
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testHandoffFailurePersistsOnlyTheErrorCategory]' passed (0.400 seconds).
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testHelperReplacementReusesReservationAndClaimsOnlyWhenReady]' started.
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testHelperReplacementReusesReservationAndClaimsOnlyWhenReady]' passed (0.307 seconds).
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testIntentionalTransitionShowsCheckingInsteadOfUnavailable]' started.
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testIntentionalTransitionShowsCheckingInsteadOfUnavailable]' passed (0.312 seconds).
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testLostReceiptRetriesTheSameReservationID]' started.
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testLostReceiptRetriesTheSameReservationID]' passed (0.271 seconds).
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testNewAppModelRecoversThePendingReservationFromHelperStatus]' started.
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testNewAppModelRecoversThePendingReservationFromHelperStatus]' passed (0.297 seconds).
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testQuitWaitsForVerifiedExternalShutdownAfterTheHandoff]' started.
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testQuitWaitsForVerifiedExternalShutdownAfterTheHandoff]' passed (0.402 seconds).
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testRemoteModeIsCommittedOnlyAfterLocalOwnershipIsReleased]' started.
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testRemoteModeIsCommittedOnlyAfterLocalOwnershipIsReleased]' passed (0.645 seconds).
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testReservationNoticeRendersAtPopoverWidth]' started.
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testReservationNoticeRendersAtPopoverWidth]' passed (0.519 seconds).
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testReservationReturnsWithoutLockingTheAppAndCanBeCancelled]' started.
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testReservationReturnsWithoutLockingTheAppAndCanBeCancelled]' passed (0.380 seconds).
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testStartupLifecycleNoticeStaysCompact]' started.
+Test Case '-[CodexBridgeKitTests.RuntimeLifecycleTests testStartupLifecycleNoticeStaysCompact]' passed (0.443 seconds).
+Test Suite 'RuntimeLifecycleTests' passed at 2026-10-07 22:11:23.030.
+	 Executed 17 tests, with 0 failures (0 unexpected) in 6.427 (6.439) seconds
+Test Suite 'RuntimePathsTests' started at 2026-10-07 22:11:23.030.
+Test Case '-[CodexBridgeKitTests.RuntimePathsTests testExplicitNodeMustReportVersion22OrNewer]' started.
+Test Case '-[CodexBridgeKitTests.RuntimePathsTests testExplicitNodeMustReportVersion22OrNewer]' passed (0.548 seconds).
+Test Case '-[CodexBridgeKitTests.RuntimePathsTests testLaunchAgentPathIncludesSelectedNodeAndManagedBinaryLocations]' started.
+Test Case '-[CodexBridgeKitTests.RuntimePathsTests testLaunchAgentPathIncludesSelectedNodeAndManagedBinaryLocations]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.RuntimePathsTests testRuntimeLockUsesCanonicalConfigDirectoryWithAlternateDotenv]' started.
+Test Case '-[CodexBridgeKitTests.RuntimePathsTests testRuntimeLockUsesCanonicalConfigDirectoryWithAlternateDotenv]' passed (0.350 seconds).
+Test Suite 'RuntimePathsTests' passed at 2026-10-07 22:11:23.932.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.899 (0.902) seconds
+Test Suite 'SettingsConnectionPresentationTests' started at 2026-10-07 22:11:23.932.
+Test Case '-[CodexBridgeKitTests.SettingsConnectionPresentationTests testCodexSetupSeparatesCheckingLoginInstallationAndCompletion]' started.
+Test Case '-[CodexBridgeKitTests.SettingsConnectionPresentationTests testCodexSetupSeparatesCheckingLoginInstallationAndCompletion]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.SettingsConnectionPresentationTests testConnectionSetupJourneyKeepsLocalAndRemoteTasksFocused]' started.
+Test Case '-[CodexBridgeKitTests.SettingsConnectionPresentationTests testConnectionSetupJourneyKeepsLocalAndRemoteTasksFocused]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.SettingsConnectionPresentationTests testDiscoveryUsesCandidatesBeforeManualCredentials]' started.
+Test Case '-[CodexBridgeKitTests.SettingsConnectionPresentationTests testDiscoveryUsesCandidatesBeforeManualCredentials]' passed (0.002 seconds).
+Test Case '-[CodexBridgeKitTests.SettingsConnectionPresentationTests testFirstRunPopoverAndConnectionWindowNoLongerReuseTheLegacyForm]' started.
+Test Case '-[CodexBridgeKitTests.SettingsConnectionPresentationTests testFirstRunPopoverAndConnectionWindowNoLongerReuseTheLegacyForm]' passed (0.084 seconds).
+Test Case '-[CodexBridgeKitTests.SettingsConnectionPresentationTests testPrimaryOpenLabelsDoNotUseAnEllipsis]' started.
+Test Case '-[CodexBridgeKitTests.SettingsConnectionPresentationTests testPrimaryOpenLabelsDoNotUseAnEllipsis]' passed (0.003 seconds).
+Test Case '-[CodexBridgeKitTests.SettingsConnectionPresentationTests testProductionSettingsUsesTheSkillLibraryStyleSidebarAndSeparateDraftDestinations]' started.
+Test Case '-[CodexBridgeKitTests.SettingsConnectionPresentationTests testProductionSettingsUsesTheSkillLibraryStyleSidebarAndSeparateDraftDestinations]' passed (0.381 seconds).
+Test Case '-[CodexBridgeKitTests.SettingsConnectionPresentationTests testRecoveryRecommendsAnActionThatCanRepairEachLocalFailure]' started.
+Test Case '-[CodexBridgeKitTests.SettingsConnectionPresentationTests testRecoveryRecommendsAnActionThatCanRepairEachLocalFailure]' passed (0.006 seconds).
+Test Case '-[CodexBridgeKitTests.SettingsConnectionPresentationTests testSettingsSearchFindsIndividualLocalizedControlsAndRespectsContext]' started.
+Test Case '-[CodexBridgeKitTests.SettingsConnectionPresentationTests testSettingsSearchFindsIndividualLocalizedControlsAndRespectsContext]' passed (0.043 seconds).
+Test Case '-[CodexBridgeKitTests.SettingsConnectionPresentationTests testSettingsSelectionMigratesRemovedAndUnavailablePanes]' started.
+Test Case '-[CodexBridgeKitTests.SettingsConnectionPresentationTests testSettingsSelectionMigratesRemovedAndUnavailablePanes]' passed (0.004 seconds).
+Test Case '-[CodexBridgeKitTests.SettingsConnectionPresentationTests testSettingsSidebarAvailabilityMatchesConnectionContext]' started.
+Test Case '-[CodexBridgeKitTests.SettingsConnectionPresentationTests testSettingsSidebarAvailabilityMatchesConnectionContext]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.SettingsConnectionPresentationTests testSettingsWindowKeepsALocalizedAccessibleTitleButHidesItVisually]' started.
+Test Case '-[CodexBridgeKitTests.SettingsConnectionPresentationTests testSettingsWindowKeepsALocalizedAccessibleTitleButHidesItVisually]' passed (0.063 seconds).
+Test Suite 'SettingsConnectionPresentationTests' passed at 2026-10-07 22:11:24.531.
+	 Executed 11 tests, with 0 failures (0 unexpected) in 0.590 (0.599) seconds
+Test Suite 'SkillsLibraryPresentationTests' started at 2026-10-07 22:11:24.532.
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testAdaptiveLayoutKeepsNarrowWorkspacesUsable]' started.
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testAdaptiveLayoutKeepsNarrowWorkspacesUsable]' passed (0.002 seconds).
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testApplicationQuitPathsConsultTheSkillsDraftGuard]' started.
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testApplicationQuitPathsConsultTheSkillsDraftGuard]' passed (0.019 seconds).
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testDashboardHistoryNoLongerOffersTheCodexPersistenceBanner]' started.
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testDashboardHistoryNoLongerOffersTheCodexPersistenceBanner]' passed (0.095 seconds).
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testDroppedFileURLsDecodeFromNativeURLAndDataRepresentations]' started.
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testDroppedFileURLsDecodeFromNativeURLAndDataRepresentations]' passed (0.044 seconds).
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testDroppedItemsAlwaysStartANewSkillImport]' started.
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testDroppedItemsAlwaysStartANewSkillImport]' passed (0.036 seconds).
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testFailedApplicationShutdownPreservesUnsavedDraftState]' started.
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testFailedApplicationShutdownPreservesUnsavedDraftState]' passed (0.027 seconds).
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testFileFolderAndZipInputsShareOneImportRouter]' started.
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testFileFolderAndZipInputsShareOneImportRouter]' passed (0.004 seconds).
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testFileTreePreservesNestedLogicalPathsWithoutHostPaths]' started.
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testFileTreePreservesNestedLogicalPathsWithoutHostPaths]' passed (0.237 seconds).
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testFinderFolderImportKeepsRelativeMarkdownPathsAndReportsUnsupportedFiles]' started.
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testFinderFolderImportKeepsRelativeMarkdownPathsAndReportsUnsupportedFiles]' passed (0.027 seconds).
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testImportIssueReasonsAreLocalizedInsteadOfShowingServerCodes]' started.
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testImportIssueReasonsAreLocalizedInsteadOfShowingServerCodes]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testImportReviewSeparatesAutomaticCleanupFromWarningsAndNamesConflictsOnlyWhenPresent]' started.
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testImportReviewSeparatesAutomaticCleanupFromWarningsAndNamesConflictsOnlyWhenPresent]' passed (0.084 seconds).
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testInspectorKeepsLifecycleActionsFixedAndDeleteNeedsNoTypedName]' started.
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testInspectorKeepsLifecycleActionsFixedAndDeleteNeedsNoTypedName]' passed (0.182 seconds).
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testRelativeMarkdownNavigationUsesExactStoredAttachmentPath]' started.
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testRelativeMarkdownNavigationUsesExactStoredAttachmentPath]' passed (0.012 seconds).
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testRendererParsingDoesNotMutateFreeformSource]' started.
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testRendererParsingDoesNotMutateFreeformSource]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testRendererRecognizesWholeDocumentMarkdownStructures]' started.
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testRendererRecognizesWholeDocumentMarkdownStructures]' passed (0.002 seconds).
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testSettingsDoesNotContainASkillManagementTab]' started.
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testSettingsDoesNotContainASkillManagementTab]' passed (0.220 seconds).
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testSkillCommandsDropEllipsesWhileProgressCopyKeepsOne]' started.
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testSkillCommandsDropEllipsesWhileProgressCopyKeepsOne]' passed (0.006 seconds).
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testSkillsWindowUsesAStableCompactTitlebarAndFreshDefaultFrame]' started.
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testSkillsWindowUsesAStableCompactTitlebarAndFreshDefaultFrame]' passed (0.034 seconds).
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testUnsavedDraftRequiresExplicitDiscardAndOnlyClearsAfterConfirmation]' started.
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testUnsavedDraftRequiresExplicitDiscardAndOnlyClearsAfterConfirmation]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testVisualAcceptanceFixtureUsesCurrentSkillContentContract]' started.
+Test Case '-[CodexBridgeKitTests.SkillsLibraryPresentationTests testVisualAcceptanceFixtureUsesCurrentSkillContentContract]' passed (0.009 seconds).
+Test Suite 'SkillsLibraryPresentationTests' passed at 2026-10-07 22:11:25.592.
+	 Executed 20 tests, with 0 failures (0 unexpected) in 1.045 (1.061) seconds
+Test Suite 'TextIntegrityTests' started at 2026-10-07 22:11:25.592.
+Test Case '-[CodexBridgeKitTests.TextIntegrityTests testCharacterLimitCountsUnicodeScalarsLikeNode]' started.
+Test Case '-[CodexBridgeKitTests.TextIntegrityTests testCharacterLimitCountsUnicodeScalarsLikeNode]' passed (0.004 seconds).
+Test Case '-[CodexBridgeKitTests.TextIntegrityTests testPreservesBOMForVerbatimTextButRejectsItForJSON]' started.
+Test Case '-[CodexBridgeKitTests.TextIntegrityTests testPreservesBOMForVerbatimTextButRejectsItForJSON]' passed (0.001 seconds).
+Test Case '-[CodexBridgeKitTests.TextIntegrityTests testRejectsEscapedUnpairedJSONSurrogates]' started.
+Test Case '-[CodexBridgeKitTests.TextIntegrityTests testRejectsEscapedUnpairedJSONSurrogates]' passed (0.002 seconds).
+Test Case '-[CodexBridgeKitTests.TextIntegrityTests testSharedTextIntegrityVectors]' started.
+Test Case '-[CodexBridgeKitTests.TextIntegrityTests testSharedTextIntegrityVectors]' passed (0.005 seconds).
+Test Suite 'TextIntegrityTests' passed at 2026-10-07 22:11:25.607.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.012 (0.014) seconds
+Test Suite 'UnixSocketRPCClientTests' started at 2026-10-07 22:11:25.607.
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testCancellingChangeWaitClosesSocketWithoutWaitingForTimeout]' started.
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testCancellingChangeWaitClosesSocketWithoutWaitingForTimeout]' passed (0.010 seconds).
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testContractDecodeFailureIsNotReportedAsPersistentDataLoss]' started.
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testContractDecodeFailureIsNotReportedAsPersistentDataLoss]' passed (0.009 seconds).
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testDefaultTransportReadsMaximumBridgeSkillContentEnvelope]' started.
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testDefaultTransportReadsMaximumBridgeSkillContentEnvelope]' passed (23.216 seconds).
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testIssue242CancellationDuringDecodeRemainsCancellation]' started.
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testIssue242CancellationDuringDecodeRemainsCancellation]' passed (0.002 seconds).
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testIssue242DecoderCannotPublishAfterAbsoluteDeadline]' started.
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testIssue242DecoderCannotPublishAfterAbsoluteDeadline]' passed (2.154 seconds).
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testIssue242PartialResponseCannotExtendAbsoluteDeadline]' started.
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testIssue242PartialResponseCannotExtendAbsoluteDeadline]' passed (0.348 seconds).
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testIssue242RefusalPeerCloseAndMissingResultStayDistinct]' started.
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testIssue242RefusalPeerCloseAndMissingResultStayDistinct]' passed (0.038 seconds).
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testIssue242StructuralFailureCategories]' started.
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testIssue242StructuralFailureCategories]' passed (0.006 seconds).
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testPendingChangeWaitDoesNotDelayIndependentHealthRead]' started.
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testPendingChangeWaitDoesNotDelayIndependentHealthRead]' passed (0.018 seconds).
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testPerCallTimeoutCanOutliveShortClientDefault]' started.
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testPerCallTimeoutCanOutliveShortClientDefault]' passed (0.244 seconds).
+Test Suite 'UnixSocketRPCClientTests' passed at 2026-10-07 22:11:51.657.
+	 Executed 10 tests, with 0 failures (0 unexpected) in 26.046 (26.051) seconds
+Test Suite 'WorkHistoryPresentationTests' started at 2026-10-07 22:11:51.657.
+Test Case '-[CodexBridgeKitTests.WorkHistoryPresentationTests testLiveAndFinishedTurnsUseTheirActualTimesAndUnknownDurationStaysUnknown]' started.
+Test Case '-[CodexBridgeKitTests.WorkHistoryPresentationTests testLiveAndFinishedTurnsUseTheirActualTimesAndUnknownDurationStaysUnknown]' passed (0.014 seconds).
+Test Suite 'WorkHistoryPresentationTests' passed at 2026-10-07 22:11:51.672.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.014 (0.014) seconds
+Test Suite 'CodexBridgeMacPackageTests.xctest' passed at 2026-10-07 22:11:51.672.
+	 Executed 245 tests, with 2 tests skipped and 0 failures (0 unexpected) in 177.499 (177.620) seconds
+Test Suite 'All tests' passed at 2026-10-07 22:11:51.672.
+	 Executed 245 tests, with 2 tests skipped and 0 failures (0 unexpected) in 177.499 (177.628) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.

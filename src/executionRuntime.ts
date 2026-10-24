@@ -1,3 +1,4 @@
+import { executionEndpoint } from "./executionTransport.js";
 import { CodexService } from "./codexService.js";
 import type { CodexUpstream } from "./upstream.js";
 import type { CodexBackendKind } from "./config.js";
@@ -7,28 +8,93 @@ import { CodexAppServerUpstreamPool, type CodexAppServerProtocolOptions } from "
 import { CodexBackendRouter } from "./upstreamRouter.js";
 import { LazyCodexUpstream } from "./lazyUpstream.js";
 import { UNVERIFIED_APP_SERVER_CAPABILITIES } from "./cliProtocol.js";
+import { codexProcessEnvironment } from "../scripts/runtime-env.mjs";
+import {
+  ChildProcessCodexExecutionService,
+  type CodexExecutionServiceHealth,
+  type ExecutorExitReason,
+  type WorkerObservationIncident
+} from "./executionServiceProcess.js";
 
-export function createExecutionRuntime(config: BridgeConfig, options: CodexAppServerProtocolOptions = {}, environment: NodeJS.ProcessEnv = process.env): CodexBackendRouter {
-  const manager = new CodexRuntimeManager({ environment, explicitCommand: environment.CODEX_MCP_BRIDGE_CODEX || environment.CODEX_GPT_BRIDGE_CODEX ||
+export type ExecutionRuntimeIsolationOptions = {
+  isolateCodexExecution?: boolean;
+  /** Test/diagnostic hook; never exposed through public status payloads. */
+  onExecutionProcessSpawn?: (processId: number) => void;
+  onExecutionObservationIncident?: (incident: WorkerObservationIncident) => void;
+  onExecutionExitIntent?: (reason: ExecutorExitReason) => void;
+};
+
+export function createExecutionRuntime(
+  config: BridgeConfig,
+  options: CodexAppServerProtocolOptions = {},
+  environment: NodeJS.ProcessEnv = process.env,
+  isolation: ExecutionRuntimeIsolationOptions = {}
+): CodexBackendRouter {
+  const codexEnvironment = codexProcessEnvironment(environment);
+  const manager = new CodexRuntimeManager({ environment: codexEnvironment, explicitCommand: codexEnvironment.CODEX_MCP_BRIDGE_CODEX || codexEnvironment.CODEX_GPT_BRIDGE_CODEX ||
     (config.codexCommand !== "codex" ? config.codexCommand : undefined) });
-  const service = config.codexService = new CodexService(environment, manager);
+  const service = config.codexService = new CodexService(codexEnvironment, manager);
   let selected: Promise<string> | undefined;
   let release: (() => Promise<void>) | undefined;
   const resolveCli = (): Promise<string> => {
-    if (!selected) selected = manager.acquire()
-      .then(acquired => { release = acquired.release; return acquired.selection.command; })
+    if (!selected) selected = service.acquireContext()
+      .then(context => { release = context.release; return context.selection.command; })
       .catch(error => { selected = undefined; throw error; });
     return selected;
   };
-  config.codexCommandResolver = resolveCli;
   config.runtimeStatusResolver = async () => {
     const cli = await manager.snapshot();
     const compact = (state: typeof cli) => `installed=${state.installedVersion ?? "none"}; running=${state.runningVersions.join(",") || "none"}; active=${state.managedVersions.find(item => item.active)?.version ?? "none"}; staged=${state.stagedVersion ?? "none"}; rollback=${state.recoveryVersion ?? "none"}`;
     return [`CLI: source=${cli.selection?.source ?? "unselected"}; compatible=${cli.selection?.compatible ?? "unknown"}; ${compact(cli)}`];
   };
-  const app = new LazyCodexUpstream("app-server", UNVERIFIED_APP_SERVER_CAPABILITIES,
-    async () => new CodexAppServerUpstreamPool(await resolveCli(), config.upstreamPoolSize, { ...options, environment }), undefined, service.admissionGuard());
+  let executionService: ChildProcessCodexExecutionService | undefined;
+  let executionStarting = false;
+  const app = new LazyCodexUpstream(
+    "app-server",
+    UNVERIFIED_APP_SERVER_CAPABILITIES,
+    async () => {
+      if (!isolation.isolateCodexExecution) {
+        const command = await resolveCli();
+        return new CodexAppServerUpstreamPool(
+          command,
+          config.upstreamPoolSize,
+          { ...options, environment: codexEnvironment }
+        );
+      }
+      executionStarting = true;
+      try {
+        const command = await resolveCli();
+        executionService = await ChildProcessCodexExecutionService.start({
+          command,
+          endpoint: executionEndpoint(config.stateDatabaseFile),
+          poolSize: config.upstreamPoolSize,
+          environment: codexEnvironment,
+          protocolOptions: options,
+          onLateResponse: options.onLateResponse,
+          onProcessSpawn: isolation.onExecutionProcessSpawn,
+          onObservationIncident: isolation.onExecutionObservationIncident,
+          onExitIntent: isolation.onExecutionExitIntent
+        });
+        return executionService;
+      } finally {
+        executionStarting = false;
+      }
+    },
+    undefined,
+    service.admissionGuard()
+  );
   const router = new CodexBackendRouter("app-server", new Map<CodexBackendKind, CodexUpstream>([["app-server", app]]));
+  service.setAccountReader(() => app.readAccountSnapshot());
+  service.setAuthPolicyReader(() => app.readAuthenticationPolicy());
+  if (isolation.isolateCodexExecution) {
+    router.supportsExecutionRecovery = () => true;
+    router.executionHealth = (): CodexExecutionServiceHealth =>
+      executionService?.health() || {
+        status: executionStarting ? "starting" : "idle",
+        inFlight: 0,
+        capacity: 128
+      };
+  }
   router.accountRevision = () => service.cacheRevision();
   router.readAccountSnapshot = () => service.readAccount(config.defaultBackend);
   router.readAccountRateLimits = async () => {

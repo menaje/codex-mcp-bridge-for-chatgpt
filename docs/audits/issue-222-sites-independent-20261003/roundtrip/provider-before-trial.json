@@ -1,0 +1,115 @@
+{
+  "recordedAt": "2026-10-03T00:28:45.174Z",
+  "secretsOmitted": true,
+  "captures": [
+    {
+      "tool": "mcp__codex_apps__sites_get_site",
+      "observedAt": "2026-10-03T00:23:52.898Z",
+      "response": {
+        "id": "appgprj_6abf89d2d04c8191a617d5193ef5471a",
+        "status": "active",
+        "current_user_role": "owner",
+        "access_mode": "custom",
+        "latest_version_number": 2,
+        "current_live_url": "https://bridge-222-receiver-probe-20261002.menaje.chatgpt.site",
+        "mcp_connection": {
+          "mcp_url": "https://bridge-222-receiver-probe-20261002.menaje.chatgpt.site/mcp",
+          "oauth_resource": "https://bridge-222-receiver-probe-20261002.menaje.chatgpt.site/mcp",
+          "plugin_id": "plugin_asdk_app_sites_7f70e9571a3081918772e5e96d81268d"
+        },
+        "automations": [],
+        "allowed_user_count": 1,
+        "editor_count": 0,
+        "external_visitor_count": 0,
+        "existing_service_auth_present": true
+      }
+    },
+    {
+      "tool": "mcp__codex_apps__sites_list_site_versions",
+      "observedAt": "2026-10-03T00:24:40.357Z",
+      "response": {
+        "items": [
+          {
+            "id": "appgprj_6abf89d2d04c8191a617d5193ef5471a~appgver_2b2c83c586188191bf94acb1145b82f7",
+            "project_id": "appgprj_6abf89d2d04c8191a617d5193ef5471a",
+            "version_number": 2,
+            "source": {
+              "commit_sha": "99a9f88391876416666b26c18b500039f77c5303"
+            },
+            "archive_storage": {
+              "archive_format": "tar",
+              "sediment_file_id": "file_00000000e57c8206b129ab7d0e9113ea",
+              "content_hash": "sha256:0c0e4527cdb4c997198cc537980146667e64e344e95fc18e7c3cc3ce0a76268b",
+              "size_bytes": 20480,
+              "file_count": 5
+            },
+            "deployment_id": "appgdep_6ac0402a4d3881918caaf9ab124ebfb0"
+          }
+        ]
+      }
+    },
+    {
+      "tool": "mcp__codex_apps__sites_create_source_repository_write_credential",
+      "observedAt": "2026-10-03T00:24:40.358Z",
+      "response": {
+        "auth_mode": "http_extra_header",
+        "provider": "cloudflare_artifact",
+        "branch": "main",
+        "publish_on_push_accepted": false,
+        "credentialPersisted": false
+      }
+    },
+    {
+      "tool": "official site-workflow.mjs open",
+      "response": {
+        "project_id": "appgprj_6abf89d2d04c8191a617d5193ef5471a",
+        "checkout_path": "/private/tmp/bridge-222-sites-source-20261003",
+        "commit_sha": "99a9f88391876416666b26c18b500039f77c5303"
+      }
+    },
+    {
+      "tool": "official site-workflow.mjs publish",
+      "response": {
+        "project_id": "appgprj_6abf89d2d04c8191a617d5193ef5471a",
+        "checkout_path": "/private/tmp/bridge-222-sites-source-20261003",
+        "commit_sha": "7755827919c042166cf5e2a7cfe3e0f5f76df577",
+        "archive": "/private/tmp/bridge-222-sites-roundtrip-v3-20261003.tar.gz"
+      },
+      "validation": [
+        "node --check worker.mjs",
+        "npm run build",
+        "existing migration and snapshot exact bytes unchanged",
+        "new migration inspected: schema-only CREATE TABLE",
+        "source clean after normal commit/non-force push"
+      ]
+    },
+    {
+      "tool": "mcp__codex_apps__sites_save_version_and_deploy_private",
+      "observedAt": "2026-10-03T00:28:18.186Z",
+      "response": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Action completed."
+          }
+        ],
+        "structuredContent": {
+          "id": "appgdep_6ac04c20c7d8819189be9303b6a24a55",
+          "project_id": "appgprj_6abf89d2d04c8191a617d5193ef5471a",
+          "title": "#222 무해한 Receiver 시험",
+          "version_id": "appgprj_6abf89d2d04c8191a617d5193ef5471a~appgver_2ad493d0916081919080d70be5bc126f",
+          "type": "publish",
+          "status": "pending",
+          "url": null,
+          "has_mcp": false,
+          "screenshot_asset_pointer": null,
+          "provider_deployment_id": null,
+          "failure_message": null,
+          "env_set_revision": 0,
+          "updated_at": "2026-10-03T00:28:17.206799+00:00"
+        },
+        "isError": false
+      }
+    }
+  ]
+}
