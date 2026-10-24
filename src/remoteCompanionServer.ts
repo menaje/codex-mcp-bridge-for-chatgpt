@@ -45,6 +45,10 @@ export const REMOTE_COMPANION_PROTOCOL_NAME = "codex-mcp-bridge-remote-companion
 export const REMOTE_COMPANION_PROTOCOL_VERSION = 10;
 const REMOTE_API_PREFIX = "/remote-companion/v1";
 const REMOTE_MAX_REQUEST_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;
+const REMOTE_MAX_PAIRING_REQUEST_BYTES = 16 * 1024;
+// Reserve complete envelopes through dispatch and response flushing, shared by
+// both address-family listeners. Even small RPCs may produce large exports.
+const REMOTE_MAX_REQUEST_BYTES_IN_FLIGHT = 2 * REMOTE_MAX_REQUEST_BYTES;
 const REMOTE_MAX_RESPONSE_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;
 const REMOTE_MAX_DEVICES = 32;
 const REMOTE_DEFAULT_PAIRING_TTL_SECONDS = 300;
@@ -114,6 +118,7 @@ export class RemoteCompanionManager implements RemoteCompanionControl {
   private lastError: string | null = null;
   private pairing: PairingSession | undefined;
   private lifecycleOperation: Promise<void> = Promise.resolve();
+  private reservedRequestBytes = 0;
 
   constructor(options: RemoteCompanionManagerOptions) {
     this.stateFile = path.resolve(options.stateFile);
@@ -338,6 +343,7 @@ export class RemoteCompanionManager implements RemoteCompanionControl {
       sendJson(response, 503, { error: "remote_management_not_listening" });
       return;
     }
+    let settled: (() => void) | undefined;
     try {
       const url = new URL(request.url || "/", "https://remote.invalid");
       if (request.method === "GET" && url.pathname === `${REMOTE_API_PREFIX}/hello`) {
@@ -345,7 +351,8 @@ export class RemoteCompanionManager implements RemoteCompanionControl {
         return;
       }
       if (request.method === "POST" && url.pathname === `${REMOTE_API_PREFIX}/pair`) {
-        const body = pairingRequestSchema.parse(await readJsonBody(request));
+        settled = this.reserveRequestBody(response, REMOTE_MAX_PAIRING_REQUEST_BYTES);
+        const body = pairingRequestSchema.parse(await readJsonBody(request, REMOTE_MAX_PAIRING_REQUEST_BYTES));
         sendJson(response, 200, await this.completePairing(body));
         return;
       }
@@ -359,7 +366,8 @@ export class RemoteCompanionManager implements RemoteCompanionControl {
           sendJson(response, 409, { error: "server_identity_mismatch" });
           return;
         }
-        const payload = await readJsonBody(request);
+        settled = this.reserveRequestBody(response, REMOTE_MAX_REQUEST_BYTES);
+        const payload = await readJsonBody(request, REMOTE_MAX_REQUEST_BYTES);
         const method = companionMethod(payload);
         if (!method || !REMOTE_COMPANION_APPLICATION_METHODS.has(method)) {
           sendJson(response, 403, { error: "method_not_available_remotely" });
@@ -385,9 +393,41 @@ export class RemoteCompanionManager implements RemoteCompanionControl {
       sendJson(response, 404, { error: "not_found" });
     } catch (error) {
       const message = safeErrorMessage(error);
-      const status = message === "request_too_large" ? 413 : 400;
-      sendJson(response, status, { error: "invalid_request", message });
+      const busy = message === "request_capacity_exhausted";
+      const status = busy ? 503 : message === "request_too_large" ? 413 : 400;
+      if (status !== 400) {
+        response.setHeader("Connection", "close");
+        request.resume();
+      }
+      sendJson(response, status, { error: busy ? "request_capacity_exhausted" : "invalid_request", message });
+    } finally {
+      settled?.();
     }
+  }
+
+  private reserveRequestBody(response: ServerResponse, bytes: number): () => void {
+    if (this.reservedRequestBytes + bytes > REMOTE_MAX_REQUEST_BYTES_IN_FLIGHT) {
+      throw new Error("request_capacity_exhausted");
+    }
+    this.reservedRequestBytes += bytes;
+    let operationSettled = false;
+    let responseCompleted = false;
+    let released = false;
+    const release = () => {
+      if (released || !operationSettled || !responseCompleted) return;
+      released = true;
+      this.reservedRequestBytes -= bytes;
+      response.removeListener("finish", completed);
+      response.removeListener("close", completed);
+    };
+    const completed = () => { responseCompleted = true; release(); };
+    response.once("finish", completed);
+    response.once("close", completed);
+    return () => {
+      operationSettled = true;
+      responseCompleted ||= response.writableFinished || response.destroyed;
+      release();
+    };
   }
 
   private hello(): Record<string, unknown> {
@@ -691,15 +731,16 @@ function digestMatches(expected: string, input: string, inputIsDigest = false): 
   return expectedBuffer.length === actualBuffer.length && timingSafeEqual(expectedBuffer, actualBuffer);
 }
 
-async function readJsonBody(request: IncomingMessage): Promise<unknown> {
+async function readJsonBody(request: IncomingMessage, maxBytes: number): Promise<unknown> {
   const contentType = request.headers["content-type"]?.split(";", 1)[0]?.trim();
   if (contentType !== "application/json") throw new Error("content_type_must_be_application_json");
+  if (Number(request.headers["content-length"]) > maxBytes) throw new Error("request_too_large");
   const chunks: Buffer[] = [];
   let bytes = 0;
-  for await (const chunk of request) {
+  for await (const chunk of request.iterator({ destroyOnReturn: false })) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     bytes += buffer.length;
-    if (bytes > REMOTE_MAX_REQUEST_BYTES) throw new Error("request_too_large");
+    if (bytes > maxBytes) throw new Error("request_too_large");
     chunks.push(buffer);
   }
   if (bytes === 0) throw new Error("request_body_required");

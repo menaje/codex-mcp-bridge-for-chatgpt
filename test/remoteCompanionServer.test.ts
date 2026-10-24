@@ -3,6 +3,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { request as httpsRequest } from "node:https";
+import { randomUUID } from "node:crypto";
 import type { TLSSocket } from "node:tls";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -27,6 +28,89 @@ afterEach(async () => {
 });
 
 describe("remote native companion", () => {
+  it.each([false, true])("keeps pairing bodies small while accepting authenticated skill payloads (chunked=%s)", async chunked => {
+    const applicationService = fakeApplicationService();
+    const unexpectedSkillMethod = vi.fn(async () => { throw new Error("unexpected_skill_method"); });
+    Object.assign(applicationService, {
+      skillLibrarySnapshot: unexpectedSkillMethod,
+      readBridgeSkill: unexpectedSkillMethod,
+      readBridgeSkillFile: unexpectedSkillMethod,
+      listBridgeSkillVersions: unexpectedSkillMethod,
+      updateBridgeSkill: unexpectedSkillMethod,
+      restoreBridgeSkill: unexpectedSkillMethod,
+      setBridgeSkillEnabled: unexpectedSkillMethod,
+      deleteBridgeSkill: unexpectedSkillMethod
+    });
+    applicationService.createBridgeSkill = vi.fn(async input => ({
+      skillId: randomUUID(), source: "bridge" as const, version: "1", name: input.name,
+      description: "", contentDigest: "a".repeat(64), enabled: true, availability: "available" as const
+    }));
+    const manager = new RemoteCompanionManager({ stateFile: path.join(temporaryDirectory(), "remote.json"), applicationService });
+    managers.push(manager);
+    const endpoint = `https://127.0.0.1:${await availablePort()}`;
+    await manager.configure({ enabled: true, endpoint, displayName: "Fixture" });
+    const invitation = await manager.beginPairing();
+    const pair = JSON.parse(Buffer.from(invitation.invitation, "base64url").toString("utf8"));
+    const oversized = await jsonRequest(`${endpoint}/remote-companion/v1/pair`, "POST", {
+      serverId: pair.serverId, code: pair.code, deviceName: "x".repeat(32 * 1024)
+    }, {}, chunked);
+    expect(oversized).toMatchObject({ status: 413, body: { message: "request_too_large" } });
+    const paired = await jsonRequest(`${endpoint}/remote-companion/v1/pair`, "POST", {
+      serverId: pair.serverId, code: pair.code, deviceName: "Fixture Mac"
+    });
+    expect(paired.status).toBe(200);
+    const payload = { jsonrpc: "2.0", id: "large-skill", method: "skills.create", params: {
+      requestId: randomUUID(), name: "Large", content: "x".repeat(2 * 1024 * 1024)
+    } };
+    const headers = { authorization: `Bearer ${paired.body.credential}`, "x-codex-bridge-server-id": pair.serverId };
+    expect(await jsonRequest(`${endpoint}/remote-companion/v1/rpc`, "POST", { ...payload, params: {} })).toMatchObject({ status: 401 });
+    expect(await jsonRequest(`${endpoint}/remote-companion/v1/rpc`, "POST", payload, headers, chunked))
+      .toMatchObject({ status: 200, body: { result: { name: "Large" } } });
+    expect(applicationService.createBridgeSkill).toHaveBeenCalledExactlyOnceWith(expect.objectContaining(payload.params));
+  });
+
+  it("bounds in-flight RPC capacity and keeps aborted work charged until it settles", async () => {
+    const applicationService = fakeApplicationService();
+    const releases: Array<() => void> = [];
+    let calls = 0;
+    applicationService.settingsSnapshot = vi.fn(async () => {
+      if (++calls <= 2) await new Promise<void>(resolve => releases.push(resolve));
+      return { settings: { settingsRevision: 3 } } as SettingsView;
+    });
+    const manager = new RemoteCompanionManager({ stateFile: path.join(temporaryDirectory(), "remote.json"), applicationService });
+    managers.push(manager);
+    const endpoint = `https://127.0.0.1:${await availablePort()}`;
+    await manager.configure({ enabled: true, endpoint, displayName: "Fixture" });
+    const invitation = await manager.beginPairing();
+    const pair = JSON.parse(Buffer.from(invitation.invitation, "base64url").toString("utf8"));
+    const paired = await jsonRequest(`${endpoint}/remote-companion/v1/pair`, "POST", {
+      serverId: pair.serverId, code: pair.code, deviceName: "Fixture Mac"
+    });
+    const headers = { authorization: `Bearer ${paired.body.credential}`, "x-codex-bridge-server-id": pair.serverId };
+    const payload = { jsonrpc: "2.0", id: "settings", method: "settings.snapshot", params: {} };
+    const abort = new AbortController();
+    const pending = [
+      jsonRequest(`${endpoint}/remote-companion/v1/rpc`, "POST", payload, headers, false, abort.signal),
+      jsonRequest(`${endpoint}/remote-companion/v1/rpc`, "POST", payload, headers)
+    ];
+    void pending[0].catch(() => {});
+    try {
+      await vi.waitFor(() => expect(releases).toHaveLength(2));
+      expect(await jsonRequest(`${endpoint}/remote-companion/v1/rpc`, "POST", payload, headers))
+        .toMatchObject({ status: 503, body: { error: "request_capacity_exhausted" } });
+      expect(await jsonRequest(`${endpoint}/remote-companion/v1/hello`, "GET")).toMatchObject({ status: 200 });
+      abort.abort();
+      await expect(pending[0]).rejects.toMatchObject({ name: "AbortError" });
+      expect(await jsonRequest(`${endpoint}/remote-companion/v1/rpc`, "POST", payload, headers))
+        .toMatchObject({ status: 503, body: { error: "request_capacity_exhausted" } });
+      releases[0]();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(await jsonRequest(`${endpoint}/remote-companion/v1/rpc`, "POST", payload, headers)).toMatchObject({ status: 200 });
+    } finally {
+      releases.forEach(release => release());
+      await Promise.allSettled(pending);
+    }
+  });
   it("rejects stale configuration before stopping the listener or invalidating pairing", async () => {
     const stateFile = path.join(temporaryDirectory(), "remote.json");
     const manager = new RemoteCompanionManager({ stateFile, applicationService: fakeApplicationService() });
@@ -501,12 +585,15 @@ function jsonRequest(
   url: string,
   method: "GET" | "POST",
   body?: unknown,
-  headers: Record<string, string> = {}
+  headers: Record<string, string> = {},
+  chunked = false,
+  signal?: AbortSignal
 ): Promise<{ status: number; body: Record<string, any>; fingerprint: string | null }> {
   return new Promise((resolve, reject) => {
     const encoded = body === undefined ? undefined : Buffer.from(JSON.stringify(body), "utf8");
     const request = httpsRequest(url, {
       method,
+      signal,
       agent: false,
       rejectUnauthorized: false,
       headers: {
@@ -514,7 +601,7 @@ function jsonRequest(
         ...(encoded
           ? {
               "content-type": "application/json",
-              "content-length": String(encoded.length)
+              ...(chunked ? { "transfer-encoding": "chunked" } : { "content-length": String(encoded.length) })
             }
           : {})
       }
