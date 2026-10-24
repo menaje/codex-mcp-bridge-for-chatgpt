@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Keep dashboard tab pages consistent when Jobs change without changing counts, preserve expanded pages on unchanged refreshes, and prevent late enrichment from replacing appended rows.",
-  "breaking": false,
-  "migration": null
-}

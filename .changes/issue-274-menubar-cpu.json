@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Avoid redundant macOS screen updates on repeated progress and quiet change notices while preserving subscription disconnect, reconnect and cancellation updates.",
-  "breaking": false,
-  "migration": null
-}
