@@ -16,6 +16,7 @@ import {
 import type { CodexPendingInteraction, UpstreamWorkerAssignment } from "../src/upstream.js";
 import { readProcessTable } from "../src/processTreeSupervisor.js";
 import { withExecutionIdentity } from "../src/executionIdentity.js";
+import type { ExecutionPeer } from "../src/executionTransport.js";
 
 const fixture = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -29,6 +30,39 @@ afterEach(async () => {
 });
 
 describe("isolated Codex execution process", () => {
+  it("reconciles missed resolutions after reconnect and completes over 100 sequential questions", async () => {
+    const service = await createService();
+    let first: CodexPendingInteraction | undefined;
+    let current: CodexPendingInteraction | undefined;
+    let firstHadPrivateInput = false;
+    const snapshots: string[][] = [];
+    let running: Promise<unknown> | undefined;
+    try {
+      running = service.callTool("codex", task("many resolved questions"), progress => {
+        const interaction = progress.event?.details?.interaction as CodexPendingInteraction | undefined;
+        if (progress.pendingInteractionIds) snapshots.push(progress.pendingInteractionIds);
+        if (!interaction) return;
+        current = interaction;
+        if (!first) {
+          first = interaction;
+          firstHadPrivateInput = Boolean(service.interactionInput(interaction.interactionId));
+          (service as unknown as { child: ExecutionPeer }).child.disconnect();
+        }
+      });
+      void running.catch(() => {});
+      await eventually(() => Boolean(first));
+      await eventually(() => current?.summary.endsWith("Question 100") === true);
+      expect(firstHadPrivateInput).toBe(true);
+      expect(snapshots.length).toBeGreaterThan(0);
+      expect(service.interactionInput(first!.interactionId)).toBeUndefined();
+      expect(service.interactionInput(current!.interactionId)).toBeDefined();
+      await service.respondToInteraction(current!.interactionId, { elicitation: { action: "accept", content: { answer: "done" } } });
+      await expect(running).resolves.toMatchObject({ content: [{ text: "SEQUENTIAL INPUT COMPLETE" }] });
+    } finally {
+      await service.close();
+      await Promise.allSettled(running ? [running] : []);
+    }
+  }, 20_000);
   it("reports only live materialized threads across IPC without starting historical workers", async () => {
     const service=await createService();
     try {

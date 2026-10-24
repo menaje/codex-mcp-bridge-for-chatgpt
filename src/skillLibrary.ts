@@ -338,6 +338,11 @@ export class SkillLibrary {
     this.packageUploads = new BridgeSkillPackageUploads(path.normalize(options.directory), options.now || Date.now);
   }
 
+  /** Native management filters locally and must include every archived record. */
+  async listForManagement(): Promise<SkillSearchResult> {
+    return { skills: (await this.store.list()).map(record => bridgeSummary(record)).sort(compareSkillSummaries) };
+  }
+
   async search(input: { query?: string; limit?: number; includeDisabled?: boolean }): Promise<SkillSearchResult> {
     const query = normalizeSearchQuery(input.query);
     const limit = normalizeSearchLimit(input.limit);

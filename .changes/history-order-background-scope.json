@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Order completed execution history by end time and inspect background processes only in live materialized threads on both dashboard surfaces.",
+  "breaking": false,
+  "migration": null
+}

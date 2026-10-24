@@ -32,7 +32,11 @@ export type CodexPublicEvent = {
   details?: Record<string, unknown>;
 };
 
-export type CodexProgress = Progress & { event?: CodexPublicEvent };
+export type CodexProgress = Progress & {
+  event?: CodexPublicEvent;
+  /** Execution-owner recovery snapshot, scoped to this exact request. */
+  pendingInteractionIds?: string[];
+};
 
 export type CodexInteractionDecision =
   | "accept"

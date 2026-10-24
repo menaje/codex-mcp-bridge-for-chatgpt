@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Keep an uncertain API login blocked until its credential writer has actually exited, including after Helper replacement.",
+  "breaking": false,
+  "migration": null
+}

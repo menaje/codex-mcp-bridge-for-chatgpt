@@ -716,6 +716,23 @@ function beginTurn(context) {
     });
   }
 
+  if (prompt === "many resolved questions") {
+    const next = index => {
+      const requestId = `sequential-input-${index}`;
+      serverRequest(requestId, "mcpServer/elicitation/request", {
+        threadId, turnId, serverName: "fixture-mcp", mode: "form", message: `Question ${index}`,
+        requestedSchema: { type: "object", properties: { answer: { type: "string" } }, required: ["answer"] }
+      }, () => finishTurn(context, "completed", "SEQUENTIAL INPUT COMPLETE"));
+      if (index === 100) return;
+      setTimeout(() => {
+        pendingServerRequests.delete(requestId);
+        notification("serverRequest/resolved", { threadId, requestId });
+        next(index + 1);
+      }, index === 0 ? 100 : 1);
+    };
+    next(0);
+    return;
+  }
   if (prompt.includes("interactions")) {
     requestCommand(context);
     return;

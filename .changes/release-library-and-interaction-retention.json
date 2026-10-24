@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "List every native-managed skill and coalesce completed interactions into a bounded recovery snapshot without interrupting long-running turns.",
+  "breaking": false,
+  "migration": null
+}

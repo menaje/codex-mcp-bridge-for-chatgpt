@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Restore compact Activity and Agent execution lists, keep problem history in failed Job units, and use append-only Show more controls in the menu bar and Dashboard card.",
+  "breaking": false,
+  "migration": null
+}

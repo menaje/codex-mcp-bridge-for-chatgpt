@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Simplify Settings speed choices to Standard, Fast and eligible Ultrafast while preserving existing speed behavior until explicitly changed.",
+  "breaking": false,
+  "migration": null
+}

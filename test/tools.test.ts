@@ -214,6 +214,61 @@ describe("current bridge tool contracts", () => {
     await rm(root, { recursive: true, force: true });
   });
 
+  it("reconciles stale persisted inputs against the execution owner's current snapshot", async () => {
+    const descriptor = (await client.listTools()).tools.find(tool => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+    const hold = upstream.holdNextCall();
+    const admitted = await client.callTool({ name: "codex_task", _meta: metadata, arguments: {
+      requestId: randomUUID(), taskContractVersion: properties.taskContractVersion?.const,
+      executionEnvelopeRef: properties.executionEnvelopeRef?.const, prompt: "Recover current inputs",
+      project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision }, selection
+    } });
+    expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
+    const jobId = (admitted.structuredContent as { jobId: string }).jobId;
+    await hold.started;
+    hold.assign(fixtureThreadId, fixtureTurnId);
+    for (const interactionId of ["stale", "live"]) {
+      const interaction: CodexPendingInteraction = {
+        interactionId, kind: "command-approval", origin: "app-approval", isBlocking: true,
+        threadId: fixtureThreadId, turnId: fixtureTurnId, itemId: interactionId, summary: interactionId
+      };
+      hold.progress({ progress: 0, event: {
+        eventId: interactionId, type: "approval-required", phase: "updated", createdAt: Date.now(),
+        summary: interactionId, details: { interaction }
+      } });
+    }
+    await eventually(() => state.listJobs().find(job => job.jobId === jobId)?.pendingInteractions.length === 2);
+    hold.progress({ progress: 0, pendingInteractionIds: ["live"], event: {
+      eventId: "recovered-resolution", type: "input-required", phase: "completed", createdAt: Date.now(),
+      summary: "Recovered input state", details: { resolvedInteractionId: "a-later-question" }
+    } });
+    await eventually(() => state.listJobs().find(job => job.jobId === jobId)?.pendingInteractions.length === 1);
+    expect(state.listJobs().find(job => job.jobId === jobId)?.pendingInteractions[0]?.interactionId).toBe("live");
+    hold.release();
+    await eventually(() => state.listJobs().find(job => job.jobId === jobId)?.status === "completed");
+  });
+
+  it("lists every active and archived skill in the native management snapshot", async () => {
+    const created = [];
+    for (let index = 0; index < 105; index++) {
+      created.push(await server.applicationService.createBridgeSkill({
+        requestId: randomUUID(), name: `Skill ${String(index).padStart(3, "0")}`, content: "# Procedure"
+      }));
+    }
+    for (const skill of created.slice(0, 5)) {
+      await server.applicationService.setBridgeSkillEnabled({
+        requestId: randomUUID(), skillId: skill.skillId, expectedVersion: skill.version, enabled: false
+      });
+    }
+    const snapshot = await server.applicationService.skillLibrarySnapshot();
+    expect(snapshot.skills).toHaveLength(105);
+    expect(snapshot.skills.map(skill => skill.skillId)).toEqual(created.map(skill => skill.skillId));
+    expect(snapshot.skills.filter(skill => !skill.enabled)).toHaveLength(5);
+    const discovery = await client.callTool({ name: "bridge_skill", arguments: { operation: "search" } });
+    expect((discovery.structuredContent as any).skills).toHaveLength(30);
+  }, 20_000);
+
   it.each([false, true])("preserves an admitted speed through a settings change and handles later support loss explicitly: %s", async removed => {
     Object.assign(upstream, { capabilities: () => APP_SERVER_CAPABILITIES });
     const current = await server.applicationService.settingsSnapshot();

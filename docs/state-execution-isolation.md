@@ -308,7 +308,7 @@ same bounded phase/freshness form for Dashboard and Settings projections.
 
 Read and telemetry children use bounded exponential restart. The Codex execution
 owner has an authenticated, reconnectable private local socket (execution protocol
-6). Its lifetime is independent of the state owner's IPC connection. A broken
+7). Its lifetime is independent of the state owner's IPC connection. A broken
 control link reconnects to the existing owner; it neither closes worker pipes nor
 creates a replacement turn. Heartbeats describe freshness and never authorize a
 kill. See the [issue #185 policy and evidence](audits/issue-185-execution-lifetime.md).
@@ -326,6 +326,9 @@ A state-owner crash temporarily makes authoritative state mutations unavailable
 while ingress `/healthz` remains live. Its replacement reopens the same single-writer
 DB lease and reattaches active, recoverable Jobs by their original Job/request IDs.
 The execution owner retains exact assignment, live question and terminal receipts;
+completed questions coalesce into one bounded current-input snapshot. Recovery
+reconciles pending questions against that snapshot, including resolutions missed
+during a control-link outage. Resolved history does not occupy live-event slots;
 results are acknowledged only after a durable terminal commit. No prompt or new
 turn is automatically replayed. The controller's read and telemetry processes can
 restart independently. A normal explicit application shutdown still closes the

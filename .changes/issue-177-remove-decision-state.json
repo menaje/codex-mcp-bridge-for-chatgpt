@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "BREAKING: Delete retired user–GPT Decision Card state in schema 27 while preserving Codex questions and answers.",
+  "breaking": true,
+  "migration": "Upgrade through schema 27, verify two restarts and recovery, then retain a schema-27 backup and dispose of protected source snapshots containing legacy Decision data under the state upgrade runbook."
+}

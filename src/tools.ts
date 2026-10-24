@@ -4082,6 +4082,10 @@ export class CodexJobRegistry {
     let resolvedInteractionId: string | undefined;
     let interaction: CodexPendingInteraction | undefined;
     if (publicEvent && job.publicEvents.some(event => event.eventId === publicEvent.eventId)) return;
+    if (progress.pendingInteractionIds) {
+      const current = new Set(progress.pendingInteractionIds);
+      job.pendingInteractions = job.pendingInteractions.filter(entry => current.has(entry.interactionId));
+    }
     const previousEvidence = job.executionEvidence;
     if (publicEvent) job.executionEvidence = retainExecutionEvidence(job, publicEvent);
     if (publicEvent) {
@@ -4115,6 +4119,7 @@ export class CodexJobRegistry {
     if (publicEvent) {
       const critical = resumedFromTerminationFailure ||
         isCodexInputEvent(publicEvent) ||
+        progress.pendingInteractionIds !== undefined ||
         resolvedInteractionId !== undefined ||
         interaction !== undefined ||
         publicEvent.phase !== "updated" ||
@@ -5382,7 +5387,7 @@ export function registerBridgeTools(
   const applicationService: BridgeApplicationService = {
     async skillLibrarySnapshot() {
       // The native library screen manages the same bridge-owned store as MCP.
-      return effectiveSkillLibrary.search({ includeDisabled: true });
+      return effectiveSkillLibrary.listForManagement();
     },
     async readBridgeSkill(reference) {
       if (reference.source !== BRIDGE_SKILL_SOURCE) {

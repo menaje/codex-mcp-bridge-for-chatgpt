@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Center load-more buttons consistently across dashboard tabs and show processing speed icons without labels beside models in the card and menu bar.",
+  "breaking": false,
+  "migration": null
+}

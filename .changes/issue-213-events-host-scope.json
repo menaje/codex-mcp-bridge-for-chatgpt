@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Record actual card-free Events subscription and delivery, exact unsubscribe arguments, and the unresolved scope of event-resumed result reads.",
+  "breaking": false,
+  "migration": null
+}

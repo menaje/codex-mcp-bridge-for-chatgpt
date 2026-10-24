@@ -4,6 +4,53 @@ import { ExecutionJournal } from "../src/executionJournal.js";
 const request = (id: string) => ({ type: "request", requestId: id, operation: "callTool", args: [id], retained: true });
 const tick = () => new Promise(resolve => setTimeout(resolve, 20));
 
+it("coalesces resolved interactions while recovering current input and exact completion", async () => {
+  const contain = vi.fn();
+  const journal = new ExecutionJournal("g", contain);
+  const received: any[] = [];
+  journal.connect((message, done) => { received.push(message); done(); return true; });
+  journal.admit(request("job"), false);
+  for (let index = 0; index < 100; index++) {
+    const interactionId = `question-${index}`;
+    journal.send({ type: "progress", requestId: "job", interactionId, interactionInput: { question: index }, progress: {} });
+    journal.send({ type: "progress", requestId: "job", progress: { event: {
+      details: { resolvedInteractionId: interactionId }
+    } } });
+    await new Promise<void>(resolve => setImmediate(resolve));
+  }
+  expect(contain).not.toHaveBeenCalled();
+  journal.disconnect();
+  journal.send({ type: "progress", requestId: "job", interactionId: "current", interactionInput: { question: "still open" }, progress: {} });
+  received.length = 0;
+  journal.connect((message, done) => { received.push(message); done(); return true; }, "replacement");
+  journal.recover("job");
+  await tick();
+  expect(received).toHaveLength(2);
+  expect(received[0].progress.pendingInteractionIds).toEqual([]);
+  expect(received[1]).toMatchObject({ interactionId: "current", interactionInput: { question: "still open" } });
+  journal.send({ type: "response", requestId: "job", ok: true, result: "exact successful result" });
+  await tick();
+  expect(received.at(-1)).toMatchObject({ ok: true, result: "exact successful result" });
+});
+
+it("preserves other live questions in a coalesced resolution snapshot", async () => {
+  const contain = vi.fn();
+  const journal = new ExecutionJournal("g", contain);
+  journal.admit(request("job"), false);
+  for (const interactionId of ["resolved", "still-open"]) {
+    journal.send({ type: "progress", requestId: "job", interactionId, interactionInput: { question: interactionId }, progress: {} });
+  }
+  journal.send({ type: "progress", requestId: "job", progress: { event: { details: { resolvedInteractionId: "resolved" } } } });
+  const received: any[] = [];
+  journal.connect((message, done) => { received.push(message); done(); return true; });
+  journal.recover("job");
+  await tick();
+  expect(received).toHaveLength(2);
+  expect(received[0].interactionId).toBe("still-open");
+  expect(received[1].progress.pendingInteractionIds).toEqual(["still-open"]);
+  expect(contain).not.toHaveBeenCalled();
+});
+
 it("keeps inspection and metadata saturation outside execution and control reservations", () => {
   const journal = new ExecutionJournal("g", vi.fn());
   for (const operation of ["probeThread", "listModels"]) {

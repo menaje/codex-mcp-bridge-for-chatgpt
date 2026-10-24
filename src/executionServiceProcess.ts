@@ -44,7 +44,7 @@ import {
 
 const CHILD_FLAG = "--codex-execution-child";
 const PROTOCOL = "bridge-codex-execution" as const;
-const PROTOCOL_VERSION = 6 as const;
+const PROTOCOL_VERSION = 7 as const;
 const HEARTBEAT_MS = 250;
 const HEARTBEAT_STALE_MS = 2_000;
 const STARTUP_TIMEOUT_MS = 20_000;
@@ -407,7 +407,7 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
   private readonly workerProcesses = new SupervisedProcessTreeRegistry();
   private readonly resumableThreads = new Map<string, boolean>();
   private readonly activeThreads = new Set<string>();
-  private readonly interactionInputs = new Map<string, CodexInteractionInput>();
+  private readonly interactionInputs = new Map<string, { requestId: string; input: CodexInteractionInput }>();
   private closed = false;
   private starting = false;
   private restartAttempts = 0;
@@ -580,7 +580,7 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
 
   interactionInput(interactionId: string): CodexInteractionInput | undefined {
     const input = this.interactionInputs.get(interactionId);
-    return input ? structuredClone(input) : undefined;
+    return input ? structuredClone(input.input) : undefined;
   }
 
   canSteerThread(threadId: string): boolean {
@@ -988,8 +988,16 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
     const sequence = (message as ChildMessage & { sequence?: number }).sequence;
     if (sequence !== undefined && sequence <= pending.sequence) return;
     if (message.type === "progress") {
+      if (message.progress.pendingInteractionIds) {
+        const current = new Set(message.progress.pendingInteractionIds);
+        for (const [id, cached] of this.interactionInputs) {
+          if (cached.requestId === message.requestId && !current.has(id)) this.interactionInputs.delete(id);
+        }
+      }
       if (message.interactionId && message.interactionInput) {
-        this.interactionInputs.set(message.interactionId, structuredClone(message.interactionInput));
+        this.interactionInputs.set(message.interactionId, {
+          requestId: message.requestId, input: structuredClone(message.interactionInput)
+        });
       }
       const resolved = message.progress.event?.details?.resolvedInteractionId;
       if (typeof resolved === "string") this.interactionInputs.delete(resolved);
@@ -1011,6 +1019,9 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
       return;
     }
     const completed = pending;
+    for (const [id, cached] of this.interactionInputs) {
+      if (cached.requestId === message.requestId) this.interactionInputs.delete(id);
+    }
     if (completed.retained && completed.assignment) {
       this.retainedResults.set(message.requestId, completed.assignment);
     }

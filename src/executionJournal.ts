@@ -134,7 +134,7 @@ export class ExecutionJournal {
       this.pump(); return;
     }
     if (entry.terminal) return;
-    const event = { ...message, sequence: ++entry.sequence };
+    const event: Message & { sequence: number } = { ...message, sequence: ++entry.sequence };
     if (message.type === "response") {
       if (entry.abandoned || entry.acknowledged) { this.entries.delete(message.requestId!); return; }
       entry.completedAt = Date.now();
@@ -152,12 +152,19 @@ export class ExecutionJournal {
       const resolvedId = message.progress?.event?.details?.resolvedInteractionId;
       if (typeof resolvedId === "string") entry.events.delete(`input:${resolvedId}`);
       const key = message.type === "assignment" ? "assignment" : interactionId ? `input:${interactionId}` :
-        resolvedId ? `resolved:${resolvedId}` : "progress";
+        typeof resolvedId === "string" ? "interaction-state" : "progress";
+      if (key === "interaction-state") {
+        // One authoritative snapshot replaces completed-question tombstones.
+        // A reconnecting controller can clear stale inputs without replaying
+        // every historical resolution; current input payloads remain retained.
+        event.progress = { ...message.progress, pendingInteractionIds: [...entry.events.keys()]
+          .filter(key => key.startsWith("input:")).map(key => key.slice("input:".length)) };
+      }
       const bytes = encodedBytes(event);
       // Optional history/progress can be coalesced. Current input cannot.
       if (key === "progress" && bytes > ORDINARY_PROGRESS_BYTES) return;
       const retainedBytes = [...entry.events].reduce((sum, [oldKey, value]) => sum + (oldKey === key ? 0 : encodedBytes(value)), 0);
-      if (bytes + retainedBytes > EVENT_BYTES || entry.events.size > 64) {
+      if (bytes + retainedBytes > EVENT_BYTES || entry.events.size + (entry.events.has(key) ? 0 : 1) > 64) {
         if (!entry.deliveryFailure) {
           entry.deliveryFailure = "EXECUTION_EVENT_RETENTION_EXHAUSTED";
           // A small error reserve is independent of the exhausted event payload.

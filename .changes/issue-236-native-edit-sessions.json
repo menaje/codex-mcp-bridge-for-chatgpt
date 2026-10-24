@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "Protect macOS input drafts with scoped edit sessions, IME-aware submissions and guarded asynchronous save responses.",
+  "breaking": false,
+  "migration": null
+}

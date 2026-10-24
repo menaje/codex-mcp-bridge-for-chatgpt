@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Preserve worker observation diagnostics and retry transient process table failures without dropping active Jobs.",
+  "breaking": false,
+  "migration": null
+}
