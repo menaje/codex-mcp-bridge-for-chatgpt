@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Keep installed helper reads responsive with app scheduling and avoid rebuilding event bodies for Dashboard lists while preserving current state, pending inputs and exact event retrieval.",
+  "breaking": false,
+  "migration": null
+}

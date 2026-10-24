@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Make clean-Mac and live ChatGPT checks optional while retaining automated release validation and payload checks.",
+  "breaking": false,
+  "migration": null
+}

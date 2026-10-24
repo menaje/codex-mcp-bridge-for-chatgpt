@@ -4,6 +4,22 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class SkillsLibraryPresentationTests: XCTestCase {
+    func testOversizedOrderedMarkersRemainTextInsteadOfOverflowingPreviewNumbers() {
+        for marker in [String(Int.max), String(Int.min), "1000000000", "999999999999999999999999999999"] {
+            let document = SafeMarkdownDocument(markdown: "\(marker). first\n1. second")
+            XCTAssertEqual(document.blocks, [.paragraph("\(marker). first"), .ordered(start: 1, items: ["second"])])
+        }
+    }
+
+    func testLargestAcceptedOrderedMarkerHasSafeOffsetsAndBothDelimitersWork() {
+        for delimiter in [".", ")"] {
+            let document = SafeMarkdownDocument(markdown: "999999999\(delimiter) first\n1\(delimiter) second")
+            XCTAssertEqual(document.blocks, [.ordered(start: 999999999, items: ["first", "second"])])
+            guard case .ordered(let start, let items) = document.blocks.first else { return XCTFail("Missing ordered list") }
+            XCTAssertEqual(items.indices.map { start + $0 }, [999999999, 1000000000])
+        }
+    }
+
     func testRendererRecognizesWholeDocumentMarkdownStructures() {
         let source = """
         # Heading

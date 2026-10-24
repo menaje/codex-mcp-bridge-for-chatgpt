@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Publish Dashboard v3 so ChatGPT loads the originating-connection completion handoff instead of a cached v2 card.",
+  "breaking": false,
+  "migration": null
+}

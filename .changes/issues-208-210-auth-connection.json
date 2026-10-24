@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "Protect Codex authentication during live checks and add explicit bridge authentication connections.",
+  "breaking": false,
+  "migration": null
+}

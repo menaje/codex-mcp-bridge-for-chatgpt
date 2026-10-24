@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Recover execution receipt capacity after acknowledgements, isolate diagnostic reads from Job reservations, and expose actionable retention and management errors.",
+  "breaking": false,
+  "migration": null
+}

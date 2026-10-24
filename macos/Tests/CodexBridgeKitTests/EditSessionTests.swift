@@ -1,9 +1,72 @@
 import AppKit
+import CodexBridgeKit
 import SwiftUI
 import XCTest
 @testable import CodexBridgeMenuBar
 
 final class EditSessionTests: XCTestCase {
+    @MainActor
+    func testCreationRetryRecoversACommittedReceiptAfterLostResponse() async throws {
+        let session = BridgeEditSession(target: "new-skill", values: [.name: "New", .description: "", .content: "# New"], retainFailedPayloadForRetry: true)
+        var committed: BridgeSkillCreateRequest?
+        var requests: [BridgeSkillCreateRequest] = []
+        var creationCount = 0
+        var closed = false
+        let operation: @MainActor (BridgeEditSubmission, @escaping @MainActor () -> Bool) async -> BridgeEditReceipt? = { submitted, _ in
+            let request = submitted.skillCreationRequest
+            requests.append(request)
+            if let committed {
+                guard committed.requestId == request.requestId else { return nil } // Existing name, different mutation.
+                return BridgeEditReceipt(version: "1", target: "created-skill")
+            }
+            committed = request
+            creationCount += 1
+            return nil // The server committed; transport lost its response.
+        }
+        session.submitReceipt(operation: operation, onClean: { closed = true })
+        for _ in 0..<100 where session.isSubmitting { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(session.isSubmitting)
+        XCTAssertFalse(closed)
+        XCTAssertNil(session.baseVersion)
+        session.submitReceipt(operation: operation, onClean: { closed = true })
+        for _ in 0..<100 where session.isSubmitting { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(closed, "Unchanged retry must recover the original creation receipt")
+        XCTAssertEqual(creationCount, 1)
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertEqual(requests.first, requests.last)
+        XCTAssertEqual(session.targetID, "created-skill")
+        XCTAssertEqual(session.baseVersion, "1")
+    }
+
+    @MainActor
+    func testRetryIdentityRequiresExactPayloadAndKeepsUIAttemptsDistinct() throws {
+        let session = BridgeEditSession(target: "new-skill", values: [.name: "New", .content: "e\u{301}"], retainFailedPayloadForRetry: true)
+        let first = try XCTUnwrap(session.prepareSubmission())
+        session.fail(first)
+        let retry = try XCTUnwrap(session.prepareSubmission())
+        XCTAssertEqual(first.requestID, retry.requestID)
+        XCTAssertNotEqual(first.id, retry.id, "A stale UI callback cannot acknowledge a later retry")
+        XCTAssertFalse(session.accepts(first))
+        session.fail(retry)
+        session.edit(.content, "\u{e9}")
+        let changed = try XCTUnwrap(session.prepareSubmission())
+        XCTAssertNotEqual(changed.requestID, first.requestID, "Verbatim content compares UTF-8 bytes, including canonical equivalents")
+        session.fail(changed)
+        session.reset(target: "new-skill", values: [.name: "New", .content: "\u{e9}"])
+        let reopened = try XCTUnwrap(session.prepareSubmission())
+        XCTAssertNotEqual(reopened.requestID, changed.requestID)
+        XCTAssertTrue(session.acknowledge(reopened))
+        XCTAssertNotEqual(try XCTUnwrap(session.prepareSubmission()).requestID, reopened.requestID)
+    }
+
+    @MainActor
+    func testOrdinaryFormsDoNotRetainFailedPayloadsForRetry() throws {
+        let session = BridgeEditSession(target: "ordinary", values: [.apiKey: "secret"])
+        let first = try XCTUnwrap(session.prepareSubmission())
+        session.fail(first)
+        XCTAssertNotEqual(try XCTUnwrap(session.prepareSubmission()).requestID, first.requestID)
+    }
+
     @MainActor
     func testUndoToOriginalValueAfterSubmissionSurvivesSuccessAndFailureRefresh() throws {
         let session = BridgeEditSession(target: "A", values: [.content: "9"], version: "v9")

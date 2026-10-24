@@ -56,10 +56,12 @@ enum BridgeEditPolicy {
 
 enum BridgeEditError: Error { case synchronization, conflict, invalidNumber, invalidValue, submission }
 
-/// Only retained by the submitting task. No draft history, payload logging, or
-/// printable secrets. Identity and revision belong to the request, not the view.
+/// Retained by the submitting task and, for opted-in forms, until an uncertain
+/// payload is retried or discarded. No draft history, payload logging, or
+/// printable secrets. UI attempt identity stays separate from transport identity.
 struct BridgeEditSubmission: Sendable, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     let id: UUID
+    let requestID: UUID
     let sessionID: UUID
     let targetID: String
     let revision: UInt64
@@ -70,6 +72,7 @@ struct BridgeEditSubmission: Sendable, CustomStringConvertible, CustomDebugStrin
 
     @MainActor fileprivate init(session: BridgeEditSession, prepared: [BridgeEditField: String]) {
         id = UUID(); sessionID = session.id; targetID = session.targetID
+        requestID = session.retryRequestID(for: prepared) ?? id
         revision = session.revision; expectedVersion = session.baseVersion; externalSequence = session.externalSequence
         rawValues = session.values; preparedValues = prepared
     }
@@ -77,6 +80,12 @@ struct BridgeEditSubmission: Sendable, CustomStringConvertible, CustomDebugStrin
     func value(_ field: BridgeEditField) -> String { preparedValues[field] ?? "" }
     fileprivate func raw(_ field: BridgeEditField) -> String { rawValues[field] ?? "" }
     fileprivate var fields: [BridgeEditField] { Array(preparedValues.keys) }
+    @MainActor fileprivate func matchesPayload(session: BridgeEditSession, prepared: [BridgeEditField: String]) -> Bool {
+        sessionID == session.id && targetID == session.targetID && expectedVersion == session.baseVersion &&
+            prepared.count == preparedValues.count && prepared.allSatisfy { field, value in
+                preparedValues[field].map { value.utf8.elementsEqual($0.utf8) } ?? false
+            }
+    }
     var description: String { "BridgeEditSubmission(\(sessionID), revision: \(revision), payload: <redacted>)" }
     var debugDescription: String { description }
     var customMirror: Mirror { Mirror(self, children: ["payload": "<redacted>"]) }
@@ -112,15 +121,18 @@ final class BridgeEditSession: ObservableObject, CustomStringConvertible, Custom
     private(set) var conflicts: Set<BridgeEditField> = []
     private var owners: [UUID: WeakInputOwner] = [:]
     private var inFlight: UUID?
+    private let retainFailedPayloadForRetry: Bool
+    private var retainedSubmission: BridgeEditSubmission?
     private var committedQuery = ""
     private var candidateReturnEvent: TimeInterval?
     @Published private(set) var change: UInt64 = 0
     @Published private(set) var problem: BridgeEditError?
 
     init(target: String, values: [BridgeEditField: String], version: String? = nil,
-         policies: [BridgeEditField: BridgeEditPolicy] = [:]) {
+         policies: [BridgeEditField: BridgeEditPolicy] = [:], retainFailedPayloadForRetry: Bool = false) {
         targetID = target; self.values = values; baseline = values; bindingValues = values
         baseVersion = version; self.policies = policies
+        self.retainFailedPayloadForRetry = retainFailedPayloadForRetry
         committedQuery = values[.query] ?? ""
     }
 
@@ -170,6 +182,7 @@ final class BridgeEditSession: ObservableObject, CustomStringConvertible, Custom
     /// session. An old task can no longer acknowledge this object.
     func reset(target: String, values: [BridgeEditField: String], version: String? = nil) {
         id = UUID(); targetID = target; revision = 0; inFlight = nil
+        retainedSubmission = nil
         self.values = values; baseline = values; bindingValues = values; baseVersion = version
         external = [:]; pending = []; protectedAfterFailure = []; conflicts = []; problem = nil; versionReview = nil; externalSequence = 0
         committedQuery = values[.query] ?? ""
@@ -198,12 +211,18 @@ final class BridgeEditSession: ObservableObject, CustomStringConvertible, Custom
             let submitted = BridgeEditSubmission(session: self, prepared: prepared)
             try validate(submitted)
             inFlight = submitted.id
+            retainedSubmission = nil
             problem = nil
             changed()
             return submitted
         } catch let error as BridgeEditError { problem = error }
         catch { problem = .invalidValue }
         return nil
+    }
+
+    fileprivate func retryRequestID(for prepared: [BridgeEditField: String]) -> UUID? {
+        guard let retainedSubmission, retainedSubmission.matchesPayload(session: self, prepared: prepared) else { return nil }
+        return retainedSubmission.requestID
     }
 
     /// Forms with a Boolean API share response/failure/exit handling as well as
@@ -252,6 +271,7 @@ final class BridgeEditSession: ObservableObject, CustomStringConvertible, Custom
         guard accepts(submission) else { return false }
         let synchronized = observeInputs()
         inFlight = nil
+        retainedSubmission = nil
         let unchanged = synchronized && revision == submission.revision
         for field in submission.fields {
             if case .secret = policy(field) {
@@ -285,6 +305,7 @@ final class BridgeEditSession: ObservableObject, CustomStringConvertible, Custom
 
     func fail(_ submission: BridgeEditSubmission, conflict: Bool = false) {
         guard accepts(submission) else { return }
+        retainedSubmission = retainFailedPayloadForRetry && !conflict ? submission : nil
         let synchronized = observeInputs()
         // Returning to the old baseline after submitting is still a newer edit.
         // A failed request must not let a later server notification erase it.

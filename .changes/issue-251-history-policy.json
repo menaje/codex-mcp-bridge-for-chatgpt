@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Apply one saved retention policy to execution and problem history, preload reusable summaries, and unify read-only history in native and card dashboards.",
+  "breaking": false,
+  "migration": "Schema 32 preserves original result bodies, immutable history clocks, recovery controls and scoped question history. Earlier missing originals remain explicitly partial."
+}

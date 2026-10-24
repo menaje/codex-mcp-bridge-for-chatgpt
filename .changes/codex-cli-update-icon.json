@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Show available Codex CLI updates as a menu-bar footer icon and name the CLI explicitly in update controls.",
+  "breaking": false,
+  "migration": null
+}

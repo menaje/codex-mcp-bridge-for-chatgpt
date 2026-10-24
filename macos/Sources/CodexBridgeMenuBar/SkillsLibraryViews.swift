@@ -798,11 +798,10 @@ struct SkillsLibraryWindowView: View {
             NewBridgeSkillSheet { submitted, isCurrent in
                 let result: BridgeSkillSummary?
                 if let version = submitted.expectedVersion {
-                    result = await model.submitBridgeSkillUpdate(.init(skillId: submitted.targetID, expectedVersion: version,
+                    result = await model.submitBridgeSkillUpdate(.init(requestId: submitted.requestID.uuidString, skillId: submitted.targetID, expectedVersion: version,
                         name: submitted.value(.name), description: submitted.value(.description), content: submitted.value(.content)), shouldSelect: isCurrent)
                 } else {
-                    result = await model.submitBridgeSkillCreation(.init(name: submitted.value(.name),
-                        description: submitted.value(.description).isEmpty ? nil : submitted.value(.description), content: submitted.value(.content)), shouldSelect: isCurrent)
+                    result = await model.submitBridgeSkillCreation(submitted.skillCreationRequest, shouldSelect: isCurrent)
                 }
                 return result.map { BridgeEditReceipt(skill: $0) }
             }
@@ -1769,6 +1768,8 @@ struct SafeMarkdownDocument: Equatable {
     private static func orderedItem(_ line: String) -> (number: Int, item: String)? {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         guard let punctuation = trimmed.firstIndex(where: { $0 == "." || $0 == ")" }),
+              (1...9).contains(trimmed.distance(from: trimmed.startIndex, to: punctuation)),
+              trimmed[..<punctuation].utf8.allSatisfy({ (48...57).contains($0) }),
               let number = Int(trimmed[..<punctuation]) else { return nil }
         let rest = trimmed[trimmed.index(after: punctuation)...]
         guard rest.first == " " else { return nil }
@@ -2419,7 +2420,7 @@ private struct NewBridgeSkillSheet: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     let save: @MainActor (BridgeEditSubmission, @escaping @MainActor () -> Bool) async -> BridgeEditReceipt?
-    @StateObject private var inputSession = BridgeEditSession(target: "new-skill", values: [.name: "", .description: "", .content: "# "])
+    @StateObject private var inputSession = BridgeEditSession(target: "new-skill", values: [.name: "", .description: "", .content: "# "], retainFailedPayloadForRetry: true)
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("macos.newbridgeskill").font(.title2.weight(.semibold))
@@ -2560,6 +2561,13 @@ private struct BridgeSkillDeleteSheet: View {
                     .disabled(isDeleting)
             }
         }.padding(20).frame(width: 430)
+    }
+}
+
+extension BridgeEditSubmission {
+    var skillCreationRequest: BridgeSkillCreateRequest {
+        .init(requestId: requestID.uuidString, name: value(.name),
+              description: value(.description).isEmpty ? nil : value(.description), content: value(.content))
     }
 }
 
