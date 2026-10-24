@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Refresh expanded running observations without collapsing pages and preserve pending runtime enrichment when loading more records in the dashboard and menu bar.",
-  "breaking": false,
-  "migration": null
-}

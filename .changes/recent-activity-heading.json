@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Remove repeated Recent Activity labels above Activity titles in the menu bar and Dashboard card.",
-  "breaking": false,
-  "migration": null
-}

@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Clarify optional predeclared followup receipts and ordinary continuation within the original user goal after result review, preserving exact replay and approval boundaries.",
-  "breaking": false,
-  "migration": null
-}

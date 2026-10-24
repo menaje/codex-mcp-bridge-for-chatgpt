@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Prevent historical thread inspection limits from creating new problem incidents and preserve recovery budgets for proven continuous runtime contexts.",
-  "breaking": false,
-  "migration": null
-}
