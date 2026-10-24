@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Use shared cancellation target names in the menu bar and dashboard, localize missing-copy fallbacks, and validate indirect native localization keys.",
-  "breaking": false,
-  "migration": null
-}

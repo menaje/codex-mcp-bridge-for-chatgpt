@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Preserve accepted requests and confirmed model reroutes in Dashboard records created before durable execution evidence, without loading progress event bodies.",
-  "breaking": false,
-  "migration": null
-}

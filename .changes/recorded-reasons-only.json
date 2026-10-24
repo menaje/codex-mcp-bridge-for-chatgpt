@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Show history reasons only when recorded, omit missing cancellation reason labels, and use Korean messages in Korean presentation examples.",
-  "breaking": false,
-  "migration": null
-}
