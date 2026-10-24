@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Preserve relay input delivery history through owner reconnection and question replacement, and align running status with automatic relay and current stops.",
-  "breaking": false,
-  "migration": null
-}

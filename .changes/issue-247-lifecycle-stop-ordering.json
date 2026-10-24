@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Preserve exact Job lifecycle revoke intent before any receiver registration so late root backfill cannot deliver stopped children.",
-  "breaking": false,
-  "migration": null
-}

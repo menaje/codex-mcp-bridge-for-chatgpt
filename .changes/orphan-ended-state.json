@@ -1,1 +1,0 @@
-{"schemaVersion":1,"releaseUnitId":"codex-mcp-bridge","bump":"patch","summary":"Converge conclusively stopped orphaned Agents to idle after a fresh process check while preserving execution history and recovery budgets.","breaking":false,"migration":null}

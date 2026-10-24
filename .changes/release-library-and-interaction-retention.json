@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "List every native-managed skill, coalesce completed interactions into bounded recovery snapshots, and restore owner-confirmed live input independently of history deduplication.",
-  "breaking": false,
-  "migration": null
-}

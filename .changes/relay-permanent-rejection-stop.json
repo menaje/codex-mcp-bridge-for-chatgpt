@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Stop automatic Relay tool retries after host rejection while preserving response-loss recovery and existing Jobs.",
-  "breaking": false,
-  "migration": null
-}

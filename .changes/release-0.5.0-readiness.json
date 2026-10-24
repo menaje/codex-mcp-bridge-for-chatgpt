@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Fix Linux process observation, cleanup-stage deadlines, macOS builds and existing runtime adoption; avoid repeated native request copies, wait for native test layout and audit all supported state schemas and active cards.",
-  "breaking": false,
-  "migration": null
-}
