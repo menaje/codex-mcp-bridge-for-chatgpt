@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Include execution storage dependencies in macOS apps and verify packaged helper imports before installation.",
+  "breaking": false,
+  "migration": null
+}

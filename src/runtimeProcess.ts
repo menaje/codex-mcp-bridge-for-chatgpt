@@ -34,6 +34,7 @@ import type {
   BridgeRuntimeAdmissionSnapshot
 } from "./tools.js";
 import { decodeUtf8Strict } from "./textIntegrity.js";
+import { BRIDGE_SKILL_LIMITS } from "./skillLibrary.js";
 import { BoundedHttpDiagnostics, HTTP_DIAGNOSTIC_HEADER, isChildHttpObservation, httpDiagnosticContext,
   type HttpDiagnosticSession, type HttpObservation } from "./httpDiagnostics.js";
 import { createStartupDiagnostics, initialStartupContext, initialStartupStageTimeout } from "../scripts/runtime-status.mjs";
@@ -120,6 +121,13 @@ const APPLICATION_RPC_METHODS = [
 
 type ApplicationRpcMethod = (typeof APPLICATION_RPC_METHODS)[number];
 type ApplicationRpcKind = "command" | "query" | "control";
+const LARGE_SKILL_RPC_METHODS = new Set<ApplicationRpcMethod>([
+  "readBridgeSkill", "readBridgeSkillFile", "createBridgeSkill", "updateBridgeSkill", "exportBridgeSkillPackage"
+]);
+
+function applicationRpcMaxBytes(method: ApplicationRpcMethod): number {
+  return LARGE_SKILL_RPC_METHODS.has(method) ? BRIDGE_SKILL_LIMITS.mutationWireMaxBytes : MAX_RPC_BYTES;
+}
 const OBSERVATION_READ_METHODS = new Set<ApplicationRpcMethod>(["dashboardSnapshot", "dashboardHistoryDetail", "dashboardExecutionDetail", "settingsSnapshot"]);
 
 const APPLICATION_QUERY_METHODS = new Set<ApplicationRpcMethod>([
@@ -1044,7 +1052,7 @@ class IsolatedRuntimeController {
       args,
       ...(context?.deadlineAt !== undefined ? { deadlineAt: context.deadlineAt } : {})
     };
-    if (Buffer.byteLength(JSON.stringify(message), "utf8") > MAX_RPC_BYTES) {
+    if (Buffer.byteLength(JSON.stringify(message), "utf8") > applicationRpcMaxBytes(method)) {
       return Promise.reject(new Error("RUNTIME_REQUEST_TOO_LARGE: Runtime request exceeds its IPC limit."));
     }
     return new Promise((resolve, reject) => {
@@ -1749,7 +1757,7 @@ async function dispatchApplicationRpc(
     context ? [...request.args, context] : request.args
   );
   const encoded = JSON.stringify(result === undefined ? null : result);
-  if (Buffer.byteLength(encoded, "utf8") > MAX_RPC_BYTES) {
+  if (Buffer.byteLength(encoded, "utf8") > applicationRpcMaxBytes(request.method)) {
     throw new Error("RUNTIME_RESPONSE_TOO_LARGE: Runtime response exceeds its IPC limit.");
   }
   return result;
@@ -1852,7 +1860,7 @@ function isRuntimeParentMessage(value: unknown): value is RuntimeParentMessage {
     APPLICATION_RPC_METHODS.includes(message.method as ApplicationRpcMethod) &&
     message.kind === applicationRpcKind(message.method as ApplicationRpcMethod) &&
     Array.isArray(message.args) &&
-    Buffer.byteLength(JSON.stringify(message), "utf8") <= MAX_RPC_BYTES;
+    Buffer.byteLength(JSON.stringify(message), "utf8") <= applicationRpcMaxBytes(message.method as ApplicationRpcMethod);
 }
 
 function applicationRpcKind(method: ApplicationRpcMethod): ApplicationRpcKind {

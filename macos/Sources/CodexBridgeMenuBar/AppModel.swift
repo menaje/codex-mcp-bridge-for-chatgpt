@@ -2468,12 +2468,14 @@ final class AppModel: ObservableObject {
         guard bridgeConnected, let skill = selectedBridgeSkill else { return }
         let reference = skill.skill.reference
         let cacheKey = "\(reference.skillId)\u{0}\(reference.version)\u{0}\(path)"
+        bridgeSkillFileRequestGeneration += 1
         if let cached = bridgeSkillFileCache[cacheKey] {
+            bridgeSkillFileLoading = false
             selectedBridgeSkillFile = cached
+            skillLibraryErrorMessage = nil
             return
         }
         selectedBridgeSkillFile = nil
-        bridgeSkillFileRequestGeneration += 1
         let request = bridgeSkillFileRequestGeneration
         let generation = connectionGeneration
         bridgeSkillFileLoading = true

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Record a complete local regression pass for the merged independent storage fix while preserving prior failed runs and unverified operating acceptance items.",
+  "breaking": false,
+  "migration": null
+}

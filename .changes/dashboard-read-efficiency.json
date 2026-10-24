@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Keep Codex status reads responsive during Settings model discovery and batch Dashboard database lookups.",
+  "breaking": false,
+  "migration": null
+}

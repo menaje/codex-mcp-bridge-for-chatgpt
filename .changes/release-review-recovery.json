@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Reject malformed HTTP request URLs and recover durable skill package mutation receipts before requiring consumed uploads.",
+  "breaking": false,
+  "migration": null
+}

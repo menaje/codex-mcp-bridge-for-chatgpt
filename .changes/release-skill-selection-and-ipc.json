@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Fence delayed attachment reads after cached selection and preserve supported skill payload sizes across isolated application RPC.",
+  "breaking": false,
+  "migration": null
+}

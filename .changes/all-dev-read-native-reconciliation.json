@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Scope query-only hydration, reuse isolated read connections, preserve lifecycle receipt retries, and fence native content after helper or project changes.",
+  "breaking": false,
+  "migration": null
+}

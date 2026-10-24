@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Add native Intel development app builds with downloadable DMG artifacts and source checksums.",
+  "breaking": false,
+  "migration": null
+}

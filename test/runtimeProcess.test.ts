@@ -306,6 +306,43 @@ async function expectTaskStorageUnavailable(
 }
 
 describe("isolated production runtime", () => {
+  it.each(["http", "stdio"] as const)("carries supported large skill payloads across the %s isolation boundary", async (transport) => {
+    const root = await mkdtemp(path.join(tmpdir(), "bridge-large-skill-"));
+    const environment = runtimeEnvironment(root);
+    const output = new PassThrough();
+    output.resume();
+    const stdio = transport === "stdio" ? await createIsolatedStdioRuntime(loadConfig(environment), {
+      childEnvironment: environment, input: new PassThrough(), output
+    }) : undefined;
+    const http = transport === "http" ? await start() : undefined;
+    const service = (stdio ?? http!.server).applicationService;
+    try {
+      const content = "\u0001".repeat(3 * 1024 * 1024);
+      const files = Array.from({ length: 3 }, (_, index) => ({ path: "refs/" + index + ".md", content: "F".repeat(2 * 1024 * 1024) }));
+      const input = { requestId: randomUUID(), name: "Large " + transport + " skill", content, files };
+      expect(Buffer.byteLength(JSON.stringify(input))).toBeGreaterThan(8 * 1024 * 1024);
+      const created = await service.createBridgeSkill!(input);
+      expect((await service.readBridgeSkill!(created)).content).toBe(content);
+      const updated = await service.updateBridgeSkill!({
+        requestId: randomUUID(), skillId: created.skillId, expectedVersion: created.version,
+        content, files: { upsert: files }
+      });
+      expect(updated.version).toBe("2");
+      expect((await service.readBridgeSkillFile!(updated, files[0]!.path)).content).toBe(files[0]!.content);
+      const exported = await service.exportBridgeSkillPackage!(updated);
+      expect(Buffer.byteLength(JSON.stringify(exported))).toBeGreaterThan(8 * 1024 * 1024);
+      const zip = Buffer.from(exported.data, "base64");
+      expect(zip.length).toBe(exported.bytes);
+      expect(zip.readUInt32LE(0)).toBe(0x04034b50);
+      await expect(service.updateSettings({ payload: "X".repeat(9 * 1024 * 1024) } as never))
+        .rejects.toThrow("RUNTIME_REQUEST_TOO_LARGE");
+      expect((await service.settingsSnapshot()).settings).toBeDefined();
+    } finally {
+      await stdio?.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it("rejects malformed request targets and continues serving requests", async () => {
     const { baseUrl } = await start();
     for (const target of ["//", "//[", "http://["]) {

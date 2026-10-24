@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Restore Standard speed choices in isolated settings reads, retain unverified Ultrafast settings without enabling new execution, and simplify recorded speed badges.",
+  "breaking": false,
+  "migration": null
+}

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "Add explicit turn-scoped processing speeds and distinguish requested execution from field-specific server confirmation across tools, web and native history.",
+  "breaking": false,
+  "migration": "Settings schema 8 retains legacy persistent speed behavior and surviving raw tier records. Unknown tiers require explicit reselection; old-client boolean saves preserve newer modes."
+}

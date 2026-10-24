@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Allow shell snapshot setup during thread initialization and preserve model choices when Codex records project trust.",
+  "breaking": false,
+  "migration": null
+}
