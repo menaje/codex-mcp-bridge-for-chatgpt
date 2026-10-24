@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Wake native completion delivery from committed outbox readiness, skip empty writer transactions, and back off notification retries.",
+  "breaking": false,
+  "migration": null
+}

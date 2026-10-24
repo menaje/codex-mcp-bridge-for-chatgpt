@@ -2518,6 +2518,42 @@ final class AppModel: ObservableObject {
         await submitBridgeSkillMutation(shouldSelect: shouldSelect) { client in try await client.createBridgeSkill(request) }
     }
 
+    func submitBridgeSkillFileCreation(_ reference: BridgeSkillReference, path: String, content: String,
+                                       requestId: String, shouldSelect: () -> Bool) async -> BridgeSkillSummary? {
+        await submitBridgeSkillMutation(shouldSelect: shouldSelect) { client in
+            let document = try await client.readBridgeSkill(reference)
+            try requireUnoccupiedBridgeSkillFilePath(path, in: document)
+            return try await client.updateBridgeSkill(.init(requestId: requestId, skillId: reference.skillId,
+                expectedVersion: reference.version, files: .init(upsert: [.init(path: path, content: content)])))
+        }
+    }
+
+    func submitBridgeSkillFileRename(_ reference: BridgeSkillReference, from oldPath: String, to newPath: String,
+                                     requestId: String, shouldSelect: () -> Bool) async -> BridgeSkillSummary? {
+        await submitBridgeSkillMutation(shouldSelect: shouldSelect) { client in
+            // Check the pinned version, rather than a possibly stale selected document.
+            // expectedVersion then prevents a concurrent change between this read and update.
+            let document = try await client.readBridgeSkill(reference)
+            try requireUnoccupiedBridgeSkillFilePath(newPath, in: document, excluding: oldPath)
+            let content = try await client.readBridgeSkillFile(reference, path: oldPath).content
+            return try await client.updateBridgeSkill(.init(requestId: requestId, skillId: reference.skillId,
+                expectedVersion: reference.version,
+                files: .init(upsert: [.init(path: newPath, content: content)], remove: [oldPath])))
+        }
+    }
+
+    private func requireUnoccupiedBridgeSkillFilePath(_ path: String, in document: BridgeSkill, excluding oldPath: String? = nil) throws {
+        let destinationKey = bridgeSkillPathComparisonKey(path)
+        guard !document.files.contains(where: { file in
+            let isSource = oldPath.map { file.path.utf8.elementsEqual($0.utf8) } ?? false
+            return !isSource && bridgeSkillPathComparisonKey(file.path) == destinationKey
+        }) else {
+            throw NSError(domain: "BridgeSkillAttachment", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "SKILL_FILE_PATH_CONFLICT: The destination is occupied by another attachment."
+            ])
+        }
+    }
+
     func inspectBridgeSkillPackage(at url: URL) async -> BridgeSkillPackageInspection? {
         skillMutationErrorMessage = nil
         do {

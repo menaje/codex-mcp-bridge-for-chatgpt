@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Preserve unknown speed in historical Jobs and document bounded CLI lifecycle and usage regressions, separating development evidence from unverified installed and real-account combinations.",
+  "breaking": false,
+  "migration": null
+}

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Return the scoped terminal admission receipt after Job result expiry and guide exact request recovery before a follow-up retry.",
+  "breaking": false,
+  "migration": null
+}

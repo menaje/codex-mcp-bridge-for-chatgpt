@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Forward native execution detail reads through the isolated runtime.",
+  "breaking": false,
+  "migration": null
+}

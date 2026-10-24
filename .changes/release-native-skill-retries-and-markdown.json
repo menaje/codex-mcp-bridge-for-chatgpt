@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Recover uncertain native skill creation, imports and form edits with the exact request identity and bound Markdown ordered-list markers before preview numbering.",
+  "breaking": false,
+  "migration": null
+}

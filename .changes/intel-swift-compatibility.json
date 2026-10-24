@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Restore native Intel builds by keeping file-drop items inside their callback and handling optional Codex status explicitly.",
+  "breaking": false,
+  "migration": null
+}

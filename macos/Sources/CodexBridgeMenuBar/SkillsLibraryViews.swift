@@ -808,9 +808,9 @@ struct SkillsLibraryWindowView: View {
         case .newFile:
             if let document = model.selectedBridgeSkill {
                 NewBridgeSkillFileSheet(target: document.skill.reference, onSaved: { requestDocumentSelection(.file($0)) }) { submitted, isCurrent in
-                    let result = await model.submitBridgeSkillUpdate(.init(requestId: submitted.requestID.uuidString, skillId: submitted.targetID,
-                        expectedVersion: submitted.expectedVersion ?? document.skill.version,
-                        files: .init(upsert: [.init(path: submitted.value(.path), content: submitted.value(.content))])), shouldSelect: isCurrent)
+                    let result = await model.submitBridgeSkillFileCreation(.init(skillId: submitted.targetID,
+                        version: submitted.expectedVersion ?? document.skill.version), path: submitted.value(.path),
+                        content: submitted.value(.content), requestId: submitted.requestID.uuidString, shouldSelect: isCurrent)
                     return result.map { BridgeEditReceipt(skill: $0) }
                 }
             }
@@ -1217,13 +1217,10 @@ struct SkillsLibraryWindowView: View {
                             isCurrent: @escaping @MainActor () -> Bool) async -> BridgeEditReceipt? {
         guard let version = submission.expectedVersion else { return nil }
         let oldPath = submission.value(.cwd).isEmpty ? initialPath : submission.value(.cwd)
-        do {
-            let content = try await model.readBridgeSkillAttachment(.init(skillId: submission.targetID, version: version), path: oldPath)
-            // A later draft must survive, while the pinned request can still finish.
-            let updated = await model.submitBridgeSkillUpdate(.init(requestId: submission.requestID.uuidString, skillId: submission.targetID, expectedVersion: version,
-                files: .init(upsert: [.init(path: submission.value(.path), content: content)], remove: [oldPath])), shouldSelect: isCurrent)
-            return updated.map { BridgeEditReceipt(version: $0.version, confirmed: [.cwd: submission.value(.path)]) }
-        } catch { return nil }
+        // A later draft must survive, while the pinned request can still finish.
+        let updated = await model.submitBridgeSkillFileRename(.init(skillId: submission.targetID, version: version),
+            from: oldPath, to: submission.value(.path), requestId: submission.requestID.uuidString, shouldSelect: isCurrent)
+        return updated.map { BridgeEditReceipt(version: $0.version, confirmed: [.cwd: submission.value(.path)]) }
     }
 
     private func deleteFile(_ path: String, from document: BridgeSkill) {
@@ -2100,6 +2097,33 @@ enum BridgeSkillDropLoader {
 }
 
 enum BridgeSkillImportCollector {
+    static let fileByteLimit = 3 * 1_024 * 1_024
+
+    /// A stat check avoids large reads; the byte budget also covers files growing after stat.
+    static func readBoundedMarkdown(size: Int64, read: (Int) throws -> Data?) throws -> Data? {
+        guard size >= 0, size <= Int64(fileByteLimit) else { return nil }
+        var data = Data()
+        while data.count <= fileByteLimit {
+            let count = min(64 * 1_024, fileByteLimit + 1 - data.count)
+            guard let chunk = try read(count), !chunk.isEmpty else { break }
+            data.append(chunk)
+        }
+        return data.count <= fileByteLimit ? data : nil
+    }
+
+    private static func readMarkdownFile(_ url: URL) throws -> Data? {
+        // Recheck the opened descriptor so a path swap cannot turn the read into a
+        // symlink or blocking special-file read after resourceValues was checked.
+        let descriptor = Darwin.open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        let file = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer { try? file.close() }
+        var info = stat()
+        guard Darwin.fstat(descriptor, &info) == 0 else { throw POSIXError(.EIO) }
+        guard info.st_mode & S_IFMT == S_IFREG else { throw POSIXError(.EINVAL) }
+        return try readBoundedMarkdown(size: info.st_size) { try file.read(upToCount: $0) }
+    }
+
     static func collect(urls: [URL]) -> BridgeSkillImportReview {
         var files: [BridgeSkillImportFile] = []
         var issues: [BridgeSkillImportIssue] = []
@@ -2182,8 +2206,7 @@ enum BridgeSkillImportCollector {
             guard normalized.lowercased().hasSuffix(".md") || normalized.lowercased().hasSuffix(".markdown") else {
                 issues.append(.init(path: normalized, reason: "unsupported-file")); return
             }
-            let data = try Data(contentsOf: url)
-            guard data.count <= 3 * 1_024 * 1_024 else {
+            guard let data = try readMarkdownFile(url) else {
                 issues.append(.init(path: normalized, reason: "file-too-large")); return
             }
             guard let content = decodeBridgeSkillMarkdown(data), !content.contains("\u{0}") else {

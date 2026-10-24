@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Keep the menu bar usage card and its last confirmed values stable while usage refreshes.",
+  "breaking": false,
+  "migration": null
+}

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Recognize byte-distinct but canonically equivalent skill Markdown edits so saving and discard protection include accents and combining characters.",
+  "breaking": false,
+  "migration": null
+}

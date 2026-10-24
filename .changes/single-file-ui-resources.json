@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "BREAKING: Replace digest-named card snapshots with one current file and an explicit stable URI version per active card.",
+  "breaking": true,
+  "migration": "Reconnect and refresh ChatGPT connector discovery, then reopen Settings and Dashboard at their v1 resource URIs."
+}

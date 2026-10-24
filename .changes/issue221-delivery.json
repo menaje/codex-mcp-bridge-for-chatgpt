@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "BREAKING: Make direct-wait the ordinary default, retire card message delivery, and isolate Events behind an explicit experimental profile.",
+  "breaking": true,
+  "migration": "Deploy server and v4 cards together, close old card instances, refresh connector discovery, and explicitly reapprove unexecuted legacy followups; preserve admitted Job identities and historical receipts."
+}

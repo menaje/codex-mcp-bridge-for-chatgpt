@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Wait for cold helper preparation and bound initial recovery to one durable three-attempt budget, with receiver-bound drain identity, bounded process inspection and preserved user stop and protected work.",
+  "breaking": false,
+  "migration": null
+}

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Harden Decision-card inline CSS and SVG paint sanitization by parsing declarations and normalizing CSS escapes before rejecting resource-loading values.",
+  "breaking": false,
+  "migration": null
+}
