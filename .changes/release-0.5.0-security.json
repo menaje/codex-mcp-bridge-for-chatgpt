@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Update MCP SDK, Hono and Zod to security-fixed versions and bound structured tool inputs before schema validation.",
-  "breaking": false,
-  "migration": null
-}
