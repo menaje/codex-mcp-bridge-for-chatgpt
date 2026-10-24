@@ -392,28 +392,11 @@ export class SkillLibrary {
   }
 
   async createBridgeSkillFromPackage(input: CreateBridgeSkillPackageInput): Promise<SkillSummary> {
-    return this.packageUploads.commit(input.uploadId, input.mainPath, input.includePaths, async (expanded) => {
-      if (expanded.content === undefined) throw new Error("SKILL_PACKAGE_MAIN_REQUIRED: Creating a skill package requires SKILL.md content.");
-      return this.createBridgeSkill({
-        requestId: input.requestId,
-        name: input.name,
-        description: input.description,
-        content: expanded.content,
-        files: expanded.files
-      });
-    });
+    return this.store.createPackage(input, this.packageUploads);
   }
 
   async updateBridgeSkillFromPackage(input: UpdateBridgeSkillPackageInput): Promise<SkillSummary> {
-    return this.packageUploads.commit(input.uploadId, input.mainPath, input.includePaths, async (expanded) => {
-      return this.updateBridgeSkill({
-        requestId: input.requestId,
-        skillId: input.skillId,
-        expectedVersion: input.expectedVersion,
-        ...(expanded.content === undefined ? {} : { content: expanded.content }),
-        ...(expanded.files.length === 0 ? {} : { files: { upsert: expanded.files } })
-      });
-    });
+    return this.store.updatePackage(input, this.packageUploads);
   }
 
   async exportBridgeSkillPackage(reference: SkillReference): Promise<Buffer> {
@@ -479,52 +462,102 @@ class BridgeSkillStore {
 
   async create(input: CreateBridgeSkillInput): Promise<SkillSummary> {
     const normalized = normalizeCreateInput(input);
-    return this.mutate(normalized.requestId, mutationActionHash("create", normalized), async (index) => {
-      if (index.skills.some((skill) => skill.nameKey === normalized.nameKey)) {
-        throw new Error("SKILL_NAME_CONFLICT: A bridge skill with this name already exists.");
-      }
-      const now = isoNow(this.now);
-      const record: BridgeSkillRecord = {
-        skillId: `bridge_${randomUUID().replaceAll("-", "")}`,
-        name: normalized.name,
-        nameKey: normalized.nameKey,
-        description: normalized.description,
-        createdAt: now,
-        updatedAt: now,
-        currentVersion: "1",
-        enabled: true,
-        versions: []
-      };
-      record.versions.push(await this.writeSkillVersion(record, "1", normalized.content, normalized.files, now));
-      index.skills.push(record);
-      return bridgeSummary(record);
-    });
+    return this.mutate(normalized.requestId, mutationActionHash("create", normalized),
+      (index) => this.createRecord(index, normalized));
+  }
+
+  private async createRecord(index: BridgeSkillIndex, normalized: ReturnType<typeof normalizeCreateInput>): Promise<SkillSummary> {
+    if (index.skills.some((skill) => skill.nameKey === normalized.nameKey)) {
+      throw new Error("SKILL_NAME_CONFLICT: A bridge skill with this name already exists.");
+    }
+    const now = isoNow(this.now);
+    const record: BridgeSkillRecord = {
+      skillId: `bridge_${randomUUID().replaceAll("-", "")}`,
+      name: normalized.name,
+      nameKey: normalized.nameKey,
+      description: normalized.description,
+      createdAt: now,
+      updatedAt: now,
+      currentVersion: "1",
+      enabled: true,
+      versions: []
+    };
+    record.versions.push(await this.writeSkillVersion(record, "1", normalized.content, normalized.files, now));
+    index.skills.push(record);
+    return bridgeSummary(record);
   }
 
   async update(input: UpdateBridgeSkillInput): Promise<SkillSummary> {
     const normalized = normalizeUpdateInput(input);
-    return this.mutate(normalized.requestId, mutationActionHash("update", normalized), async (index) => {
-      const record = findCurrentRecord(index, normalized.skillId, normalized.expectedVersion);
-      const current = await this.loadVersion(record, record.currentVersion);
-      const name = normalized.name ?? record.name;
-      const nameKey = normalized.nameKey ?? record.nameKey;
-      if (index.skills.some((candidate) => candidate.skillId !== record.skillId && candidate.nameKey === nameKey)) {
-        throw new Error("SKILL_NAME_CONFLICT: A bridge skill with this name already exists.");
-      }
-      const description = normalized.description ?? record.description;
-      const content = normalized.content ?? current.content;
-      const files = applySkillFileChanges(current.files, normalized.files);
-      const nextVersion = nextBridgeVersion(record.currentVersion);
-      const now = isoNow(this.now);
-      const version = await this.writeSkillVersion({ ...record, name, description }, nextVersion, content, files, now);
-      record.name = name;
-      record.nameKey = nameKey;
-      record.description = description;
-      record.currentVersion = nextVersion;
-      record.updatedAt = now;
-      record.versions.push(version);
-      return bridgeSummary(record);
+    return this.mutate(normalized.requestId, mutationActionHash("update", normalized),
+      (index) => this.updateRecord(index, normalized));
+  }
+
+  private async updateRecord(index: BridgeSkillIndex, normalized: ReturnType<typeof normalizeUpdateInput>): Promise<SkillSummary> {
+    const record = findCurrentRecord(index, normalized.skillId, normalized.expectedVersion);
+    const current = await this.loadVersion(record, record.currentVersion);
+    const name = normalized.name ?? record.name;
+    const nameKey = normalized.nameKey ?? record.nameKey;
+    if (index.skills.some((candidate) => candidate.skillId !== record.skillId && candidate.nameKey === nameKey)) {
+      throw new Error("SKILL_NAME_CONFLICT: A bridge skill with this name already exists.");
+    }
+    const description = normalized.description ?? record.description;
+    const content = normalized.content ?? current.content;
+    const files = applySkillFileChanges(current.files, normalized.files);
+    const nextVersion = nextBridgeVersion(record.currentVersion);
+    const now = isoNow(this.now);
+    const version = await this.writeSkillVersion({ ...record, name, description }, nextVersion, content, files, now);
+    record.name = name;
+    record.nameKey = nameKey;
+    record.description = description;
+    record.currentVersion = nextVersion;
+    record.updatedAt = now;
+    record.versions.push(version);
+    return bridgeSummary(record);
+  }
+
+  async createPackage(input: CreateBridgeSkillPackageInput, uploads: BridgeSkillPackageUploads): Promise<SkillSummary> {
+    return this.mutatePackage(input, "create-package", {
+      name: input.name, description: input.description ?? null
+    }, uploads, async (index, expanded) => {
+      if (expanded.content === undefined) throw new Error("SKILL_PACKAGE_MAIN_REQUIRED: Creating a skill package requires SKILL.md content.");
+      return this.createRecord(index, normalizeCreateInput({
+        requestId: input.requestId, name: input.name, description: input.description,
+        content: expanded.content, files: expanded.files
+      }));
     });
+  }
+
+  async updatePackage(input: UpdateBridgeSkillPackageInput, uploads: BridgeSkillPackageUploads): Promise<SkillSummary> {
+    return this.mutatePackage(input, "update-package", {
+      skillId: input.skillId, expectedVersion: input.expectedVersion
+    }, uploads, (index, expanded) => this.updateRecord(index, normalizeUpdateInput({
+      requestId: input.requestId, skillId: input.skillId, expectedVersion: input.expectedVersion,
+      ...(expanded.content === undefined ? {} : { content: expanded.content }),
+      ...(expanded.files.length === 0 ? {} : { files: { upsert: expanded.files } })
+    })));
+  }
+
+  private async mutatePackage(
+    input: { requestId: string; uploadId: string; mainPath: string | null; includePaths?: string[] },
+    operation: "create-package" | "update-package",
+    identity: Record<string, unknown>,
+    uploads: BridgeSkillPackageUploads,
+    mutate: (index: BridgeSkillIndex, expanded: { content?: string; files: SkillFileInput[] }) => Promise<SkillSummary>
+  ): Promise<SkillSummary> {
+    const requestId = normalizeMutationRequestId(input.requestId);
+    const actionHash = mutationActionHash(operation, {
+      ...identity, requestId, uploadId: input.uploadId,
+      mainPath: input.mainPath, includePaths: input.includePaths ?? null
+    });
+    let expanded!: { content?: string; files: SkillFileInput[] };
+    // Look up durable receipts under the mutation lock before requiring a live upload.
+    // Consume the upload only after both the version and its receipt are committed.
+    return this.mutate(requestId, actionHash, (index) => mutate(index, expanded),
+      (commit) => uploads.commit(input.uploadId, input.mainPath, input.includePaths, async (selection) => {
+        expanded = selection;
+        return commit();
+      }));
   }
 
   async restore(input: RestoreBridgeSkillInput): Promise<SkillSummary> {
@@ -792,7 +825,8 @@ class BridgeSkillStore {
   private async mutate<T extends BridgeSkillMutationValue>(
     requestId: string,
     actionHash: string,
-    operation: (index: BridgeSkillIndex) => Promise<T>
+    operation: (index: BridgeSkillIndex) => Promise<T>,
+    wrapCommit?: (commit: () => Promise<T>) => Promise<T>
   ): Promise<T> {
     const existing = mutationQueues.get(this.directory) || Promise.resolve();
     let release!: () => void;
@@ -817,13 +851,16 @@ class BridgeSkillStore {
           }
           return cloneMutationValue(receipt.outcome) as T;
         }
-        const result = await operation(index);
-        index.mutationReceipts = cloneMutationReceipts([
-          ...index.mutationReceipts,
-          { requestId, actionHash, outcome: mutationOutcome(result), createdAt: isoNow(this.now) }
-        ]);
-        await this.writeIndex(index);
-        return result;
+        const commit = async () => {
+          const result = await operation(index);
+          index.mutationReceipts = cloneMutationReceipts([
+            ...index.mutationReceipts,
+            { requestId, actionHash, outcome: mutationOutcome(result), createdAt: isoNow(this.now) }
+          ]);
+          await this.writeIndex(index);
+          return result;
+        };
+        return wrapCommit ? wrapCommit(commit) : commit();
       });
     } finally {
       release();

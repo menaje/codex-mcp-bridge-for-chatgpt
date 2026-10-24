@@ -296,7 +296,13 @@ export async function createIsolatedHttpServer(
   );
   const applicationService = runtime.applicationService();
   const server = createServer((request, response) => {
-    const pathname = new URL(request.url || "/", "http://bridge.invalid").pathname;
+    let pathname: string;
+    try {
+      pathname = new URL(request.url || "/", "http://bridge.invalid").pathname;
+    } catch {
+      writeJson(response, 400, { error: "invalid_request_url" });
+      return;
+    }
     if (pathname === "/healthz" && request.method === "GET") {
       writeJson(response, 200, {
         ok: true,

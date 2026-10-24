@@ -207,6 +207,27 @@ async function start(
 }
 
 describe("MCP 2026-07-28 HTTP server", () => {
+  it("rejects malformed request targets and continues serving requests", async () => {
+    const { baseUrl } = await start();
+    for (const target of ["//", "//[", "http://["]) {
+      const response = await new Promise<{ status: number | undefined; body: string }>((resolve, reject) => {
+        const request = httpRequest(baseUrl, { method: "GET", path: target }, (incoming) => {
+          let body = "";
+          incoming.setEncoding("utf8");
+          incoming.on("data", (chunk) => { body += chunk; });
+          incoming.on("end", () => resolve({ status: incoming.statusCode, body }));
+          incoming.on("error", reject);
+        });
+        request.on("error", reject);
+        request.setTimeout(2_000, () => request.destroy(new Error("Malformed request did not receive a response")));
+        request.end();
+      });
+      expect(response.status, target).toBe(400);
+      expect(JSON.parse(response.body), target).toEqual({ error: "invalid_request_url" });
+      expect((await fetch(`${baseUrl}/healthz`)).status).toBe(200);
+    }
+  });
+
   it("separates liveness from state-service readiness without authentication", async () => {
     const starting = await start();
     const liveness = await fetch(`${starting.baseUrl}/healthz`);

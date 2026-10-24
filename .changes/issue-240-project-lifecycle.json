@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "End project use through restartable confirmed archive, remove Bridge management on delete, and allow repeated registration of the same folder with new execution context.",
+  "breaking": false,
+  "migration": "Schema 31 adds archive intent/confirmation state and independent retired-request/thread receipts; legacy archived and deleted registrations enter the same cleanup flow."
+}

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Present Finder and AppleDouble ZIP metadata exclusions as neutral automatic cleanup while keeping actionable import warnings separate.",
+  "breaking": false,
+  "migration": null
+}

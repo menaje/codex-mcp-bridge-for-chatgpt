@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "Recommend managed CLI for new installations, retain one Bridge conversation store across new native login profiles, and separate durable storage from app visibility.",
+  "breaking": false,
+  "migration": "Existing CLI choices, explicit Codex homes and legacy authentication profiles retain their original stores. New profiles share owned rollout and SQLite directories; saved app visibility no longer makes new conversations ephemeral. Existing conversation persistence remains unchanged."
+}

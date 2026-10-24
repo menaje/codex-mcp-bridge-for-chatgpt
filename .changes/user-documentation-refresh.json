@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Refresh user guides and English screenshots for skills, authentication, processing speed, conversation storage, and current cards.",
+  "breaking": false,
+  "migration": null
+}

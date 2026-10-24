@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Retain confirmed native content during helper RPC failure, classify observation errors, and fence late responses without granting execution permission.",
+  "breaking": false,
+  "migration": null
+}

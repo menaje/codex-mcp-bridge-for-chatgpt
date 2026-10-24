@@ -600,7 +600,13 @@ async function handleHttpRequest(
   readiness: () => BridgeReadinessSnapshot,
   oauthVerifier?: McpOAuthVerifier
 ): Promise<void> {
-  const pathname = new URL(req.url || "/", "http://bridge.invalid").pathname;
+  let pathname: string;
+  try {
+    pathname = new URL(req.url || "/", "http://bridge.invalid").pathname;
+  } catch {
+    writeJson(res, 400, { error: "invalid_request_url" });
+    return;
+  }
   if (pathname === "/healthz" && req.method === "GET") {
     writeJson(res, 200, {
       ok: true,

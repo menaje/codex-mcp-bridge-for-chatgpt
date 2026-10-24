@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Preserve exact JSON-RPC request IDs across split or reordered request bodies and retain verified orphan process ownership through incomplete birth observations.",
+  "breaking": false,
+  "migration": null
+}

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "Add original-conversation OAuth subscription delegation and immutable card-free Events completion for exact Jobs and preapproved followups.",
+  "breaking": false,
+  "migration": null
+}

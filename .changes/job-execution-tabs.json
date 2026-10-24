@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "Show every retained Job in execution history with exact details and distinct problem counts.",
+  "breaking": false,
+  "migration": null
+}

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Bound and coalesce fresh read projections, batch Dashboard reads, and preserve observation capacity through cancellation.",
+  "breaking": false,
+  "migration": null
+}

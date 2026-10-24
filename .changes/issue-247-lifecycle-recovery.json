@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "Add opt-in scoped lifecycle Events receivers that atomically connect later Jobs and current input, recover missing delivery intent and stop at goal completion without creating child grants.",
+  "breaking": false,
+  "migration": null
+}

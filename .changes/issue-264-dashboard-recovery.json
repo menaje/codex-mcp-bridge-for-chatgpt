@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Separate task-list reload failures from service connection recovery in the macOS dashboard and retain confirmed content.",
+  "breaking": false,
+  "migration": null
+}

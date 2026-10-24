@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "BREAKING: Replace foreground/background Codex task modes with one durable asynchronous admission contract.",
+  "breaking": true,
+  "migration": "Deploy the matching bridge and macOS app (state schema 20, Settings schema 5, task input contract 6, local companion protocol 10, and remote companion protocol 8), reconnect native clients, refresh ChatGPT connector discovery, remove executionMode from codex_task calls, and recover work with the same requestId through codex_status."
+}

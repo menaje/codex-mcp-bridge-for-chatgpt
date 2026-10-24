@@ -255,6 +255,70 @@ describe("Bridge skill ZIP packages", () => {
     expect(inspectBridgeSkillZip(exported).files.map((file) => file.path)).toEqual(["refs/a.md", "SKILL.md"]);
   });
 
+  it("recovers package create receipts after upload consumption, concurrent retries and restart", async () => {
+    const root = await temporaryRoot();
+    const directory = path.join(root, "skills");
+    const library = new SkillLibrary({ directory });
+    const upload = await library.beginBridgeSkillPackageUpload();
+    const zip = deterministicBridgeSkillZip("# Imported", [{ path: "refs/a.md", content: "A" }]);
+    await library.appendBridgeSkillPackageUpload({ uploadId: upload.uploadId, chunkIndex: 0, data: zip.toString("base64") });
+    const input = { requestId: randomUUID(), name: "Retryable package", description: "Original", uploadId: upload.uploadId,
+      mainPath: "SKILL.md", includePaths: ["SKILL.md", "refs/a.md"] };
+    const [created, concurrentRetry] = await Promise.all([
+      library.createBridgeSkillFromPackage(input), library.createBridgeSkillFromPackage(input)
+    ]);
+    expect(concurrentRetry).toEqual(created);
+    await expect(library.inspectBridgeSkillPackageUpload(upload.uploadId)).rejects.toThrow("SKILL_UPLOAD_NOT_FOUND");
+    const restarted = new SkillLibrary({ directory });
+    expect(await restarted.createBridgeSkillFromPackage(input)).toEqual(created);
+    expect((await restarted.listBridgeSkillVersions({ skillId: created.skillId })).versions).toHaveLength(1);
+    expect((await restarted.readFile({ reference: created, path: "refs/a.md" })).content).toBe("A");
+    for (const changes of [
+      { name: "Changed" }, { description: "Changed" }, { uploadId: "different-upload" },
+      { mainPath: "refs/a.md" }, { includePaths: [] }
+    ]) {
+      await expect(restarted.createBridgeSkillFromPackage({ ...input, ...changes })).rejects.toThrow("SKILL_MUTATION_REQUEST_REUSED");
+    }
+    await expect(restarted.createBridgeSkill({
+      requestId: input.requestId, name: input.name, content: "# Imported"
+    })).rejects.toThrow("SKILL_MUTATION_REQUEST_REUSED");
+    await expect(restarted.updateBridgeSkillFromPackage({
+      requestId: input.requestId, skillId: created.skillId, expectedVersion: created.version,
+      uploadId: input.uploadId, mainPath: input.mainPath
+    })).rejects.toThrow("SKILL_MUTATION_REQUEST_REUSED");
+    await restarted.deleteBridgeSkill({ requestId: randomUUID(), skillId: created.skillId, expectedVersion: created.version });
+    await expect(new SkillLibrary({ directory }).createBridgeSkillFromPackage(input)).rejects.toThrow("SKILL_MUTATION_INVALIDATED");
+  });
+
+  it("recovers package update receipts without adding another immutable version", async () => {
+    const root = await temporaryRoot();
+    const directory = path.join(root, "skills");
+    const library = new SkillLibrary({ directory });
+    const created = await library.createBridgeSkill({ requestId: randomUUID(), name: "Update package", content: "# Original" });
+    const upload = await library.beginBridgeSkillPackageUpload();
+    const zip = deterministicBridgeSkillZip("# Updated", [{ path: "refs/a.md", content: "A" }]);
+    await library.appendBridgeSkillPackageUpload({ uploadId: upload.uploadId, chunkIndex: 0, data: zip.toString("base64") });
+    const input = { requestId: randomUUID(), skillId: created.skillId, expectedVersion: created.version,
+      uploadId: upload.uploadId, mainPath: "SKILL.md" };
+    const [updated, concurrentRetry] = await Promise.all([
+      library.updateBridgeSkillFromPackage(input), library.updateBridgeSkillFromPackage(input)
+    ]);
+    expect(concurrentRetry).toEqual(updated);
+    expect(updated.version).toBe("2");
+    const restarted = new SkillLibrary({ directory });
+    expect(await restarted.updateBridgeSkillFromPackage(input)).toEqual(updated);
+    expect((await restarted.listBridgeSkillVersions({ skillId: updated.skillId })).versions).toHaveLength(2);
+    expect((await restarted.readFile({ reference: updated, path: "refs/a.md" })).content).toBe("A");
+    for (const changes of [
+      { skillId: `bridge_${"1".repeat(32)}` }, { expectedVersion: "2" }, { uploadId: "different-upload" },
+      { mainPath: null }, { includePaths: [] }
+    ]) {
+      await expect(restarted.updateBridgeSkillFromPackage({ ...input, ...changes })).rejects.toThrow("SKILL_MUTATION_REQUEST_REUSED");
+    }
+    await restarted.deleteBridgeSkill({ requestId: randomUUID(), skillId: updated.skillId, expectedVersion: updated.version });
+    await expect(new SkillLibrary({ directory }).updateBridgeSkillFromPackage(input)).rejects.toThrow("SKILL_MUTATION_INVALIDATED");
+  });
+
   it("keeps a single-use upload retryable until the version mutation commits", async () => {
     const root = await temporaryRoot();
     const library = new SkillLibrary({ directory: path.join(root, "skills") });

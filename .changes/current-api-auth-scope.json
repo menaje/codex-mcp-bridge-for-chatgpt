@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Match authentication to current Codex APIs and omit unprovided account, quota and cost information from the interface.",
+  "breaking": false,
+  "migration": null
+}
