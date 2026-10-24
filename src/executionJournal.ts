@@ -153,12 +153,14 @@ export class ExecutionJournal {
       if (typeof resolvedId === "string") entry.events.delete(`input:${resolvedId}`);
       const key = message.type === "assignment" ? "assignment" : interactionId ? `input:${interactionId}` :
         typeof resolvedId === "string" ? "interaction-state" : "progress";
-      if (key === "interaction-state") {
+      if (key === "interaction-state" || typeof interactionId === "string") {
         // One authoritative snapshot replaces completed-question tombstones.
         // A reconnecting controller can clear stale inputs without replaying
         // every historical resolution; current input payloads remain retained.
-        event.progress = { ...message.progress, pendingInteractionIds: [...entry.events.keys()]
-          .filter(key => key.startsWith("input:")).map(key => key.slice("input:".length)) };
+        const pending = new Set([...entry.events.keys()]
+          .filter(key => key.startsWith("input:")).map(key => key.slice("input:".length)));
+        if (typeof interactionId === "string") pending.add(interactionId);
+        event.progress = { ...message.progress, pendingInteractionIds: [...pending] };
       }
       const bytes = encodedBytes(event);
       // Optional history/progress can be coalesced. Current input cannot.

@@ -4081,7 +4081,21 @@ export class CodexJobRegistry {
     );
     let resolvedInteractionId: string | undefined;
     let interaction: CodexPendingInteraction | undefined;
-    if (publicEvent && job.publicEvents.some(event => event.eventId === publicEvent.eventId)) return;
+    if (publicEvent && job.publicEvents.some(event => event.eventId === publicEvent.eventId)) {
+      // A retained live question can follow an older recovery snapshot whose
+      // event has already aged out of public history. Restore current input
+      // independently of history deduplication, without adding another event.
+      const recovered = readPendingInteraction(publicEvent.details?.interaction);
+      if (recovered && progress.pendingInteractionIds?.includes(recovered.interactionId) &&
+          !job.pendingInteractions.some(entry => entry.interactionId === recovered.interactionId)) {
+        job.pendingInteractions = [...job.pendingInteractions, recovered].slice(-20);
+        job.updatedAt = now;
+        job.version += 1;
+        this.persistProgressSnapshotBestEffort(this.progressSnapshot(job));
+        this.notify(job.jobId, "progress");
+      }
+      return;
+    }
     if (progress.pendingInteractionIds) {
       const current = new Set(progress.pendingInteractionIds);
       job.pendingInteractions = job.pendingInteractions.filter(entry => current.has(entry.interactionId));

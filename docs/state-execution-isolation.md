@@ -328,8 +328,10 @@ DB lease and reattaches active, recoverable Jobs by their original Job/request I
 The execution owner retains exact assignment, live question and terminal receipts;
 completed questions coalesce into one bounded current-input snapshot. Recovery
 reconciles pending questions against that snapshot, including resolutions missed
-during a control-link outage. Resolved history does not occupy live-event slots;
-results are acknowledged only after a durable terminal commit. No prompt or new
+during a control-link outage. Resolved history does not occupy live-event slots.
+An owner-confirmed replayed live input restores pending state when its public event is already
+present in the bounded history.
+Results are acknowledged only after a durable terminal commit. No prompt or new
 turn is automatically replayed. The controller's read and telemetry processes can
 restart independently. A normal explicit application shutdown still closes the
 execution owner after the application's existing drain policy.

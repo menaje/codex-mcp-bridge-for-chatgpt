@@ -214,7 +214,7 @@ describe("current bridge tool contracts", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it("reconciles stale persisted inputs against the execution owner's current snapshot", async () => {
+  it.each([false, true])("reconciles stale persisted inputs with an older retained snapshot: %s", async olderSnapshot => {
     const descriptor = (await client.listTools()).tools.find(tool => tool.name === "codex_task")!;
     const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
     const project = settings.current.projects[0]!;
@@ -228,23 +228,46 @@ describe("current bridge tool contracts", () => {
     const jobId = (admitted.structuredContent as { jobId: string }).jobId;
     await hold.started;
     hold.assign(fixtureThreadId, fixtureTurnId);
+    let liveProgress!: CodexProgress;
     for (const interactionId of ["stale", "live"]) {
       const interaction: CodexPendingInteraction = {
         interactionId, kind: "command-approval", origin: "app-approval", isBlocking: true,
         threadId: fixtureThreadId, turnId: fixtureTurnId, itemId: interactionId, summary: interactionId
       };
-      hold.progress({ progress: 0, event: {
+      const progress: CodexProgress = { progress: 0, event: {
         eventId: interactionId, type: "approval-required", phase: "updated", createdAt: Date.now(),
         summary: interactionId, details: { interaction }
-      } });
+      } };
+      if (olderSnapshot && interactionId === "live") progress.pendingInteractionIds = ["live"];
+      if (interactionId === "live") liveProgress = progress;
+      if (!olderSnapshot || interactionId !== "live") hold.progress(progress);
     }
-    await eventually(() => state.listJobs().find(job => job.jobId === jobId)?.pendingInteractions.length === 2);
-    hold.progress({ progress: 0, pendingInteractionIds: ["live"], event: {
+    await eventually(() => state.listJobs().find(job => job.jobId === jobId)?.pendingInteractions.length === (olderSnapshot ? 1 : 2));
+    const resolution: CodexProgress = { progress: 0, pendingInteractionIds: olderSnapshot ? [] : ["live"], event: {
       eventId: "recovered-resolution", type: "input-required", phase: "completed", createdAt: Date.now(),
       summary: "Recovered input state", details: { resolvedInteractionId: "a-later-question" }
-    } });
+    } };
+    if (olderSnapshot) {
+      hold.progress(resolution);
+      for (let index = 0; index < 201; index++) {
+        if (index === 10) hold.progress(liveProgress);
+        else hold.progress({ progress: index, event: {
+          eventId: `history-${index}`, type: "plan", phase: "updated", createdAt: Date.now(), summary: `Progress ${index}`
+        } });
+      }
+      hold.progress({ progress: 201, event: {
+        eventId: "history-checkpoint", type: "warning", phase: "completed", createdAt: Date.now(), summary: "History checkpoint"
+      } });
+      expect(state.listJobs().find(job => job.jobId === jobId)?.pendingInteractions[0]?.interactionId).toBe("live");
+    }
+    hold.progress(resolution);
+    if (olderSnapshot) hold.progress(liveProgress);
     await eventually(() => state.listJobs().find(job => job.jobId === jobId)?.pendingInteractions.length === 1);
     expect(state.listJobs().find(job => job.jobId === jobId)?.pendingInteractions[0]?.interactionId).toBe("live");
+    hold.progress({ ...resolution, event: { ...resolution.event!, eventId: "all-resolved" }, pendingInteractionIds: [] });
+    await eventually(() => state.listJobs().find(job => job.jobId === jobId)?.pendingInteractions.length === 0);
+    hold.progress({ ...liveProgress, pendingInteractionIds: undefined });
+    expect(state.listJobs().find(job => job.jobId === jobId)?.pendingInteractions).toHaveLength(0);
     hold.release();
     await eventually(() => state.listJobs().find(job => job.jobId === jobId)?.status === "completed");
   });
