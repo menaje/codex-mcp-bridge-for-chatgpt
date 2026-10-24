@@ -68,6 +68,22 @@ final class EditSessionTests: XCTestCase {
     }
 
     @MainActor
+    func testImportRetryPinsSelectionAndSeparatesChangedFileSets() throws {
+        let session = BridgeEditSession(target: "new-import", values: [.name: "Imported", .cwd: "main=SKILL.md;files=SKILL.md,a.md"], retainFailedPayloadForRetry: true)
+        let first = try XCTUnwrap(session.prepareSubmission())
+        session.fail(first)
+        let unchanged = try XCTUnwrap(session.prepareSubmission())
+        XCTAssertEqual(unchanged.requestID, first.requestID)
+        session.fail(unchanged)
+        session.edit(.cwd, "main=SKILL.md;files=SKILL.md,b.md")
+        let changed = try XCTUnwrap(session.prepareSubmission())
+        XCTAssertNotEqual(changed.requestID, first.requestID, "The selected main document and file set are part of the exact request")
+        session.fail(changed)
+        session.discard()
+        XCTAssertNotEqual(try XCTUnwrap(session.prepareSubmission()).requestID, changed.requestID)
+    }
+
+    @MainActor
     func testUndoToOriginalValueAfterSubmissionSurvivesSuccessAndFailureRefresh() throws {
         let session = BridgeEditSession(target: "A", values: [.content: "9"], version: "v9")
         session.edit(.content, "10")

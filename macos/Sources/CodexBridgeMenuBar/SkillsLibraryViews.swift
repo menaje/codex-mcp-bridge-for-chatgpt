@@ -201,7 +201,7 @@ struct SkillsLibraryWindowView: View {
     private var searchText: String { searchSession.searchValue }
     @State private var documentSelection: SkillDocumentSelection = .main
     @State private var editorMode: SkillEditorMode = .preview
-    @StateObject private var editSession = BridgeEditSession(target: "unselected", values: [:])
+    @StateObject private var editSession = BridgeEditSession(target: "unselected", values: [:], retainFailedPayloadForRetry: true)
     private var draftContent: String { editSession.value(.content) }
     private var draftName: String { editSession.value(.name) }
     private var draftDescription: String { editSession.value(.description) }
@@ -808,7 +808,7 @@ struct SkillsLibraryWindowView: View {
         case .newFile:
             if let document = model.selectedBridgeSkill {
                 NewBridgeSkillFileSheet(target: document.skill.reference, onSaved: { requestDocumentSelection(.file($0)) }) { submitted, isCurrent in
-                    let result = await model.submitBridgeSkillUpdate(.init(skillId: submitted.targetID,
+                    let result = await model.submitBridgeSkillUpdate(.init(requestId: submitted.requestID.uuidString, skillId: submitted.targetID,
                         expectedVersion: submitted.expectedVersion ?? document.skill.version,
                         files: .init(upsert: [.init(path: submitted.value(.path), content: submitted.value(.content))])), shouldSelect: isCurrent)
                     return result.map { BridgeEditReceipt(skill: $0) }
@@ -1056,11 +1056,11 @@ struct SkillsLibraryWindowView: View {
         switch selection {
         case .main:
             path = nil
-            request = .init(skillId: document.skill.skillId, expectedVersion: submitted.expectedVersion ?? currentExpectedVersion(document),
+            request = .init(requestId: submitted.requestID.uuidString, skillId: document.skill.skillId, expectedVersion: submitted.expectedVersion ?? currentExpectedVersion(document),
                             name: submitted.value(.name), description: submitted.value(.description), content: submitted.value(.content))
         case .file(let file):
             path = file
-            request = .init(skillId: document.skill.skillId, expectedVersion: submitted.expectedVersion ?? currentExpectedVersion(document),
+            request = .init(requestId: submitted.requestID.uuidString, skillId: document.skill.skillId, expectedVersion: submitted.expectedVersion ?? currentExpectedVersion(document),
                             files: .init(upsert: [.init(path: file, content: submitted.value(.content))]))
         }
         Task { @MainActor in
@@ -1220,7 +1220,7 @@ struct SkillsLibraryWindowView: View {
         do {
             let content = try await model.readBridgeSkillAttachment(.init(skillId: submission.targetID, version: version), path: oldPath)
             // A later draft must survive, while the pinned request can still finish.
-            let updated = await model.submitBridgeSkillUpdate(.init(skillId: submission.targetID, expectedVersion: version,
+            let updated = await model.submitBridgeSkillUpdate(.init(requestId: submission.requestID.uuidString, skillId: submission.targetID, expectedVersion: version,
                 files: .init(upsert: [.init(path: submission.value(.path), content: content)], remove: [oldPath])), shouldSelect: isCurrent)
             return updated.map { BridgeEditReceipt(version: $0.version, confirmed: [.cwd: submission.value(.path)]) }
         } catch { return nil }
@@ -1303,25 +1303,25 @@ struct SkillsLibraryWindowView: View {
                               isCurrent: @escaping @MainActor () -> Bool) async -> BridgeEditReceipt? {
         let originalTarget = target
         let target = target ?? submission.expectedVersion.map { BridgeSkillReference(skillId: submission.targetID, version: $0) }
-        guard let target else { return await commitNewImport(review, commit: commit, isCurrent: isCurrent) }
+        guard let target else { return await commitNewImport(review, commit: commit, submission: submission, isCurrent: isCurrent) }
         guard submission.targetID == target.skillId, let version = submission.expectedVersion else { return nil }
         switch review.payload {
         case .direct(let files):
             guard let selected = selectedImportFiles(files, commit: commit) else { return nil }
             let main = commit.mainPath.flatMap { path in selected.first(where: { $0.path == path }) }
             let attachments = selected.filter { $0.path != main?.path }.map { BridgeSkillFileInput(path: $0.path, content: $0.content) }
-            let result = await model.submitBridgeSkillUpdate(.init(skillId: target.skillId, expectedVersion: version,
+            let result = await model.submitBridgeSkillUpdate(.init(requestId: submission.requestID.uuidString, skillId: target.skillId, expectedVersion: version,
                 name: originalTarget == nil ? commit.name : nil, description: originalTarget == nil ? commit.description : nil,
                 content: main?.content, files: attachments.isEmpty ? nil : .init(upsert: attachments)), shouldSelect: isCurrent)
             return result.map { BridgeEditReceipt(skill: $0) }
         case .package(let inspection):
-            let result = await model.submitBridgeSkillPackageUpdate(.init(skillId: target.skillId, expectedVersion: version,
+            let result = await model.submitBridgeSkillPackageUpdate(.init(requestId: submission.requestID.uuidString, skillId: target.skillId, expectedVersion: version,
                 uploadId: inspection.uploadId, mainPath: commit.mainPath, includePaths: Array(commit.selectedPaths).sorted()), shouldSelect: isCurrent)
             return result.map { BridgeEditReceipt(skill: $0) }
         }
     }
 
-    private func commitNewImport(_ review: BridgeSkillImportReview, commit: BridgeSkillImportCommit,
+    private func commitNewImport(_ review: BridgeSkillImportReview, commit: BridgeSkillImportCommit, submission: BridgeEditSubmission,
                                  isCurrent: @escaping @MainActor () -> Bool) async -> BridgeEditReceipt? {
         guard let mainPath = commit.mainPath, !commit.name.isEmpty else { return nil }
         switch review.payload {
@@ -1329,11 +1329,11 @@ struct SkillsLibraryWindowView: View {
             guard let selected = selectedImportFiles(files, commit: commit),
                   let main = selected.first(where: { $0.path == mainPath }) else { return nil }
             let attachments = selected.filter { $0.path != mainPath }.map { BridgeSkillFileInput(path: $0.path, content: $0.content) }
-            let result = await model.submitBridgeSkillCreation(.init(name: commit.name, description: commit.description,
+            let result = await model.submitBridgeSkillCreation(.init(requestId: submission.requestID.uuidString, name: commit.name, description: commit.description,
                                                        content: main.content, files: attachments), shouldSelect: isCurrent)
             return result.map { BridgeEditReceipt(skill: $0) }
         case .package(let inspection):
-            let result = await model.submitBridgeSkillPackageCreation(.init(name: commit.name, description: commit.description,
+            let result = await model.submitBridgeSkillPackageCreation(.init(requestId: submission.requestID.uuidString, name: commit.name, description: commit.description,
                 uploadId: inspection.uploadId, mainPath: mainPath, includePaths: Array(commit.selectedPaths).sorted()), shouldSelect: isCurrent)
             return result.map { BridgeEditReceipt(skill: $0) }
         }
@@ -2249,7 +2249,7 @@ private struct BridgeSkillImportReviewSheet: View {
         _inputSession = StateObject(wrappedValue: BridgeEditSession(target: currentSkill?.skill.skillId ?? "new-import",
             values: [.name: review.suggestedName, .description: review.suggestedDescription ?? "",
                      .cwd: encodedImportSelection(main: currentSkill == nil ? review.suggestedMainPath : nil,
-                        paths: review.initiallySelectedPaths(intoCurrentSkill: currentSkill != nil))], version: currentSkill?.skill.version))
+                        paths: review.initiallySelectedPaths(intoCurrentSkill: currentSkill != nil))], version: currentSkill?.skill.version, retainFailedPayloadForRetry: true))
         _mainPath = State(initialValue: currentSkill == nil ? review.suggestedMainPath : nil)
         _selectedPaths = State(initialValue: review.initiallySelectedPaths(intoCurrentSkill: currentSkill != nil))
     }
@@ -2466,7 +2466,7 @@ private struct NewBridgeSkillFileSheet: View {
          save: @escaping @MainActor (BridgeEditSubmission, @escaping @MainActor () -> Bool) async -> BridgeEditReceipt?) {
         self.save = save; self.onSaved = onSaved
         _inputSession = StateObject(wrappedValue: BridgeEditSession(target: target.skillId,
-            values: [.path: "references/new.md", .content: "# "], version: target.version))
+            values: [.path: "references/new.md", .content: "# "], version: target.version, retainFailedPayloadForRetry: true))
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -2509,7 +2509,7 @@ private struct RenameBridgeSkillFileSheet: View {
     init(oldPath: String, target: BridgeSkillReference, onSaved: @escaping (String) -> Void,
          save: @escaping @MainActor (BridgeEditSubmission, @escaping @MainActor () -> Bool) async -> BridgeEditReceipt?) {
         self.oldPath = oldPath; self.save = save; self.onSaved = onSaved
-        _inputSession = StateObject(wrappedValue: BridgeEditSession(target: target.skillId, values: [.path: oldPath, .cwd: oldPath], version: target.version))
+        _inputSession = StateObject(wrappedValue: BridgeEditSession(target: target.skillId, values: [.path: oldPath, .cwd: oldPath], version: target.version, retainFailedPayloadForRetry: true))
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
