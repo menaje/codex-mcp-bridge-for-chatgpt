@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Reject occupied attachment creation and rename destinations and bound native Markdown import reads before allocating file contents.",
-  "breaking": false,
-  "migration": null
-}

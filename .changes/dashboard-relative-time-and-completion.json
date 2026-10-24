@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Use shared relative start times that refresh on screen and concise, consistent completion labels in the menu bar and dashboard card.",
-  "breaking": false,
-  "migration": null
-}
