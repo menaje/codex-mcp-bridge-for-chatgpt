@@ -6,8 +6,6 @@ import {
   HARD_MAX_CONCURRENT_JOBS,
   defaultStateProfile,
   enforceSandbox,
-  findSensitiveFiles,
-  formatSensitiveFileFindings,
   isPathWithinRoot,
   loadConfig,
   requireAllowedCwd
@@ -413,96 +411,5 @@ describe("config policy", () => {
       CODEX_MCP_BRIDGE_DEFAULT_ACCESS_STRATEGY: "always-full"
     });
     expect(config.defaultAccessStrategy).toBe("always-full");
-  });
-
-  it("finds sensitive-looking files before delegation", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    writeFileSync(path.join(root, ".env"), "TOKEN=secret\n");
-    writeFileSync(path.join(root, "server.pem"), "secret\n");
-
-    expect(await findSensitiveFiles(root)).toEqual([path.join(root, ".env"), path.join(root, "server.pem")]);
-  });
-
-  it("allows a documented .env.example template", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    writeFileSync(path.join(root, ".env.example"), "TOKEN=replace-me\n");
-
-    expect(await findSensitiveFiles(root)).toEqual([]);
-  });
-
-  it("allows only the narrowly benign npm settings bundled with generated VS Code runtimes", async () => {
-    const benignRoot = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    writeFileSync(
-      path.join(benignRoot, ".npmrc"),
-      'legacy-peer-deps="true"\ntimeout=180000\n'
-    );
-    expect(await findSensitiveFiles(benignRoot)).toEqual([]);
-
-    const credentialRoot = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    writeFileSync(path.join(credentialRoot, ".npmrc"), "//registry.example/:_authToken=secret\n");
-    expect(await findSensitiveFiles(credentialRoot)).toEqual([
-      path.join(credentialRoot, ".npmrc")
-    ]);
-
-    const unknownRoot = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    writeFileSync(path.join(unknownRoot, ".npmrc"), "registry=https://registry.npmjs.org\n");
-    expect(await findSensitiveFiles(unknownRoot)).toEqual([
-      path.join(unknownRoot, ".npmrc")
-    ]);
-  });
-
-  it("formats bounded project-relative sensitive-file diagnostics", () => {
-    const root = path.join(path.sep, "private", "project");
-    const findings = [
-      path.join(root, "config", ".env"),
-      path.join(root, "certs", "server.pem"),
-      path.join(root, "third.key")
-    ];
-
-    expect(formatSensitiveFileFindings(root, findings, 2)).toBe(
-      '"config/.env", "certs/server.pem" (+1 more)'
-    );
-    expect(formatSensitiveFileFindings(root, [path.join(path.sep, "outside", "secret.key")]))
-      .toBe('"secret.key"');
-  });
-
-  it("fails closed when the working directory itself cannot be scanned", async () => {
-    const rootFile = path.join(mkdtempSync(path.join(tmpdir(), "bridge-root-")), "not-a-directory");
-    writeFileSync(rootFile, "plain file\n");
-
-    await expect(findSensitiveFiles(rootFile)).rejects.toThrow(/Could not scan/);
-  });
-
-  it("ignores generated test and build directories", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    const vscodeTest = path.join(root, ".vscode-test", "runtime");
-    const swiftBuild = path.join(root, ".build", "checkouts", "fixture");
-    const rustBuild = path.join(root, "target", "checkouts", "fixture");
-    mkdirSync(vscodeTest, { recursive: true });
-    mkdirSync(swiftBuild, { recursive: true });
-    mkdirSync(rustBuild, { recursive: true });
-    writeFileSync(path.join(vscodeTest, ".npmrc"), "registry=https://registry.npmjs.org\n");
-    writeFileSync(path.join(swiftBuild, "test-pubkey.pem"), "public test fixture\n");
-    writeFileSync(path.join(rustBuild, "test-pubkey.pem"), "public test fixture\n");
-
-    expect(await findSensitiveFiles(root)).toEqual([]);
-  });
-
-  it("blocks sensitive-looking symlink names before delegation", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    const target = path.join(root, "target");
-    writeFileSync(target, "TOKEN=secret\n");
-    symlinkSync(target, path.join(root, ".env"));
-
-    expect(await findSensitiveFiles(root)).toEqual([path.join(root, ".env")]);
-  });
-
-  it("does not apply the benign npm exception to symlinks", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    const target = path.join(root, "generated-npm-settings");
-    writeFileSync(target, 'legacy-peer-deps="true"\ntimeout=180000\n');
-    symlinkSync(target, path.join(root, ".npmrc"));
-
-    expect(await findSensitiveFiles(root)).toEqual([path.join(root, ".npmrc")]);
   });
 });

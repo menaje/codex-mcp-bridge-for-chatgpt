@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "BREAKING: Remove project filename scanning from Codex task admission; file access follows configured execution permissions.",
+  "breaking": true,
+  "migration": "Refresh connector discovery after updating and review the intended project access; CODEX_MCP_BRIDGE_DISABLE_SECRET_SCAN and CODEX_GPT_BRIDGE_DISABLE_SECRET_SCAN are ignored."
+}

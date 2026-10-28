@@ -77,6 +77,12 @@ Bridge tools, answer a Codex question, or grant an approval.
   checked separately at admission.
 - Automatic model selection accepts only a current permitted model/effort
   pair. Fixed selection rejects a caller-supplied pair.
+- Project filenames and extensions are not admission criteria. The bridge does
+  not scan project contents for credentials before starting, continuing, or
+  forking Codex work. Files such as `.env`, private keys, and public certificate
+  bundles may exist in the registered project without blocking admission.
+  Access to those files follows the configured execution permissions; the
+  bridge's own runtime credentials remain outside registered project roots.
 
 An allowed Codex access setting can still modify files, run commands, and use
 network access as the local user. Use a separate OS account, a container, a

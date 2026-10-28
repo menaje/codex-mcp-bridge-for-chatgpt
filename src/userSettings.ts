@@ -654,8 +654,7 @@ function canonicalExecutionOperatorEnvelope(config: BridgeConfig): Record<string
     approvalsReviewer: config.defaultApprovalsReviewer,
     modelCeiling: config.operatorModelCeiling
       ? canonicalModelChoices(config.operatorModelCeiling)
-      : null,
-    secretScan: config.secretScan
+      : null
   };
 }
 
