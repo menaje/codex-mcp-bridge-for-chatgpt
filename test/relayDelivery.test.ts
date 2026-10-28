@@ -482,6 +482,16 @@ describe("#280 direct result and relay coordination", () => {
     expect(f.state.relay.pending(f.activity.activityId).map(e => e.eventId)).toEqual([event.eventId]);
   });
 
+  it("rejects excess waits rather than accepting an untracked direct wait", () => {
+    let now = 1_800_000_000_000; vi.spyOn(Date, "now").mockImplementation(() => now);
+    const f = fixture(), a = f.seed();
+    for (let i = 0; i < 16; i++) expect(f.state.relay.beginDirectWait(a.jobId, f.owner, randomUUID(), 20_000)).toBe(true);
+    expect(() => f.state.relay.beginDirectWait(a.jobId, f.owner, randomUUID(), 20_000)).toThrow(/DIRECT_WAIT_CAPACITY/);
+    expect(f.state.getEventJobSnapshot(a.jobId)?.status).toBe("running");
+    now += 20_000 + DIRECT_WAIT_GRACE_MS;
+    expect(f.state.relay.beginDirectWait(a.jobId, f.owner, randomUUID(), 20_000)).toBe(true);
+  });
+
   it("recovers the original completion when a direct wait ends before the Job", () => {
     let now = 1_800_000_000_000; vi.spyOn(Date, "now").mockImplementation(() => now);
     const f = fixture(), a = f.seed(), waitId = randomUUID();
@@ -519,7 +529,7 @@ describe("#280 direct result and relay coordination", () => {
     expect(f.state.relay.enter(f.activity.activityId, f.owner, card, event.eventId, retry)).toBe(true);
   });
 
-  it.each(["sending", "unknown", "accepted"] as const)("never replays an already %s send after late review and expiry", outcome => {
+  it.each(["sending", "unknown", "accepted", "rejected"] as const)("never replays an already %s send after late review and expiry", outcome => {
     let now = 1_800_000_000_000; vi.spyOn(Date, "now").mockImplementation(() => now);
     const f = fixture(), a = f.seed(), event = f.finish(a), card = f.connect(), attempt = randomUUID();
     f.state.relay.offerResult(a.jobId, f.owner, event.eventId, event.version);

@@ -117,7 +117,10 @@ It affects the Job's terminal event, not its questions or any other Job. A wait
 gets an absolute deadline equal to its requested duration plus 10 seconds; on
 normal return or host abort the remaining priority is shortened to at most 10
 seconds. Concurrent waits have separate deadlines. A dead process cannot renew
-them. Card polls, connections, remounts, visibility changes and ordinary status
+them. Up to 16 concurrent waits or their end graces are retained per Job; an
+additional wait is rejected instead of silently running without priority, and
+an exact read without waiting remains available. Card polls, connections,
+remounts, visibility changes and ordinary status
 reads never extend them. A completed source may be recovered without creating a
 new Job; elapsed priority does not cancel, fail or restart execution.
 

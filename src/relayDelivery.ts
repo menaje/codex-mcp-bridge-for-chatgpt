@@ -254,7 +254,9 @@ export class RelayDeliveryStore {
       const goal = this.requireGoal(record.activityId, owner);
       if (goal.ended || goal.monitoringStopped || this.state.isEventActivityEnded(record.activityId)) return false;
       const waits = Object.fromEntries(Object.entries(record.directWaits || {}).filter(([, until]) => until > now));
-      if (Object.keys(waits).length >= 16) return false;
+      if (Object.keys(waits).length >= 16) {
+        throw new Error("DIRECT_WAIT_CAPACITY: Too many direct waits for this Job; retry later or read its exact status without waiting.");
+      }
       waits[waitId] = now + waitMs + DIRECT_WAIT_GRACE_MS;
       record.directWaits = waits;
       this.clearIndex(record); this.index(record, now); this.save(JOB + jobId, record);
@@ -301,12 +303,12 @@ export class RelayDeliveryStore {
       }
       const existing = current.resultReview;
       if (existing?.eventId === eventId && existing.version === version) {
-        return { until: existing.until, alreadyReviewed: true, dispatchEntered: ["sending", "unknown", "accepted"].includes(event.state) };
+        return { until: existing.until, alreadyReviewed: true, dispatchEntered: ["sending", "unknown", "accepted", "rejected"].includes(event.state) };
       }
       current.resultReview = { eventId, version, reviewedAt: now, until: now + RESULT_REVIEW_GRACE_MS };
       this.clearIndex(current); this.index(current, now); this.save(JOB + current.jobId, current);
       this.diagnoseDecision(current, "hold", "model-review");
-      return { until: current.resultReview.until, alreadyReviewed: false, dispatchEntered: ["sending", "unknown", "accepted"].includes(event.state) };
+      return { until: current.resultReview.until, alreadyReviewed: false, dispatchEntered: ["sending", "unknown", "accepted", "rejected"].includes(event.state) };
     });
   }
 
