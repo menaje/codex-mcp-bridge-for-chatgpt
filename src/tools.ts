@@ -89,9 +89,7 @@ import { PROCESSING_SPEED_MODES, isProcessingSpeedMode, resolveTurnSpeed, select
 import { UNVERIFIED_APP_SERVER_CAPABILITIES } from "./cliProtocol.js";
 import {
   HARD_MAX_CONCURRENT_JOBS,
-  formatSensitiveFileFindings,
   isCodexBackendKind,
-  findSensitiveFiles,
   isPathWithinRoot,
   resolveAllowedCwd
 } from "./config.js";
@@ -8480,7 +8478,6 @@ export function registerBridgeTools(
             userSettings,
             requireSameCwd: true
           });
-          await enforceSensitiveFilePreflight(config, cwd, "run Codex");
           const routing = resolveTaskRouting({
             args,
             activityRequest,
@@ -8530,7 +8527,6 @@ export function registerBridgeTools(
               admissionCatalogFingerprint:
                 executionResolution.admissionCatalogFingerprint
             },
-            preflightDone: true,
             onAdmitted: onTaskAdmitted
           });
         }
@@ -9929,13 +9925,11 @@ async function startNewSession(input: {
     decision: ExecutionDecision;
     admissionCatalogFingerprint: string;
   };
-  preflightDone?: boolean;
   rejectIfSelectionActive?: boolean;
   onAdmitted?: () => void;
 }): Promise<ToolResult> {
   const { cwd, sandbox, decision: executionDecision } = input.resolved;
   const access = resolveExecutionPolicy(input.config, input.preferences, cwd, sandbox);
-  if (!input.preflightDone) await enforceSensitiveFilePreflight(input.config, cwd, "run Codex");
 
   const basePrompt = input.backendHandoff
     ? backendHandoffPrompt(input.backendHandoff, input.args.prompt)
@@ -10098,7 +10092,6 @@ async function continueTrackedSession(input: {
   preferences: BridgeUserSettings;
   activityRequest: ActivityTaskRequest;
   adoptOnComplete?: boolean;
-  preflightDone?: boolean;
   rejectIfSelectionActive?: boolean;
   executionDecision: ExecutionDecision;
   agent: BridgeAgent;
@@ -10113,10 +10106,7 @@ async function continueTrackedSession(input: {
   onAdmitted?: () => void;
 }): Promise<ToolResult> {
   const access = resolveExecutionPolicy(input.config, input.preferences, input.session.cwd, input.session.sandbox);
-  const currentCwd = resolvePinnedAgentCwd(input);
-  if (!input.preflightDone) {
-    await enforceSensitiveFilePreflight(input.config, currentCwd, "continue Codex");
-  }
+  resolvePinnedAgentCwd(input);
   const prompt = input.prompt;
   const decision: SessionDecision = {
     requestedMode: input.requestedMode,
@@ -10278,8 +10268,7 @@ async function forkTrackedSession(input: {
     );
   }
   const storage = await input.config.codexService?.sessionPolicy(input.session.backendKind, input.preferences.showBridgeThreadsInCodexApp, input.session.threadId, input.preferences.bridgeThreadPersistence);
-  const currentCwd = resolvePinnedAgentCwd(input);
-  await enforceSensitiveFilePreflight(input.config, currentCwd, "fork Codex context");
+  resolvePinnedAgentCwd(input);
   const prompt = input.prompt;
   const sessionDecision: SessionDecision = {
     requestedMode: "new",
@@ -15212,21 +15201,6 @@ function applyModelSelection(
     model_reasoning_effort: selection.reasoningEffort,
   };
   if (backendSupports(backendKind, "supportsTurnSelection")) Object.assign(payload, selectionSpeedArguments(selection));
-}
-
-async function enforceSensitiveFilePreflight(
-  config: BridgeConfig,
-  cwd: string,
-  operation: "run Codex" | "continue Codex" | "fork Codex context"
-): Promise<void> {
-  if (!config.secretScan) return;
-  const sensitiveFiles = await findSensitiveFiles(cwd);
-  if (sensitiveFiles.length > 0) {
-    const findings = formatSensitiveFileFindings(cwd, sensitiveFiles);
-    throw new Error(
-      `Refusing to ${operation} because ${sensitiveFiles.length} sensitive-looking file(s) were found in the project folder. Project-relative path(s): ${findings}. Move them outside the project or set CODEX_MCP_BRIDGE_DISABLE_SECRET_SCAN=1 if you accept the risk.`
-    );
-  }
 }
 
 function sanitizeProgress(
