@@ -59,7 +59,8 @@ Relay or admit new dynamic relay steps. Its explicit Events admission is unchang
 ## Durable delivery boundary
 
 The existing SQLite `bridge_meta` journal stores versioned `relay_goal_v1/`,
-`relay_job_v1/`, `relay_event_history_v1/`, `relay_member_v1/` and `relay_ready_v1/` records. No separate DB,
+`relay_job_v1/`, `relay_event_history_v1/`, `relay_member_v1/`, `relay_ready_v1/`
+and `relay_deferred_v1/` records. No separate DB,
 SQL schema migration or general workflow engine is introduced. Job admission,
 goal enrollment and event intent commit in the existing Unit of Work before
 dispatch. Source changes issue an internal readiness invalidation only after
@@ -105,9 +106,62 @@ The card selects standard `ui/message` or compatibility
 `sendFollowUpMessage` before claiming. It never retries the message through the
 other API after sending. The prompt contains common receiver guidance and only
 event/Job lookup references. If an ACK response is lost, only that identical
-attempt's outcome is retried; the message is not resent. Direct result offers
-remain independent of host acceptance and never consume a pending event.
-No conversation-wide exactly-once guarantee is claimed.
+attempt's outcome is retried; the message is not resent. No conversation-wide
+exactly-once guarantee is claimed.
+
+## Coordinating a direct result (#280)
+
+An authenticated originating-conversation `codex_status` exact Job or request
+query with `waitFor` creates priority only while that actual bounded wait runs.
+It affects the Job's terminal event, not its questions or any other Job. A wait
+gets an absolute deadline equal to its requested duration plus 10 seconds; on
+normal return or host abort the remaining priority is shortened to at most 10
+seconds. Concurrent waits have separate deadlines. A dead process cannot renew
+them. Up to 16 concurrent waits or their end graces are retained per Job; an
+additional wait is rejected instead of silently running without priority, and
+an exact read without waiting remains available. Card polls, connections,
+remounts, visibility changes and ordinary status
+reads never extend them. A completed source may be recovered without creating a
+new Job; elapsed priority does not cancel, fail or restart execution.
+
+An exact `codex_status` response may contain `relayReview` with the terminal
+`eventId` and its event `version` when the
+complete bounded answer is offered. After actually reviewing that answer, the
+model can call `codex_result_review` with the same `eventId` and `version` in
+the original host conversation and authenticated principal. The server checks
+the retained Job, current terminal generation and prior exact offer in one
+transaction. This is the model's assertion of review, not proof of its private
+understanding. A truncated, omitted or non-text answer has no review handle. Identical
+retries return the original review deadline and never extend it. Review defers
+only that event for 60 seconds, even if the model stops immediately before its
+final answer. It neither marks the result reported to the user nor establishes
+Job success, Activity completion, verification or followup approval.
+
+The current ChatGPT component bridge documents tool results and a request for a
+component-authored message, but does not document a callback to this MCP app
+confirming that the model's own final answer was posted; see the
+[host bridge reference](https://developers.openai.com/plugins/reference).
+That is a limit of the available contract, not a claim about every possible
+host. Therefore an offer alone never consumes an event, and a model review is a
+finite hold rather than permanent suppression. An explicit Activity finish or
+relay stop retains its existing effect. If neither occurs, a still-unsent
+completion becomes eligible again even after review: a duplicate remains
+possible, but stopping before the final answer does not permanently lose the
+notification opportunity. Users reading a message, or the whole goal passing
+verification, cannot be inferred from any of these records.
+
+Holds and send entry commit in the same SQLite unit of work. `pending`, `claim`
+and `enter` recheck them; a claim made before a review cannot enter until the
+hold expires. A send already in `sending`, `unknown` or `accepted` cannot be
+retracted and is never made pending because a hold expired or review was absent.
+The existing pre-entry lease and proven not-sent rules remain in force. Deferred
+events use a separate deadline-ordered index so held Jobs do not hide unrelated
+ready Jobs; a connected card discovers an expired hold on its next bounded wait
+read. No connection means the retained event waits for the next valid connection.
+Deadlines and event receipts survive restart without restarting their duration.
+Diagnostics record bounded decision/reason codes, never result, prompt or secret
+text. The common retention and project deletion policy still removes the event
+and its deferral index, and stops cannot be cleared by a late review.
 
 Running `relay-card` Job status describes automatic relay consistently with
 `nextActions`. Exact queries and bounded waits remain optional observation
@@ -121,7 +175,8 @@ Enabled relay still depends on an available host connection.
 `codex_relay_wait` uses an instance epoch/revision and commit subscription,
 bounded to 25 seconds, eight waits per state store and two per goal. Replacement
 requests cancel stale waits. Recovery reads 32 registered Jobs per indexed page;
-pending reads at most 64 indexed references. Empty reads do not open writer
+pending reads at most 64 ready and 64 deadline-ordered deferred references and
+returns at most 64 events. Empty reads do not open writer
 transactions. No per-progress global scan or execution polling is added.
 
 ## Followup admission and recovery

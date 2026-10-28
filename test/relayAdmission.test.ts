@@ -11,6 +11,7 @@ import {
   createHttpServer, type BridgeHttpServer
 } from "../src/server.js";
 import { BridgeStateStore } from "../src/stateStore.js";
+import { RelayDeliveryStore } from "../src/relayDelivery.js";
 import { CodexJobRegistry } from "../src/tools.js";
 import type {
   CodexInteractionResponse, CodexProgress, CodexUpstream,
@@ -223,11 +224,11 @@ describe("#261 bounded followup contracts", () => {
 
   it("automatically connects execution and answer descriptors while keeping reads and internal relay responses card-free", async () => {
     const tools = (await client.listTools()).tools;
-    expect(tools).toHaveLength(19);
+    expect(tools).toHaveLength(20);
     for (const name of ["codex_task", "codex_answer"]) {
       expect(tools.find(tool => tool.name === name)!._meta).toMatchObject({ ui: { resourceUri: "ui://codex-mcp-bridge/relay/v1.html" } });
     }
-    for (const name of ["codex_status", "codex_relay", "codex_relay_wait"]) {
+    for (const name of ["codex_status", "codex_result_review", "codex_relay", "codex_relay_wait"]) {
       expect(tools.find(tool => tool.name === name)!._meta || {}).not.toHaveProperty("openai/outputTemplate");
     }
     const hold = upstream.hold(), result = await initial(), a = taskResult(result);
@@ -258,6 +259,83 @@ describe("#261 bounded followup contracts", () => {
     expect((await call("codex_relay_wait", { ...base, waitMs: 0 }, foreignMetadata)).isError).toBe(true);
     expect((await call("codex_status", { scopeId: state.getRelayJobSnapshot(a.jobId)!.scopeId, query: { kind: "job", id: a.jobId } }, {})).isError).toBe(true);
     expect((await call("codex_relay", { ...base, contractGeneration: 0, action: "connect", inputRequestId: open.inputRequestId, presentationRef: open.presentationRef })).isError).toBe(true);
+  });
+
+  it("coordinates a real exact status wait and scoped result review with the relay protocol", async () => {
+    const hold = upstream.hold(), admitted = await initial(), a = taskResult(admitted);
+    await hold.started.promise;
+    const started = barrier<void>(), original = RelayDeliveryStore.prototype.beginDirectWait;
+    vi.spyOn(RelayDeliveryStore.prototype, "beginDirectWait").mockImplementation(function(...args) {
+      const result = original.apply(this, args); started.resolve(); return result;
+    });
+    const waiting = call("codex_status", { query: { kind: "job", id: a.jobId, waitFor: "terminal", waitMs: 20_000 } });
+    await started.promise;
+    await finish(a, hold);
+    const result = await waiting;
+    expect(result.isError, JSON.stringify(result)).not.toBe(true);
+    const item = (result.structuredContent as any).items[0], review = item.relayReview;
+    expect(item.answer).toBe("Fixture result");
+    expect(review).toMatchObject({ eventId: state.relay.registration(a.jobId)!.event!.eventId });
+    expect(state.relay.pending(a.activityId)).toEqual([]);
+    const args = { eventId: review.eventId, version: review.version };
+    expect((await call("codex_result_review", args, foreignMetadata)).isError).toBe(true);
+    const confirmed = await call("codex_result_review", args);
+    expect(confirmed.isError, JSON.stringify(confirmed)).not.toBe(true);
+    expect(confirmed.structuredContent).toMatchObject({ kind: "result-review", ...args, alreadyReviewed: false, dispatchEntered: false });
+    const repeated = await call("codex_result_review", args);
+    expect(repeated.structuredContent).toMatchObject({ alreadyReviewed: true, holdUntil: (confirmed.structuredContent as any).holdUntil });
+    expect(state.relay.pending(a.activityId, (confirmed.structuredContent as any).holdUntil + 1)).toHaveLength(1);
+    expect(state.getActivity(a.activityId)?.lifecycle).toBe("open");
+  });
+
+  it("does not offer a review confirmation for a truncated exact answer", async () => {
+    const hold = upstream.hold(), a = taskResult(await initial());
+    await finish(a, hold, "x".repeat(30_000));
+    const result = await call("codex_status", { query: { kind: "job", id: a.jobId } });
+    expect(result.isError, JSON.stringify(result)).not.toBe(true);
+    const item = (result.structuredContent as any).items[0];
+    expect(item.relayReview).toBeUndefined();
+    const event = state.relay.registration(a.jobId)!.event!;
+    expect((await call("codex_result_review", { eventId: event.eventId, version: event.version })).isError).toBe(true);
+    expect(state.relay.pending(a.activityId).map(e => e.eventId)).toContain(event.eventId);
+  });
+
+  it("does not offer a review confirmation for an answer containing non-text content", async () => {
+    const hold = upstream.hold(), a = taskResult(await initial()); await hold.started.promise;
+    const committed = terminal(a.jobId);
+    hold.result.resolve({ content: [
+      { type: "text", text: "See the image." },
+      { type: "image", mimeType: "image/png", data: "aGVsbG8=" }
+    ] });
+    await committed;
+    const result = await call("codex_status", { query: { kind: "job", id: a.jobId } });
+    expect(result.isError, JSON.stringify(result)).not.toBe(true);
+    expect((result.structuredContent as any).items[0].relayReview).toBeUndefined();
+    expect(state.relay.pending(a.activityId)).toHaveLength(1);
+  });
+
+  it("releases an aborted model wait without cancelling or replacing the original Job", async () => {
+    const hold = upstream.hold(), a = taskResult(await initial()); await hold.started.promise;
+    const started = barrier<void>(), ended = barrier<void>();
+    const begin = RelayDeliveryStore.prototype.beginDirectWait, end = RelayDeliveryStore.prototype.endDirectWait;
+    vi.spyOn(RelayDeliveryStore.prototype, "beginDirectWait").mockImplementation(function(...args) {
+      const result = begin.apply(this, args); started.resolve(); return result;
+    });
+    vi.spyOn(RelayDeliveryStore.prototype, "endDirectWait").mockImplementation(function(...args) {
+      const result = end.apply(this, args); ended.resolve(); return result;
+    });
+    const controller = new AbortController();
+    const waiting = client.callTool({ name: "codex_status", _meta: metadata,
+      arguments: { query: { kind: "job", id: a.jobId, waitFor: "terminal", waitMs: 60_000 } } }, { signal: controller.signal });
+    const outcome = waiting.then(() => "returned", () => "aborted");
+    await started.promise; controller.abort();
+    expect(await outcome).toBe("aborted"); await ended.promise;
+    expect(state.getEventJobSnapshot(a.jobId)?.status).toBe("running");
+    await finish(a, hold);
+    const event = state.relay.registration(a.jobId)!.event!;
+    expect(state.relay.pending(a.activityId)).toEqual([]);
+    expect(state.relay.pending(a.activityId, Date.now() + 10_001).map(e => e.eventId)).toEqual([event.eventId]);
+    expect(upstream.calls).toHaveLength(1);
   });
 
   it("binds dynamic B atomically through admission response loss, different caller IDs, concurrent replay and restart", async () => {

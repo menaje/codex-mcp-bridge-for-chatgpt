@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Coordinate direct result waits and Relay notices while preserving recovery after interrupted replies.",
+  "breaking": false,
+  "migration": null
+}
