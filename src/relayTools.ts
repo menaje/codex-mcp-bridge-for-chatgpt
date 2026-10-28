@@ -20,6 +20,10 @@ export const relayMutationOutputSchema = z.strictObject({
   event: relayEventOutputSchema.optional(), dispatch: z.boolean().optional()
 });
 export const relayControlOutputSchema = z.strictObject({ kind: z.literal("relay-control"), activityId: z.string().uuid(), stopped: z.enum(["relay", "followups"]) });
+export const relayReviewOutputSchema = z.strictObject({
+  kind: z.literal("result-review"), eventId: z.string().regex(RELAY_EVENT_PATTERN), version: z.number().int().positive(),
+  holdUntil: z.number(), alreadyReviewed: z.boolean(), dispatchEntered: z.boolean()
+});
 
 const base = { contractGeneration: z.literal(1), activityId: z.string().uuid(), cardId: z.string().uuid() };
 const eventAttempt = { eventId: z.string().regex(RELAY_EVENT_PATTERN), attemptId: z.string().uuid() };
@@ -136,5 +140,17 @@ export function registerRelayTools(server: McpServer, state: BridgeStateStore, s
   }, async (args, extra) => {
     state.relay.stop(args.activityId, owner(extra.mcpReq._meta, authenticatedMcpPrincipal(extra)), args.stop);
     return response({ kind: "relay-control" as const, activityId: args.activityId, stopped: args.stop });
+  });
+
+  server.registerTool("codex_result_review", {
+    title: "Confirm Exact Result Review",
+    description: "After actually reviewing an exact completed Job result returned by codex_status, confirm its returned relayReview eventId and version in the original authenticated conversation. This postpones only its unsent Relay notice for 60 seconds; it does not prove an answer was posted, finish the Activity, authorize followups, or retract an entered send. Identical retries never extend the hold.",
+    inputSchema: z.strictObject({ eventId: z.string().regex(RELAY_EVENT_PATTERN), version: z.number().int().positive() }),
+    outputSchema: relayReviewOutputSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  }, async (args, extra) => {
+    const reviewed = state.relay.reviewResult(owner(extra.mcpReq._meta, authenticatedMcpPrincipal(extra)), args.eventId, args.version);
+    return response({ kind: "result-review" as const, ...args, holdUntil: reviewed.until,
+      alreadyReviewed: reviewed.alreadyReviewed, dispatchEntered: reviewed.dispatchEntered });
   });
 }

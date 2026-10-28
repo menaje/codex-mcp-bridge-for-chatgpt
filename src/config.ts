@@ -1,6 +1,5 @@
 import path from "node:path";
 import { realpathSync, statSync } from "node:fs";
-import { open, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { validateModelPolicy, type ModelChoice } from "./modelPolicy.js";
 import { PRODUCT_INFO } from "./productInfo.js";
@@ -65,7 +64,6 @@ export type BridgeConfig = {
   bridgeSkillsDirectory: string;
   stateProfile: StateProfile | "explicit";
   upstreamPoolSize: number;
-  secretScan: boolean;
   enableRecoveryTools: boolean;
   maxConcurrentJobs: number;
   maxPromptChars: number;
@@ -137,7 +135,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   const stateProfile: StateProfile | "explicit" = explicitStateDatabaseFile
     ? "explicit"
     : selectedStateProfile;
-  const secretScan = !parseBool(read("DISABLE_SECRET_SCAN"));
   const enableRecoveryTools = parseBool(read("ENABLE_RECOVERY_TOOLS"));
   const maxConcurrentJobs = parsePositiveInt(
     read("MAX_CONCURRENT_JOBS") || String(HARD_MAX_CONCURRENT_JOBS)
@@ -273,7 +270,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     bridgeSkillsDirectory,
     stateProfile,
     upstreamPoolSize,
-    secretScan,
     enableRecoveryTools,
     maxConcurrentJobs,
     maxPromptChars,
@@ -403,163 +399,6 @@ export function enforceSandbox(config: BridgeConfig, requested?: SandboxMode): S
     );
   }
   return sandbox;
-}
-
-const sensitiveFileScans = new Map<string, Promise<string[]>>();
-
-export function findSensitiveFiles(root: string, maxFindings = 20): Promise<string[]> {
-  const key = `${root}\0${maxFindings}`;
-  const existing = sensitiveFileScans.get(key);
-  if (existing) return existing;
-  const scan = scanSensitiveFiles(root, maxFindings).finally(() => {
-    if (sensitiveFileScans.get(key) === scan) sensitiveFileScans.delete(key);
-  });
-  sensitiveFileScans.set(key, scan);
-  return scan;
-}
-
-const MAX_BENIGN_NPMRC_BYTES = 4 * 1024;
-
-/**
- * Keep the filename-first guard fail-closed while allowing the small, generated
- * npm configuration bundled with VS Code language servers. Unknown settings,
- * comments, oversized files, symlinks and unreadable files remain blocked.
- */
-async function isNarrowlyBenignNpmrc(file: string): Promise<boolean> {
-  let handle: Awaited<ReturnType<typeof open>> | undefined;
-  try {
-    handle = await open(file, "r");
-    const buffer = Buffer.alloc(MAX_BENIGN_NPMRC_BYTES + 1);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    if (bytesRead > MAX_BENIGN_NPMRC_BYTES) return false;
-
-    const text = buffer.toString("utf8", 0, bytesRead);
-    if (text.includes("\0") || text.includes("\uFFFD")) return false;
-
-    for (const rawLine of text.split(/\r?\n/)) {
-      const line = rawLine.trim();
-      if (!line) continue;
-      // Do not try to prove arbitrary comments harmless: this exception is
-      // intentionally limited to a tiny, machine-generated configuration.
-      if (line.startsWith("#") || line.startsWith(";")) return false;
-      const separator = line.indexOf("=");
-      if (separator <= 0) return false;
-      const key = line.slice(0, separator).trim().toLowerCase();
-      const value = line.slice(separator + 1).trim();
-      if (key === "legacy-peer-deps") {
-        if (!/^(?:true|false|"(?:true|false)"|'(?:true|false)')$/i.test(value)) return false;
-        continue;
-      }
-      if (key === "timeout") {
-        if (!/^\d{1,7}$/.test(value)) return false;
-        continue;
-      }
-      return false;
-    }
-    return true;
-  } catch {
-    return false;
-  } finally {
-    await handle?.close().catch(() => undefined);
-  }
-}
-
-/** Bounded, project-relative diagnostics; never expose the absolute project root. */
-export function formatSensitiveFileFindings(
-  root: string,
-  findings: readonly string[],
-  maxPaths = 5
-): string {
-  const displayed = findings.slice(0, Math.max(0, maxPaths)).map((file) => {
-    const relative = path.relative(root, file);
-    const withinRoot = relative !== "" &&
-      !path.isAbsolute(relative) &&
-      relative !== ".." &&
-      !relative.startsWith(`..${path.sep}`);
-    const label = (withinRoot ? relative : path.basename(file))
-      .split(path.sep)
-      .join("/")
-      .replace(/[\u0000-\u001f\u007f]/g, "\uFFFD");
-    return JSON.stringify(label);
-  });
-  const remaining = findings.length - displayed.length;
-  return `${displayed.join(", ")}${remaining > 0 ? ` (+${remaining} more)` : ""}`;
-}
-
-async function scanSensitiveFiles(root: string, maxFindings: number): Promise<string[]> {
-  const findings: string[] = [];
-  const skipDirs = new Set([
-    ".git",
-    "node_modules",
-    "dist",
-    "coverage",
-    ".next",
-    ".turbo",
-    ".vscode-test",
-    ".build",
-    "target"
-  ]);
-  const deniedBasenames = new Set([
-    ".env",
-    ".env.local",
-    ".env.production",
-    ".env.development",
-    ".npmrc",
-    ".pypirc",
-    ".netrc",
-    "id_rsa",
-    "id_ed25519",
-    "id_dsa",
-    "id_ecdsa"
-  ]);
-  const deniedExtensions = [".pem", ".key", ".p12", ".pfx"];
-
-  let directories = [root];
-  while (directories.length > 0 && findings.length < maxFindings) {
-    const batch = directories.splice(0, 32);
-    const results = await Promise.all(
-      batch.map(async (directory) => {
-        try {
-          return { directory, entries: await readdir(directory, { withFileTypes: true }), error: undefined };
-        } catch (error) {
-          return { directory, entries: [], error };
-        }
-      })
-    );
-
-    for (const { directory, entries, error } of results) {
-      if (directory === root && error) {
-        throw new Error(
-          `Could not scan the Codex working directory for sensitive files: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
-      }
-      for (const entry of entries) {
-        if (findings.length >= maxFindings) break;
-        const fullPath = path.join(directory, entry.name);
-        const lower = entry.name.toLowerCase();
-        const deniedByName =
-          deniedBasenames.has(lower) ||
-          (lower.startsWith(".env.") && lower !== ".env.example") ||
-          deniedExtensions.some((ext) => lower.endsWith(ext));
-        if (deniedByName) {
-          if (
-            lower === ".npmrc" &&
-            entry.isFile() &&
-            await isNarrowlyBenignNpmrc(fullPath)
-          ) {
-            continue;
-          }
-          findings.push(fullPath);
-          continue;
-        }
-        if (entry.isSymbolicLink()) continue;
-        if (entry.isDirectory() && !skipDirs.has(entry.name)) directories.push(fullPath);
-      }
-    }
-  }
-  return findings.sort();
 }
 
 function parseAllowedRoots(raw: string | undefined): string[] {

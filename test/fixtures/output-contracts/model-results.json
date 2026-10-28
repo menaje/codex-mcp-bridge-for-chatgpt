@@ -440,6 +440,19 @@
     }
   ],
   "codex_task": [],
+  "codex_result_review": [
+    {
+      "fixture": "reviewed-exact-result",
+      "structuredContent": {
+        "kind": "result-review",
+        "eventId": "rle_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "version": 2,
+        "holdUntil": 1800000060000,
+        "alreadyReviewed": false,
+        "dispatchEntered": false
+      }
+    }
+  ],
   "codex_relay_control": [
     {
       "fixture": "explicit-relay-stop",

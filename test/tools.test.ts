@@ -1,6 +1,6 @@
 import { historicalCompletion } from "./fixtures/historicalCompletion.js";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -455,6 +455,99 @@ describe("current bridge tool contracts", () => {
     await eventually(() => state.listJobs().some(job => job.status === "completed"));
     expect(upstream.calls[0]?.args.ephemeral).toBe(persistence === "ephemeral");
     expect(state.listSessions()).toContainEqual(expect.objectContaining({ persistence, visibleInCodexApp: false }));
+  });
+
+  it("runs fresh, continued and forked work regardless of project filenames", async () => {
+    const filenames = [
+      ".env", ".env.production", ".npmrc", ".pypirc", ".netrc", "id_ed25519",
+      "server.pem", "server.key", "client.p12", "client.pfx",
+      "build/LocalModels/research/venv/lib/python3.12/site-packages/pip/_vendor/certifi/cacert.pem"
+    ];
+    for (const filename of filenames) {
+      const file = path.join(root, filename);
+      await mkdir(path.dirname(file), { recursive: true });
+      await writeFile(file, "Synthetic filename fixture; no credentials.\n");
+    }
+    Object.assign(upstream, {
+      capabilities: () => ({ selectionScope: "turn", supportsModelOverrideOnContinue: true,
+        supportsEffortOverrideOnContinue: true, supportsServiceTierOverrideOnContinue: true, supportsFork: true }),
+      forkThread: (input: Record<string, unknown>, progress?: (value: CodexProgress) => void,
+        assigned?: (value: UpstreamWorkerAssignment) => void) => upstream.callTool("codex-fork", input, progress, assigned)
+    });
+    const descriptor = (await client.listTools()).tools.find(tool => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+    const common = { scopeId: randomUUID(), taskContractVersion: properties.taskContractVersion?.const,
+      executionEnvelopeRef: properties.executionEnvelopeRef?.const };
+    const projectSelection = { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision };
+    const execute = async (args: Record<string, unknown>) => {
+      const result = await client.callTool({ name: "codex_task", _meta: metadata,
+        arguments: { ...common, requestId: randomUUID(), ...args } });
+      expect(result.isError, JSON.stringify(result)).not.toBe(true);
+      const handles = result.structuredContent as { jobId: string; agentId: string; activityId: string };
+      await eventually(() => state.listJobs().some(job => job.jobId === handles.jobId && job.status === "completed"));
+      const completed = await client.callTool({ name: "codex_status", _meta: metadata,
+        arguments: { scopeId: common.scopeId, query: { kind: "job", id: handles.jobId } } });
+      expect(completed.structuredContent).toMatchObject({ items: [{
+        id: handles.jobId, state: "completed", answer: expect.stringContaining("Completed fixture work.")
+      }] });
+      return handles;
+    };
+    const handles = await execute({ prompt: "Start work in the registered project.", project: projectSelection, selection });
+    for (const context of ["continue", "fresh", "fork"] as const) {
+      if (context !== "continue") upstream.setNextThreadId(randomUUID());
+      await execute({ prompt: `Exercise ${context} in the registered project.`,
+        activity: { mode: "existing", id: handles.activityId },
+        agent: { mode: "existing", id: handles.agentId, context },
+        ...(context === "fresh" ? { project: projectSelection, selection } : {}) });
+    }
+    expect(upstream.calls.map(call => call.name)).toEqual(["codex", "codex-reply", "codex", "codex-fork"]);
+    expect(state.listJobs()).toHaveLength(4);
+  });
+
+  it.each([
+    { context: "continue", change: "missing" },
+    { context: "continue", change: "replaced" },
+    { context: "fork", change: "missing" },
+    { context: "fork", change: "replaced" }
+  ])("rejects $context when the admitted project folder is $change", async ({ context, change }) => {
+    const cwd = path.join(root, "admitted-project");
+    await mkdir(cwd);
+    settings.updateWithProjectOperations({}, [{ kind: "add", project: { name: "Pinned", cwd } }],
+      undefined, settings.current.registryRevision);
+    Object.assign(upstream, {
+      capabilities: () => ({ selectionScope: "turn", supportsModelOverrideOnContinue: true,
+        supportsEffortOverrideOnContinue: true, supportsServiceTierOverrideOnContinue: true, supportsFork: true }),
+      forkThread: (input: Record<string, unknown>, progress?: (value: CodexProgress) => void,
+        assigned?: (value: UpstreamWorkerAssignment) => void) => upstream.callTool("codex-fork", input, progress, assigned)
+    });
+    const descriptor = (await client.listTools()).tools.find(tool => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects.find(project => project.name === "Pinned")!;
+    const common = { scopeId: randomUUID(), taskContractVersion: properties.taskContractVersion?.const,
+      executionEnvelopeRef: properties.executionEnvelopeRef?.const };
+    const original = await client.callTool({ name: "codex_task", _meta: metadata, arguments: {
+      ...common, requestId: randomUUID(), prompt: "Create a context in the admitted folder.", selection,
+      project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision }
+    } });
+    expect(original.isError, JSON.stringify(original)).not.toBe(true);
+    const handles = original.structuredContent as { jobId: string; agentId: string; activityId: string };
+    await eventually(() => state.listJobs().some(job => job.jobId === handles.jobId && job.status === "completed"));
+    await rm(cwd, { recursive: true });
+    if (change === "replaced") {
+      const replacement = path.join(root, "replacement-project");
+      await mkdir(replacement);
+      await symlink(replacement, cwd, "dir");
+    }
+    const rejected = await client.callTool({ name: "codex_task", _meta: metadata, arguments: {
+      ...common, requestId: randomUUID(), prompt: "Check the original project boundary.",
+      activity: { mode: "existing", id: handles.activityId },
+      agent: { mode: "existing", id: handles.agentId, context }
+    } });
+    expect(rejected.isError).toBe(true);
+    expect(JSON.stringify(rejected)).toContain("PROJECT_UNAVAILABLE");
+    expect(upstream.calls).toHaveLength(1);
+    expect(state.listJobs()).toHaveLength(1);
   });
 
   it("continues, replaces and forks the same Agent across accounts while keeping Bridge scope and logout admission checks", async () => {

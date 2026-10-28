@@ -388,18 +388,23 @@ new identity and execution context; deleted Bridge history is not restored.
 
 When settings are opened from a remote client, enter the absolute path as it exists on the selected server.
 
-Do not place `.env`, credentials, or other common secret files inside a registered project. The Bridge intentionally blocks common secret filenames before starting work.
+The Bridge admits work according to the registered project and its configured
+execution permissions. It does not scan the project for credential-looking
+filenames or refuse work because files such as `.env`, `.npmrc`, private keys,
+or certificate bundles are present. Python virtual environments and their
+`certifi/cacert.pem` bundles can stay in the project; no filename exception or
+scan override is required.
 
-The scan is independent of Git: `.gitignore` does not exclude a path from this
-check. Generated VS Code test runtimes should use the conventional
-`.vscode-test/` directory or a cache outside the registered project instead of
-an `artifacts/` subtree. The Bridge still scans ordinary `artifacts/`
-directories because generated output can accidentally contain copied
-credentials. A `.npmrc` is allowed only when it contains the narrowly recognized
-non-credential settings used by generated VS Code language servers
-(`legacy-peer-deps` and numeric `timeout`); unknown or authentication-related
-settings remain blocked. When admission is refused, the error reports a bounded
-list of project-relative paths without exposing the absolute project root.
+Choose project folders and Codex access according to the files you intend Codex
+to use. The Bridge's own runtime credential file must remain outside registered
+project roots. Authentication, project availability, sandbox, approval, and
+model restrictions still apply.
+
+The retired `CODEX_MCP_BRIDGE_DISABLE_SECRET_SCAN` and
+`CODEX_GPT_BRIDGE_DISABLE_SECRET_SCAN` settings are ignored. After updating from
+a build with filename scanning, refresh connector discovery so new requests use
+the current execution envelope. Existing stale-envelope rejection and recovery
+rules continue to apply.
 
 ### Server
 

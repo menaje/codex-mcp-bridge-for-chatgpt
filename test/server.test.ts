@@ -23,6 +23,7 @@ const CURRENT_TOOL_ORDER = [
   "codex_relay",
   "codex_relay_wait",
   "codex_relay_control",
+  "codex_result_review",
   "codex_answer",
   "bridge_skill",
   "bridge_skill_manage",

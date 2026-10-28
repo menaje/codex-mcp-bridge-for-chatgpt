@@ -771,6 +771,29 @@ describe("user settings and project registry", () => {
     restored.stateStore.close();
   });
 
+  it("ignores retired filename-scan switches without changing execution references", () => {
+    const databaseFile = path.join(temporaryDirectory("settings-retired-scan-"), "state.sqlite");
+    const config = configFor();
+    const original = persistentSettings(config, databaseFile);
+    const executionRef = original.settings.executionPolicyRef();
+    const envelopeRef = original.settings.taskExecutionEnvelopeRef();
+    original.stateStore.close();
+
+    for (const name of ["CODEX_MCP_BRIDGE_DISABLE_SECRET_SCAN", "CODEX_GPT_BRIDGE_DISABLE_SECRET_SCAN"]) {
+      for (const value of ["0", "1"]) {
+        const restoredConfig = configFor({ [name]: value });
+        expect(restoredConfig).toEqual(config);
+        const restored = persistentSettings(restoredConfig, databaseFile);
+        try {
+          expect(restored.settings.executionPolicyRef()).toBe(executionRef);
+          expect(restored.settings.taskExecutionEnvelopeRef()).toBe(envelopeRef);
+        } finally {
+          restored.stateStore.close();
+        }
+      }
+    }
+  });
+
   it("safely clamps but does not erase a saved full-access preference", () => {
     const databaseFile = path.join(temporaryDirectory("settings-narrow-"), "state.sqlite");
     const broad = configFor({
