@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isActiveActivityJobStatus } from "./activity.js";
 import type { BridgeStateStore } from "./stateStore.js";
 import type { EventJob } from "./mcpEventStore.js";
 import { parseJsonTextStrict } from "./textIntegrity.js";
@@ -249,7 +250,7 @@ export class RelayDeliveryStore {
   beginDirectWait(jobId: string, owner: Owner, waitId: string, waitMs: number, now = Date.now()): boolean {
     return this.state.transaction(() => {
       const record = this.registration(jobId), current = this.state.getRelayJobSnapshot(jobId);
-      if (!record || !current || current.status !== "running" || !this.state.retainedJobVisible(jobId)) return false;
+      if (!record || !current || !isActiveActivityJobStatus(current.status) || !this.state.retainedJobVisible(jobId)) return false;
       const goal = this.requireGoal(record.activityId, owner);
       if (goal.ended || goal.monitoringStopped || this.state.isEventActivityEnded(record.activityId)) return false;
       const waits = Object.fromEntries(Object.entries(record.directWaits || {}).filter(([, until]) => until > now));

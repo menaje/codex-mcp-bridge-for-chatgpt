@@ -493,6 +493,13 @@ describe("#280 direct result and relay coordination", () => {
     expect(f.state.getEventJobSnapshot(a.jobId)?.status).toBe("completed");
   });
 
+  it.each(["terminating", "termination-failed"])("holds a terminal notice while directly waiting on a %s Job", status => {
+    const f = fixture(), a = f.seed({ status });
+    expect(f.state.relay.beginDirectWait(a.jobId, f.owner, randomUUID(), 20_000)).toBe(true);
+    f.finish(a);
+    expect(f.state.relay.pending(f.activity.activityId)).toEqual([]);
+  });
+
   it("atomically refuses entry after review and makes an unentered lease eligible again after expiry", () => {
     let now = 1_800_000_000_000; vi.spyOn(Date, "now").mockImplementation(() => now);
     const f = fixture(), a = f.seed(), event = f.finish(a), card = f.connect(), attempt = randomUUID();

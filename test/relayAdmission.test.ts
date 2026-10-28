@@ -300,6 +300,20 @@ describe("#261 bounded followup contracts", () => {
     expect(state.relay.pending(a.activityId).map(e => e.eventId)).toContain(event.eventId);
   });
 
+  it("does not offer a review confirmation for an answer containing non-text content", async () => {
+    const hold = upstream.hold(), a = taskResult(await initial()); await hold.started.promise;
+    const committed = terminal(a.jobId);
+    hold.result.resolve({ content: [
+      { type: "text", text: "See the image." },
+      { type: "image", mimeType: "image/png", data: "aGVsbG8=" }
+    ] });
+    await committed;
+    const result = await call("codex_status", { query: { kind: "job", id: a.jobId } });
+    expect(result.isError, JSON.stringify(result)).not.toBe(true);
+    expect((result.structuredContent as any).items[0].relayReview).toBeUndefined();
+    expect(state.relay.pending(a.activityId)).toHaveLength(1);
+  });
+
   it("releases an aborted model wait without cancelling or replacing the original Job", async () => {
     const hold = upstream.hold(), a = taskResult(await initial()); await hold.started.promise;
     const started = barrier<void>(), ended = barrier<void>();

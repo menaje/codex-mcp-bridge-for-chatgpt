@@ -6636,6 +6636,7 @@ export function registerBridgeTools(
           });
           const event = jobs.admissionStateStore.relay.registration(job.jobId)?.event;
           if (event?.kind === "terminal" && job.result && Array.isArray(job.result.content) &&
+              job.result.content.every(item => item.type === "text") &&
               job.result.content.some(item => item.type === "text" && item.text.trim().length > 0) &&
               !modelPrimaryAnswer(job.result).truncated &&
               jobs.admissionStateStore.relay.offerResult(job.jobId,
