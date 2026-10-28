@@ -1,6 +1,6 @@
-import { RELAY_GUIDANCE } from "./relayDelivery.js";
+import { RELAY_EVENT_PATTERN, RELAY_GUIDANCE } from "./relayDelivery.js";
 import { RELAY_TOOL_METADATA, registerRelayCardResource } from "./relayCard.js";
-import { registerRelayTools, relayToolResult, relayControlOutputSchema, relayMutationOutputSchema, relayWaitOutputSchema } from "./relayTools.js";
+import { registerRelayTools, relayToolResult, relayControlOutputSchema, relayMutationOutputSchema, relayWaitOutputSchema, relayReviewOutputSchema } from "./relayTools.js";
 import { ProjectLifecycleController } from "./projectLifecycle.js";
 import { withExecutionIdentity } from "./executionIdentity.js";
 import { bridgeExecutionContext } from "./executionContext.js";
@@ -1177,6 +1177,7 @@ const statusItemOutputSchema = z.strictObject({
     resultOffer: z.enum(["none", "direct-query", "completion-receipt", "both"]),
     activityLifecycle: z.enum(ACTIVITY_LIFECYCLES).nullable()
   }).optional(),
+  relayReview: z.strictObject({ eventId: z.string().regex(RELAY_EVENT_PATTERN), version: z.number().int().positive() }).optional(),
   replay: z.boolean().optional(),
   versions: z.strictObject({
     job: z.number().int().min(1),
@@ -1745,6 +1746,7 @@ export const MODEL_VISIBLE_OUTPUT_SCHEMA_PER_TOOL_BYTE_BUDGET = 18_000;
 export const MODEL_VISIBLE_OUTPUT_SCHEMAS = Object.freeze({
   codex_answer: CODEX_INPUT_MODEL_OUTPUT_SCHEMAS.codex_answer,
   codex_relay_control: relayControlOutputSchema,
+  codex_result_review: relayReviewOutputSchema,
   codex_activity_update: activityUpdateMutationOutputSchema,
   codex_agent: agentMutationOutputSchema,
   codex_cancel: z.union([cancelMutationOutputSchema, activityCancelMutationOutputSchema]),
@@ -6483,7 +6485,7 @@ export function registerBridgeTools(
     {
       title: `${PRODUCT_INFO.displayName} Status`,
       description:
-        "Read project selectors, exact Job state, current questions, original results and followup receipts in this conversation. The default server profile attaches a blank relay automatically. Optional bounded terminal waits observe the same exact Job; timeout or host abort never cancels it or permits replacement. A terminal wait wakes only for terminal lifecycle state; inspect its exact input action after every non-terminal return. At a current question or approval, do not keep a parallel terminal wait. Review the original result before continuing within the original user goal and delegation; reuse a declared followup receipt or bind a dynamic step with relayFollowup. Query kind=followups pages all existing receipts for an exact retained predecessor. Keep the original scope and honor explicit stops and new user decision or approval boundaries. Summary reads contain no original answer; retrieve the supplied exact Job action. A response offer is not proof of GPT review. Status checks never require opening Dashboard.",
+        "Read project selectors, exact Job state, current questions, original results and followup receipts in this conversation. The default server profile attaches a blank relay automatically. An actual bounded exact Job wait temporarily gives direct reception priority over an unsent Relay completion, with a short expiry after the wait ends. Timeout or host abort never cancels it or permits replacement. A terminal wait wakes only for terminal lifecycle state; inspect its exact input action after every non-terminal return. At a current question or approval, do not keep a parallel terminal wait. After actually reviewing a delivered exact result, call codex_result_review with its returned relayReview eventId and version; this delays the unsent notice briefly, not indefinitely, and does not prove an answer was posted. Review the original result before continuing within the original user goal and delegation; reuse a declared followup receipt or bind a dynamic step with relayFollowup. Query kind=followups pages all existing receipts for an exact retained predecessor. Keep the original scope and honor explicit stops and new user decision or approval boundaries. Summary reads contain no original answer; retrieve the supplied exact Job action. A response offer is not proof of GPT review. Status checks never require opening Dashboard.",
       inputSchema: codexStatusInput,
       outputSchema: config.experimentalProfile === "events" && config.eventsEnabled
         ? MODEL_VISIBLE_OUTPUT_SCHEMAS.codex_status
@@ -6573,6 +6575,11 @@ export function registerBridgeTools(
             (scopeResolution?.source !== "host-metadata" || initial.mcpPrincipal !== authenticatedMcpPrincipal(extra))) throw scopedHandleUnavailable("job");
         let wait: CodexJobWaitResult | undefined;
         if (jobQuery.waitFor) {
+          const waitMs = jobQuery.waitMs ?? DEFAULT_CODEX_STATUS_WAIT_MS;
+          const waitId = randomUUID();
+          const directWait = scopeResolution?.source === "host-metadata" && !signal?.aborted &&
+            jobs.admissionStateStore.relay.beginDirectWait(initial.jobId,
+              { scopeId, mcpPrincipal: authenticatedMcpPrincipal(extra) }, waitId, waitMs);
           let observedAbort = false;
           const onAbort = () => {
             if (observedAbort) return;
@@ -6593,12 +6600,13 @@ export function registerBridgeTools(
             wait = await jobs.wait(
               initial.jobId,
               jobQuery.waitFor,
-              jobQuery.waitMs ?? DEFAULT_CODEX_STATUS_WAIT_MS,
+              waitMs,
               signal,
               "model-status"
             );
           } finally {
             signal?.removeEventListener("abort", onAbort);
+            if (directWait) jobs.admissionStateStore.relay.endDirectWait(initial.jobId, waitId);
           }
         }
         const job = wait?.job || initial;
@@ -6609,7 +6617,7 @@ export function registerBridgeTools(
           inputs: { cursor: codexInputCursor(job), ordinaryQuestions: job.pendingInteractions.filter(ordinaryCodexQuestion).length, approvalRequests: job.pendingInteractions.filter(q => !ordinaryCodexQuestion(q)).length, readTool: "codex_status", queryKind: "input" }
         };
         const projection = compactStatusProjection(structured);
-        const result = statusToolResult(
+        let result = statusToolResult(
           projection,
           job,
           config.maxJobResultBytes
@@ -6626,6 +6634,16 @@ export function registerBridgeTools(
             source: "direct-job-query",
             jobId: job.jobId
           });
+          const event = jobs.admissionStateStore.relay.registration(job.jobId)?.event;
+          if (event?.kind === "terminal" && job.result && Array.isArray(job.result.content) &&
+              job.result.content.some(item => item.type === "text" && item.text.trim().length > 0) &&
+              !modelPrimaryAnswer(job.result).truncated &&
+              jobs.admissionStateStore.relay.offerResult(job.jobId,
+              { scopeId, mcpPrincipal: authenticatedMcpPrincipal(extra) }, event.eventId, event.version)) {
+            const item = projection.items.find(item => item.type === "job" && item.id === job.jobId);
+            if (item) item.relayReview = { eventId: event.eventId, version: event.version };
+            result = statusToolResult(projection, job, config.maxJobResultBytes);
+          }
         }
         return result;
       }
@@ -16308,8 +16326,8 @@ function statusToolResult(
           ? {
               ...item,
               answer: primaryAnswer.text,
-              message:
-                "Codex completed; the bounded model-authoritative answer is in this exact Job item. Tool content is a compatibility copy."
+              message: "Codex completed; the bounded model-authoritative answer is in this exact Job item. Tool content is a compatibility copy." +
+                (item.relayReview ? " After actually reviewing it, call codex_result_review with the returned relayReview eventId and version." : "")
             }
           : item
       ),

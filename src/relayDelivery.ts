@@ -8,6 +8,9 @@ const JOB = "relay_job_v1/";
 const HISTORY = "relay_event_history_v1/";
 const MEMBER = "relay_member_v1/";
 const READY = "relay_ready_v1/";
+const DEFERRED = "relay_deferred_v1/";
+export const DIRECT_WAIT_GRACE_MS = 10_000;
+export const RESULT_REVIEW_GRACE_MS = 60_000;
 export const RELAY_EVENT_PATTERN = /^rle_[a-f0-9]{96}$/;
 export const RELAY_METADATA_KEY = "codex/relayOpen@1";
 export const RELAY_RETRY_METADATA_KEY = "codex/relayRetry@1";
@@ -23,7 +26,13 @@ export type RelayEvent = {
   state: "pending" | "leased" | "sending" | "accepted" | "unknown" | "rejected";
   attemptId?: string; cardId?: string; leaseUntil?: number; attempts: number; retryAt?: number;
 };
-type Registration = Owner & { jobId: string; activityId: string; projectId?: string; event?: RelayEvent; paused?: boolean };
+type Registration = Owner & {
+  jobId: string; activityId: string; projectId?: string; event?: RelayEvent; paused?: boolean;
+  directWaits?: Record<string, number>;
+  resultOffer?: { eventId: string; version: number };
+  resultReview?: { eventId: string; version: number; reviewedAt: number; until: number };
+  deferredUntil?: number;
+};
 export type RelayOutcome = "accepted" | "unknown" | "rejected" | "retryable-rejection" | "not-sent";
 
 /** This request cannot grant dispatch; the card can recover without new work. */
@@ -109,7 +118,7 @@ export class RelayDeliveryStore {
     const sameEvent = record.event?.eventId === next?.eventId;
     const paused = Boolean(next && !dispatchable(job, next));
     if (sameEvent && Boolean(record.paused) === paused) return;
-    if (record.event) this.state.deleteMeta(this.readyKey(record.activityId, record.event.eventId));
+    this.clearIndex(record);
     if (!sameEvent) {
       // A resolved/replaced input loses current eligibility, not its receipt.
       // Archive only on identity changes; progress and liveness do not append.
@@ -119,11 +128,8 @@ export class RelayDeliveryStore {
     }
     if (paused) record.paused = true;
     else delete record.paused;
+    this.index(record);
     this.save(JOB + job.jobId, record);
-    if (record.event && !paused && ["pending", "leased"].includes(record.event.state)) {
-      this.save(this.readyKey(record.activityId, record.event.eventId), { jobId: job.jobId });
-      this.state.markRelayReady(record.activityId, job.jobId);
-    }
   }
 
   connect(activityId: string, owner: Owner, cardId: string): RelayGoal {
@@ -160,13 +166,20 @@ export class RelayDeliveryStore {
     const goal = this.goal(activityId);
     if (!goal || goal.ended || goal.monitoringStopped || this.state.isEventActivityEnded(activityId)) return [];
     const result: RelayEvent[] = [];
-    for (const row of this.state.listMeta(`${READY}${activityId}/`, 64)) {
+    // Held events have their own deadline-ordered index, so a block of held
+    // Jobs cannot hide unrelated ready events behind the first page.
+    const rows = [...this.state.listMeta(`${READY}${activityId}/`, 64),
+      ...this.state.listMeta(`${DEFERRED}${activityId}/`, 64).filter(row =>
+        Number(row.key.slice(`${DEFERRED}${activityId}/`.length, `${DEFERRED}${activityId}/`.length + 16)) <= now)];
+    for (const row of rows) {
       const { jobId } = parseJsonTextStrict(row.value, "Relay readiness") as { jobId: string };
       const record = this.registration(jobId), event = record?.event;
       const current = this.state.getRelayJobSnapshot(jobId);
       if (!event || !current || !this.state.retainedJobVisible(jobId) || relayEvent(current)?.eventId !== event.eventId || !dispatchable(current, event)) continue;
+      if (this.heldUntil(record, now) > now) continue;
       if (event.state === "pending" && (event.retryAt || 0) <= now || event.state === "leased" &&
           ((event.leaseUntil || 0) <= now || event.cardId !== goal.cardId)) result.push(event);
+      if (result.length === 64) break;
     }
     return result;
   }
@@ -176,10 +189,15 @@ export class RelayDeliveryStore {
       const goal = this.requireGoal(activityId, owner);
       const record = this.requireCurrentEvent(activityId, eventId), event = record.event!;
       if (goal.cardId !== cardId || goal.ended || goal.monitoringStopped) return;
+      if (this.heldUntil(record, Date.now()) > Date.now()) return;
       if (event.attemptId === attemptId) return event.cardId === cardId ? event : undefined;
       if (!this.pending(activityId).some(item => item.eventId === eventId)) return;
+      if (record.deferredUntil !== undefined) this.diagnoseDecision(record, "release", "priority-expired");
+      this.clearIndex(record);
       Object.assign(event, { state: "leased", cardId, attemptId, leaseUntil: Date.now() + 30_000, attempts: event.attempts + 1 });
+      this.index(record);
       this.save(JOB + record.jobId, record);
+      this.diagnoseDecision(record, "claim", "eligible");
       return event;
     });
   }
@@ -190,9 +208,13 @@ export class RelayDeliveryStore {
       const record = this.requireCurrentEvent(activityId, eventId), event = record.event!;
       if (goal.ended || goal.monitoringStopped || goal.cardId !== cardId || event.cardId !== cardId ||
           event.attemptId !== attemptId || event.state !== "leased" || (event.leaseUntil || 0) <= Date.now()) return false;
+      if (this.heldUntil(record, Date.now()) > Date.now()) {
+        this.diagnoseDecision(record, "defer", "direct-priority");
+        return false;
+      }
       event.state = "sending";
+      this.clearIndex(record);
       this.save(JOB + record.jobId, record);
-      this.state.deleteMeta(this.readyKey(activityId, eventId));
       this.diagnose(record);
       return true;
     });
@@ -211,16 +233,79 @@ export class RelayDeliveryStore {
       if (event.state === "leased" && outcome !== "not-sent") return event;
       event.state = outcome === "accepted" ? "accepted" : outcome === "unknown" ? "unknown" :
         outcome === "not-sent" || outcome === "retryable-rejection" && event.attempts < 3 ? "pending" : "rejected";
+      this.clearIndex(record);
       if (event.state === "pending") {
         event.retryAt = Date.now() + 2_000 * event.attempts;
-        if (!record.paused) {
-          this.save(this.readyKey(activityId, eventId), { jobId: record.jobId });
-          this.state.markRelayReady(activityId, record.jobId);
-        }
-      } else this.state.deleteMeta(this.readyKey(activityId, eventId));
+      }
+      this.index(record);
       this.save(JOB + record.jobId, record);
       this.diagnose(record);
       return event;
+    });
+  }
+
+  /** Only an actual, authenticated model status wait creates this bounded
+   * preference. Card reads, connections and visibility never call it. */
+  beginDirectWait(jobId: string, owner: Owner, waitId: string, waitMs: number, now = Date.now()): boolean {
+    return this.state.transaction(() => {
+      const record = this.registration(jobId), current = this.state.getRelayJobSnapshot(jobId);
+      if (!record || !current || current.status !== "running" || !this.state.retainedJobVisible(jobId)) return false;
+      const goal = this.requireGoal(record.activityId, owner);
+      if (goal.ended || goal.monitoringStopped || this.state.isEventActivityEnded(record.activityId)) return false;
+      const waits = Object.fromEntries(Object.entries(record.directWaits || {}).filter(([, until]) => until > now));
+      if (Object.keys(waits).length >= 16) return false;
+      waits[waitId] = now + waitMs + DIRECT_WAIT_GRACE_MS;
+      record.directWaits = waits;
+      this.clearIndex(record); this.index(record, now); this.save(JOB + jobId, record);
+      this.diagnoseDecision(record, "hold", "direct-wait");
+      return true;
+    });
+  }
+
+  endDirectWait(jobId: string, waitId: string, now = Date.now()): void {
+    this.state.transaction(() => {
+      const record = this.registration(jobId), until = record?.directWaits?.[waitId];
+      if (!record || until === undefined) return;
+      record.directWaits![waitId] = Math.min(until, now + DIRECT_WAIT_GRACE_MS);
+      this.clearIndex(record); this.index(record, now); this.save(JOB + jobId, record);
+      this.diagnoseDecision(record, "hold", "wait-ended-grace");
+    });
+  }
+
+  /** A server offer binds the exact event, but is never a model review. */
+  offerResult(jobId: string, owner: Owner, eventId: string, version: number): boolean {
+    return this.state.transaction(() => {
+      const record = this.registration(jobId), source = this.state.getRelayJobSnapshot(jobId);
+      if (!record || !source || source.status !== "completed" || !this.state.retainedJobVisible(jobId)) return false;
+      const goal = this.requireGoal(record.activityId, owner);
+      if (goal.ended || goal.monitoringStopped || this.state.isEventActivityEnded(record.activityId) ||
+          record.event?.kind !== "terminal" || record.event.eventId !== eventId || record.event.version !== version ||
+          relayEvent(source)?.eventId !== eventId) return false;
+      record.resultOffer = { eventId, version };
+      this.save(JOB + jobId, record);
+      return true;
+    });
+  }
+
+  reviewResult(owner: Owner, eventId: string, version: number, now = Date.now()): { until: number; alreadyReviewed: boolean; dispatchEntered: boolean } {
+    return this.state.transaction(() => {
+      const record = this.registration(relayEventJobId(eventId));
+      if (!record) throw new RelayEventUnavailableError("RELAY_EVENT_STALE: Read the exact current Job.");
+      const goal = this.requireGoal(record.activityId, owner);
+      const current = this.requireCurrentEvent(record.activityId, eventId), event = current.event!;
+      if (goal.ended || goal.monitoringStopped || this.state.getRelayJobSnapshot(record.jobId)?.status !== "completed" ||
+          event.kind !== "terminal" || event.version !== version ||
+          current.resultOffer?.eventId !== eventId || current.resultOffer.version !== version) {
+        throw new RelayEventUnavailableError("RESULT_REVIEW_UNAVAILABLE: Retrieve the exact retained result in this conversation and honor relay stops.");
+      }
+      const existing = current.resultReview;
+      if (existing?.eventId === eventId && existing.version === version) {
+        return { until: existing.until, alreadyReviewed: true, dispatchEntered: ["sending", "unknown", "accepted"].includes(event.state) };
+      }
+      current.resultReview = { eventId, version, reviewedAt: now, until: now + RESULT_REVIEW_GRACE_MS };
+      this.clearIndex(current); this.index(current, now); this.save(JOB + current.jobId, current);
+      this.diagnoseDecision(current, "hold", "model-review");
+      return { until: current.resultReview.until, alreadyReviewed: false, dispatchEntered: ["sending", "unknown", "accepted"].includes(event.state) };
     });
   }
 
@@ -259,7 +344,7 @@ export class RelayDeliveryStore {
     this.state.deleteMetaPrefix(`${HISTORY}${jobId}/`);
     const record = this.registration(jobId);
     if (!record) return;
-    if (record.event) this.state.deleteMeta(this.readyKey(record.activityId, record.event.eventId));
+    this.clearIndex(record);
     this.state.deleteMeta(`${MEMBER}${record.activityId}/${jobId}`);
     this.state.deleteMeta(JOB + jobId);
     // A minimal goal stop receipt follows the retained Activity, not its result
@@ -287,7 +372,36 @@ export class RelayDeliveryStore {
       route: "relay-card", state: record.event!.state, attempts: record.event!.attempts
     });
   }
+  private diagnoseDecision(record: Registration, decision: string, reason: string): void {
+    this.state.recordHistoryDiagnostic(record.jobId, "completion-delivery", { route: "relay-card", decision, reason });
+  }
+  private heldUntil(record: Registration, now: number): number {
+    if (record.event?.kind !== "terminal") return 0;
+    const review = record.resultReview;
+    const reviewUntil = review?.eventId === record.event.eventId && review.version === record.event.version ? review.until : 0;
+    return Math.max(reviewUntil, ...Object.values(record.directWaits || {}).filter(until => until > now), 0);
+  }
+  private clearIndex(record: Registration): void {
+    if (!record.event) return;
+    this.state.deleteMeta(this.readyKey(record.activityId, record.event.eventId));
+    if (record.deferredUntil !== undefined) this.state.deleteMeta(this.deferredKey(record.activityId, record.event.eventId, record.deferredUntil));
+    delete record.deferredUntil;
+  }
+  private index(record: Registration, now = Date.now()): void {
+    const event = record.event;
+    if (!event || record.paused || !["pending", "leased"].includes(event.state)) return;
+    const until = this.heldUntil(record, now);
+    if (until > now) {
+      // A live pre-entry lease remains recoverable, but cannot be entered.
+      record.deferredUntil = Math.max(until, event.state === "leased" ? event.leaseUntil || 0 : 0);
+      this.save(this.deferredKey(record.activityId, event.eventId, record.deferredUntil), { jobId: record.jobId });
+    } else {
+      this.save(this.readyKey(record.activityId, event.eventId), { jobId: record.jobId });
+      this.state.markRelayReady(record.activityId, record.jobId);
+    }
+  }
   private readyKey(activityId: string, eventId: string): string { return `${READY}${activityId}/${eventId}`; }
+  private deferredKey(activityId: string, eventId: string, until: number): string { return `${DEFERRED}${activityId}/${String(until).padStart(16, "0")}/${eventId}`; }
   private historyKey(jobId: string, eventId: string): string { return `${HISTORY}${jobId}/${eventId}`; }
   private read<T>(key: string): T | undefined {
     const raw = this.state.getMeta(key);

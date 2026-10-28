@@ -95,6 +95,16 @@ and the maximum remains 60 seconds. Timeout or host abort returns or aborts only
 the read request; neither path creates cancellation provenance, calls upstream
 interrupt, or changes the Job lifecycle.
 
+For a Relay-enrolled Job, a bounded exact wait in the originating authenticated
+host conversation temporarily defers its unsent terminal notice; the wait and
+its 10-second end grace never suppress input events. Exact results can include
+`relayReview` for `codex_result_review` after the model actually reviews the
+complete offered answer. That exact, idempotent review holds an unsent event for
+60 seconds and does not establish that an answer was posted. Offers alone never
+consume the event; missing review, interrupted GPT responses and expired holds
+leave an unsent event recoverable. Already-entered sends do not replay. See
+[Relay coordination](relay-delivery.md#coordinating-a-direct-result-280).
+
 The bridge owns access policy, the permitted execution envelope, project
 authorization, and any App Server capability checks. Callers cannot pass a
 sandbox, approval policy, working directory, raw thread ID, presentation

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BridgeStateStore } from "../src/stateStore.js";
-import { relayEvent, relayPresentationRef } from "../src/relayDelivery.js";
+import { DIRECT_WAIT_GRACE_MS, RESULT_REVIEW_GRACE_MS, relayEvent, relayPresentationRef } from "../src/relayDelivery.js";
 import { registerRelayTools, relayToolResult } from "../src/relayTools.js";
 import { ScopeResolver } from "../src/scopeResolver.js";
 import type { McpServer } from "@modelcontextprotocol/server";
@@ -448,5 +448,152 @@ describe("#261 durable relay delivery", () => {
     await expect(inputs.readInput({ jobId: a.jobId }, foreign as any)).rejects.toThrow(/INPUT_JOB_UNAVAILABLE/);
     await expect(handlers.get("codex_answer")({ requestId: randomUUID(), jobId: a.jobId, questionRef: "a".repeat(64), answers: { choice: ["yes"] } }, foreign)).rejects.toThrow(/INPUT_JOB_UNAVAILABLE/);
     expect(waitForInput).not.toHaveBeenCalled();
+  });
+});
+
+describe("#280 direct result and relay coordination", () => {
+  it("holds only a terminal event during an actual wait and restores it after the finite end grace", () => {
+    let now = 1_800_000_000_000; vi.spyOn(Date, "now").mockImplementation(() => now);
+    const f = fixture(), a = f.seed(), waitId = randomUUID(), card = f.connect();
+    expect(f.state.relay.beginDirectWait(a.jobId, f.owner, waitId, 20_000)).toBe(true);
+    f.state.upsertJob({ ...a, version: 2, pendingInteractions: [{ interactionId: "question" }] });
+    expect(f.state.relay.pending(f.activity.activityId).map(event => event.kind)).toEqual(["input"]);
+    const event = f.finish(a);
+    expect(f.state.relay.pending(f.activity.activityId)).toEqual([]);
+    const before = f.state.relay.registration(a.jobId)!.directWaits;
+    f.connect(); f.state.relay.recover(f.activity.activityId); f.state.relay.pending(f.activity.activityId);
+    expect(f.state.relay.registration(a.jobId)!.directWaits).toEqual(before);
+    expect(f.state.relay.claim(f.activity.activityId, f.owner, card, event.eventId, randomUUID())).toBeUndefined();
+    f.state.relay.endDirectWait(a.jobId, waitId);
+    now += DIRECT_WAIT_GRACE_MS;
+    expect(f.state.relay.pending(f.activity.activityId).map(e => e.eventId)).toEqual([event.eventId]);
+    expect(f.state.getEventJobSnapshot(a.jobId)?.status).toBe("completed");
+  });
+
+  it("preserves overlapping waits and bounds a vanished wait without renewal by cards", () => {
+    let now = 1_800_000_000_000; vi.spyOn(Date, "now").mockImplementation(() => now);
+    const f = fixture(), a = f.seed(), first = randomUUID(), second = randomUUID();
+    f.state.relay.beginDirectWait(a.jobId, f.owner, first, 20_000);
+    f.state.relay.beginDirectWait(a.jobId, f.owner, second, 40_000);
+    const event = f.finish(a); f.state.relay.endDirectWait(a.jobId, first);
+    now += 20_000; f.connect(); f.state.relay.recover(f.activity.activityId);
+    expect(f.state.relay.pending(f.activity.activityId)).toEqual([]);
+    now += 30_000;
+    expect(f.state.relay.pending(f.activity.activityId).map(e => e.eventId)).toEqual([event.eventId]);
+  });
+
+  it("recovers the original completion when a direct wait ends before the Job", () => {
+    let now = 1_800_000_000_000; vi.spyOn(Date, "now").mockImplementation(() => now);
+    const f = fixture(), a = f.seed(), waitId = randomUUID();
+    f.state.relay.beginDirectWait(a.jobId, f.owner, waitId, 60_000);
+    f.state.relay.endDirectWait(a.jobId, waitId);
+    now += DIRECT_WAIT_GRACE_MS + 1;
+    const event = f.finish(a);
+    expect(f.state.relay.pending(f.activity.activityId).map(e => e.eventId)).toEqual([event.eventId]);
+    expect(f.state.getEventJobSnapshot(a.jobId)?.status).toBe("completed");
+  });
+
+  it("atomically refuses entry after review and makes an unentered lease eligible again after expiry", () => {
+    let now = 1_800_000_000_000; vi.spyOn(Date, "now").mockImplementation(() => now);
+    const f = fixture(), a = f.seed(), event = f.finish(a), card = f.connect(), attempt = randomUUID();
+    expect(f.state.relay.offerResult(a.jobId, f.owner, event.eventId, event.version)).toBe(true);
+    expect(f.state.relay.claim(f.activity.activityId, f.owner, card, event.eventId, attempt)?.state).toBe("leased");
+    const review = f.state.relay.reviewResult(f.owner, event.eventId, event.version);
+    expect(review).toMatchObject({ alreadyReviewed: false, dispatchEntered: false });
+    expect(f.state.relay.claim(f.activity.activityId, f.owner, card, event.eventId, attempt)).toBeUndefined();
+    expect(f.state.relay.enter(f.activity.activityId, f.owner, card, event.eventId, attempt)).toBe(false);
+    now += RESULT_REVIEW_GRACE_MS - 1;
+    expect(f.state.relay.reviewResult(f.owner, event.eventId, event.version)).toMatchObject({ alreadyReviewed: true, until: review.until });
+    expect(f.state.relay.pending(f.activity.activityId)).toEqual([]);
+    now += 1;
+    expect(f.state.relay.pending(f.activity.activityId).map(e => e.eventId)).toEqual([event.eventId]);
+    const retry = randomUUID();
+    expect(f.state.relay.claim(f.activity.activityId, f.owner, card, event.eventId, retry)?.state).toBe("leased");
+    expect(f.state.relay.enter(f.activity.activityId, f.owner, card, event.eventId, retry)).toBe(true);
+  });
+
+  it.each(["sending", "unknown", "accepted"] as const)("never replays an already %s send after late review and expiry", outcome => {
+    let now = 1_800_000_000_000; vi.spyOn(Date, "now").mockImplementation(() => now);
+    const f = fixture(), a = f.seed(), event = f.finish(a), card = f.connect(), attempt = randomUUID();
+    f.state.relay.offerResult(a.jobId, f.owner, event.eventId, event.version);
+    f.state.relay.claim(f.activity.activityId, f.owner, card, event.eventId, attempt);
+    expect(f.state.relay.enter(f.activity.activityId, f.owner, card, event.eventId, attempt)).toBe(true);
+    if (outcome !== "sending") f.state.relay.acknowledge(f.activity.activityId, f.owner, card, event.eventId, attempt, outcome);
+    expect(f.state.relay.reviewResult(f.owner, event.eventId, event.version).dispatchEntered).toBe(true);
+    now += RESULT_REVIEW_GRACE_MS + 60_000; f.connect();
+    expect(f.state.relay.pending(f.activity.activityId)).toEqual([]);
+    expect(f.state.relay.registration(a.jobId)?.event?.state).toBe(outcome);
+  });
+
+  it("requires the exact offered generation and original owner, without holding other Jobs", () => {
+    const f = fixture(), a = f.seed(), b = f.seed(), event = f.finish(a), other = f.finish(b);
+    expect(() => f.state.relay.reviewResult(f.owner, event.eventId, event.version)).toThrow(/RESULT_REVIEW_UNAVAILABLE/);
+    f.state.relay.offerResult(a.jobId, f.owner, event.eventId, event.version);
+    expect(() => f.state.relay.reviewResult({ scopeId: randomUUID() }, event.eventId, event.version)).toThrow(/OWNER_REQUIRED/);
+    expect(() => f.state.relay.reviewResult(f.owner, event.eventId, event.version + 1)).toThrow(/RESULT_REVIEW_UNAVAILABLE/);
+    f.state.relay.reviewResult(f.owner, event.eventId, event.version);
+    expect(f.state.relay.pending(f.activity.activityId).map(e => e.eventId)).toEqual([other.eventId]);
+  });
+
+  it("persists finite holds and send history through restart without restarting their deadline", () => {
+    let now = 1_800_000_000_000; vi.spyOn(Date, "now").mockImplementation(() => now);
+    const directory = mkdtempSync(path.join(tmpdir(), "relay-direct-restart-")); directories.push(directory);
+    const file = path.join(directory, "state.sqlite"), f = fixture(file), a = f.seed(), waitId = randomUUID();
+    f.state.relay.beginDirectWait(a.jobId, f.owner, waitId, 20_000);
+    const event = f.finish(a); f.state.close();
+    const restarted = new BridgeStateStore({ file }); stores.push(restarted);
+    restarted.relay.connect(f.activity.activityId, f.owner, randomUUID());
+    restarted.relay.recover(f.activity.activityId);
+    expect(restarted.relay.pending(f.activity.activityId)).toEqual([]);
+    now += 20_000 + DIRECT_WAIT_GRACE_MS;
+    expect(restarted.relay.pending(f.activity.activityId).map(e => e.eventId)).toEqual([event.eventId]);
+  });
+
+  it.each(["sending", "unknown", "accepted"] as const)("retains a %s terminal attempt after review and restart", outcome => {
+    let now = 1_800_000_000_000; vi.spyOn(Date, "now").mockImplementation(() => now);
+    const directory = mkdtempSync(path.join(tmpdir(), "relay-review-restart-")); directories.push(directory);
+    const file = path.join(directory, "state.sqlite"), f = fixture(file), a = f.seed(), event = f.finish(a);
+    const card = f.connect(), attempt = randomUUID();
+    f.state.relay.offerResult(a.jobId, f.owner, event.eventId, event.version);
+    f.state.relay.claim(f.activity.activityId, f.owner, card, event.eventId, attempt);
+    f.state.relay.enter(f.activity.activityId, f.owner, card, event.eventId, attempt);
+    if (outcome !== "sending") f.state.relay.acknowledge(f.activity.activityId, f.owner, card, event.eventId, attempt, outcome);
+    f.state.relay.reviewResult(f.owner, event.eventId, event.version); f.state.close();
+    now += RESULT_REVIEW_GRACE_MS + 1;
+    const restarted = new BridgeStateStore({ file }); stores.push(restarted);
+    restarted.relay.connect(f.activity.activityId, f.owner, randomUUID()); restarted.relay.recover(f.activity.activityId);
+    expect(restarted.relay.pending(f.activity.activityId)).toEqual([]);
+    expect(restarted.relay.registration(a.jobId)?.event).toMatchObject({ eventId: event.eventId, attemptId: attempt, state: outcome });
+  });
+
+  it("removes the held-event index when its project is deleted", () => {
+    const f = fixture(":memory:", true), a = f.seed(), waitId = randomUUID();
+    f.state.relay.beginDirectWait(a.jobId, f.owner, waitId, 20_000); f.finish(a);
+    expect(f.state.listMeta(`relay_deferred_v1/${f.activity.activityId}/`, 1)).toHaveLength(1);
+    const projectId = f.project!.id, apply = (operations: any[]) => f.state.applyProjectOperations(operations, f.state.getProjectRegistryRevision(), [f.directory!]);
+    apply([{ kind: "archive", projectId }]);
+    const intent = f.state.projectLifecycle.pending().find(item => item.projectId === projectId)!;
+    expect(f.state.transaction(() => f.state.projectLifecycle.complete(projectId, intent.revision))).toBe(true);
+    apply([{ kind: "delete", projectId }]);
+    expect(f.state.listMeta(`relay_deferred_v1/${f.activity.activityId}/`, 1)).toEqual([]);
+  });
+
+  it("does not let a page of held completions starve an unrelated ready event", () => {
+    const f = fixture();
+    for (let i = 0; i < 70; i++) {
+      const a = f.seed(); f.state.relay.beginDirectWait(a.jobId, f.owner, randomUUID(), 20_000); f.finish(a);
+    }
+    const b = f.seed(), event = f.finish(b);
+    expect(f.state.relay.pending(f.activity.activityId).map(e => e.eventId)).toEqual([event.eventId]);
+  });
+
+  it("keeps explicit relay stop authoritative after a wait ends", () => {
+    const f = fixture(), a = f.seed(), waitId = randomUUID();
+    f.state.relay.beginDirectWait(a.jobId, f.owner, waitId, 20_000);
+    f.state.relay.stop(f.activity.activityId, f.owner, "relay");
+    f.finish(a); f.state.relay.endDirectWait(a.jobId, waitId);
+    f.connect();
+    expect(f.state.relay.pending(f.activity.activityId, Date.now() + 120_000)).toEqual([]);
+    expect(f.state.relay.goal(f.activity.activityId)?.monitoringStopped).toBe(true);
   });
 });
